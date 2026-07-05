@@ -21,20 +21,20 @@
   <g class="silhouette-group">
     <ellipse class="silhouette" cx="100" cy="36" rx="20" ry="24"/>
     <line class="silhouette" x1="100" y1="56" x2="100" y2="76"
-          stroke="#cfdce6" stroke-width="16"/>
+          stroke-width="16"/>
     <path class="silhouette" d="M64,78 L136,78 Q143,78 142,88 L137,178
              Q136,190 126,194 L74,194 Q64,190 63,178 L58,88 Q57,78 64,78 Z"/>
     <rect class="silhouette" x="70" y="190" width="60" height="38" rx="15"/>
     <line class="silhouette" x1="53" y1="92" x2="37" y2="226"
-          stroke="#cfdce6" stroke-width="17" stroke-linecap="round"/>
+          stroke-width="17" stroke-linecap="round"/>
     <line class="silhouette" x1="147" y1="92" x2="163" y2="226"
-          stroke="#cfdce6" stroke-width="17" stroke-linecap="round"/>
+          stroke-width="17" stroke-linecap="round"/>
     <circle class="silhouette" cx="35" cy="240" r="9"/>
     <circle class="silhouette" cx="165" cy="240" r="9"/>
     <line class="silhouette" x1="86" y1="222" x2="84" y2="396"
-          stroke="#cfdce6" stroke-width="23" stroke-linecap="round"/>
+          stroke-width="23" stroke-linecap="round"/>
     <line class="silhouette" x1="114" y1="222" x2="116" y2="396"
-          stroke="#cfdce6" stroke-width="23" stroke-linecap="round"/>
+          stroke-width="23" stroke-linecap="round"/>
     <ellipse class="silhouette" cx="80" cy="410" rx="14" ry="8"/>
     <ellipse class="silhouette" cx="120" cy="410" rx="14" ry="8"/>
     ${spineLine}
@@ -333,7 +333,7 @@
       const card = notesList.querySelector(`[data-key="${CSS.escape(point.key)}"]`);
       if (card) {
         card.scrollIntoView({ behavior: "smooth", block: "center" });
-        card.style.background = "#fff3d6";
+        card.style.background = "var(--flash)";
         setTimeout(() => (card.style.background = ""), 900);
       }
     });

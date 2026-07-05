@@ -7,7 +7,69 @@
   --accent-soft: #d3ecee;
   --point: #e03e52;
   --border: #e2e8f0;
+  --sil: #cfdce6;
+  --sil-line: #b6c8d6;
+  --hover: #fbf8f5;
+  --flash: #fff3d6;
+  --danger-soft: #fde8ea;
+  --danger-border: #f2b8c0;
   --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131c25;
+    --panel: #1b2733;
+    --ink: #e4edf4;
+    --muted: #93a5b5;
+    --accent: #3ab6c0;
+    --accent-soft: #143740;
+    --point: #e25a6d;
+    --border: #2b3a49;
+    --sil: #40536b;
+    --sil-line: #55688a;
+    --hover: #22303e;
+    --flash: #4a3c17;
+    --danger-soft: #45242b;
+    --danger-border: #7a3c47;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.28);
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f7f9;
+  --panel: #ffffff;
+  --ink: #1f2d3a;
+  --muted: #64748b;
+  --accent: #0e7c86;
+  --accent-soft: #d3ecee;
+  --point: #e03e52;
+  --border: #e2e8f0;
+  --sil: #cfdce6;
+  --sil-line: #b6c8d6;
+  --hover: #fbf8f5;
+  --flash: #fff3d6;
+  --danger-soft: #fde8ea;
+  --danger-border: #f2b8c0;
+  --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
+}
+
+:root[data-theme="dark"] {
+  --bg: #131c25;
+  --panel: #1b2733;
+  --ink: #e4edf4;
+  --muted: #93a5b5;
+  --accent: #3ab6c0;
+  --accent-soft: #143740;
+  --point: #e25a6d;
+  --border: #2b3a49;
+  --sil: #40536b;
+  --sil-line: #55688a;
+  --hover: #22303e;
+  --flash: #4a3c17;
+  --danger-soft: #45242b;
+  --danger-border: #7a3c47;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.28);
 }
 
 * { box-sizing: border-box; }
@@ -55,6 +117,10 @@ h1 { margin: 0; font-size: 20px; letter-spacing: 0.3px; }
   box-shadow: var(--shadow);
 }
 .mic-btn:hover { filter: brightness(1.06); }
+.mic-btn:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .mic-btn.listening {
   background: var(--point);
   animation: pulse 1.6s infinite;
@@ -101,12 +167,12 @@ main {
 
 .bodymap svg { width: 230px; height: auto; display: block; }
 
-.silhouette { fill: #cfdce6; }
-.silhouette-line { stroke: #b6c8d6; stroke-width: 2; fill: none; }
+.silhouette { fill: var(--sil); stroke: var(--sil); }
+.silhouette-line { stroke: var(--sil-line); stroke-width: 2; fill: none; }
 
 .point-dot {
   fill: var(--point);
-  stroke: #fff;
+  stroke: var(--panel);
   stroke-width: 2;
   cursor: pointer;
 }
@@ -120,6 +186,10 @@ main {
 @keyframes ring {
   0%   { stroke-width: 6; r: 8; opacity: 0.55; }
   100% { stroke-width: 0.5; r: 20; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .point-ring { animation: none; opacity: 0; }
+  .mic-btn.listening { animation: none; }
 }
 .point-num {
   fill: #fff;
@@ -161,11 +231,12 @@ main {
   font-size: 13px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
+  color: var(--ink);
   cursor: pointer;
 }
 .notes-actions button:hover { background: var(--accent-soft); }
-.notes-actions .danger:hover { background: #fde8ea; border-color: #f2b8c0; }
+.notes-actions .danger:hover { background: var(--danger-soft); border-color: var(--danger-border); }
 
 .notes-list {
   flex: 1;
@@ -185,7 +256,7 @@ main {
   cursor: pointer;
   transition: background 0.15s;
 }
-.note-card:hover { background: #fbf8f5; }
+.note-card:hover { background: var(--hover); }
 .note-card .card-head {
   display: flex;
   justify-content: space-between;
@@ -224,14 +295,17 @@ main {
   font-size: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
 }
-.manual input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.manual input::placeholder { color: var(--muted); }
 .manual button {
   padding: 8px 12px;
   font-size: 13px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
+  color: var(--ink);
   cursor: pointer;
   white-space: nowrap;
 }
