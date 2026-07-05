@@ -739,6 +739,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <option value="fil-PH">Tagalog / Filipino</option>
         <option value="ceb-PH">Cebuano</option>
       </select>
+    </div>
+    <div class="dict-bar">
+      <select id="engineSel" title="Transcription engine — compare them yourself">
+        <option value="browser">Engine: Browser (Google servers)</option>
+        <option value="whisper">Engine: Private — Whisper on clinic server</option>
+      </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
     <div class="figures">
@@ -957,66 +963,281 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   const TREAT_RE = /\b(performed|completed|exercis\w*|therex|sets?|reps?|ultrasound|massage|stretch\w*|mobilizat\w*|manual therapy|gait|ice|heat|e-?stim\w*|modalit\w*|educat\w*|hep|home program|tens)\b/i;
 
+  /* Two interchangeable transcription engines, so clinics can compare:
+     - "browser": the Web Speech API (fast, streams audio to the browser
+       vendor's servers — on Chrome, Google)
+     - "whisper": records locally, converts to 16 kHz WAV in the page, and
+       sends segments to the clinic server's self-hosted Whisper. Audio never
+       leaves the clinic. Segments queue in order — if the server is slow
+       (CPU-only), the transcript simply arrives late; nothing is dropped. */
+
+  function browserEngine({ lang, onText, onInterim, onStatus }) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const rec = new SR();
+    let listening = false;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = lang();
+    rec.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) onText(res[0].transcript);
+        else interim += res[0].transcript;
+      }
+      onInterim(interim);
+    };
+    rec.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        listening = false;
+        onStatus("Mic blocked — allow microphone access and retry.", false);
+      } else if (event.error === "language-not-supported") {
+        onStatus("This speech language isn't supported here — try the Whisper engine or another device.", listening);
+      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        onStatus(`Mic error: ${event.error}`, listening);
+      }
+    };
+    rec.onend = () => { if (listening) { try { rec.start(); } catch (_) { } } };
+    return {
+      name: "browser",
+      start() { listening = true; rec.lang = lang(); try { rec.start(); } catch (_) { } },
+      stop() { listening = false; try { rec.stop(); } catch (_) { } },
+      setLang(l) { rec.lang = l; },
+      pending: () => 0,
+    };
+  }
+
+  function encodeWav(float32, inRate, outRate = 16000) {
+    // downsample (linear) + 16-bit PCM WAV encode, entirely in the page
+    const ratio = inRate / outRate;
+    const outLen = Math.floor(float32.length / ratio);
+    const pcm = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * ratio;
+      const i0 = Math.floor(pos);
+      const frac = pos - i0;
+      const s = float32[i0] * (1 - frac) + (float32[Math.min(i0 + 1, float32.length - 1)] || 0) * frac;
+      pcm[i] = Math.max(-1, Math.min(1, s)) * 0x7fff;
+    }
+    const buf = new ArrayBuffer(44 + pcm.length * 2);
+    const dv = new DataView(buf);
+    const str = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVE");
+    str(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, outRate, true); dv.setUint32(28, outRate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    str(36, "data"); dv.setUint32(40, pcm.length * 2, true);
+    new Int16Array(buf, 44).set(pcm);
+    return buf;
+  }
+
+  const WHISPER_LANG = { "en-US": "en", "fil-PH": "tl", "ceb-PH": "auto" };
+
+  function whisperEngine({ lang, onText, onInterim, onStatus }) {
+    let ctx = null, stream = null, proc = null, listening = false;
+    let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
+    const queue = [];
+    let uploading = false, pending = 0, stopped = false;
+
+    const status = () => {
+      if (!listening && !pending) return;
+      const q = pending ? ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…` : "";
+      onStatus((listening ? "Listening (private, on clinic server)" : "Finishing up") + q, listening);
+    };
+
+    function cut(force) {
+      const dur = segMs;
+      const samples = seg;
+      seg = []; voicedMs = 0; silenceMs = 0; segMs = 0;
+      if (!samples.length || voicedTotal(samples) === 0) return;
+      if (!force && dur < 900) return;
+      const flat = new Float32Array(samples.reduce((n, a) => n + a.length, 0));
+      let off = 0;
+      for (const a of samples) { flat.set(a, off); off += a.length; }
+      queue.push(encodeWav(flat, ctx ? ctx.sampleRate : 16000));
+      pump();
+    }
+    // rough check that a segment contains any speech-level audio at all
+    function voicedTotal(samples) {
+      let n = 0;
+      for (const a of samples) for (let i = 0; i < a.length; i += 160) if (Math.abs(a[i]) > 0.015) n++;
+      return n;
+    }
+
+    async function pump() {
+      if (uploading) return;
+      uploading = true;
+      while (queue.length) {
+        pending = queue.length;
+        status();
+        const wav = queue.shift();
+        try {
+          const token = (window.TheraSync || {}).token;
+          const res = await fetch(`/api/transcribe?lang=${WHISPER_LANG[lang()] || "auto"}`, {
+            method: "POST",
+            headers: { "content-type": "audio/wav", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+            body: wav,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.text) onText(data.text);
+          else if (!res.ok) onStatus(data.error || `Transcription error (${res.status})`, listening);
+        } catch (e) {
+          onStatus("Clinic server unreachable — segment kept, retrying…", listening);
+          queue.unshift(wav);
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+      pending = 0;
+      uploading = false;
+      status();
+      if (!listening) onStatus("Mic off — all segments transcribed.", false);
+    }
+
+    return {
+      name: "whisper",
+      pending: () => pending + queue.length,
+      async start() {
+        stopped = false;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+          });
+        } catch (_) {
+          onStatus("Mic blocked — allow microphone access and retry.", false);
+          return false;
+        }
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        proc = ctx.createScriptProcessor(4096, 1, 1);
+        proc.onaudioprocess = (e) => {
+          if (!listening) return;
+          const data = e.inputBuffer.getChannelData(0);
+          seg.push(new Float32Array(data));
+          const chunkMs = (data.length / ctx.sampleRate) * 1000;
+          segMs += chunkMs;
+          let rms = 0;
+          for (let i = 0; i < data.length; i += 8) rms += data[i] * data[i];
+          rms = Math.sqrt(rms / (data.length / 8));
+          if (rms > 0.012) { voicedMs += chunkMs; silenceMs = 0; }
+          else silenceMs += chunkMs;
+          onInterim(voicedMs > 200 ? "recording…" : "");
+          // cut on a natural pause, or hard-cut long monologues
+          if ((voicedMs > 400 && silenceMs > 750) || segMs > 15000) cut(false);
+        };
+        src.connect(proc);
+        proc.connect(ctx.destination);
+        listening = true;
+        status();
+        return true;
+      },
+      stop() {
+        listening = false;
+        cut(true); // flush whatever was being said
+        try { if (proc) proc.disconnect(); } catch (_) { }
+        try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
+        try { if (ctx) ctx.close(); } catch (_) { }
+        stopped = true;
+        if (queue.length || pending) status();
+        else onStatus("Mic off", false);
+      },
+      setLang() { },
+      // test hook: feed synthetic samples through the same path as the mic
+      _testPush(float32, sampleRate) {
+        ctx = ctx || { sampleRate: sampleRate || 16000 };
+        seg.push(float32);
+        segMs += (float32.length / ctx.sampleRate) * 1000;
+        voicedMs += 1000;
+        cut(true);
+      },
+    };
+  }
+
   function startDictation(doc, user, dstate) {
     currentDocState = dstate;
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const micBtn = document.getElementById("micBtn");
     const micLabel = document.getElementById("micLabel");
     const statusEl = document.getElementById("dictStatus");
     const interimEl = document.getElementById("interim");
     const langSel = document.getElementById("langSel");
+    const engineSel = document.getElementById("engineSel");
     langSel.value = localStorage.getItem("therachart-lang") || "en-US";
-    langSel.addEventListener("change", () => {
-      localStorage.setItem("therachart-lang", langSel.value);
-      if (rec) rec.lang = langSel.value;
-      statusEl.textContent = listening ? "Listening… (" + langSel.selectedOptions[0].text + ")" : "Mic off";
-    });
 
-    let rec = null, listening = false;
-    if (!SR) {
-      statusEl.textContent = "Speech not supported in this browser — use the measurement box and type into sections.";
-      micBtn.disabled = true;
-      activeDictation = { stop() {} };
-      return;
+    const sync = window.TheraSync || { mode: "local" };
+    const whisperAvailable = sync.mode === "server" && sync.whisper;
+    const whisperOpt = engineSel.querySelector('option[value="whisper"]');
+    if (!whisperAvailable) {
+      whisperOpt.disabled = true;
+      whisperOpt.textContent = sync.mode === "server"
+        ? "Engine: Whisper — not installed on clinic server"
+        : "Engine: Whisper — needs the clinic server";
     }
-    rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = langSel.value;
+    let engineChoice = localStorage.getItem("therachart-engine") || "browser";
+    if (engineChoice === "whisper" && !whisperAvailable) engineChoice = "browser";
+    engineSel.value = engineChoice;
 
-    rec.onresult = (event) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        if (res.isFinal) routeUtterance(doc, user, res[0].transcript, dstate);
-        else interim += res[0].transcript;
-      }
-      interimEl.textContent = interim ? interim + " …" : "…";
+    let listening = false;
+    const callbacks = {
+      lang: () => langSel.value,
+      onText: (text) => routeUtterance(doc, user, text, dstate),
+      onInterim: (t) => { interimEl.textContent = t ? t + " …" : "…"; },
+      onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
     };
-    rec.onerror = (event) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        listening = false; setUI();
-        statusEl.textContent = "Mic blocked — allow microphone access and retry.";
-      } else if (event.error === "language-not-supported") {
-        statusEl.textContent = "That speech language isn't supported on this device — body-part detection still understands Tagalog & Cebuano typed or spoken via Filipino.";
-      } else if (event.error !== "no-speech" && event.error !== "aborted") {
-        statusEl.textContent = `Mic error: ${event.error}`;
+
+    let engine = null;
+    function makeEngine() {
+      engine = engineChoice === "whisper" ? whisperEngine(callbacks) : browserEngine(callbacks);
+      if (!engine) {
+        statusEl.textContent = whisperAvailable
+          ? "Browser speech not supported here — switch the engine to Whisper."
+          : "Speech not supported in this browser — type into the dictation box instead.";
       }
-    };
-    rec.onend = () => { if (listening) { try { rec.start(); } catch (_) {} } else setUI(); };
+      window.__theraDict = engine; // test hook
+    }
+    makeEngine();
 
     const setUI = () => {
       micBtn.classList.toggle("listening", listening);
       micLabel.textContent = listening ? "Stop" : "Listen";
-      statusEl.textContent = listening ? "Listening… (" + langSel.selectedOptions[0].text + ")" : "Mic off";
+      if (!listening && engine && engine.pending() === 0) statusEl.textContent = "Mic off";
+      if (listening) {
+        statusEl.textContent = engineChoice === "whisper"
+          ? "Listening (private, on clinic server)"
+          : `Listening… (${langSel.selectedOptions[0].text}, via browser/Google)`;
+      }
     };
-    micBtn.addEventListener("click", () => {
-      listening = !listening;
-      if (listening) { try { rec.start(); } catch (_) {} } else rec.stop();
+
+    micBtn.addEventListener("click", async () => {
+      if (!engine) return;
+      if (!listening) {
+        listening = true;
+        const ok = await Promise.resolve(engine.start());
+        if (ok === false) listening = false;
+      } else {
+        listening = false;
+        engine.stop();
+      }
       setUI();
     });
 
-    activeDictation = { stop() { listening = false; try { rec.stop(); } catch (_) {} } };
+    langSel.addEventListener("change", () => {
+      localStorage.setItem("therachart-lang", langSel.value);
+      if (engine) engine.setLang(langSel.value);
+      setUI();
+    });
+
+    engineSel.addEventListener("change", () => {
+      const wasListening = listening;
+      if (engine && listening) { engine.stop(); listening = false; }
+      engineChoice = engineSel.value;
+      localStorage.setItem("therachart-engine", engineChoice);
+      makeEngine();
+      if (wasListening && engine) { listening = true; Promise.resolve(engine.start()); }
+      setUI();
+    });
+
+    activeDictation = {
+      stop() { if (engine) engine.stop(); listening = false; },
+    };
   }
 
   function appendField(doc, field, sentence) {
@@ -1060,7 +1281,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     } else if (doc.type === "progress") {
       field = { reason: "currentStatus", precautions: "currentStatus", pmh: "currentStatus", assessment: "assessment", objective: "updatedFindings", subjective: "currentStatus" }[section];
     } else if (doc.type === "daily") {
-      field = nMeas ? null : TREAT_RE.test(parsed.text) ? "summary" : "subjective";
+      // objective measurements (ROM/MMT/tests) live in the table only;
+      // pain ratings are patient-reported and also belong in Subjective
+      const objMeas = parsed.measurements.rom.length + parsed.measurements.mmt.length + parsed.measurements.special.length;
+      field = objMeas ? null : TREAT_RE.test(parsed.text) ? "summary" : "subjective";
     } else if (doc.type === "discharge") {
       field = "summary";
     }
@@ -1115,8 +1339,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   /* ---- sign & amend ---- */
 
   function signModal(doc, user) {
+    const pending = window.__theraDict && window.__theraDict.pending ? window.__theraDict.pending() : 0;
     const m = showModal(`
 <h2>E-sign &amp; lock — ${esc(doc.title)}</h2>
+${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending > 1 ? "s are" : " is"} still being transcribed — wait for them to land before signing, or they will need an amendment.</div>` : ""}
 <p style="font-size:13px; color:var(--muted)">Signing certifies this documentation is accurate and complete. The document will lock; later changes require a signed amendment with an authorization reason.</p>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="sigName" autocomplete="off" /></div>
 <div class="field"><label>PIN</label><input id="sigPin" type="password" inputmode="numeric" autocomplete="off" /></div>
@@ -1362,7 +1588,7 @@ ${ths.map((t) => {
   <div class="card">
     <h2>🎙 Voice dictation, honestly</h2>
     <p style="font-size:13px">Browser dictation (the Web Speech API) typically sends <b>audio to the browser vendor's servers</b> for transcription — on Chrome that is Google. Google states dictation audio is used only to return the transcript, but there is <b>no healthcare data agreement (HIPAA BAA / RA 10173 outsourcing agreement)</b> behind the free browser API, so treat spoken PHI as leaving your control during dictation.</p>
-    <p style="font-size:13px; margin-bottom:0"><b>Safer options:</b> ① use a device with on-device dictation (iOS/macOS local dictation, Pixel/Android on-device typing) and the typed-input box; ② for production, add self-hosted transcription (e.g. Whisper) on the clinic server so audio never leaves your network; ③ or license a medical speech vendor that signs a BAA. This app itself never stores or transmits audio.</p>
+    <p style="font-size:13px; margin-bottom:0"><b>The private option is built in:</b> switch the engine to <b>Whisper on the clinic server</b> in any note's dictation bar — audio is transcribed on your own machine and deleted, never reaching a third party (requires <code>pip install faster-whisper</code> on the server). The browser/Google engine remains available so you can compare accuracy yourself. This app never stores audio with either engine.</p>
   </div>
   <div class="card">
     <h2>🛡 Access controls</h2>

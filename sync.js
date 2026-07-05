@@ -118,6 +118,7 @@
       if (data && data.server === "therachart") {
         sync.mode = "server";
         sync.rev = data.rev;
+        sync.whisper = !!data.whisper;
         // Refresh the login screen's user list / facility name from the server
         const boot = await fetch("/api/bootstrap").then((r) => r.json());
         const st = S.load();

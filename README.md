@@ -85,15 +85,44 @@ works; the body-part lexicon understands all three at once):
   (including what the browser's speech service does), role/PIN/license
   access controls, export/erase controls, and a live audit log.
 
-## Voice privacy — read before dictating real PHI
+## Two transcription engines — compare them yourself
 
-Browser dictation (Web Speech API) typically sends audio to the **browser
-vendor's servers** — on Chrome, Google — and the free API carries **no
-healthcare data agreement** (HIPAA BAA / RA 10173 outsourcing agreement).
-Safer options, also listed in the app's Privacy panel: use a device with
-on-device dictation, type into the dictation box, add self-hosted
-transcription (e.g. Whisper) on the clinic server, or license a medical
-speech vendor that signs a BAA. The app itself never stores or sends audio.
+Every note's dictation bar has an engine toggle:
+
+- **Browser (Google servers)** — the Web Speech API. Fast and streams live,
+  but audio goes to the browser vendor's servers with **no healthcare data
+  agreement** (HIPAA BAA / RA 10173).
+- **Private — Whisper on clinic server** — the page records locally, detects
+  natural pauses, converts each segment to 16 kHz WAV in the browser, and
+  posts it to your own server, which transcribes with OpenAI's free
+  MIT-licensed Whisper model and deletes the audio. **Nothing reaches a
+  third party.** Segments upload in order and queue if the server is busy —
+  on a CPU-only server the transcript arrives a few seconds behind your
+  speech, but nothing is ever lost.
+
+Enable the private engine on the clinic server (one time):
+
+```bash
+pip install faster-whisper        # the engine (free, MIT)
+WHISPER_MODEL=small node server.js   # model auto-downloads on first use, then cached
+```
+
+Model sizes: `tiny`/`base` for older CPUs (fastest), `small` (default,
+good accuracy), `medium`/`large-v3` with a GPU. Any other engine works via
+`WHISPER_CMD='whisper-cli -m model.bin -nt -f {file}' node server.js`
+(e.g. whisper.cpp). Whisper supports English and Tagalog directly; for
+Cebuano the engine auto-detects (and the body-part lexicon understands
+Cebuano regardless of engine).
+
+## Install on phones and tablets
+
+TheraChart is an installable web app (PWA). Open the clinic server's address
+on the phone, then **Add to Home Screen** (Safari share menu on iOS, Chrome
+menu on Android) — it launches fullscreen like a native app, with its own
+icon, and the app shell loads instantly from cache. Dictation, the body
+chart, printing to PDF, and sync all work from the phone; heavy Whisper
+transcription runs on the clinic server, so phones don't need any special
+hardware.
 
 ## Testing
 

@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0e7c86" />
 <title>TheraChart EMR</title>
 <link rel="stylesheet" href="styles.css" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
 <div id="app"></div>
@@ -15,5 +20,12 @@
 <script src="store.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
+<script>
+// Install as an app: the service worker makes TheraChart launch from a
+// phone's home screen like a native app (only when served over http/https).
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
 </body>
 </html>
