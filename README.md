@@ -6,10 +6,26 @@ speaks, TheraChart pins what they say onto a body map, files measurements into
 the right sections, keeps the full word-for-word transcript, and lets you
 click any finding to see exactly where it was said.
 
-Runs on phone, iPad, or computer as a responsive web app. All records stay on
-the device — no server, no build step, nothing uploaded.
+Runs on phone, iPad, or computer as a responsive web app.
 
 ## Run it
+
+**Clinic mode (shared database, recommended)** — run the included zero-dependency
+server on one machine in the clinic:
+
+```bash
+node server.js            # serves the app + shared database on :8080
+```
+
+Open `http://<that-machine>:8080` from every device. Logins authenticate
+server-side, changes sync between devices within seconds, and the reminder
+scheduler runs every minute (set `REMINDER_WEBHOOK=<url>` to forward each due
+reminder as JSON to a real SMS/email gateway; otherwise reminders are marked
+sent and logged). Data lives in `data/therachart.json` on that machine —
+hardware your facility controls, never a third-party cloud.
+
+**On-device mode** — serve the folder statically and each device keeps its own
+records (the sync badge shows which mode you're in):
 
 ```bash
 python3 -m http.server 8000
@@ -69,6 +85,16 @@ works; the body-part lexicon understands all three at once):
   (including what the browser's speech service does), role/PIN/license
   access controls, export/erase controls, and a live audit log.
 
+## Voice privacy — read before dictating real PHI
+
+Browser dictation (Web Speech API) typically sends audio to the **browser
+vendor's servers** — on Chrome, Google — and the free API carries **no
+healthcare data agreement** (HIPAA BAA / RA 10173 outsourcing agreement).
+Safer options, also listed in the app's Privacy panel: use a device with
+on-device dictation, type into the dictation box, add self-hosted
+transcription (e.g. Whisper) on the clinic server, or license a medical
+speech vendor that signs a BAA. The app itself never stores or sends audio.
+
 ## Testing
 
 The parsing brain (`parser.js`) and data rules (`store.js`) are DOM-free and
@@ -82,6 +108,10 @@ node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, ca
 ## Files
 
 - `index.html` / `styles.css` — shell and design system (light + dark)
+- `server.js` — zero-dependency clinic server: shared database, server-side
+  login, reminder scheduler, static hosting
+- `sync.js` — client sync layer (auto-detects the server, degrades to
+  on-device mode)
 - `parser.js` — multilingual body-part lexicon, symptom summarizer,
   measurement extraction, section classifier
 - `store.js` — on-device data layer: users, patients, documents, calendar,

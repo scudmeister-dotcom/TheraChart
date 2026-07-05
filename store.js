@@ -12,10 +12,14 @@
   const KEY = "therachart-emr-v1";
 
   let storage;
-  try {
-    storage = typeof localStorage !== "undefined" ? localStorage : null;
-  } catch (_) {
-    storage = null; // storage blocked: fall back to in-memory (session only)
+  if (typeof globalThis !== "undefined" && globalThis.THERACHART_STORAGE) {
+    storage = globalThis.THERACHART_STORAGE; // server injects file-backed storage
+  } else {
+    try {
+      storage = typeof localStorage !== "undefined" ? localStorage : null;
+    } catch (_) {
+      storage = null; // storage blocked: fall back to in-memory (session only)
+    }
   }
   const memory = {};
   const backend = storage || {
@@ -205,10 +209,30 @@
     return state;
   }
 
+  let changeHook = null; // sync layer subscribes to pushes
+  let importing = false;
+
   function save() {
     try {
       backend.setItem(KEY, JSON.stringify(state));
     } catch (_) { /* storage full/blocked — keep going in memory */ }
+    if (changeHook && !importing) changeHook();
+  }
+
+  function setChangeHook(fn) { changeHook = fn; }
+
+  /** Replace local state with a server copy, keeping this device's session. */
+  function importAll(next, { preserveSession = true } = {}) {
+    load();
+    const session = state.sessionUserId;
+    importing = true;
+    try {
+      state = typeof next === "string" ? JSON.parse(next) : next;
+      if (preserveSession) state.sessionUserId = session;
+      save();
+    } finally {
+      importing = false;
+    }
   }
 
   function resetAll() {
@@ -522,7 +546,7 @@
   }
 
   return {
-    load, save, resetAll, wipeAll, exportAll, uid,
+    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, uid,
     audit, auditLog: () => load().audit,
     // users/auth
     users: () => load().users, getUser, login, logout, currentUser,

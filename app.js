@@ -65,25 +65,71 @@
 
   /* ---------------- body map figure (shared) ---------------- */
 
+  /* Clinical body chart in the style used on PT/EMR pain diagrams:
+     a segmented, anatomically proportioned figure with visible region
+     boundaries and posterior landmarks (spine, scapulae, gluteal fold). */
+
+  function capsule(x1, y1, x2, y2, w) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    const ang = (Math.atan2(-dx, dy) * 180) / Math.PI;
+    return `<rect class="sil-part" x="${-w / 2}" y="${-w / 2}" width="${w}" height="${len + w}" rx="${w / 2}"
+      transform="translate(${x1},${y1}) rotate(${ang})"/>`;
+  }
+
   function figureMarkup(view) {
-    const spineLine = view === "back"
-      ? `<line class="silhouette-line" x1="100" y1="80" x2="100" y2="190"/>` : "";
+    const mirror = (inner) => inner + inner.replace(/translate\((-?[\d.]+),/g, (m, x) => `translate(${200 - Number(x)},`)
+      .replace(/rotate\((-?[\d.]+)\)/g, (m, a) => `rotate(${-Number(a)})`);
+
+    // limbs (left/viewer side), mirrored programmatically
+    const limbsOneSide =
+      capsule(52, 100, 45, 151, 15) +     // upper arm
+      capsule(45, 156, 38, 207, 12) +     // forearm
+      capsule(37, 213, 33.5, 243, 10.5) + // hand
+      capsule(85, 236, 83, 306, 21) +     // thigh
+      capsule(83, 313, 84.5, 388, 14.5) + // lower leg
+      capsule(84.5, 393, 79.5, 411, 12);  // foot
+
+    const deltoids = `
+      <circle class="sil-part" cx="53" cy="95" r="11"/>
+      <circle class="sil-part" cx="147" cy="95" r="11"/>`;
+
+    const trunk = `
+      <path class="sil-part" d="M63,82 Q100,73 137,82 Q144,86 144,96 L139,142
+        Q137,151 128,153 L72,153 Q63,151 61,142 L56,96 Q56,86 63,82 Z"/>
+      <path class="sil-part" d="M71,153 L129,153 Q133,160 132,168 Q131,180 133,190 L67,190
+        Q69,180 68,168 Q67,160 71,153 Z"/>
+      <path class="sil-part" d="M67,190 L133,190 Q139,199 136,213 Q131,227 117,232
+        Q108,235 100,235 Q92,235 83,232 Q69,227 64,213 Q61,199 67,190 Z"/>`;
+
+    const headNeck = `
+      <ellipse class="sil-part" cx="100" cy="36" rx="18.5" ry="22.5"/>
+      ${view === "front" ? `<ellipse class="sil-part" cx="80.5" cy="39" rx="3" ry="5.5"/>
+      <ellipse class="sil-part" cx="119.5" cy="39" rx="3" ry="5.5"/>` : ""}
+      <path class="sil-part" d="M92,54 L92,70 Q92,77 84,81 L116,81 Q108,77 108,70 L108,54
+        Q104,59 100,59 Q96,59 92,54 Z"/>`;
+
+    const backDetail = view !== "back" ? "" : `
+      <line class="sil-line" x1="100" y1="83" x2="100" y2="188"/>
+      <path class="sil-line" d="M76,97 Q84,99 87,107 L84,126 Q76,122 73,112 Z"/>
+      <path class="sil-line" d="M124,97 Q116,99 113,107 L116,126 Q124,122 127,112 Z"/>
+      <line class="sil-line" x1="100" y1="196" x2="100" y2="232"/>
+      <path class="sil-line" d="M70,226 Q85,234 99,232" fill="none"/>
+      <path class="sil-line" d="M130,226 Q115,234 101,232" fill="none"/>`;
+
+    const frontDetail = view !== "front" ? "" : `
+      <path class="sil-line" d="M78,89 Q89,86 97,88" fill="none"/>
+      <path class="sil-line" d="M122,89 Q111,86 103,88" fill="none"/>`;
+
     return `
 <svg viewBox="0 0 200 460" xmlns="http://www.w3.org/2000/svg" data-view="${view}">
-  <g class="silhouette-group">
-    <ellipse class="silhouette" cx="100" cy="36" rx="20" ry="24"/>
-    <line class="silhouette" x1="100" y1="56" x2="100" y2="76" stroke-width="16"/>
-    <path class="silhouette" d="M64,78 L136,78 Q143,78 142,88 L137,178 Q136,190 126,194 L74,194 Q64,190 63,178 L58,88 Q57,78 64,78 Z"/>
-    <rect class="silhouette" x="70" y="190" width="60" height="38" rx="15"/>
-    <line class="silhouette" x1="53" y1="92" x2="37" y2="226" stroke-width="17" stroke-linecap="round"/>
-    <line class="silhouette" x1="147" y1="92" x2="163" y2="226" stroke-width="17" stroke-linecap="round"/>
-    <circle class="silhouette" cx="35" cy="240" r="9"/>
-    <circle class="silhouette" cx="165" cy="240" r="9"/>
-    <line class="silhouette" x1="86" y1="222" x2="84" y2="396" stroke-width="23" stroke-linecap="round"/>
-    <line class="silhouette" x1="114" y1="222" x2="116" y2="396" stroke-width="23" stroke-linecap="round"/>
-    <ellipse class="silhouette" cx="80" cy="410" rx="14" ry="8"/>
-    <ellipse class="silhouette" cx="120" cy="410" rx="14" ry="8"/>
-    ${spineLine}
+  <g class="mannequin">
+    ${mirror(limbsOneSide)}
+    ${deltoids}
+    ${trunk}
+    ${headNeck}
+    ${backDetail}
+    ${frontDetail}
   </g>
   <g class="points-layer"></g>
 </svg>`;
@@ -220,10 +266,12 @@
         document.getElementById("pinInput").focus();
       })
     );
-    const doLogin = () => {
+    const doLogin = async () => {
       const err = document.getElementById("loginErr");
       if (!loginSelected) { err.textContent = "Choose your account first."; return; }
-      const fail = S.login(loginSelected, document.getElementById("pinInput").value);
+      err.textContent = "…";
+      // S.login may be wrapped by the sync layer and return a promise
+      const fail = await Promise.resolve(S.login(loginSelected, document.getElementById("pinInput").value));
       if (fail) { err.textContent = fail; return; }
       location.hash = "#/dashboard";
       render();
@@ -1302,8 +1350,10 @@ ${ths.map((t) => {
 </div>
 <div class="cards-3">
   <div class="card">
-    <h2>🔐 Your records stay on this device</h2>
-    <p style="font-size:13px">All patient records, documents, schedules, and transcripts are stored <b>only in this device's local storage</b>. There is no cloud database and no account server — nothing is uploaded by the app.</p>
+    <h2>🔐 Where your records live</h2>
+    <p style="font-size:13px">${window.TheraSync && window.TheraSync.mode === "server"
+      ? "This device is synced with <b>your clinic's own server</b> — a machine your facility controls, on your network. Records are shared between your clinic's devices and never touch a third-party cloud."
+      : "All patient records, documents, schedules, and transcripts are stored <b>only in this device's local storage</b>. Run the included clinic server (<code>node server.js</code>) to share records between your clinic's devices — still entirely on hardware you control, never a third-party cloud."}</p>
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
       <button class="btn small danger" id="wipeBtn">Erase all data</button>
@@ -1311,7 +1361,8 @@ ${ths.map((t) => {
   </div>
   <div class="card">
     <h2>🎙 Voice dictation, honestly</h2>
-    <p style="font-size:13px">Transcription uses your browser's built-in speech engine. On some browsers (e.g. Chrome) audio is processed by the browser vendor's speech service during dictation — that is the only data that leaves the device, and this app never stores or sends audio itself. If your policy requires fully on-device speech, use a platform with local dictation or type instead.</p>
+    <p style="font-size:13px">Browser dictation (the Web Speech API) typically sends <b>audio to the browser vendor's servers</b> for transcription — on Chrome that is Google. Google states dictation audio is used only to return the transcript, but there is <b>no healthcare data agreement (HIPAA BAA / RA 10173 outsourcing agreement)</b> behind the free browser API, so treat spoken PHI as leaving your control during dictation.</p>
+    <p style="font-size:13px; margin-bottom:0"><b>Safer options:</b> ① use a device with on-device dictation (iOS/macOS local dictation, Pixel/Android on-device typing) and the typed-input box; ② for production, add self-hosted transcription (e.g. Whisper) on the clinic server so audio never leaves your network; ③ or license a medical speech vendor that signs a BAA. This app itself never stores or transmits audio.</p>
   </div>
   <div class="card">
     <h2>🛡 Access controls</h2>
@@ -1481,6 +1532,7 @@ ${ths.map((t) => {
 
   /* ================= boot ================= */
 
+  window.TheraRender = render; // the sync layer re-renders after remote pulls
   window.addEventListener("hashchange", render);
   render();
 })();
