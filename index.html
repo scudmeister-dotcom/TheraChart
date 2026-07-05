@@ -3,82 +3,16 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TheraChart — Talk &amp; Map</title>
+<title>TheraChart EMR</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-<header>
-  <div class="brand">
-    <div class="logo">🫀</div>
-    <div>
-      <h1>TheraChart</h1>
-      <p class="tagline">Talk naturally — I’ll pin what you say to the body map.</p>
-    </div>
-  </div>
-  <div class="controls">
-    <button id="micBtn" class="mic-btn" title="Start / stop listening">
-      <span class="mic-icon">🎤</span>
-      <span id="micLabel">Start listening</span>
-    </button>
-    <span id="status" class="status">Mic off</span>
-  </div>
-</header>
-
-<main>
-  <section class="map-panel">
-    <div class="figures">
-      <figure>
-        <figcaption>Front <span class="hint">(patient’s left appears on your right)</span></figcaption>
-        <div id="frontMap" class="bodymap" data-view="front"></div>
-      </figure>
-      <figure>
-        <figcaption>Back</figcaption>
-        <div id="backMap" class="bodymap" data-view="back"></div>
-      </figure>
-    </div>
-    <div class="transcript-section">
-      <div class="transcript-head">
-        <h3>Transcript</h3>
-        <span class="hint">click a note to see where it came from</span>
-      </div>
-      <div id="transcriptLog" class="transcript-log">
-        <p class="empty" id="transcriptEmpty">Everything you say is saved here, word for word.</p>
-      </div>
-      <div class="transcript-bar">
-        <span class="transcript-label">Hearing:</span>
-        <span id="interim" class="transcript">…</span>
-      </div>
-    </div>
-  </section>
-
-  <aside class="notes-panel">
-    <div class="notes-head">
-      <h2>Session notes</h2>
-      <div class="notes-actions">
-        <button id="exportBtn" title="Download notes as a text file">Export</button>
-        <button id="clearBtn" class="danger" title="Remove all points and notes">Clear</button>
-      </div>
-    </div>
-    <div id="notesList" class="notes-list">
-      <p class="empty" id="emptyMsg">
-        No points yet. Press <strong>Start listening</strong> and describe how you feel —
-        e.g. <em>“My left shoulder has been really sore since Monday, and I get a sharp
-        pain in my lower back when I bend over.”</em>
-      </p>
-    </div>
-    <div class="manual">
-      <input id="manualInput" type="text"
-             placeholder="No mic? Type a sentence and press Enter…" />
-      <button id="demoBtn" title="Run a short scripted example">Try an example</button>
-    </div>
-  </aside>
-</main>
-
-<footer>
-  <span>Works best in Chrome or Edge (uses the built-in Web Speech API). Nothing is uploaded — everything stays in this page.</span>
-</footer>
+<div id="app"></div>
+<div id="modalRoot"></div>
+<div id="printArea" aria-hidden="true"></div>
 
 <script src="parser.js"></script>
+<script src="store.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

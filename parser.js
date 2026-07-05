@@ -1,6 +1,11 @@
 /* TheraChart parser — the listening brain, kept free of DOM code so the
    exact same logic runs in the browser app and in the offline test checker
-   (node test/parser.test.js). */
+   (node test/parser.test.js).
+
+   Understands English, Tagalog, and Cebuano at the same time (code-switching
+   like Taglish is common in clinic speech), extracts clinical measurements
+   (ROM, MMT, pain ratings, special tests), and classifies utterances into
+   evaluation sections. */
 
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -9,7 +14,7 @@
   "use strict";
 
   /* ---------------------------------------------------------------- *
-   *  Body-part lexicon
+   *  Body-part lexicon (en + tl Tagalog + ceb Cebuano)
    *  dx = horizontal offset from the body's centreline (x = 100).
    *  Front view is mirrored (patient's left shows on the viewer's right);
    *  the back view is not.
@@ -22,73 +27,87 @@
 
   const BODY_PARTS = [
     // Back view, specific first
-    P("Lower back", "lower\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back", { view: "back", y: 178 }),
+    P("Lower back", "lower\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back|baywang|hawak", { view: "back", y: 178 }),
     P("Upper back", "upper\\s+back", { view: "back", y: 110 }),
     P("Mid back", "mid(?:dle)?[-\\s]?back", { view: "back", y: 145 }),
-    P("Shoulder blade", "shoulder\\s+blades?|scapula", { view: "back", dx: 24, y: 112, sided: true }),
-    P("Back of head", "back of (?:my|the|his|her) head", { view: "back", y: 36 }),
+    P("Shoulder blade", "shoulder\\s+blades?|scapula|paypay", { view: "back", dx: 24, y: 112, sided: true }),
+    P("Back of head", "back of (?:my|the|his|her) head|batok", { view: "back", y: 36 }),
     P("Back of neck", "back of (?:my|the|his|her) neck", { view: "back", y: 66 }),
     P("Tailbone", "tail\\s?bone|coccyx", { view: "back", y: 200 }),
-    P("Spine", "spine|spinal", { view: "back", y: 140 }),
-    P("Buttock", "buttocks?|glutes?|gluteal|rear end", { view: "back", dx: 15, y: 210, sided: true }),
+    P("Spine", "spine|spinal|gulugod", { view: "back", y: 140 }),
+    P("Buttock", "buttocks?|glutes?|gluteal|rear end|puwit|pwet|lubot", { view: "back", dx: 15, y: 210, sided: true }),
     P("Hamstring", "hamstrings?", { view: "back", dx: 16, y: 265, sided: true }),
     P("Achilles", "achilles(?:\\s+tendon)?", { view: "back", dx: 15, y: 398, sided: true }),
-    P("Heel", "heels?", { view: "back", dx: 15, y: 410, sided: true }),
-    P("Calf", "calf|calves", { view: "back", dx: 16, y: 350, sided: true }),
+    P("Heel", "heels?|sakong|tikod", { view: "back", dx: 15, y: 410, sided: true }),
+    P("Calf", "calf|calves|binti|b[ai]tiis", { view: "back", dx: 16, y: 350, sided: true }),
     // Generic "back" only when clearly the body part:
     // needs a possessive before it, and not "back of" / "behind my back".
-    P("Back", "(?<=\\b(?:my|his|her|your|the)\\s)(?<!behind (?:my|his|her|your|the)\\s)back\\b(?!\\s+of)", { view: "back", y: 150 }),
+    // "likod" (tl/ceb) is always the body part.
+    P("Back", "(?<=\\b(?:my|his|her|your|the)\\s)(?<!behind (?:my|his|her|your|the)\\s)back\\b(?!\\s+of)|likod", { view: "back", y: 150 }),
 
     // Head & face
-    P("Forehead", "forehead", { y: 24 }),
+    P("Forehead", "forehead|noo|agtang", { y: 24 }),
     P("Temple", "temples?", { dx: 14, y: 28, sided: true }),
-    P("Eye", "eyes?|eyebrows?|eyelids?", { dx: 8, y: 32, sided: true }),
-    P("Ear", "ears?|earlobes?", { dx: 18, y: 36, sided: true }),
-    P("Nose", "nose|sinus(?:es)?", { y: 38 }),
-    P("Jaw", "jaws?|tmj", { dx: 10, y: 48, sided: true }),
-    P("Mouth", "mouth|teeth|tooth|gums?|tongue|lips?", { y: 46 }),
-    P("Head", "head|skull|headaches?|migraines?", { y: 34 }),
-    P("Throat", "throat", { y: 70 }),
-    P("Neck", "neck", { y: 66 }),
+    P("Eye", "eyes?|eyebrows?|eyelids?|mata", { dx: 8, y: 32, sided: true }),
+    P("Ear", "ears?|earlobes?|tenga|tainga|dalunggan", { dx: 18, y: 36, sided: true }),
+    P("Nose", "nose|sinus(?:es)?|ilong", { y: 38 }),
+    P("Jaw", "jaws?|tmj|panga", { dx: 10, y: 48, sided: true }),
+    P("Mouth", "mouth|teeth|tooth|gums?|tongue|lips?|bibig|ngipin|ngipon|dila", { y: 46 }),
+    P("Head", "head|skull|headaches?|migraines?|ulo", { y: 34 }),
+    P("Throat", "throat|lalamunan|tutunlan", { y: 70 }),
+    P("Neck", "neck|leeg|liog", { y: 66 }),
 
     // Torso
     P("Collarbone", "collar\\s?bones?|clavicle", { dx: 22, y: 84, sided: true }),
-    P("Armpit", "armpits?|underarms?", { dx: 38, y: 100, sided: true }),
-    P("Shoulder", "shoulders?|rotator cuff|deltoids?", { dx: 40, y: 86, sided: true }),
-    P("Heart", "heart", { dx: 14, y: 112, fixedSide: "left" }),
-    P("Chest", "chest|pec(?:toral)?s?|breast\\s?bone|sternum", { dx: 14, y: 112, sided: true }),
-    P("Ribs", "ribs?|rib\\s?cage", { dx: 20, y: 135, sided: true }),
-    P("Navel", "navel|belly\\s?button", { y: 170 }),
-    P("Stomach", "stomach(?:\\s?aches?)?|belly|abdomen|abdominal|tummy|gut", { y: 160 }),
+    P("Armpit", "armpits?|underarms?|kilikili|ilok", { dx: 38, y: 100, sided: true }),
+    P("Shoulder", "shoulders?|rotator cuff|deltoids?|balikat|abaga", { dx: 40, y: 86, sided: true }),
+    P("Heart", "heart|puso", { dx: 14, y: 112, fixedSide: "left" }),
+    P("Chest", "chest|pec(?:toral)?s?|breast\\s?bone|sternum|dibdib|dughan", { dx: 14, y: 112, sided: true }),
+    P("Ribs", "ribs?|rib\\s?cage|tadyang|gusok", { dx: 20, y: 135, sided: true }),
+    P("Navel", "navel|belly\\s?button|pusod", { y: 170 }),
+    P("Stomach", "stomach(?:\\s?aches?)?|belly|abdomen|abdominal|tummy|gut|tiyan|sikmura", { y: 160 }),
     P("Pelvis", "pelvis|pelvic", { y: 200 }),
-    P("Groin", "groin", { y: 206 }),
-    P("Hip", "hips?", { dx: 30, y: 196, sided: true }),
+    P("Groin", "groin|singit", { y: 206 }),
+    P("Hip", "hips?|balakang|bat-?ang", { dx: 30, y: 196, sided: true }),
 
     // Arms (specific before generic "arm")
     P("Upper arm", "upper\\s+arms?|biceps?|triceps?", { dx: 48, y: 120, sided: true }),
-    P("Elbow", "elbows?", { dx: 53, y: 155, sided: true }),
-    P("Forearm", "forearms?", { dx: 57, y: 185, sided: true }),
-    P("Wrist", "wrists?", { dx: 61, y: 215, sided: true }),
-    P("Thumb", "thumbs?", { dx: 60, y: 246, sided: true }),
-    P("Finger", "fingers?|knuckles?|pinky", { dx: 66, y: 248, sided: true }),
-    P("Hand", "hands?|palms?", { dx: 64, y: 236, sided: true }),
-    P("Arm", "arms?", { dx: 52, y: 150, sided: true }),
+    P("Elbow", "elbows?|siko", { dx: 53, y: 155, sided: true }),
+    P("Forearm", "forearms?|bisig", { dx: 57, y: 185, sided: true }),
+    P("Wrist", "wrists?|pulso|galang-?galangan", { dx: 61, y: 215, sided: true }),
+    P("Thumb", "thumbs?|hinlalaki|kumagko", { dx: 60, y: 246, sided: true }),
+    // Toe phrases must win over Finger ("daliri sa paa" = toe, not finger)
+    P("Toe", "(?:big\\s+)?toes?|daliri sa paa|tudlo sa tiil", { dx: 24, y: 416, sided: true }),
+    P("Finger", "fingers?|knuckles?|pinky|daliri|tudlo", { dx: 66, y: 248, sided: true }),
+    P("Hand", "hands?|palms?|kamay|kamot|palad", { dx: 64, y: 236, sided: true }),
+    P("Arm", "arms?|braso|bukton", { dx: 52, y: 150, sided: true }),
 
     // Legs (specific before generic "leg")
-    P("Thigh", "thighs?|quad(?:ricep)?s?", { dx: 16, y: 260, sided: true }),
+    P("Thigh", "thighs?|quad(?:ricep)?s?|hita", { dx: 16, y: 260, sided: true }),
     P("Kneecap", "knee\\s?caps?|patella", { dx: 15, y: 303, sided: true }),
-    P("Knee", "knees?", { dx: 15, y: 305, sided: true }),
-    P("Shin", "shins?", { dx: 16, y: 350, sided: true }),
-    P("Ankle", "ankles?", { dx: 15, y: 392, sided: true }),
-    P("Toe", "(?:big\\s+)?toes?", { dx: 24, y: 416, sided: true }),
-    P("Foot", "foot|feet", { dx: 21, y: 408, sided: true }),
-    P("Leg", "legs?", { dx: 16, y: 300, sided: true }),
+    P("Knee", "knees?|tuhod", { dx: 15, y: 305, sided: true }),
+    P("Shin", "shins?|lulod", { dx: 16, y: 350, sided: true }),
+    P("Ankle", "ankles?|bukong-?bukong|buol-?buol", { dx: 15, y: 392, sided: true }),
+    P("Foot", "foot|feet|talampakan|tiil", { dx: 21, y: 408, sided: true }),
+    // "paa" is foot/leg in Tagalog and thigh in Cebuano — mapped to the leg
+    P("Leg", "legs?|paa", { dx: 16, y: 300, sided: true }),
   ];
 
-  // Compile one regex per entry, with an optional left/right capture in front.
+  // Optional left/right words, in all three languages.
+  // kaliwa(ng) = left (tl) · wala(ng) = left (ceb) · kanan(g) = right (tl)
+  // tuo(ng) = right (ceb). Normalized by sideWord().
+  const SIDE_WORDS = "left|right|kaliwang?|kanang?|walang?|wala|tuong?|tuo";
+  const LEFT_RE = /^(left|kaliwa|wala)/i;
+
+  function sideWord(raw) {
+    if (!raw) return null;
+    return LEFT_RE.test(raw) ? "left" : "right";
+  }
+
+  // Compile one regex per entry, with an optional side capture in front.
   for (const part of BODY_PARTS) {
     part.re = new RegExp(
-      `\\b(?:(left|right)\\s+(?:\\w+\\s+)??)?(?:${part.kw})\\b`,
+      `\\b(?:(${SIDE_WORDS})\\s+(?:nga\\s+)?(?:\\w+\\s+)??)?(?:${part.kw})\\b`,
       "gi"
     );
   }
@@ -98,12 +117,12 @@
    * ---------------------------------------------------------------- */
 
   const ADJECTIVES = [
-    ["sharp", /\bsharp\b/i],
+    ["sharp", /\b(?:sharp|kirot|kumikirot)\b/i],
     ["dull", /\bdull\b/i],
-    ["throbbing", /\bthrobbing\b/i],
+    ["throbbing", /\b(?:throbbing|ngutngut|nagangutngut)\b/i],
     ["stabbing", /\bstabbing\b/i],
     ["shooting", /\bshoot(?:s|ing)?\b/i],
-    ["burning", /\bburn(?:s|ing)?\b/i],
+    ["burning", /\b(?:burn(?:s|ing)?|hapdi|mahapdi)\b/i],
     ["radiating", /\bradiat(?:es|ing)\b/i],
     ["constant", /\bconstant(?:ly)?\b/i],
     ["intermittent", /\b(?:intermittent|comes and goes|on and off)\b/i],
@@ -113,38 +132,39 @@
 
   const NOUNS = [
     ["headache", /\b(?:headaches?|migraines?)\b/i],
-    ["pain", /\b(?:pain(?:ful)?|hurt(?:s|ing)?|ach(?:e|es|ing|y)|sting(?:s|ing)?|killing me|agony)\b/i],
+    ["pain", /\b(?:pain(?:ful)?|hurt(?:s|ing)?|ach(?:e|es|ing|y)|sting(?:s|ing)?|killing me|agony|(?:napaka|ma)?sakit|sumasakit|kirot|kumikirot|ngutngut|nagangutngut|hapdi|mahapdi)\b/i],
     ["soreness", /\bsore(?:ness)?\b/i],
-    ["stiffness", /\bstiff(?:ness)?\b/i],
+    ["stiffness", /\b(?:stiff(?:ness)?|naninigas|matigas|gahi)\b/i],
     ["tightness", /\btight(?:ness)?\b/i],
-    ["numbness", /\bnumb(?:ness)?\b/i],
-    ["tingling", /\b(?:tingl(?:e|es|ing|y)|pins and needles)\b/i],
-    ["cramping", /\b(?:cramp(?:s|ing)?|spasm(?:s|ing)?)\b/i],
-    ["swelling", /\b(?:swollen|swelling|puffy|inflam(?:ed|mation))\b/i],
-    ["weakness", /\b(?:weak(?:ness)?|giv(?:es?|ing) out)\b/i],
-    ["bruising", /\bbruis(?:e|ed|es|ing)\b/i],
-    ["itching", /\bitch(?:y|ing|es)?\b/i],
+    ["numbness", /\b(?:numb(?:ness)?|manhid|namamanhid|binhod|nabinhod)\b/i],
+    ["tingling", /\b(?:tingl(?:e|es|ing|y)|pins and needles|tusok-?tusok|tinutusok)\b/i],
+    ["cramping", /\b(?:cramp(?:s|ing)?|spasm(?:s|ing)?|pulikat|kalambr[ei])\b/i],
+    ["swelling", /\b(?:swollen|swelling|puffy|inflam(?:ed|mation)|n?a?mamaga|namaga|maga|hubag|nanghubag|gihubag)\b/i],
+    ["weakness", /\b(?:weak(?:ness)?|giv(?:es?|ing) out|mahina|nanghihina|luya|naluya|giluya)\b/i],
+    ["bruising", /\b(?:bruis(?:e|ed|es|ing)|pasa)\b/i],
+    ["itching", /\b(?:itch(?:y|ing|es)?|makati|katol)\b/i],
     ["tenderness", /\btender(?:ness)?\b/i],
     ["clicking", /\b(?:click(?:s|ing)?|pop(?:s|ping)|crack(?:s|ing)|grind(?:s|ing))\b/i],
     ["locking", /\block(?:s|ed|ing)(?:\s+up)?\b/i],
-    ["dizziness", /\b(?:dizzy|dizziness|light-?headed)\b/i],
+    ["dizziness", /\b(?:dizzy|dizziness|light-?headed|nahihilo|hilo|naglipong|lipong)\b/i],
     ["pressure", /\b(?:pressure|tension)\b/i],
     ["instability", /\b(?:unstable|instability|wobbly|buckl(?:es|ing))\b/i],
     ["a possible sprain", /\bsprain(?:ed)?\b/i],
     ["a possible strain", /\b(?:strain(?:ed)?|pulled)\b/i],
     ["a possible tear", /\b(?:tore|torn)\b/i],
-    ["a possible fracture", /\b(?:broke(?:n)?|fracture(?:d)?)\b/i],
-    ["a twist injury", /\btwisted\b/i],
+    ["a possible fracture", /\b(?:broke(?:n)?|fracture(?:d)?|nabali|nabuak)\b/i],
+    ["a twist injury", /\b(?:twisted|napilay|nalisa)\b/i],
   ];
 
-  const SEVERE_RE = /\b(really|very|extremely|severe(?:ly)?|terribl[ye]|excruciating|unbearable|awful|so much|super|badly|killing me)\b/i;
-  const MILD_RE = /\b(slightly|a\s+(?:little|bit|touch)|mild(?:ly)?|minor|somewhat|kind of|sort of)\b/i;
-  const RATING_RE = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\/|out of)\s*(?:10|ten)\b/i;
+  const SEVERE_RE = /\b(really|very|extremely|severe(?:ly)?|terribl[ye]|excruciating|unbearable|awful|so much|super|badly|killing me|sobrang?|grabe(?:\s+kaayo)?|kaayo|napaka\w+)\b/i;
+  const MILD_RE = /\b(slightly|a\s+(?:little|bit|touch)|mild(?:ly)?|minor|somewhat|kind of|sort of|medyo|gamay|konti|onti)\b/i;
+  const RATING_RE = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\/|out of|sa)\s*(?:10|ten|sampu)\b/i;
   const NUM_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
-  const DURATION_RE = /\b((?:for|since|over)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood|surgery|accident|fall|injury))\b/i;
-  const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while)\s+(?:(?:i|he|she|they)\s+)?[a-z' ]{2,36})/i;
+  const DURATION_RE = /\b((?:for|since|over|mula|simula|sukad)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+|pa\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|kahapon|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood|surgery|accident|fall|injury)|\w+\s+(?:linggo|araw|buwan|taon|semana|adlaw|bulan|tuig)\s+na)\b/i;
+  const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while|kapag|tuwing|kada|inig|pag)\s+(?:(?:i|he|she|they)\s+)?[a-z' ]{2,36})/i;
   // A symptom is treated as denied when a negation sits shortly before it.
-  const NEG_TAIL_RE = /\b(?:no|not|don't|dont|doesn't|doesnt|didn't|didnt|isn't|isnt|never|without|denies|denied)\b[\w\s']{0,22}$/i;
+  // hindi/wala(ng) (tl) · dili/walay (ceb)
+  const NEG_TAIL_RE = /\b(?:no|not|don't|dont|doesn't|doesnt|didn't|didnt|isn't|isnt|never|without|denies|denied|hindi|walang?|walay|dili)\b[\w\s']{0,22}$/i;
 
   function cap(s) {
     return s.charAt(0).toUpperCase() + s.slice(1);
@@ -226,6 +246,85 @@
   }
 
   /* ---------------------------------------------------------------- *
+   *  Clinical measurements (ROM, MMT, pain rating, special tests)
+   * ---------------------------------------------------------------- */
+
+  const ROM_RE = new RegExp(
+    `\\b(?:(${SIDE_WORDS})\\s+)?` +
+      `(shoulder|knee|hip|elbow|ankle|wrist|neck|cervical|lumbar|trunk|balikat|abaga|tuhod|siko|leeg|liog)\\s+` +
+      `(flexion|extension|abduction|adduction|internal rotation|external rotation|rotation|dorsiflexion|plantar\\s?flexion|supination|pronation|lateral flexion)` +
+      `(?:\\s+(?:is|was|to|at|measured|limited|now|about|around|approximately))*\\s+(\\d{1,3})\\s*degrees?\\b`,
+    "gi"
+  );
+  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*([0-5](?:\s*(?:plus|minus)|[+-])?)\s*(?:out of|\/)\s*(?:5|five)\b/gi;
+  const SPECIAL_RE = /\b(positive|negative)\s+((?:[A-Za-z'’-]+\s+){1,4}?)(?:test|sign)\b/gi;
+
+  function extractMeasurements(text, mentions) {
+    const rom = [];
+    const mmt = [];
+    const special = [];
+    const pain = [];
+
+    ROM_RE.lastIndex = 0;
+    let m;
+    while ((m = ROM_RE.exec(text)) !== null) {
+      rom.push({
+        side: sideWord(m[1]),
+        joint: m[2].toLowerCase(),
+        motion: m[3].toLowerCase().replace(/\s+/g, " "),
+        degrees: Number(m[4]),
+      });
+    }
+
+    MMT_RE.lastIndex = 0;
+    while ((m = MMT_RE.exec(text)) !== null) {
+      // "6 out of 10" style pain ratings must not read as MMT
+      const grade = m[2].replace(/\s*plus/i, "+").replace(/\s*minus/i, "-").trim();
+      const context = m[1].trim();
+      mmt.push({ context: context || null, grade: `${grade}/5` });
+    }
+
+    SPECIAL_RE.lastIndex = 0;
+    while ((m = SPECIAL_RE.exec(text)) !== null) {
+      special.push({ result: m[1].toLowerCase(), name: cap(m[2].trim()) + " test" });
+    }
+
+    const rating = text.match(RATING_RE);
+    if (rating && !NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
+      const score = NUM_WORDS[rating[1].toLowerCase()] || Number(rating[1]);
+      const where = mentions && mentions.length
+        ? `${mentions[0].side ? mentions[0].side + " " : ""}${mentions[0].partName.toLowerCase()}`
+        : null;
+      pain.push({ score: Number(score), location: where });
+    }
+
+    return { rom, mmt, special, pain };
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Section classifier (for evaluations / progress reports)
+   * ---------------------------------------------------------------- */
+
+  const SECTION_RULES = [
+    ["precautions", /\b(precaution|avoid|do not|don't lift|no lifting|weight.?bearing|contraindicat|restrict|bawal|iwasan|ingat|likayan)\b/i],
+    ["reason", /\b(referr(?:ed|al)|prescri(?:bed|ption)|sent (?:by|from)|doctor (?:sent|wants)|dahilan|ipinadala)\b/i],
+    ["pmh", /\b(history of|diagnosed with|surgery|surgeries|underwent|operation|hypertension|diabetes|arthritis|years? ago|noong|kaniadto|inopera|opera(?:syon|tion))\b/i],
+    ["assessment", /\b(assessment|impression|consistent with|likely|appears to (?:be|have)|prognosis|suspect)\b/i],
+  ];
+
+  /** Decide which documentation section an utterance belongs to.
+      parsed = result of parseUtterance; measurements = extractMeasurements. */
+  function classifyUtterance(text, parsed, measurements) {
+    for (const [section, re] of SECTION_RULES) {
+      if (re.test(text)) return section;
+    }
+    const meas = measurements || { rom: [], mmt: [], special: [], pain: [] };
+    if (meas.rom.length || meas.mmt.length || meas.special.length) return "objective";
+    if (parsed && (parsed.mentions.length || parsed.loose)) return "subjective";
+    return "subjective";
+  }
+
+  /* ---------------------------------------------------------------- *
    *  Coordinates
    * ---------------------------------------------------------------- */
 
@@ -281,17 +380,18 @@
 
   /**
    * Parse one finished utterance.
-   * Returns { text, mentions, loose }:
+   * Returns { text, mentions, loose, measurements }:
    *  - mentions: body-part hits, each with map coordinates, a summarized
    *    note, and character ranges into `text` (for transcript highlighting)
    *  - loose: set when no body part was named but symptoms/ratings/triggers
    *    were — the app attaches it to the last point or flags it for review,
    *    so nothing a physical therapist would care about gets dropped.
+   *  - measurements: {rom, mmt, special, pain} found in the utterance
    */
   function parseUtterance(rawText) {
     const text = String(rawText || "").trim().replace(/\s+/g, " ");
     const mentions = [];
-    if (!text) return { text, mentions, loose: null };
+    if (!text) return { text, mentions, loose: null, measurements: { rom: [], mmt: [], special: [], pain: [] } };
 
     const claimed = [];
     for (const part of BODY_PARTS) {
@@ -305,7 +405,7 @@
 
         let side = null;
         if (part.fixedSide) side = part.fixedSide;
-        else if (part.sided && m[1]) side = m[1].toLowerCase();
+        else if (part.sided && m[1]) side = sideWord(m[1]);
 
         const winStart = expandLeft(text, Math.max(0, start - 80));
         const winEnd = expandRight(text, Math.min(text.length, end + 80));
@@ -340,8 +440,17 @@
         };
       }
     }
-    return { text, mentions, loose };
+
+    const measurements = extractMeasurements(text, mentions);
+    return { text, mentions, loose, measurements };
   }
 
-  return { parseUtterance, summarize, coordFor, BODY_PARTS };
+  return {
+    parseUtterance,
+    summarize,
+    coordFor,
+    extractMeasurements,
+    classifyUtterance,
+    BODY_PARTS,
+  };
 });

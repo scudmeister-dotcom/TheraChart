@@ -5,7 +5,7 @@
 
 "use strict";
 
-const { parseUtterance } = require("../parser.js");
+const { parseUtterance, classifyUtterance } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -182,6 +182,118 @@ function mention(result, partName, side = undefined) {
   // Empty / meaningless speech must be silent.
   const r = parseUtterance("um okay so yeah let me think");
   check("noise: nothing detected, nothing flagged", r.mentions.length === 0 && r.loose === null);
+}
+
+/* ------------------------------------------------------------------ *
+ * 1b. Tagalog & Cebuano (code-switching is normal in clinic speech)
+ * ------------------------------------------------------------------ */
+
+{
+  const r = parseUtterance("masakit ang kaliwang balikat ko simula noong isang linggo");
+  const m = mention(r, "Shoulder", "left");
+  check("tl: kaliwang balikat → left shoulder", !!m, JSON.stringify(labels(r)));
+  check("tl: masakit reads as pain", m && /pain/i.test(m.summary), m && m.summary);
+}
+
+{
+  const r = parseUtterance("sobrang sakit ng tuhod ko kapag umaakyat ako ng hagdan");
+  const m = mention(r, "Knee");
+  check("tl: tuhod → knee", !!m, JSON.stringify(labels(r)));
+  check("tl: sobrang → significant", m && /significant/i.test(m.summary), m && m.summary);
+  check("tl: kapag trigger captured", m && /kapag/i.test(m.summary), m && m.summary);
+}
+
+{
+  const r = parseUtterance("namamaga at manhid ang kanang kamay niya");
+  const m = mention(r, "Hand", "right");
+  check("tl: kanang kamay → right hand", !!m, JSON.stringify(labels(r)));
+  check("tl: namamaga/manhid → swelling + numbness", m && /swelling/i.test(m.summary) && /numbness/i.test(m.summary), m && m.summary);
+}
+
+{
+  // Tagalog negation: walang = none/no — must be a denial, not left side of a symptom
+  const r = parseUtterance("walang sakit ang kanang tuhod niya ngayon");
+  const m = mention(r, "Knee", "right");
+  check("tl: right knee detected under negation", !!m, JSON.stringify(labels(r)));
+  check("tl: walang sakit → denies pain", m && /denies pain/i.test(m.summary), m && m.summary);
+}
+
+{
+  const r = parseUtterance("grabe ang ngutngut sa akong likod");
+  const m = mention(r, "Back");
+  check("ceb: likod → back", !!m, JSON.stringify(labels(r)));
+  check("ceb: ngutngut → throbbing pain", m && /pain/i.test(m.summary), m && m.summary);
+  check("ceb: grabe → significant", m && /significant/i.test(m.summary), m && m.summary);
+}
+
+{
+  const r = parseUtterance("sakit akong tuo nga abaga ug naluya akong bukton");
+  const m = mention(r, "Shoulder", "right");
+  check("ceb: tuo nga abaga → right shoulder", !!m, JSON.stringify(labels(r)));
+  const arm = mention(r, "Arm");
+  check("ceb: bukton → arm with weakness", !!arm && /weakness/i.test(arm.summary), arm && arm.summary);
+}
+
+{
+  const r = parseUtterance("nabinhod ang wala nga kamot sa pasyente");
+  const m = mention(r, "Hand", "left");
+  check("ceb: wala nga kamot → left hand", !!m, JSON.stringify(labels(r)));
+  check("ceb: nabinhod → numbness", m && /numbness/i.test(m.summary), m && m.summary);
+}
+
+/* ------------------------------------------------------------------ *
+ * 1c. Clinical measurements
+ * ------------------------------------------------------------------ */
+
+{
+  const r = parseUtterance("left shoulder flexion measured at 120 degrees today");
+  const rom = r.measurements.rom;
+  check("rom: one measurement", rom.length === 1, JSON.stringify(rom));
+  check("rom: side/joint/motion/degrees", rom[0] && rom[0].side === "left" && rom[0].joint === "shoulder" && rom[0].motion === "flexion" && rom[0].degrees === 120, JSON.stringify(rom[0]));
+}
+
+{
+  const r = parseUtterance("knee extension is limited to 10 degrees and hip abduction to 30 degrees");
+  check("rom: two measurements in one breath", r.measurements.rom.length === 2, JSON.stringify(r.measurements.rom));
+}
+
+{
+  const r = parseUtterance("quad strength is 4 out of 5 on the right");
+  const mmt = r.measurements.mmt;
+  check("mmt: grade captured", mmt.length === 1 && mmt[0].grade === "4/5", JSON.stringify(mmt));
+  check("mmt: context kept", mmt[0] && /quad/i.test(mmt[0].context || ""), JSON.stringify(mmt[0]));
+}
+
+{
+  const r = parseUtterance("pain is about 7 out of 10 in the left shoulder");
+  const pain = r.measurements.pain;
+  check("pain measure: score 7", pain.length === 1 && pain[0].score === 7, JSON.stringify(pain));
+  check("pain measure: located to left shoulder", pain[0] && pain[0].location === "left shoulder", JSON.stringify(pain[0]));
+  check("pain measure: not mistaken for MMT", r.measurements.mmt.length === 0, JSON.stringify(r.measurements.mmt));
+}
+
+{
+  const r = parseUtterance("positive Neer test and negative drop arm test on the left shoulder");
+  const sp = r.measurements.special;
+  check("special: two tests captured", sp.length === 2, JSON.stringify(sp));
+  check("special: results kept", sp[0] && sp[0].result === "positive" && sp[1] && sp[1].result === "negative", JSON.stringify(sp));
+}
+
+/* ------------------------------------------------------------------ *
+ * 1d. Section classifier (evaluations / progress notes)
+ * ------------------------------------------------------------------ */
+
+{
+  const cls = (t) => {
+    const r = parseUtterance(t);
+    return classifyUtterance(r.text, r, r.measurements);
+  };
+  check("classify: precautions", cls("precaution no lifting over 10 pounds") === "precautions");
+  check("classify: reason for referral", cls("she was referred by Dr Cruz for shoulder pain") === "reason");
+  check("classify: past medical history", cls("history of diabetes and hypertension, surgery two years ago") === "pmh");
+  check("classify: assessment", cls("findings are consistent with subacromial impingement") === "assessment");
+  check("classify: objective when measured", cls("shoulder flexion at 95 degrees") === "objective");
+  check("classify: subjective by default", cls("my knee hurts when I climb stairs") === "subjective");
 }
 
 /* ------------------------------------------------------------------ *
