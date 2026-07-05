@@ -1,8 +1,11 @@
-/* TheraChart — listen while the user talks, pin body-part mentions to a map,
-   and store a short summarized note for each spot. Everything runs locally. */
+/* TheraChart app — listens while the user talks, pins body-part mentions to
+   a map via the shared parser (parser.js), keeps the full transcript, and
+   links every summarized note back to the exact words it came from. */
 
 (() => {
   "use strict";
+
+  const parser = window.TheraParser;
 
   /* ---------------------------------------------------------------- *
    *  Body map figure (shared silhouette, drawn once per view)
@@ -44,203 +47,16 @@
   }
 
   /* ---------------------------------------------------------------- *
-   *  Body-part lexicon
-   *  dx = horizontal offset from the body's centreline (x = 100).
-   *  Front view is mirrored (patient's left shows on the viewer's right);
-   *  the back view is not.
-   *  Order matters: more specific phrases must come before generic ones —
-   *  a match claims its text range so later entries can't reuse it.
+   *  State
    * ---------------------------------------------------------------- */
 
-  const P = (name, kw, opts = {}) =>
-    Object.assign({ name, kw, dx: 0, y: 0, view: "front", sided: false }, opts);
-
-  const BODY_PARTS = [
-    // Back view, specific first
-    P("Lower back", "lower\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back", { view: "back", y: 178 }),
-    P("Upper back", "upper\\s+back", { view: "back", y: 110 }),
-    P("Mid back", "mid(?:dle)?[-\\s]?back", { view: "back", y: 145 }),
-    P("Shoulder blade", "shoulder\\s+blades?|scapula", { view: "back", dx: 24, y: 112, sided: true }),
-    P("Back of head", "back of (?:my|the|his|her) head", { view: "back", y: 36 }),
-    P("Back of neck", "back of (?:my|the|his|her) neck", { view: "back", y: 66 }),
-    P("Tailbone", "tail\\s?bone|coccyx", { view: "back", y: 200 }),
-    P("Spine", "spine|spinal", { view: "back", y: 140 }),
-    P("Buttock", "buttocks?|glutes?|gluteal|rear end", { view: "back", dx: 15, y: 210, sided: true }),
-    P("Hamstring", "hamstrings?", { view: "back", dx: 16, y: 265, sided: true }),
-    P("Achilles", "achilles(?:\\s+tendon)?", { view: "back", dx: 15, y: 398, sided: true }),
-    P("Heel", "heels?", { view: "back", dx: 15, y: 410, sided: true }),
-    P("Calf", "calf|calves", { view: "back", dx: 16, y: 350, sided: true }),
-    // Generic "back" only when clearly the body part ("my back", not "come back" / "back of")
-    P("Back", "(?<=\\b(?:my|his|her|your|the)\\s)back\\b(?!\\s+of)", { view: "back", y: 150 }),
-
-    // Head & face
-    P("Forehead", "forehead", { y: 24 }),
-    P("Temple", "temples?", { dx: 14, y: 28, sided: true }),
-    P("Eye", "eyes?|eyebrows?|eyelids?", { dx: 8, y: 32, sided: true }),
-    P("Ear", "ears?|earlobes?", { dx: 18, y: 36, sided: true }),
-    P("Nose", "nose|sinus(?:es)?", { y: 38 }),
-    P("Jaw", "jaws?|tmj", { dx: 10, y: 48, sided: true }),
-    P("Mouth", "mouth|teeth|tooth|gums?|tongue|lips?", { y: 46 }),
-    P("Head", "head|skull|headaches?|migraines?", { y: 34 }),
-    P("Throat", "throat", { y: 70 }),
-    P("Neck", "neck", { y: 66 }),
-
-    // Torso
-    P("Collarbone", "collar\\s?bones?|clavicle", { dx: 22, y: 84, sided: true }),
-    P("Armpit", "armpits?|underarms?", { dx: 38, y: 100, sided: true }),
-    P("Shoulder", "shoulders?|rotator cuff|deltoids?", { dx: 40, y: 86, sided: true }),
-    P("Heart", "heart", { dx: 14, y: 112, fixedSide: "left" }),
-    P("Chest", "chest|pec(?:toral)?s?|breast\\s?bone|sternum", { dx: 14, y: 112, sided: true, centerIfNoSide: true }),
-    P("Ribs", "ribs?|rib\\s?cage", { dx: 20, y: 135, sided: true, centerIfNoSide: true }),
-    P("Navel", "navel|belly\\s?button", { y: 170 }),
-    P("Stomach", "stomach(?:\\s?aches?)?|belly|abdomen|abdominal|tummy|gut", { y: 160 }),
-    P("Pelvis", "pelvis|pelvic", { y: 200 }),
-    P("Groin", "groin", { y: 206 }),
-    P("Hip", "hips?", { dx: 30, y: 196, sided: true }),
-
-    // Arms (specific before generic "arm")
-    P("Upper arm", "upper\\s+arms?|biceps?|triceps?", { dx: 48, y: 120, sided: true }),
-    P("Elbow", "elbows?", { dx: 53, y: 155, sided: true }),
-    P("Forearm", "forearms?", { dx: 57, y: 185, sided: true }),
-    P("Wrist", "wrists?", { dx: 61, y: 215, sided: true }),
-    P("Thumb", "thumbs?", { dx: 60, y: 246, sided: true }),
-    P("Finger", "fingers?|knuckles?|pinky", { dx: 66, y: 248, sided: true }),
-    P("Hand", "hands?|palms?", { dx: 64, y: 236, sided: true }),
-    P("Arm", "arms?", { dx: 52, y: 150, sided: true }),
-
-    // Legs (specific before generic "leg")
-    P("Thigh", "thighs?|quad(?:ricep)?s?", { dx: 16, y: 260, sided: true }),
-    P("Kneecap", "knee\\s?caps?|patella", { dx: 15, y: 303, sided: true }),
-    P("Knee", "knees?", { dx: 15, y: 305, sided: true }),
-    P("Shin", "shins?", { dx: 16, y: 350, sided: true }),
-    P("Ankle", "ankles?", { dx: 15, y: 392, sided: true }),
-    P("Toe", "(?:big\\s+)?toes?", { dx: 24, y: 416, sided: true }),
-    P("Foot", "foot|feet", { dx: 21, y: 408, sided: true }),
-    P("Leg", "legs?", { dx: 16, y: 300, sided: true }),
-  ];
-
-  // Compile one regex per entry, with an optional left/right capture in front.
-  for (const part of BODY_PARTS) {
-    part.re = new RegExp(
-      `\\b(?:(left|right)\\s+(?:\\w+\\s+)??)?(?:${part.kw})\\b`,
-      "gi"
-    );
-  }
-
-  /* ---------------------------------------------------------------- *
-   *  Symptom vocabulary used to write the summary "in my own words"
-   * ---------------------------------------------------------------- */
-
-  const ADJECTIVES = [
-    ["sharp", /\bsharp\b/i],
-    ["dull", /\bdull\b/i],
-    ["throbbing", /\bthrobbing\b/i],
-    ["stabbing", /\bstabbing\b/i],
-    ["shooting", /\bshooting\b/i],
-    ["burning", /\bburn(?:s|ing)?\b/i],
-    ["radiating", /\bradiat(?:es|ing)\b/i],
-    ["constant", /\bconstant(?:ly)?\b/i],
-    ["intermittent", /\b(?:intermittent|comes and goes|on and off)\b/i],
-    ["deep", /\bdeep\b/i],
-    ["chronic", /\bchronic\b/i],
-  ];
-
-  const NOUNS = [
-    ["headache", /\b(?:headaches?|migraines?)\b/i],
-    ["pain", /\b(?:pain(?:ful)?|hurt(?:s|ing)?|ach(?:e|es|ing|y)|sting(?:s|ing)?|killing me|agony)\b/i],
-    ["soreness", /\bsore(?:ness)?\b/i],
-    ["stiffness", /\bstiff(?:ness)?\b/i],
-    ["tightness", /\btight(?:ness)?\b/i],
-    ["numbness", /\bnumb(?:ness)?\b/i],
-    ["tingling", /\b(?:tingl(?:e|es|ing|y)|pins and needles)\b/i],
-    ["cramping", /\b(?:cramp(?:s|ing)?|spasm(?:s|ing)?)\b/i],
-    ["swelling", /\b(?:swollen|swelling|puffy|inflam(?:ed|mation))\b/i],
-    ["weakness", /\b(?:weak(?:ness)?|giv(?:es?|ing) out)\b/i],
-    ["bruising", /\bbruis(?:e|ed|es|ing)\b/i],
-    ["itching", /\bitch(?:y|ing|es)?\b/i],
-    ["tenderness", /\btender(?:ness)?\b/i],
-    ["clicking", /\b(?:click(?:s|ing)?|pop(?:s|ping)|crack(?:s|ing)|grind(?:s|ing))\b/i],
-    ["locking", /\block(?:s|ed|ing)(?:\s+up)?\b/i],
-    ["dizziness", /\b(?:dizzy|dizziness|light-?headed)\b/i],
-    ["pressure", /\b(?:pressure|tension)\b/i],
-    ["a possible sprain", /\bsprain(?:ed)?\b/i],
-    ["a possible strain", /\bstrain(?:ed)?\b/i],
-    ["a possible tear", /\b(?:tore|torn)\b/i],
-    ["a possible fracture", /\b(?:broke(?:n)?|fracture(?:d)?)\b/i],
-    ["a twist injury", /\btwisted\b/i],
-  ];
-
-  const SEVERE_RE = /\b(really|very|extremely|severe(?:ly)?|terribl[ye]|excruciating|unbearable|awful|so much|super|badly|killing me)\b/i;
-  const MILD_RE = /\b(slightly|a\s+(?:little|bit|touch)|mild(?:ly)?|minor|somewhat|kind of|sort of)\b/i;
-  const RATING_RE = /\b(\d{1,2})\s*(?:\/|out of)\s*(?:10|ten)\b/i;
-  const DURATION_RE = /\b((?:for|since|over)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood))\b/i;
-  const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while)\s+(?:i|he|she|they)\s+[a-z' ]{2,32})/i;
-
-  function cap(s) {
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  }
-
-  /** Turn the text around a body-part mention into a short paraphrase.
-      ms/me mark where the body part sits inside windowText, so symptoms
-      spoken close to the mention outrank ones from a different clause. */
-  function summarize(windowText, ms, me) {
-    const distFrom = (idx, len) => {
-      if (idx + len <= ms) return ms - (idx + len);
-      if (idx >= me) return idx - me;
-      return 0;
-    };
-    const found = (vocab) =>
-      vocab
-        .map(([word, re]) => {
-          const m = re.exec(windowText);
-          return m ? { word, d: distFrom(m.index, m[0].length) } : null;
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.d - b.d);
-
-    const adjs = found(ADJECTIVES).filter((a) => a.d <= 45).map((a) => a.word);
-    const nearNouns = found(NOUNS).filter((n) => n.d <= 55);
-
-    let main = "";
-    if (nearNouns.length) {
-      const primary = nearNouns[0].word;
-      const extra = nearNouns.slice(1, 3).filter((n) => n.d <= 40).map((n) => n.word);
-      main = adjs.length ? `${adjs.slice(0, 3).join(", ")} ${primary}` : primary;
-      if (extra.length) main += ` with ${extra.join(" and ")}`;
-    } else if (adjs.length) {
-      main = `${adjs.slice(0, 3).join(", ")} discomfort`;
-    }
-
-    if (main) {
-      if (SEVERE_RE.test(windowText)) main = `significant ${main}`;
-      else if (MILD_RE.test(windowText)) main = `mild ${main}`;
-    }
-
-    const bits = [];
-    if (main) bits.push(cap(main));
-
-    const rating = windowText.match(RATING_RE);
-    if (rating) bits.push(`rated ${rating[1]}/10`);
-
-    const duration = windowText.match(DURATION_RE);
-    if (duration) bits.push(`ongoing ${duration[1].trim()}`);
-
-    const trigger = windowText.match(TRIGGER_RE);
-    if (trigger) bits.push(`worse ${trigger[1].trim()}`);
-
-    if (!bits.length) {
-      const snippet = windowText.trim().replace(/\s+/g, " ").slice(0, 90);
-      return `Mentioned this area — “${snippet}${windowText.trim().length > 90 ? "…" : ""}”`;
-    }
-    return bits.join(" · ");
-  }
-
-  /* ---------------------------------------------------------------- *
-   *  State + rendering
-   * ---------------------------------------------------------------- */
-
-  const points = new Map(); // key: "Part|side" -> point object
+  const utterances = []; // {id, time, text}
+  const points = new Map(); // key "Part|side" -> point
+  const unassigned = []; // symptoms with no clear body part: review bucket
   let pointCounter = 0;
+  let lastPointKey = null; // most recently mentioned point (for follow-ups)
+  let lastPointUtt = -1;
+  let activeHlKey = null; // which point/card is currently highlighted
 
   const frontMap = document.getElementById("frontMap");
   const backMap = document.getElementById("backMap");
@@ -254,48 +70,175 @@
 
   const notesList = document.getElementById("notesList");
   const emptyMsg = document.getElementById("emptyMsg");
+  const transcriptLog = document.getElementById("transcriptLog");
+  const transcriptEmpty = document.getElementById("transcriptEmpty");
 
-  function coordFor(part, side) {
-    // dx offsets are from the centreline. In the front view the figure is
-    // mirrored (patient's left = viewer's right); in the back view it isn't.
-    let x = 100;
-    if (part.dx) {
-      let dir; // +1 => viewer's right
-      if (side === "left") dir = part.view === "front" ? 1 : -1;
-      else if (side === "right") dir = part.view === "front" ? -1 : 1;
-      else dir = part.view === "front" ? -1 : 1; // unspecified: pick one side
-      x = 100 + dir * part.dx;
-    }
-    return { x, y: part.y };
+  const nowTime = () =>
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  function cap(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  function addMention(part, side, summary, quote) {
-    const key = `${part.name}|${side || ""}`;
-    const now = new Date();
-    const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
 
+  /* ---------------------------------------------------------------- *
+   *  Transcript
+   * ---------------------------------------------------------------- */
+
+  function addUtterance(text, time) {
+    const id = utterances.length;
+    utterances.push({ id, time, text });
+    transcriptEmpty.style.display = "none";
+    const el = document.createElement("div");
+    el.className = "utt";
+    el.dataset.utt = id;
+    el.innerHTML =
+      `<span class="utt-time">${time}</span>` +
+      `<span class="utt-text">${escapeHtml(text)}</span>`;
+    transcriptLog.appendChild(el);
+    transcriptLog.scrollTop = transcriptLog.scrollHeight;
+    return id;
+  }
+
+  /** Render an utterance's text with optional highlight ranges.
+      marks: array of [start, end, strong]. Overlaps are fine — the
+      strongest level wins per character. */
+  function uttHtml(text, marks) {
+    if (!marks || !marks.length) return escapeHtml(text);
+    const level = new Uint8Array(text.length);
+    for (const [s, e, strong] of marks) {
+      const lv = strong ? 2 : 1;
+      for (let i = Math.max(0, s); i < Math.min(text.length, e); i++) {
+        if (level[i] < lv) level[i] = lv;
+      }
+    }
+    let html = "";
+    let i = 0;
+    while (i < text.length) {
+      const lv = level[i];
+      let j = i;
+      while (j < text.length && level[j] === lv) j++;
+      const chunk = escapeHtml(text.slice(i, j));
+      if (lv === 2) html += `<mark class="hl strong">${chunk}</mark>`;
+      else if (lv === 1) html += `<mark class="hl">${chunk}</mark>`;
+      else html += chunk;
+      i = j;
+    }
+    return html;
+  }
+
+  function clearHighlights() {
+    activeHlKey = null;
+    for (const utt of utterances) {
+      const el = transcriptLog.querySelector(`[data-utt="${utt.id}"] .utt-text`);
+      if (el) el.innerHTML = escapeHtml(utt.text);
+    }
+    notesList
+      .querySelectorAll(".note-card.selected")
+      .forEach((c) => c.classList.remove("selected"));
+  }
+
+  /** Highlight every passage of the transcript that fed a point's notes,
+      then scroll to the first one. */
+  function highlightNotes(key, notes) {
+    clearHighlights();
+    activeHlKey = key;
+    const byUtt = new Map();
+    for (const n of notes) {
+      if (n.uttId == null) continue;
+      if (!byUtt.has(n.uttId)) byUtt.set(n.uttId, []);
+      byUtt.get(n.uttId).push(...n.marks);
+    }
+    let first = null;
+    for (const [uttId, marks] of byUtt) {
+      const utt = utterances[uttId];
+      const el = transcriptLog.querySelector(`[data-utt="${uttId}"] .utt-text`);
+      if (!utt || !el) continue;
+      el.innerHTML = uttHtml(utt.text, marks);
+      if (first === null || uttId < first) first = uttId;
+    }
+    if (first !== null) {
+      const target = transcriptLog.querySelector(`[data-utt="${first}"]`);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const card = notesList.querySelector(`[data-key="${CSS.escape(key)}"]`);
+    if (card) card.classList.add("selected");
+  }
+
+  function selectPoint(point, { scrollCard = false } = {}) {
+    if (activeHlKey === point.key) {
+      clearHighlights();
+      return;
+    }
+    highlightNotes(point.key, point.notes);
+    flashPoint(point);
+    if (scrollCard) {
+      const card = notesList.querySelector(`[data-key="${CSS.escape(point.key)}"]`);
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Points
+   * ---------------------------------------------------------------- */
+
+  function keyOf(mention) {
+    return `${mention.partName}|${mention.side || ""}`;
+  }
+
+  function addMention(mention, uttId, time) {
+    const key = keyOf(mention);
     let point = points.get(key);
     if (!point) {
       pointCounter += 1;
-      const { x, y } = coordFor(part, side);
       point = {
         id: pointCounter,
         key,
-        part: part.name,
-        side,
-        view: part.view,
-        x,
-        y,
+        part: mention.partName,
+        side: mention.side,
+        view: mention.view,
+        x: mention.x,
+        y: mention.y,
         notes: [],
       };
+      // Nudge apart points that would sit on top of each other
+      const others = [...points.values()];
+      while (
+        others.some(
+          (p) =>
+            p.view === point.view &&
+            Math.abs(p.x - point.x) < 9 &&
+            Math.abs(p.y - point.y) < 10
+        )
+      ) {
+        point.y += 12;
+      }
       points.set(key, point);
       drawPoint(point);
     }
-    // Skip exact repeats (speech engines often re-finalize the same phrase)
+    pushNote(point, {
+      time,
+      summary: mention.summary,
+      quote: mention.quote,
+      uttId,
+      marks: [
+        [mention.winStart, mention.winEnd, false],
+        [mention.start, mention.end, true],
+      ],
+    });
+    return point;
+  }
+
+  function pushNote(point, note) {
     const last = point.notes[point.notes.length - 1];
-    if (!last || last.summary !== summary) {
-      point.notes.push({ time, summary, quote });
-    }
+    // Speech engines sometimes re-finalize the same phrase — skip repeats
+    if (last && last.summary === note.summary && last.uttId === note.uttId) return;
+    point.notes.push(note);
     renderNotes();
     flashPoint(point);
   }
@@ -329,20 +272,16 @@
     dot.appendChild(title);
 
     g.append(ring, dot, num);
-    g.addEventListener("click", () => {
-      const card = notesList.querySelector(`[data-key="${CSS.escape(point.key)}"]`);
-      if (card) {
-        card.scrollIntoView({ behavior: "smooth", block: "center" });
-        card.style.background = "var(--flash)";
-        setTimeout(() => (card.style.background = ""), 900);
-      }
+    g.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectPoint(point, { scrollCard: true });
     });
     layers[point.view].appendChild(g);
   }
 
   function pointLabel(point) {
     const sideTxt = point.side ? `${cap(point.side)} ` : "";
-    return `${sideTxt}${point.part.toLowerCase()}`.trim().replace(/^./, (c) => c.toUpperCase());
+    return cap(`${sideTxt}${point.part.toLowerCase()}`.trim());
   }
 
   function flashPoint(point) {
@@ -350,15 +289,19 @@
     if (!g) return;
     g.classList.add("flash");
     setTimeout(() => g.classList.remove("flash"), 1200);
-    // refresh hover tooltip with the latest summary
     const title = g.querySelector("title");
     const latest = point.notes[point.notes.length - 1];
     if (title && latest) title.textContent = `${pointLabel(point)} — ${latest.summary}`;
   }
 
+  /* ---------------------------------------------------------------- *
+   *  Notes panel
+   * ---------------------------------------------------------------- */
+
   function renderNotes() {
-    emptyMsg.style.display = points.size ? "none" : "";
+    emptyMsg.style.display = points.size || unassigned.length ? "none" : "";
     notesList.querySelectorAll(".note-card").forEach((el) => el.remove());
+
     const sorted = [...points.values()].sort((a, b) => a.id - b.id);
     for (const point of sorted) {
       const card = document.createElement("div");
@@ -373,63 +316,79 @@
         <ul>${point.notes
           .map(
             (n) =>
-              `<li>${escapeHtml(n.summary)}<span class="time">${n.time}</span><br>` +
+              `<li>${escapeHtml(n.summary)}` +
+              (n.followUp ? `<span class="follow-tag">follow-up</span>` : "") +
+              `<span class="time">${n.time}</span><br>` +
               `<span class="quote">“${escapeHtml(n.quote)}”</span></li>`
           )
           .join("")}</ul>`;
-      card.addEventListener("click", () => flashPoint(point));
+      card.addEventListener("click", () => selectPoint(point));
+      notesList.appendChild(card);
+    }
+
+    for (const item of unassigned) {
+      const card = document.createElement("div");
+      card.className = "note-card unassigned";
+      card.dataset.key = item.key;
+      card.innerHTML = `
+        <div class="card-head">
+          <span class="part">Needs review</span>
+          <span class="view-tag">no body area named</span>
+        </div>
+        <ul><li>${escapeHtml(item.summary)}<span class="time">${item.time}</span><br>
+          <span class="quote">“${escapeHtml(item.quote)}”</span></li></ul>`;
+      card.addEventListener("click", () => {
+        if (activeHlKey === item.key) clearHighlights();
+        else {
+          highlightNotes(item.key, [
+            { uttId: item.uttId, marks: [[0, utterances[item.uttId].text.length, false]] },
+          ]);
+        }
+      });
       notesList.appendChild(card);
     }
   }
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
-  }
-
   /* ---------------------------------------------------------------- *
-   *  Text processing: find body parts in a finished utterance
+   *  Utterance processing (parser + follow-up/review checker)
    * ---------------------------------------------------------------- */
 
-  function processUtterance(text) {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const claimed = []; // [start, end] ranges already matched
+  function processUtterance(raw) {
+    const parsed = parser.parseUtterance(raw);
+    if (!parsed.text) return;
+    const time = nowTime();
+    const uttId = addUtterance(parsed.text, time);
 
-    for (const part of BODY_PARTS) {
-      part.re.lastIndex = 0;
-      let m;
-      while ((m = part.re.exec(trimmed)) !== null) {
-        const start = m.index;
-        const end = start + m[0].length;
-        if (claimed.some(([s, e]) => start < e && end > s)) continue;
-        claimed.push([start, end]);
-
-        let side = null;
-        if (part.fixedSide) side = part.fixedSide;
-        else if (part.sided && m[1]) side = m[1].toLowerCase();
-        else if (part.sided && part.centerIfNoSide) side = null;
-        else if (part.sided) side = null; // paired part, side unspecified
-
-        const winStart = Math.max(0, start - 80);
-        const winEnd = Math.min(trimmed.length, end + 80);
-        const windowText = trimmed.slice(winStart, winEnd);
-        const summary = summarize(windowText, start - winStart, end - winStart);
-
-        addMention(part, side, summary, snippet(trimmed, start, end));
+    if (parsed.mentions.length) {
+      for (const mention of parsed.mentions) addMention(mention, uttId, time);
+      const lastMention = parsed.mentions[parsed.mentions.length - 1];
+      lastPointKey = keyOf(lastMention);
+      lastPointUtt = uttId;
+    } else if (parsed.loose) {
+      // Symptoms without a named body part: attach to the point we were just
+      // talking about ("it's a 6 out of 10"), or flag for review — never drop.
+      const anchor = points.get(lastPointKey);
+      if (anchor && uttId - lastPointUtt <= 2) {
+        pushNote(anchor, {
+          time,
+          summary: parsed.loose.summary,
+          quote: parsed.loose.quote,
+          uttId,
+          marks: [[0, parsed.text.length, false]],
+          followUp: true,
+        });
+        lastPointUtt = uttId; // keep the conversational thread alive
+      } else {
+        unassigned.push({
+          key: `unassigned|${unassigned.length}`,
+          time,
+          summary: parsed.loose.summary,
+          quote: parsed.loose.quote,
+          uttId,
+        });
+        renderNotes();
       }
     }
-  }
-
-  function snippet(text, start, end) {
-    const s = Math.max(0, start - 45);
-    const e = Math.min(text.length, end + 45);
-    return (
-      (s > 0 ? "…" : "") +
-      text.slice(s, e).trim() +
-      (e < text.length ? "…" : "")
-    );
   }
 
   /* ---------------------------------------------------------------- *
@@ -439,7 +398,7 @@
   const micBtn = document.getElementById("micBtn");
   const micLabel = document.getElementById("micLabel");
   const statusEl = document.getElementById("status");
-  const transcriptEl = document.getElementById("transcript");
+  const interimEl = document.getElementById("interim");
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition = null;
@@ -456,14 +415,12 @@
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
         if (res.isFinal) {
-          const finalText = res[0].transcript.trim();
-          transcriptEl.textContent = finalText;
-          processUtterance(finalText);
+          processUtterance(res[0].transcript);
         } else {
           interim += res[0].transcript;
         }
       }
-      if (interim) transcriptEl.textContent = interim + " …";
+      interimEl.textContent = interim ? interim + " …" : "…";
     };
 
     recognition.onerror = (event) => {
@@ -515,7 +472,6 @@
   const manualInput = document.getElementById("manualInput");
   manualInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && manualInput.value.trim()) {
-      transcriptEl.textContent = manualInput.value.trim();
       processUtterance(manualInput.value);
       manualInput.value = "";
     }
@@ -523,35 +479,47 @@
 
   const DEMO_LINES = [
     "My left shoulder has been really sore for two weeks, especially when I reach overhead.",
-    "I also get a sharp shooting pain in my lower back when I bend over, maybe a 7 out of 10.",
-    "My right knee clicks and feels stiff in the morning.",
+    "I also get a sharp shooting pain in my lower back when I bend over.",
+    "It shoots down into my right leg after sitting for a while.",
+    "It's probably a six out of ten at night.",
+    "My right knee used to bother me, but I don't have any pain in it anymore.",
     "And I've had a dull headache since yesterday with some tightness in my neck.",
   ];
 
   document.getElementById("demoBtn").addEventListener("click", () => {
     let delay = 0;
     for (const line of DEMO_LINES) {
-      setTimeout(() => {
-        transcriptEl.textContent = line;
-        processUtterance(line);
-      }, delay);
-      delay += 1400;
+      setTimeout(() => processUtterance(line), delay);
+      delay += 1300;
     }
   });
 
   document.getElementById("exportBtn").addEventListener("click", () => {
-    if (!points.size) return;
+    if (!points.size && !unassigned.length && !utterances.length) return;
     const lines = [
       `TheraChart session notes — ${new Date().toLocaleString()}`,
       "",
+      "FINDINGS",
     ];
     for (const point of [...points.values()].sort((a, b) => a.id - b.id)) {
       lines.push(`${point.id}. ${pointLabel(point)} (${point.view} view)`);
       for (const n of point.notes) {
-        lines.push(`   - [${n.time}] ${n.summary}`);
+        lines.push(`   - [${n.time}] ${n.summary}${n.followUp ? " (follow-up)" : ""}`);
         lines.push(`     said: "${n.quote}"`);
       }
       lines.push("");
+    }
+    if (unassigned.length) {
+      lines.push("NEEDS REVIEW (no body area named)");
+      for (const item of unassigned) {
+        lines.push(`   - [${item.time}] ${item.summary}`);
+        lines.push(`     said: "${item.quote}"`);
+      }
+      lines.push("");
+    }
+    lines.push("FULL TRANSCRIPT");
+    for (const utt of utterances) {
+      lines.push(`[${utt.time}] ${utt.text}`);
     }
     const blob = new Blob([lines.join("\n")], { type: "text/plain" });
     const a = document.createElement("a");
@@ -562,12 +530,25 @@
   });
 
   document.getElementById("clearBtn").addEventListener("click", () => {
-    if (!points.size) return;
-    if (!confirm("Remove all points and notes for this session?")) return;
+    if (!points.size && !utterances.length && !unassigned.length) return;
+    if (!confirm("Remove all points, notes, and the transcript for this session?")) return;
     points.clear();
+    unassigned.length = 0;
+    utterances.length = 0;
     pointCounter = 0;
+    lastPointKey = null;
+    lastPointUtt = -1;
+    activeHlKey = null;
     layers.front.innerHTML = "";
     layers.back.innerHTML = "";
+    transcriptLog.innerHTML = "";
+    transcriptLog.appendChild(transcriptEmpty);
+    transcriptEmpty.style.display = "";
     renderNotes();
+  });
+
+  // Clicking empty space in the transcript clears the current highlight
+  transcriptLog.addEventListener("click", (e) => {
+    if (e.target === transcriptLog) clearHighlights();
   });
 })();

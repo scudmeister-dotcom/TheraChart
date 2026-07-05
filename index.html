@@ -36,9 +36,18 @@
         <div id="backMap" class="bodymap" data-view="back"></div>
       </figure>
     </div>
-    <div class="transcript-bar">
-      <span class="transcript-label">Hearing:</span>
-      <span id="transcript" class="transcript">…</span>
+    <div class="transcript-section">
+      <div class="transcript-head">
+        <h3>Transcript</h3>
+        <span class="hint">click a note to see where it came from</span>
+      </div>
+      <div id="transcriptLog" class="transcript-log">
+        <p class="empty" id="transcriptEmpty">Everything you say is saved here, word for word.</p>
+      </div>
+      <div class="transcript-bar">
+        <span class="transcript-label">Hearing:</span>
+        <span id="interim" class="transcript">…</span>
+      </div>
     </div>
   </section>
 
@@ -69,6 +78,7 @@
   <span>Works best in Chrome or Edge (uses the built-in Web Speech API). Nothing is uploaded — everything stays in this page.</span>
 </footer>
 
+<script src="parser.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
