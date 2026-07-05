@@ -249,6 +249,9 @@
   const uid = (prefix) =>
     `${prefix}-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 
+  // every mutation stamps the entity so offline edits can merge newest-wins
+  const touch = (obj) => { if (obj) obj._mod = new Date().toISOString(); };
+
   /* ---------------------------------------------------------------- *
    *  Audit log — every access-relevant action is recorded
    * ---------------------------------------------------------------- */
@@ -331,6 +334,7 @@
       { id: uid("p"), attachments: [], createdBy: byUserId, createdAt: new Date().toISOString() },
       fields
     );
+    touch(patient);
     state.patients.push(patient);
     save();
     audit(byUserId, "patient-created", patientName(patient));
@@ -341,6 +345,7 @@
     const p = getPatient(id);
     if (!p) return null;
     Object.assign(p, fields);
+    touch(p);
     save();
     audit(byUserId, "patient-updated", patientName(p));
     return p;
@@ -401,6 +406,7 @@
       createdBy: byUser.id, createdAt: new Date().toISOString(),
       status: "draft", signatures: [], amendments: [], data,
     };
+    touch(doc);
     state.documents.push(doc);
     save();
     audit(byUser.id, "doc-created", `${doc.title} for ${patientName(getPatient(patientId))}`);
@@ -413,6 +419,7 @@
     if (!canDocument(byUser)) return { error: "Your account can’t edit clinical documents." };
     if (doc.status === "signed") return { error: "Document is locked. Use an amendment (requires e-signature)." };
     Object.assign(doc.data, patch);
+    touch(doc);
     save();
     return { doc };
   }
@@ -431,6 +438,7 @@
       reason: reason || (doc.status === "draft" ? "Original completion" : "Amendment"),
     });
     doc.status = "signed";
+    touch(doc);
     save();
     audit(byUser.id, "doc-signed", doc.title);
     return { doc };
@@ -453,6 +461,7 @@
       license: byUser.license ? byUser.license.number : null,
       time: new Date().toISOString(),
     });
+    touch(doc);
     save();
     audit(byUser.id, "doc-amended", `${doc.title}: ${reason.trim()}`);
     return { doc };
@@ -502,6 +511,7 @@
         { when: remindAm.toISOString(), method: "sms", status: "scheduled (simulated)" },
       ],
     };
+    touch(appt);
     state.appointments.push(appt);
     save();
     audit(byUser.id, "appointment-created", `${patientName(getPatient(patientId))} @ ${start}`);
@@ -514,6 +524,7 @@
     if (!appt) return { error: "Appointment not found." };
     appt.status = "cancelled";
     appt.history.push({ action: "cancelled", userId: byUser.id, time: new Date().toISOString() });
+    touch(appt);
     save();
     audit(byUser.id, "appointment-cancelled", appt.id);
     return { appt };
@@ -526,6 +537,7 @@
   function updateSettings(patch, byUser) {
     load();
     Object.assign(state.settings, patch);
+    touch(state.settings);
     save();
     audit(byUser.id, "settings-updated", JSON.stringify(patch));
   }
@@ -535,6 +547,7 @@
     if (!u) return null;
     if (patch.license) Object.assign(u.license || (u.license = {}), patch.license);
     for (const k of ["name", "active", "pin"]) if (k in patch) u[k] = patch[k];
+    touch(u);
     save();
     audit(byUser.id, "user-updated", `${u.name} ${JSON.stringify(Object.keys(patch))}`);
     return u;
@@ -545,8 +558,76 @@
     return JSON.stringify(state, null, 2);
   }
 
+  /* ---------------------------------------------------------------- *
+   *  Offline merge: combine a device's local state with the server's.
+   *  Rules: entities created on either side always survive; when both
+   *  sides changed the same entity, the newer _mod wins; signatures,
+   *  amendments, and history are unioned (append-only records never
+   *  disappear); a signed status always beats a draft. Every conflict
+   *  where an edit loses is reported so it can be audit-logged.
+   * ---------------------------------------------------------------- */
+
+  const mtime = (x) => (x && (x._mod || x.createdAt)) || "";
+
+  function unionBy(items, keyFn) {
+    const seen = new Map();
+    for (const it of items) if (!seen.has(keyFn(it))) seen.set(keyFn(it), it);
+    return [...seen.values()].sort((a, b) => ((a.time || "") < (b.time || "") ? -1 : 1));
+  }
+
+  function mergeStates(serverState, localState) {
+    const merged = JSON.parse(JSON.stringify(serverState));
+    const local = JSON.parse(JSON.stringify(localState));
+    const conflicts = [];
+
+    for (const key of ["patients", "documents", "appointments", "users"]) {
+      const byId = new Map(merged[key].map((x) => [x.id, x]));
+      for (const li of local[key]) {
+        const si = byId.get(li.id);
+        if (!si) { merged[key].push(li); continue; } // created offline — keep
+        const same = JSON.stringify(si) === JSON.stringify(li);
+        if (same) continue;
+
+        let winner = mtime(li) > mtime(si) ? li : si;
+        const loser = winner === li ? si : li;
+
+        if (key === "documents") {
+          // signed always beats draft; append-only records are unioned
+          if (si.status === "signed" && li.status !== "signed") winner = si;
+          else if (li.status === "signed" && si.status !== "signed") winner = li;
+          winner.signatures = unionBy([...si.signatures, ...li.signatures], (s) => s.time + s.userId);
+          winner.amendments = unionBy([...si.amendments, ...li.amendments], (a) => a.time + a.userId);
+          if (si.status === "signed" || li.status === "signed") winner.status = "signed";
+        }
+        if (key === "appointments") {
+          winner.history = unionBy([...si.history, ...li.history], (h) => h.time + h.action + h.userId);
+          if (si.status === "cancelled" || li.status === "cancelled") winner.status = "cancelled";
+        }
+
+        if (winner !== si) {
+          const idx = merged[key].findIndex((x) => x.id === li.id);
+          merged[key][idx] = winner;
+        }
+        if (JSON.stringify(winner) !== JSON.stringify(loser)) {
+          conflicts.push({
+            kind: key, id: li.id,
+            note: `${key.slice(0, -1)} ${li.id}: kept ${mtime(winner)} version, superseded ${mtime(loser)} version`,
+          });
+        }
+      }
+    }
+
+    if (mtime(local.settings) > mtime(merged.settings)) merged.settings = local.settings;
+    merged.audit = unionBy(
+      [...merged.audit, ...local.audit],
+      (e) => e.time + (e.userId || "") + e.action
+    ).slice(-2000);
+    merged.sessionUserId = null;
+    return { state: merged, conflicts };
+  }
+
   return {
-    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, uid,
+    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
     audit, auditLog: () => load().audit,
     // users/auth
     users: () => load().users, getUser, login, logout, currentUser,

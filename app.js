@@ -994,6 +994,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         onStatus("Mic blocked — allow microphone access and retry.", false);
       } else if (event.error === "language-not-supported") {
         onStatus("This speech language isn't supported here — try the Whisper engine or another device.", listening);
+      } else if (event.error === "network") {
+        onStatus("No internet — the browser engine needs Google's servers. Switch the engine to Whisper (queues offline) or type below.", listening);
       } else if (event.error !== "no-speech" && event.error !== "aborted") {
         onStatus(`Mic error: ${event.error}`, listening);
       }
@@ -1033,17 +1035,122 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   const WHISPER_LANG = { "en-US": "en", "fil-PH": "tl", "ceb-PH": "auto" };
 
-  function whisperEngine({ lang, onText, onInterim, onStatus }) {
+  /* Persistent audio queue for the Whisper engine. Segments live in
+     IndexedDB until the clinic server confirms transcription, so dictation
+     recorded offline (home visit, brownout) survives even a page reload and
+     transcribes automatically on reconnect. Audio is deleted the moment its
+     transcript arrives. */
+  const AudioQueue = (() => {
+    let dbp = null;
+    const listeners = new Set();
+    let cachedCount = 0;
+
+    function db() {
+      if (dbp) return dbp;
+      dbp = new Promise((resolve, reject) => {
+        const req = indexedDB.open("therachart-audio", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("segments", { keyPath: "id", autoIncrement: true });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      return dbp;
+    }
+    const tx = async (mode, fn) => {
+      const d = await db();
+      return new Promise((resolve, reject) => {
+        const t = d.transaction("segments", mode);
+        const out = fn(t.objectStore("segments"));
+        t.oncomplete = () => resolve(out && "result" in out ? out.result : undefined);
+        t.onerror = () => reject(t.error);
+      });
+    };
+    const all = () => tx("readonly", (s) => s.getAll());
+    const notify = () => listeners.forEach((fn) => { try { fn(cachedCount); } catch (_) { } });
+    async function refreshCount() {
+      try { cachedCount = ((await all()) || []).length; } catch { cachedCount = 0; }
+      notify();
+    }
+    refreshCount();
+
+    let draining = false;
+    async function drain() {
+      if (draining) return;
+      draining = true;
+      try {
+        for (; ;) {
+          const sync = window.TheraSync || {};
+          if (!(sync.mode === "server" && sync.token)) break;
+          const items = (await all()) || [];
+          cachedCount = items.length;
+          notify();
+          if (!items.length) break;
+          const it = items[0];
+          try {
+            const res = await fetch(`/api/transcribe?lang=${it.lang}`, {
+              method: "POST",
+              headers: { "content-type": "audio/wav", authorization: `Bearer ${sync.token}` },
+              body: it.wav,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+              await tx("readwrite", (s) => s.delete(it.id));
+              if (data.text) deliver(it.docId, data.text);
+            } else if (res.status === 400 || res.status === 501) {
+              await tx("readwrite", (s) => s.delete(it.id)); // unrecoverable segment
+              deliver(it.docId, "", data.error);
+            } else break; // auth/server issue — retry next tick
+          } catch { break; } // network — retry next tick
+        }
+      } finally {
+        draining = false;
+        refreshCount();
+      }
+    }
+    setInterval(drain, 5000);
+
+    function deliver(docId, text, error) {
+      const doc = S.getDoc(docId);
+      const user = S.currentUser();
+      if (error) { if (user) S.audit(user.id, "transcription-error", error.slice(0, 200)); return; }
+      if (!doc || !user) return;
+      if (doc.status === "signed" || !S.canDocument(user)) {
+        // the note locked while this segment waited: keep the words in the audit log
+        S.audit(user.id, "late-transcript", `${doc.title}: “${text.slice(0, 200)}”`);
+        return;
+      }
+      routeUtterance(doc, user, text, currentDocState);
+    }
+
+    return {
+      async add(docId, lang, wav) {
+        await tx("readwrite", (s) => s.add({ docId, lang, wav, time: Date.now() }));
+        await refreshCount();
+        drain();
+      },
+      pending: () => cachedCount,
+      onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    };
+  })();
+  window.TheraAudioQueue = AudioQueue;
+
+  function whisperEngine({ docId, lang, onText, onInterim, onStatus }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
-    const queue = [];
-    let uploading = false, pending = 0, stopped = false;
 
     const status = () => {
-      if (!listening && !pending) return;
-      const q = pending ? ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…` : "";
-      onStatus((listening ? "Listening (private, on clinic server)" : "Finishing up") + q, listening);
+      const pending = AudioQueue.pending();
+      const sync = window.TheraSync || {};
+      const offline = sync.mode !== "server";
+      const q = pending
+        ? offline
+          ? ` — ${pending} segment${pending > 1 ? "s" : ""} queued, will transcribe on reconnect`
+          : ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…`
+        : "";
+      if (listening) onStatus("Listening (private" + (offline ? ", offline" : ", on clinic server") + ")" + q, true);
+      else if (pending) onStatus("Mic off" + q, false);
+      else onStatus("Mic off — all segments transcribed.", false);
     };
+    const unsub = AudioQueue.onChange(status);
 
     function cut(force) {
       const dur = segMs;
@@ -1054,8 +1161,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const flat = new Float32Array(samples.reduce((n, a) => n + a.length, 0));
       let off = 0;
       for (const a of samples) { flat.set(a, off); off += a.length; }
-      queue.push(encodeWav(flat, ctx ? ctx.sampleRate : 16000));
-      pump();
+      AudioQueue.add(docId, WHISPER_LANG[lang()] || "auto", encodeWav(flat, ctx ? ctx.sampleRate : 16000));
     }
     // rough check that a segment contains any speech-level audio at all
     function voicedTotal(samples) {
@@ -1064,40 +1170,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       return n;
     }
 
-    async function pump() {
-      if (uploading) return;
-      uploading = true;
-      while (queue.length) {
-        pending = queue.length;
-        status();
-        const wav = queue.shift();
-        try {
-          const token = (window.TheraSync || {}).token;
-          const res = await fetch(`/api/transcribe?lang=${WHISPER_LANG[lang()] || "auto"}`, {
-            method: "POST",
-            headers: { "content-type": "audio/wav", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-            body: wav,
-          });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok && data.text) onText(data.text);
-          else if (!res.ok) onStatus(data.error || `Transcription error (${res.status})`, listening);
-        } catch (e) {
-          onStatus("Clinic server unreachable — segment kept, retrying…", listening);
-          queue.unshift(wav);
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-      }
-      pending = 0;
-      uploading = false;
-      status();
-      if (!listening) onStatus("Mic off — all segments transcribed.", false);
-    }
-
     return {
       name: "whisper",
-      pending: () => pending + queue.length,
+      pending: () => AudioQueue.pending(),
+      _unsub: unsub,
       async start() {
-        stopped = false;
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
@@ -1136,9 +1213,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         try { if (proc) proc.disconnect(); } catch (_) { }
         try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
         try { if (ctx) ctx.close(); } catch (_) { }
-        stopped = true;
-        if (queue.length || pending) status();
-        else onStatus("Mic off", false);
+        unsub();
+        status();
       },
       setLang() { },
       // test hook: feed synthetic samples through the same path as the mic
@@ -1163,13 +1239,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     langSel.value = localStorage.getItem("therachart-lang") || "en-US";
 
     const sync = window.TheraSync || { mode: "local" };
-    const whisperAvailable = sync.mode === "server" && sync.whisper;
+    // offline still allows Whisper: segments queue and transcribe on reconnect
+    const whisperAvailable = sync.whisper && (sync.mode === "server" || sync.mode === "offline");
     const whisperOpt = engineSel.querySelector('option[value="whisper"]');
     if (!whisperAvailable) {
       whisperOpt.disabled = true;
       whisperOpt.textContent = sync.mode === "server"
         ? "Engine: Whisper — not installed on clinic server"
         : "Engine: Whisper — needs the clinic server";
+    } else if (sync.mode === "offline") {
+      whisperOpt.textContent = "Engine: Whisper — offline, segments will queue";
     }
     let engineChoice = localStorage.getItem("therachart-engine") || "browser";
     if (engineChoice === "whisper" && !whisperAvailable) engineChoice = "browser";
@@ -1177,6 +1256,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     let listening = false;
     const callbacks = {
+      docId: doc.id,
       lang: () => langSel.value,
       onText: (text) => routeUtterance(doc, user, text, dstate),
       onInterim: (t) => { interimEl.textContent = t ? t + " …" : "…"; },
@@ -1578,7 +1658,7 @@ ${ths.map((t) => {
   <div class="card">
     <h2>🔐 Where your records live</h2>
     <p style="font-size:13px">${window.TheraSync && window.TheraSync.mode === "server"
-      ? "This device is synced with <b>your clinic's own server</b> — a machine your facility controls, on your network. Records are shared between your clinic's devices and never touch a third-party cloud."
+      ? "This device is synced with <b>your clinic's own server</b> — a machine your facility controls, on your network. Records are shared between your clinic's devices and never touch a third-party cloud. A copy is cached on this device so you can keep working offline (home visits, outages); offline changes merge back automatically, sign-in is refused if the offline copy is older than 72 hours, and superseded edits are preserved in the audit log."
       : "All patient records, documents, schedules, and transcripts are stored <b>only in this device's local storage</b>. Run the included clinic server (<code>node server.js</code>) to share records between your clinic's devices — still entirely on hardware you control, never a third-party cloud."}</p>
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
@@ -1588,7 +1668,8 @@ ${ths.map((t) => {
   <div class="card">
     <h2>🎙 Voice dictation, honestly</h2>
     <p style="font-size:13px">Browser dictation (the Web Speech API) typically sends <b>audio to the browser vendor's servers</b> for transcription — on Chrome that is Google. Google states dictation audio is used only to return the transcript, but there is <b>no healthcare data agreement (HIPAA BAA / RA 10173 outsourcing agreement)</b> behind the free browser API, so treat spoken PHI as leaving your control during dictation.</p>
-    <p style="font-size:13px; margin-bottom:0"><b>The private option is built in:</b> switch the engine to <b>Whisper on the clinic server</b> in any note's dictation bar — audio is transcribed on your own machine and deleted, never reaching a third party (requires <code>pip install faster-whisper</code> on the server). The browser/Google engine remains available so you can compare accuracy yourself. This app never stores audio with either engine.</p>
+    <p style="font-size:13px"><b>The private option is built in:</b> switch the engine to <b>Whisper on the clinic server</b> in any note's dictation bar — audio is transcribed on your own machine, never reaching a third party (requires <code>pip install faster-whisper</code> on the server). The browser/Google engine remains available so you can compare accuracy yourself.</p>
+    <p style="font-size:13px; margin-bottom:0"><b>Offline dictation:</b> when the clinic server is unreachable, Whisper recordings are <b>held in this device's browser storage</b> until reconnection, then transcribed and immediately deleted. That temporary on-device audio is the one exception to "audio is never stored" — it exists only while offline, only on this device, so enable full-disk/device encryption on phones used in the field.</p>
   </div>
   <div class="card">
     <h2>🛡 Access controls</h2>

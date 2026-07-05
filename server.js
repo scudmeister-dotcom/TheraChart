@@ -51,12 +51,22 @@ store.load();
 let rev = (() => { try { return Number(fs.readFileSync(REV_FILE, "utf8")) || 1; } catch { return 1; } })();
 function bumpRev() { rev += 1; fs.writeFileSync(REV_FILE, String(rev)); }
 
-/* ---- sessions ---- */
+/* ---- sessions (persisted so device tokens survive server restarts) ---- */
+const SESS_FILE = path.join(DATA_DIR, "sessions.json");
 const sessions = new Map(); // token -> { userId, at }
+try {
+  for (const [t, s] of Object.entries(JSON.parse(fs.readFileSync(SESS_FILE, "utf8")))) sessions.set(t, s);
+} catch { }
+function saveSessions() {
+  const cutoff = Date.now() - 30 * 24 * 3600 * 1000; // sessions expire after 30 days
+  for (const [t, s] of sessions) if (s.at < cutoff) sessions.delete(t);
+  fs.writeFileSync(SESS_FILE, JSON.stringify(Object.fromEntries(sessions)));
+}
 
 function tokenFor(userId) {
   const token = crypto.randomBytes(24).toString("hex");
   sessions.set(token, { userId, at: Date.now() });
+  saveSessions();
   return token;
 }
 function userForReq(req) {

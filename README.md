@@ -114,6 +114,35 @@ good accuracy), `medium`/`large-v3` with a GPU. Any other engine works via
 Cebuano the engine auto-detects (and the body-part lexicon understands
 Cebuano regardless of engine).
 
+## Working offline (home visits, brownouts)
+
+Devices that belong to a clinic server keep working when it's unreachable:
+
+- **Unlock with your PIN** against the last-synced copy (refused if that copy
+  is older than 72 hours, so stale security/license data can't be abused).
+- **Full offline editing** — read every chart; create and edit notes,
+  intakes, and bookings. The badge counts queued changes.
+- **On reconnect everything merges**: records created offline always
+  survive; when both sides edited the same record, the newer edit wins,
+  a signed document always beats a draft, signatures/amendments/history are
+  unioned, and every superseded edit is preserved in the audit log
+  (`sync-conflict` entries).
+- **Offline Whisper dictation**: recordings queue in the device's browser
+  storage, then transcribe on the clinic server and are deleted the moment
+  the transcript lands — this temporary on-device audio is disclosed in the
+  Privacy panel. If a note was signed while a segment waited, its words are
+  preserved as a `late-transcript` audit entry instead of being lost.
+
+## Reaching the clinic server from outside the clinic
+
+On the clinic's WiFi, devices connect directly (no internet needed at all).
+For home visits or working from home, install a mesh VPN like Tailscale on
+the server and each phone — devices then reach the clinic server from
+anywhere over an encrypted tunnel, without exposing it to the public
+internet. Note that phone browsers require HTTPS (or localhost) to allow the
+microphone, so give the server a certificate when deploying (Tailscale can
+issue one).
+
 ## Install on phones and tablets
 
 TheraChart is an installable web app (PWA). Open the clinic server's address
@@ -132,6 +161,7 @@ checked offline:
 ```bash
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
+node test/merge.test.js    # 13 checks: offline merge never loses records
 ```
 
 ## Files
