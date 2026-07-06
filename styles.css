@@ -1,6 +1,8 @@
 /* TheraChart EMR — design tokens + app styles (light & dark) */
 
 :root {
+  /* render native controls (select menus, date pickers) to match the theme */
+  color-scheme: light;
   --bg: #f4f7f9;
   --panel: #ffffff;
   --ink: #1f2d3a;
@@ -33,6 +35,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --bg: #131c25;
     --panel: #1b2733;
     --ink: #e4edf4;
@@ -65,6 +68,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #64748b;
   --accent: #0e7c86; --accent-ink: #ffffff; --accent-soft: #d3ecee;
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
@@ -79,6 +83,7 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #131c25; --panel: #1b2733; --ink: #e4edf4; --muted: #93a5b5;
   --accent: #3ab6c0; --accent-ink: #06272b; --accent-soft: #143740;
   --point: #e25a6d; --border: #2b3a49; --sil: #40536b; --sil-line: #55688a;
@@ -737,6 +742,9 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table.list th, table.list td { white-space: nowrap; }
   .cal-grid { min-width: 480px; }
+
+  /* lift the sync badge above the bottom tab bar (inline styles → !important) */
+  #syncBadge { bottom: calc(76px + env(safe-area-inset-bottom)) !important; z-index: 39 !important; }
 }
 
 /* modal becomes a bottom sheet on phones — thumb-reachable, native feel */
