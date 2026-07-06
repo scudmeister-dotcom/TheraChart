@@ -653,8 +653,8 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
     <div class="card">
       <h2>Therapy documents</h2>
       ${canDoc ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">
-        <button class="btn small newdoc-btn doc-daily" data-newdoc="daily"><i class="dt-swatch"></i>+ Daily note</button>
         <button class="btn small newdoc-btn doc-eval" data-newdoc="eval"><i class="dt-swatch"></i>+ Evaluation</button>
+        <button class="btn small newdoc-btn doc-daily" data-newdoc="daily"><i class="dt-swatch"></i>+ Daily note</button>
         <button class="btn small newdoc-btn doc-progress ${due ? "primary" : ""}" data-newdoc="progress"><i class="dt-swatch"></i>+ Progress report${due ? " (due)" : ""}</button>
         <button class="btn small newdoc-btn doc-discharge" data-newdoc="discharge"><i class="dt-swatch"></i>+ Discharge</button>
       </div>` : `<div class="banner warn" style="margin-bottom:12px">Your account can view this chart but cannot create or edit clinical documents.</div>`}
@@ -1140,7 +1140,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     ${editable ? `<div class="measure-add"><input id="typedDictation" placeholder="No mic? Type what the patient says and press Enter…" /></div>` : ""}
     <div class="route-log" id="routeLog"></div>
   </div>
-  <div class="card">
+  <div class="card doc-fields ${meta.cls}">
     ${sections}
     ${sigBlock}
   </div>

@@ -521,6 +521,30 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 .newdoc-btn.doc-daily .dt-swatch { background: var(--dt-daily); }
 .newdoc-btn.doc-progress .dt-swatch { background: var(--dt-progress); }
 .newdoc-btn.doc-discharge .dt-swatch { background: var(--dt-discharge); }
+
+/* Colour-code the note fields by document type, so you know at a glance which
+   form you're in. Each type sets --dt; the card accent, labels, and text-box
+   borders all follow it. */
+.doc-fields.doc-eval      { --dt: var(--dt-eval); }
+.doc-fields.doc-daily     { --dt: var(--dt-daily); }
+.doc-fields.doc-progress  { --dt: var(--dt-progress); }
+.doc-fields.doc-discharge { --dt: var(--dt-discharge); }
+.doc-fields {
+  border-top: 3px solid var(--dt, var(--border));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in srgb, var(--dt) 12%, transparent);
+}
+.doc-fields .field > label { color: var(--dt); font-weight: 700; }
+.doc-fields textarea,
+.doc-fields input[type="text"],
+.doc-fields .measure-add input {
+  border-color: color-mix(in srgb, var(--dt) 32%, var(--border));
+}
+.doc-fields textarea:focus,
+.doc-fields input:focus {
+  border-color: var(--dt);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt) 18%, transparent);
+  outline: none;
+}
 .newdoc-btn { border-left-width: 3px; }
 .newdoc-btn.doc-eval { border-left-color: var(--dt-eval); }
 .newdoc-btn.doc-daily { border-left-color: var(--dt-daily); }
