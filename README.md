@@ -151,6 +151,23 @@ text can contain PHI, using the consumer Gemini API means sending PHI to
 Google; the Privacy panel explains the compliant path (paid Vertex AI Gemini
 under a signed BAA) and the local reviewer alternative.
 
+## Navigation & visual design
+
+- **Modern sidebar** — grouped nav (Clinic / Account), gradient brand mark,
+  animated active indicator, avatar + one-tap sign-out.
+- **Breadcrumb + Back** on every screen inside a patient (Patients › Name ›
+  Document), so you always know where you are and can step back one level;
+  **scroll position is remembered** when you return to a screen.
+- **Colour-coded document types** — Evaluation, Daily Note, Progress, and
+  Discharge each carry a consistent colour on their tag, header stripe, chart
+  rows, and "new document" buttons.
+- **Clinical body chart as a callout diagram** — the dictation & body map is
+  the large primary column. Each finding is a small dot at the exact spot with
+  a **leader line out to a numbered marker in the gutter**, so several findings
+  can point at the same area and each stays pinpoint-precise. Marker colour
+  encodes **severity** (severe / moderate / mild / resolved), derived from the
+  pain rating and wording.
+
 ## Working offline (home visits, brownouts)
 
 Devices that belong to a clinic server keep working when it's unreachable:

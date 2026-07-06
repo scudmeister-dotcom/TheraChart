@@ -47,7 +47,19 @@
     shield: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z"/><path d="M5.6 8l1.7 1.7 3.1-3.4"/></svg>',
     gear: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4"/></svg>',
     user: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5.2" r="2.7"/><path d="M2.8 14c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3"/></svg>',
+    back: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>',
+    signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
+    logo: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 13h3l2-5 3 9 2.5-6 1.5 2h4" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
+
+  /* scroll memory: return to where you were when navigating back */
+  const scrollMem = {};
+  let lastHashForScroll = location.hash || "#/dashboard";
+  function captureScroll() { scrollMem[lastHashForScroll] = window.scrollY; }
+  function restoreScroll(hash) {
+    lastHashForScroll = hash;
+    requestAnimationFrame(() => window.scrollTo(0, scrollMem[hash] || 0));
+  }
 
   function showModal(html) {
     modalRoot.innerHTML = `<div class="modal-backdrop"><div class="modal">${html}</div></div>`;
@@ -122,7 +134,7 @@
       <path class="sil-line" d="M122,89 Q111,86 103,88" fill="none"/>`;
 
     return `
-<svg viewBox="0 0 200 460" xmlns="http://www.w3.org/2000/svg" data-view="${view}">
+<svg viewBox="-64 -6 328 476" xmlns="http://www.w3.org/2000/svg" data-view="${view}">
   <g class="mannequin">
     ${mirror(limbsOneSide)}
     ${deltoids}
@@ -176,42 +188,119 @@
     location.hash = "#/dashboard";
   }
 
+  /* Breadcrumb trail for the current location — powers the back button and
+     the "remember where I was" navigation inside a patient. */
+  function breadcrumbFor(hash, user) {
+    const seg = hash.replace(/^#\//, "").split("/");
+    const route = seg[0] || "dashboard";
+    const trail = [];
+    const patientCrumb = (pid) => {
+      const p = S.getPatient(pid);
+      if (p) trail.push({ label: S.patientName(p), hash: `#/patient/${pid}` });
+    };
+    if (route === "patients") trail.push({ label: "Patients", hash: "#/patients" });
+    else if (route === "patient") { trail.push({ label: "Patients", hash: "#/patients" }); patientCrumb((seg[1] || "").split("?")[0]); }
+    else if (route === "doc") {
+      const d = S.getDoc(seg[1]);
+      trail.push({ label: "Patients", hash: "#/patients" });
+      if (d) { patientCrumb(d.patientId); trail.push({ label: d.title, hash }); }
+    } else if (route === "intake") {
+      trail.push({ label: "Patients", hash: "#/patients" });
+      const editId = (hash.split("?edit=")[1] || "").trim();
+      if (editId) { patientCrumb(editId); trail.push({ label: "Edit info", hash }); }
+      else trail.push({ label: "New intake", hash });
+    } else if (route === "calendar") trail.push({ label: "Calendar", hash: "#/calendar" });
+    else if (route === "privacy") trail.push({ label: "Privacy & Security", hash: "#/privacy" });
+    else if (route === "facility") trail.push({ label: "Facility Admin", hash: "#/facility" });
+    else if (route === "profile") trail.push({ label: "My Profile", hash: "#/profile" });
+    return trail;
+  }
+
   function renderShell(hash, content, user, bind) {
     const emrAllowed = S.canAccessEmr(user);
-    const links = NAV.filter((n) => !n.adminOnly || user.role === "admin")
-      .map((n) => {
-        const disabled = n.emr && !emrAllowed;
-        const active = hash.startsWith(n.hash) ||
-          (n.hash === "#/patients" && /^(#\/patient\/|#\/intake|#\/doc\/)/.test(hash));
-        return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">${n.icon}${n.label}</a>`;
-      }).join("");
+    const groups = [
+      { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash)) },
+      { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/profile"].includes(n.hash)) },
+    ];
+    const linkHtml = (n) => {
+      if (n.adminOnly && user.role !== "admin") return "";
+      const disabled = n.emr && !emrAllowed;
+      const active = hash.startsWith(n.hash) ||
+        (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
+      return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
+        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span></a>`;
+    };
+    const nav = groups.map((g) => {
+      const items = g.items.map(linkHtml).filter(Boolean).join("");
+      return items ? `<div class="nav-group"><div class="nav-group-label">${g.label}</div>${items}</div>` : "";
+    }).join("");
+
+    const crumbs = breadcrumbFor(hash, user);
+    const canBack = crumbs.length > 1;
+    const crumbBar = crumbs.length ? `
+      <div class="crumbbar">
+        ${canBack ? `<button class="crumb-back" id="crumbBack" title="Back">${ICON.back}<span>Back</span></button>` : ""}
+        <nav class="crumbs">${crumbs.map((c, i) =>
+          i === crumbs.length - 1
+            ? `<span class="crumb current">${esc(c.label)}</span>`
+            : `<a class="crumb" href="${c.hash}">${esc(c.label)}</a><span class="crumb-sep">›</span>`
+        ).join("")}</nav>
+      </div>` : "";
 
     app.innerHTML = `
 <div class="shell">
   <aside class="sidebar">
     <div class="brand">
-      <div class="logo">T</div>
-      <div><b>TheraChart</b></div>
+      <div class="logo">${ICON.logo}</div>
+      <div class="brand-text"><b>TheraChart</b><span>Clinic EMR</span></div>
     </div>
-    ${links}
+    <div class="nav">${nav}</div>
     <div class="spacer"></div>
     <div class="userchip">
       <div class="avatar">${esc(initials(user.name))}</div>
       <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
-      <button id="logoutBtn" title="Sign out">Out</button>
+      <button id="logoutBtn" class="signout" title="Sign out">${ICON.signout}</button>
     </div>
   </aside>
-  <main class="content" id="view">${content}</main>
+  <main class="content" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
 </div>`;
-    document.getElementById("logoutBtn").addEventListener("click", () => {
-      S.logout();
-      render();
-    });
+    document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
+    const back = document.getElementById("crumbBack");
+    if (back) back.addEventListener("click", () => { location.hash = crumbs[crumbs.length - 2].hash; });
     if (bind) bind(user);
+    restoreScroll(hash);
   }
 
   const roleLabel = (u) =>
     u.role === "therapist" ? "Physical Therapist" : u.role === "frontdesk" ? "Front Desk" : "Administrator";
+
+  /* Per-document-type identity: a colour + short label used everywhere a
+     document appears, so the four note types are easy to tell apart. */
+  const DOC_META = {
+    eval:      { label: "Evaluation",  short: "EVAL", cls: "doc-eval" },
+    daily:     { label: "Daily Note",  short: "DAILY", cls: "doc-daily" },
+    progress:  { label: "Progress",    short: "PROG", cls: "doc-progress" },
+    discharge: { label: "Discharge",   short: "DC",   cls: "doc-discharge" },
+  };
+  const docMeta = (t) => DOC_META[t] || { label: t, short: "", cls: "doc-daily" };
+
+  /* Severity of a body-map finding, from its notes: pain rating, intensity
+     words, and symptom type. Drives the pin colour on the body chart. */
+  function severityOf(pt) {
+    const text = (pt.notes || []).map((n) => n.summary).join(" ").toLowerCase();
+    if (/denies/.test(text)) return { level: 0, cls: "sev-none", label: "resolved / denied" };
+    const rate = text.match(/(\d{1,2})\/10/);
+    const score = rate ? Number(rate[1]) : null;
+    if (score !== null) {
+      if (score >= 7) return { level: 3, cls: "sev-high", label: "severe" };
+      if (score >= 4) return { level: 2, cls: "sev-mid", label: "moderate" };
+      return { level: 1, cls: "sev-low", label: "mild" };
+    }
+    if (/\bsignificant\b|severe|excruciating/.test(text)) return { level: 3, cls: "sev-high", label: "severe" };
+    if (/\bmild\b|slight|minor/.test(text)) return { level: 1, cls: "sev-low", label: "mild" };
+    if (/pain|sharp|shooting|burning|throbbing/.test(text)) return { level: 2, cls: "sev-mid", label: "moderate" };
+    return { level: 1, cls: "sev-low", label: "reported" };
+  }
 
   function blockedView(user) {
     return `
@@ -326,7 +415,7 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
       <h2>Unsigned drafts</h2>
       ${drafts.length ? `<table class="list"><tbody>${drafts.map((d) => `
         <tr class="rowlink" data-href="#/doc/${d.id}">
-          <td>${esc(d.title)}<br><small style="color:var(--muted)">${esc(S.patientName(S.getPatient(d.patientId)))}</small></td>
+          <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>${esc(d.title)}<br><small style="color:var(--muted)">${esc(S.patientName(S.getPatient(d.patientId)))}</small></td>
           <td><span class="chip warn">draft</span></td>
           <td class="num">${fmtDate(d.createdAt)}</td></tr>`).join("")}</tbody></table>`
         : `<div class="empty-state">Everything is signed. ✓</div>`}
@@ -476,7 +565,7 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
 
     const docRow = (d) => `
       <tr class="rowlink" data-href="#/doc/${d.id}">
-        <td><b>${esc(d.title)}</b></td>
+        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
         <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
         <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
         <td class="num">${fmtDate(d.createdAt)}</td>
@@ -501,10 +590,10 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
     <div class="card">
       <h2>Therapy documents</h2>
       ${canDoc ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">
-        <button class="btn small" data-newdoc="daily">+ Daily note</button>
-        <button class="btn small" data-newdoc="eval">+ Evaluation</button>
-        <button class="btn small ${due ? "primary" : ""}" data-newdoc="progress">+ Progress report${due ? " (due)" : ""}</button>
-        <button class="btn small" data-newdoc="discharge">+ Discharge</button>
+        <button class="btn small newdoc-btn doc-daily" data-newdoc="daily"><i class="dt-swatch"></i>+ Daily note</button>
+        <button class="btn small newdoc-btn doc-eval" data-newdoc="eval"><i class="dt-swatch"></i>+ Evaluation</button>
+        <button class="btn small newdoc-btn doc-progress ${due ? "primary" : ""}" data-newdoc="progress"><i class="dt-swatch"></i>+ Progress report${due ? " (due)" : ""}</button>
+        <button class="btn small newdoc-btn doc-discharge" data-newdoc="discharge"><i class="dt-swatch"></i>+ Discharge</button>
       </div>` : `<div class="banner warn" style="margin-bottom:12px">Your account can view this chart but cannot create or edit clinical documents.</div>`}
       ${docs.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>Document</th><th>Status</th><th>Therapist</th><th>Date</th></tr></thead>
         <tbody>${docs.slice().reverse().map(docRow).join("")}</tbody></table></div>`
@@ -664,8 +753,9 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
   function bindDoc(user) {
     const docId = location.hash.split("/")[2];
     const doc = S.getDoc(docId);
-    const view = document.getElementById("view");
+    const view = document.getElementById("viewBody");
     if (!doc) { view.innerHTML = `<div class="card"><div class="empty-state">Document not found.</div></div>`; return; }
+    const meta = docMeta(doc.type);
     const p = S.getPatient(doc.patientId);
     const locked = doc.status === "signed";
     const canDoc = S.canDocument(user);
@@ -709,10 +799,10 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       </div>`;
 
     view.innerHTML = `
-<div class="page-head">
+<div class="page-head doc-head ${meta.cls}">
   <div>
-    <h1>${esc(doc.title)}</h1>
-    <div class="sub"><a href="#/patient/${p.id}">${esc(S.patientName(p))}</a> · created ${fmtDT(doc.createdAt)} by ${esc((S.getUser(doc.createdBy) || {}).name || "—")}</div>
+    <div class="doc-title-row"><span class="doc-tag ${meta.cls}">${meta.short}</span><h1>${esc(doc.title)}</h1></div>
+    <div class="sub">created ${fmtDT(doc.createdAt)} by ${esc((S.getUser(doc.createdBy) || {}).name || "—")}</div>
   </div>
   <div class="page-actions">
     <button class="btn" id="printDocBtn">Print / PDF</button>
@@ -726,12 +816,16 @@ ${locked ? `<div class="lock-banner">🔒 Signed &amp; locked. Edits require a s
 ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot edit clinical documents.</div>` : ""}
 
 <div class="doc-layout">
-  <div class="card">
-    ${sections}
-    ${sigBlock}
-  </div>
-  <div class="card">
-    <h2>Dictation &amp; body map</h2>
+  <div class="card map-card">
+    <div class="map-card-head">
+      <h2>Dictation &amp; body map</h2>
+      <div class="sev-legend">
+        <span><i class="sev-dot sev-high"></i>severe</span>
+        <span><i class="sev-dot sev-mid"></i>moderate</span>
+        <span><i class="sev-dot sev-low"></i>mild</span>
+        <span><i class="sev-dot sev-none"></i>resolved</span>
+      </div>
+    </div>
     <div class="dict-bar">
       <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen</span></button>
       <select id="langSel" title="Speech language">
@@ -739,11 +833,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <option value="fil-PH">Tagalog / Filipino</option>
         <option value="ceb-PH">Cebuano</option>
       </select>
-    </div>
-    <div class="dict-bar">
       <select id="engineSel" title="Transcription engine — compare them yourself">
-        <option value="browser">Engine: Browser (Google servers)</option>
-        <option value="whisper">Engine: Private — Whisper on clinic server</option>
+        <option value="browser">Engine: Browser (Google)</option>
+        <option value="whisper">Engine: Private — Whisper</option>
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
@@ -761,6 +853,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>
     ${editable ? `<div class="measure-add"><input id="typedDictation" placeholder="No mic? Type what the patient says and press Enter…" /></div>` : ""}
     <div class="route-log" id="routeLog"></div>
+  </div>
+  <div class="card">
+    ${sections}
+    ${sigBlock}
   </div>
 </div>`;
 
@@ -864,38 +960,70 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   const layerFor = (view) =>
     document.querySelector(`#map${view === "back" ? "Back" : "Front"} .points-layer`);
 
+  const svgNS = "http://www.w3.org/2000/svg";
+  const mkSvg = (tag, attrs) => {
+    const e = document.createElementNS(svgNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  };
+
+  /* Draw the body chart as a callout diagram: a small severity-coloured dot
+     at the exact spot, a leader line out to a numbered marker in the gutter
+     beside the figure. Numbers sit OUTSIDE the mannequin and are spaced apart,
+     so several findings can point at the same area and each stays legible. */
   function drawAllPoints(doc) {
     ["front", "back"].forEach((v) => { const l = layerFor(v); if (l) l.innerHTML = ""; });
-    (doc.data.mapPoints || []).forEach((pt, i) => drawPoint(doc, pt, i + 1));
+    const pts = doc.data.mapPoints || [];
+    // re-pin every point to the current lexicon coordinates + tag its number
+    pts.forEach((pt, i) => {
+      if (pt.part) { const c = PR.coordForName(pt.part, pt.side); pt.x = c.x; pt.y = c.y; pt.view = c.view; }
+      pt._num = i + 1;
+      pt._sev = severityOf(pt);
+    });
+    for (const view of ["front", "back"]) {
+      const layer = layerFor(view);
+      if (!layer) continue;
+      const here = pts.filter((p) => p.view === view);
+      for (const side of ["left", "right"]) {
+        const col = here.filter((p) => (p.x <= 100 ? "left" : "right") === side).sort((a, b) => a.y - b.y);
+        layoutGutter(col, side).forEach(({ pt, ly }) => drawCallout(doc, layer, pt, side, ly));
+      }
+    }
   }
 
-  function drawPoint(doc, pt, num) {
-    const svgNS = "http://www.w3.org/2000/svg";
-    // Re-derive coordinates from the current lexicon so any saved dictation
-    // (even from before a mannequin change) pins to the right spot.
-    if (pt.part) {
-      const c = PR.coordForName(pt.part, pt.side);
-      pt.x = c.x; pt.y = c.y; pt.view = c.view;
-    }
-    const layer = layerFor(pt.view);
-    if (!layer) return;
-    const g = document.createElementNS(svgNS, "g");
-    g.setAttribute("class", "point-group");
+  // spread label y-positions in a gutter so markers never overlap
+  function layoutGutter(col, side) {
+    const GAP = 30, MIN = 8, MAX = 452;
+    let y = MIN;
+    return col.map((pt) => {
+      const ly = Math.min(MAX, Math.max(y, pt.y));
+      y = ly + GAP;
+      return { pt, ly };
+    });
+  }
+
+  function drawCallout(doc, layer, pt, side, ly) {
+    const lx = side === "left" ? -46 : 246; // gutter x
+    const elbow = side === "left" ? -30 : 230;
+    const g = mkSvg("g", { class: `point-group ${pt._sev.cls}` });
     g.dataset.key = pt.key;
-    const mk = (tag, attrs) => {
-      const e = document.createElementNS(svgNS, tag);
-      for (const k in attrs) e.setAttribute(k, attrs[k]);
-      return e;
-    };
-    const ring = mk("circle", { class: "point-ring", cx: pt.x, cy: pt.y, r: 10 });
-    const dot = mk("circle", { class: "point-dot", cx: pt.x, cy: pt.y, r: 8 });
-    const num2 = mk("text", { class: "point-num", x: pt.x, y: pt.y });
-    num2.textContent = num;
+
+    // leader line: dot → elbow → marker
+    const line = mkSvg("polyline", {
+      class: "leader",
+      points: `${pt.x},${pt.y} ${elbow},${ly} ${lx + (side === "left" ? 12 : -12)},${ly}`,
+    });
+    const dot = mkSvg("circle", { class: "loc-dot", cx: pt.x, cy: pt.y, r: 3.6 });
+    const ring = mkSvg("circle", { class: "loc-ring", cx: pt.x, cy: pt.y, r: 3.6 });
+    const marker = mkSvg("circle", { class: "marker", cx: lx, cy: ly, r: 11 });
+    const num = mkSvg("text", { class: "marker-num", x: lx, y: ly });
+    num.textContent = pt._num;
     const title = document.createElementNS(svgNS, "title");
     const latest = pt.notes[pt.notes.length - 1];
-    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""}`;
-    dot.appendChild(title);
-    g.append(ring, dot, num2);
+    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""} (${pt._sev.label})`;
+    marker.appendChild(title);
+
+    g.append(line, ring, dot, marker, num);
     g.addEventListener("click", () => selectMapPoint(doc, pt.key));
     layer.appendChild(g);
   }
@@ -908,7 +1036,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     box.innerHTML = pts.length ? pts.map((pt, i) => `
       <div class="map-note ${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
         <div class="map-note-head">
-          <b><span class="badge">${i + 1}</span>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</b>
+          <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</b>
           ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
@@ -2135,6 +2263,8 @@ ${ths.map((t) => {
   /* ================= boot ================= */
 
   window.TheraRender = render; // the sync layer re-renders after remote pulls
-  window.addEventListener("hashchange", render);
+  window.addEventListener("hashchange", () => { render(); });
+  // remember scroll position per screen so Back returns you where you were
+  window.addEventListener("scroll", () => { scrollMem[location.hash || "#/dashboard"] = window.scrollY; }, { passive: true });
   render();
 })();
