@@ -13,7 +13,10 @@
      pmh: "…",                   // past medical history
      current: { subjective, findings: [{part, side, summary}], measurements },
      history: [ { date, type, subjective, assessment,
-                  findings: [{part, side, summary}], measurements } ]
+                  findings: [{part, side, summary}], measurements } ],
+     historyDigest: buildHistoryDigest(olderVisits) | null
+       // visits beyond the recent window, compressed (see below) so charts
+       // with years of visits keep the context to about a page
    }
    measurements = { rom:[{side,joint,motion,degrees}], mmt:[], special:[], pain:[{location,score}] }
 */
@@ -27,6 +30,68 @@
   const regionOf = (f) => `${f.side ? f.side + " " : ""}${f.part}`.toLowerCase().trim();
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
+  /* ---------------- history digest ----------------
+     Compresses visits beyond the recent window (same {date,type,subjective,
+     assessment,findings,measurements} shape) into a compact summary: date
+     range, visit counts, recurring regions, ROM/pain endpoints, and key
+     assessments. Keeps the AI context bounded when a chart holds years of
+     visits (e.g. onboarded from scanned records). Returns null when there is
+     nothing to digest. */
+  function buildHistoryDigest(older) {
+    older = (older || []).filter(Boolean);
+    if (!older.length) return null;
+
+    const dates = older.map((d) => d.date || "").filter(Boolean).sort();
+    const types = {};
+    older.forEach((d) => { const t = d.type || "note"; types[t] = (types[t] || 0) + 1; });
+
+    // recurring regions across the older visits
+    const regionMap = {};
+    older.forEach((d) => (d.findings || []).forEach((f) => {
+      const r = regionOf(f);
+      const e = (regionMap[r] = regionMap[r] || { count: 0, last: "" });
+      e.count++;
+      if (f.summary) e.last = String(f.summary).slice(0, 120);
+    }));
+    const regions = Object.entries(regionMap)
+      .sort((a, b) => b[1].count - a[1].count).slice(0, 6)
+      .map(([region, e]) => ({ region, count: e.count, lastSummary: e.last }));
+
+    // ROM endpoints per joint/motion (earliest → latest by date)
+    const romMap = {};
+    older.forEach((d) => (((d.measurements || {}).rom) || []).forEach((r) => {
+      const k = `${r.side ? r.side + " " : ""}${r.joint} ${r.motion}`.trim();
+      (romMap[k] = romMap[k] || []).push({ deg: r.degrees, when: d.date || "" });
+    }));
+    const romTrends = Object.entries(romMap)
+      .filter(([, s]) => s.length >= 2).slice(0, 5)
+      .map(([key, s]) => {
+        const sorted = s.slice().sort((a, b) => (a.when < b.when ? -1 : 1));
+        return { key, first: sorted[0].deg, last: sorted[sorted.length - 1].deg, n: s.length };
+      });
+
+    // pain endpoints (earliest and latest recorded rating)
+    const painPts = [];
+    older.forEach((d) => (((d.measurements || {}).pain) || []).forEach((p) => painPts.push({ score: p.score, when: d.date || "" })));
+    painPts.sort((a, b) => (a.when < b.when ? -1 : 1));
+    const pain = painPts.length ? { first: painPts[0].score, last: painPts[painPts.length - 1].score, n: painPts.length } : null;
+
+    // key assessments: the earliest eval's, and the most recent one on file
+    const byDateAsc = older.slice().sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
+    const firstEval = byDateAsc.find((d) => d.type === "eval" && d.assessment) || byDateAsc.find((d) => d.assessment);
+    const lastNote = byDateAsc.slice().reverse().find((d) => d.assessment && d !== firstEval);
+    const assessments = [];
+    if (firstEval) assessments.push({ date: firstEval.date || "", text: String(firstEval.assessment).slice(0, 220) });
+    if (lastNote) assessments.push({ date: lastNote.date || "", text: String(lastNote.assessment).slice(0, 220) });
+
+    return {
+      visits: older.length,
+      from: dates[0] || "",
+      to: dates[dates.length - 1] || "",
+      types, regions, romTrends, pain, assessments,
+    };
+  }
+
   function buildInsights(ctx) {
     ctx = ctx || {};
     const current = ctx.current || { findings: [], measurements: {} };
@@ -38,11 +103,15 @@
     const curFindings = current.findings || [];
     const curRegions = new Set(curFindings.map(regionOf));
 
-    /* 1) Recurrence across visits */
+    /* 1) Recurrence across visits (digest of older visits counts too) */
     const regionCount = {};
     for (const doc of history) for (const f of doc.findings || []) {
       const r = regionOf(f);
       regionCount[r] = (regionCount[r] || 0) + 1;
+    }
+    const dg = ctx.historyDigest || null;
+    if (dg) for (const r of dg.regions || []) {
+      regionCount[r.region] = (regionCount[r.region] || 0) + r.count;
     }
     for (const r of curRegions) {
       if (regionCount[r]) {
@@ -55,15 +124,19 @@
       }
     }
 
-    /* 2) ROM trend for a joint/motion measured across visits */
+    /* 2) ROM trend for a joint/motion measured across visits.
+       Digest endpoints seed the series so trends span the whole chart. */
     const romSeries = {};
+    if (dg) for (const t of dg.romTrends || []) {
+      romSeries[t.key] = [{ deg: t.first, when: dg.from }, { deg: t.last, when: dg.to }];
+    }
     const pushRom = (m, when) => {
       for (const r of (m && m.rom) || []) {
         const k = `${r.side || ""} ${r.joint} ${r.motion}`.trim();
         (romSeries[k] = romSeries[k] || []).push({ deg: r.degrees, when });
       }
     };
-    history.forEach((d) => pushRom(d.measurements, d.date || ""));
+    history.slice().reverse().forEach((d) => pushRom(d.measurements, d.date || "")); // oldest first
     pushRom(current.measurements, "now");
     for (const k in romSeries) {
       const s = romSeries[k];
@@ -87,9 +160,10 @@
       }
     }
 
-    /* 3) Pain trend */
+    /* 3) Pain trend — digest endpoints first (oldest), then history, then now */
     const painSeries = [];
-    history.forEach((d) => (d.measurements?.pain || []).forEach((p) => painSeries.push(p.score)));
+    if (dg && dg.pain) painSeries.push(dg.pain.first, dg.pain.last);
+    history.slice().reverse().forEach((d) => (d.measurements?.pain || []).forEach((p) => painSeries.push(p.score)));
     (current.measurements?.pain || []).forEach((p) => painSeries.push(p.score));
     if (painSeries.length >= 2) {
       const d = painSeries[painSeries.length - 1] - painSeries[0];
@@ -230,8 +304,17 @@
       if (d.assessment) lines.push(`  Assessment: ${d.assessment}`);
     });
     if (!(c.history || []).length) lines.push("(no prior documents on file)");
+    const dg = c.historyDigest;
+    if (dg) {
+      lines.push("", `EARLIER HISTORY — DIGEST of ${dg.visits} older visit${dg.visits === 1 ? "" : "s"} (${dg.from || "?"} → ${dg.to || "?"})`, "-".repeat(40));
+      lines.push(`Visit types: ${Object.entries(dg.types || {}).map(([t, n]) => `${t} ×${n}`).join(", ")}`);
+      (dg.regions || []).forEach((r) => lines.push(`Recurring region: ${r.region} (×${r.count})${r.lastSummary ? ` — last noted: ${r.lastSummary}` : ""}`));
+      (dg.romTrends || []).forEach((t) => lines.push(`ROM over that period: ${t.key} ${t.first}° → ${t.last}° (${t.n} measurements)`));
+      if (dg.pain) lines.push(`Pain over that period: ${dg.pain.first}/10 → ${dg.pain.last}/10 (${dg.pain.n} ratings)`);
+      (dg.assessments || []).forEach((a) => lines.push(`Assessment ${a.date || ""}: ${a.text}`));
+    }
     return lines.join("\n");
   }
 
-  return { buildInsights, insightsPrompt, insightsSystem, INSIGHTS_SCHEMA };
+  return { buildInsights, buildHistoryDigest, insightsPrompt, insightsSystem, INSIGHTS_SCHEMA };
 });

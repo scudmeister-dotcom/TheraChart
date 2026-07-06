@@ -591,7 +591,7 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
     const docRow = (d) => `
       <tr class="rowlink" data-href="#/doc/${d.id}">
         <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
-        <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
+        <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.imported ? ' <span class="chip muted">imported</span>' : ""}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
         <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
         <td class="num">${fmtDate(d.createdAt)}</td>
       </tr>`;
@@ -630,11 +630,14 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
         <tr><td><b>${esc(a.name)}</b><br><small style="color:var(--muted)">added ${fmtDT(a.uploadedAt)} by ${esc((S.getUser(a.uploadedBy) || {}).name || "—")}</small></td>
         <td style="text-align:right"><a class="btn small" href="${a.dataUrl}" download="${esc(a.name)}">Download</a></td></tr>`).join("")}</tbody></table>`
         : `<div class="empty-state">No files yet — add the physician referral, X-rays, or other documents.</div>`}
-      <div style="margin-top:10px">
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
         <label class="btn small" style="position:relative; overflow:hidden">
           Upload file<input id="fileUpload" type="file" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
         </label>
-        <small style="color:var(--muted); margin-left:8px">Stored on this device only · up to ~1.5 MB per file</small>
+        ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
+          ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
+        </label>` : ""}
+        <small style="color:var(--muted)">Files stay on your own storage · up to ~1.5 MB kept per file</small>
       </div>
     </div>
   </div>
@@ -699,6 +702,13 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
       reader.readAsDataURL(f);
     });
 
+    const imp = document.getElementById("pdfImport");
+    if (imp) imp.addEventListener("change", () => {
+      const f = imp.files[0];
+      if (f) importPdfFlow(p, user, f);
+      imp.value = "";
+    });
+
     const pr = document.getElementById("printChartBtn");
     if (pr) pr.addEventListener("click", () => printPatientChart(p));
   }
@@ -707,6 +717,217 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
     const m = showModal(`<h2>Notice</h2><p style="font-size:14px">${esc(msg)}</p>
       <div class="modal-actions"><button class="btn primary" id="okBtn">OK</button></div>`);
     m.querySelector("#okBtn").addEventListener("click", closeModal);
+  }
+
+  /* ========== Import visit history from a scanned document (PDF) ==========
+     Gemini reads the scan into one structured entry per visit; the user
+     reviews and edits everything before any document is created. Imported
+     documents are dated with their original visit date and locked, with the
+     importing clinician's attestation. */
+
+  async function importPdfFlow(p, user, f) {
+    const sync = window.TheraSync || {};
+    if (!sync.ai) {
+      return alertBanner("Reading scanned documents needs the Gemini AI backend — add a Gemini API key in Facility Admin (or set GEMINI_API_KEY where the app is hosted). There is no offline reader for scans.");
+    }
+    // Vercel serverless caps request bodies at ~4.5 MB; the clinic server allows 8 MB
+    const maxMb = sync.mode === "server" ? 8 : 3;
+    if (f.size > maxMb * 1024 * 1024) {
+      return alertBanner(`This file is ${(f.size / 1024 / 1024).toFixed(1)} MB — the limit here is ${maxMb} MB. Split the scan into smaller PDFs and import them one at a time.`);
+    }
+    let b64;
+    try {
+      b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(",")[1] || "");
+        r.onerror = () => reject(new Error("couldn't read the file"));
+        r.readAsDataURL(f);
+      });
+    } catch (e) { return alertBanner("Couldn't read the file: " + e.message); }
+
+    showModal(`<h2>⇪ Reading ${esc(f.name)}…</h2>
+      <p style="font-size:13px">Gemini is reading the document and pulling out each visit — dates, note types, findings, and measurements. You'll review everything before anything is saved to the chart.</p>
+      <div class="empty-state">Working…</div>`);
+    let result;
+    try {
+      result = await sync.extractRecords(b64, f.type || "application/pdf");
+    } catch (e) {
+      closeModal();
+      const hint = /timeout|abort/i.test(e.message) ? " Long or unclear scans can take too long — try again, or split the PDF into fewer pages." : "";
+      return alertBanner("Couldn't read the document: " + e.message + hint);
+    }
+    closeModal();
+    if (!result.visits || !result.visits.length) {
+      return alertBanner(`No visit records were found in this document${result.docDescription ? ` — it looks like: ${result.docDescription}` : ""}. Nothing was saved.`);
+    }
+    openImportReviewModal(p, user, f, b64, result);
+  }
+
+  function openImportReviewModal(p, user, f, b64, result) {
+    const existing = S.docsFor(p.id);
+    const isDupe = (v) => !!v.date && existing.some((d) => d.type === v.type && d.createdAt.slice(0, 10) === v.date);
+    const visits = result.visits.map((v) => {
+      const dupe = isDupe(v);
+      return { ...v, _inc: !dupe, _dupe: dupe,
+        findings: (v.findings || []).map((x) => ({ ...x, _inc: true })),
+        rom: (v.rom || []).map((x) => ({ ...x, _inc: true })),
+        mmt: (v.mmt || []).map((x) => ({ ...x, _inc: true })),
+        pain: (v.pain || []).map((x) => ({ ...x, _inc: true })),
+        special: (v.special || []).map((x) => ({ ...x, _inc: true })),
+      };
+    });
+
+    const nameOnDoc = (result.patientName || "").toLowerCase();
+    const mismatch = nameOnDoc &&
+      !nameOnDoc.includes((p.lastName || "").toLowerCase()) &&
+      !nameOnDoc.includes((p.firstName || "").toLowerCase());
+
+    const measRow = (i, kind, j, label, valueHtml) => `
+      <div class="imp-row">
+        <input type="checkbox" data-minc="${i}:${kind}:${j}" checked />
+        <span style="color:var(--muted); min-width:0">${esc(label)}</span>${valueHtml}
+      </div>`;
+
+    const visitCard = (v, i) => `
+      <div class="rev-finding" style="align-items:flex-start">
+        <label class="rev-inc"><input type="checkbox" data-vinc="${i}" ${v._inc ? "checked" : ""}/></label>
+        <div class="rev-fbody" style="min-width:0; flex:1">
+          <div class="rev-fhead imp-head" style="flex-wrap:wrap">
+            <input type="date" data-vdate="${i}" value="${esc(v.date)}" style="width:150px"/>
+            <select data-vtype="${i}">
+              ${["eval", "daily", "progress", "discharge"].map((t) => `<option value="${t}" ${v.type === t ? "selected" : ""}>${docMeta(t).label}</option>`).join("")}
+            </select>
+            ${v.therapist ? `<span class="chip muted">PT: ${esc(v.therapist)}</span>` : ""}
+            ${v._dupe ? `<span class="chip warn">possible duplicate — unchecked</span>` : ""}
+            ${!v.date ? `<span class="chip warn">no date read — set one</span>` : ""}
+          </div>
+          ${[["subjective", "Subjective"], ["objective", "Objective"], ["assessment", "Assessment"], ["treatment", "Treatment / plan"]].map(([k, label]) => `
+            <label class="imp-label">${label}</label>
+            <textarea data-vfield="${i}:${k}" rows="2" class="imp-text">${esc(v[k] || "")}</textarea>`).join("")}
+          ${v.findings.length ? `<label class="imp-label">Body-map findings</label>
+            ${v.findings.map((x, j) => `<div class="imp-row">
+              <input type="checkbox" data-finc="${i}:${j}" checked />
+              <b style="white-space:nowrap">${esc(x.side ? cap(x.side) + " " : "")}${esc(x.part)}</b>
+              <input data-fsum="${i}:${j}" value="${esc(x.summary)}" style="flex:1"/>
+            </div>`).join("")}` : ""}
+          ${(v.rom.length + v.mmt.length + v.pain.length + v.special.length) ? `<label class="imp-label">Measurements</label>
+            ${v.rom.map((r, j) => measRow(i, "rom", j, `ROM ${r.side || ""} ${r.joint} ${r.motion}`,
+              `<input type="number" data-mval="${i}:rom:${j}" value="${r.degrees}" style="width:74px"/><span>°</span>`)).join("")}
+            ${v.mmt.map((r, j) => measRow(i, "mmt", j, `MMT ${r.context || ""}`,
+              `<input data-mval="${i}:mmt:${j}" value="${esc(r.grade)}" style="width:64px"/>`)).join("")}
+            ${v.pain.map((r, j) => measRow(i, "pain", j, `Pain ${r.location || ""}`,
+              `<input type="number" min="0" max="10" data-mval="${i}:pain:${j}" value="${r.score}" style="width:60px"/><span>/10</span>`)).join("")}
+            ${v.special.map((r, j) => measRow(i, "special", j, r.name,
+              `<select data-mval="${i}:special:${j}"><option ${r.result === "positive" ? "selected" : ""}>positive</option><option ${r.result === "negative" ? "selected" : ""}>negative</option></select>`)).join("")}` : ""}
+        </div>
+      </div>`;
+
+    const m = showModal(`
+<h2>⇪ Review imported visits <span class="chip info">Gemini</span></h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:-4px">
+  Read from <b>${esc(f.name)}</b>${result.docDescription ? ` — ${esc(result.docDescription)}` : ""}.
+  Check the dates and values against the scan; edit anything. Only checked visits are saved — each becomes a locked
+  historical document dated to the original visit.</p>
+${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b>${esc(result.patientName)}</b>, but this chart is <b>${esc(S.patientName(p))}</b>. Make sure you're importing into the right patient.</div>` : ""}
+<div style="max-height:56vh; overflow:auto">${visits.map(visitCard).join("")}</div>
+<div class="modal-actions">
+  <button class="btn" id="impCancel">Cancel</button>
+  <button class="btn primary" id="impApply">Add ${visits.length} visit${visits.length === 1 ? "" : "s"} to chart</button>
+</div>`);
+    m.classList.add("wide");
+
+    // live edits back into the working copies
+    m.querySelectorAll("[data-vinc]").forEach((c) => c.addEventListener("change", () => { visits[+c.dataset.vinc]._inc = c.checked; updateApplyLabel(); }));
+    m.querySelectorAll("[data-vdate]").forEach((el) => el.addEventListener("input", () => { visits[+el.dataset.vdate].date = el.value; }));
+    m.querySelectorAll("[data-vtype]").forEach((el) => el.addEventListener("change", () => { visits[+el.dataset.vtype].type = el.value; }));
+    m.querySelectorAll("[data-vfield]").forEach((el) => el.addEventListener("input", () => {
+      const [i, k] = el.dataset.vfield.split(":");
+      visits[+i][k] = el.value;
+    }));
+    m.querySelectorAll("[data-finc]").forEach((c) => c.addEventListener("change", () => {
+      const [i, j] = c.dataset.finc.split(":");
+      visits[+i].findings[+j]._inc = c.checked;
+    }));
+    m.querySelectorAll("[data-fsum]").forEach((el) => el.addEventListener("input", () => {
+      const [i, j] = el.dataset.fsum.split(":");
+      visits[+i].findings[+j].summary = el.value;
+    }));
+    m.querySelectorAll("[data-minc]").forEach((c) => c.addEventListener("change", () => {
+      const [i, kind, j] = c.dataset.minc.split(":");
+      visits[+i][kind][+j]._inc = c.checked;
+    }));
+    m.querySelectorAll("[data-mval]").forEach((el) => el.addEventListener("input", () => {
+      const [i, kind, j] = el.dataset.mval.split(":");
+      const row = visits[+i][kind][+j];
+      if (kind === "rom") row.degrees = Number(el.value) || 0;
+      else if (kind === "pain") row.score = Math.max(0, Math.min(10, Number(el.value) || 0));
+      else if (kind === "mmt") row.grade = el.value;
+      else if (kind === "special") row.result = el.value;
+    }));
+
+    const applyBtn = m.querySelector("#impApply");
+    const updateApplyLabel = () => {
+      const n = visits.filter((v) => v._inc).length;
+      applyBtn.textContent = `Add ${n} visit${n === 1 ? "" : "s"} to chart`;
+      applyBtn.disabled = !n;
+    };
+    updateApplyLabel();
+
+    m.querySelector("#impCancel").addEventListener("click", closeModal);
+    applyBtn.addEventListener("click", () => {
+      applyImport(p, user, f, b64, visits);
+      closeModal();
+    });
+  }
+
+  function importDocData(v) {
+    const kept = (arr) => arr.filter((x) => x._inc !== false);
+    const mapPoints = kept(v.findings)
+      .filter((x) => (x.summary || "").trim())
+      .map((x) => ({ key: x.key, part: x.part, side: x.side, view: x.view, x: x.x, y: x.y,
+        notes: [{ time: "", summary: x.summary.trim(), quote: "", uttId: null, marks: [] }] }));
+    const data = {
+      mapPoints, transcript: [],
+      rom: kept(v.rom).map(({ side, joint, motion, degrees }) => ({ side, joint, motion, degrees })),
+      mmt: kept(v.mmt).map(({ context, grade }) => ({ context, grade })),
+      pain: kept(v.pain).map(({ location, score }) => ({ location, score })),
+      special: kept(v.special).map(({ name, result }) => ({ name, result })),
+    };
+    const s = (t) => (t || "").trim();
+    if (v.type === "eval") {
+      data.subjective = s(v.subjective); data.objectiveText = s(v.objective);
+      data.assessment = s(v.assessment); data.plan = s(v.treatment);
+    } else if (v.type === "progress") {
+      data.currentStatus = s(v.subjective); data.updatedFindings = s(v.objective);
+      data.assessment = s(v.assessment); data.goalsProgress = s(v.treatment);
+    } else if (v.type === "discharge") {
+      data.summary = [s(v.subjective), s(v.objective)].filter(Boolean).join("\n");
+      data.outcome = s(v.assessment); data.recommendations = s(v.treatment);
+    } else { // daily
+      data.subjective = s(v.subjective);
+      data.summary = [s(v.treatment), s(v.objective), s(v.assessment)].filter(Boolean).join("\n");
+    }
+    return data;
+  }
+
+  function applyImport(p, user, f, b64, visits) {
+    let n = 0;
+    for (const v of visits) {
+      if (!v._inc) continue;
+      const res = S.addImportedDoc(p.id, { type: v.type, date: v.date, data: importDocData(v) }, user, f.name);
+      if (!res.error) n++;
+    }
+    // keep the source scan on the chart when it fits the attachment limit
+    if (n && f.size <= 1.5 * 1024 * 1024 && !p.attachments.some((a) => a.name === f.name)) {
+      p.attachments.push({
+        id: S.uid("a"), name: f.name, type: f.type || "application/pdf",
+        dataUrl: `data:${f.type || "application/pdf"};base64,${b64}`,
+        uploadedBy: user.id, uploadedAt: new Date().toISOString(),
+      });
+      S.save();
+    }
+    S.audit(user.id, "pdf-import-applied", `${f.name}: ${n} visit${n === 1 ? "" : "s"} → ${S.patientName(p)}`);
+    render();
   }
 
   /* ---------- patient chart printing / PDF export ---------- */
@@ -1937,21 +2158,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   function gatherInsightContext(doc) {
     const p = S.getPatient(doc.patientId);
     const evalDoc = S.docsFor(doc.patientId).find((d) => d.type === "eval");
-    const history = S.docsFor(doc.patientId)
+    const all = S.docsFor(doc.patientId)
       .filter((d) => d.id !== doc.id)
       .sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))
-      .slice(0, 12)
       .map((d) => ({
-        date: fmtDate(d.createdAt), type: docMeta(d.type).label,
+        date: d.createdAt.slice(0, 10), type: docMeta(d.type).label,
         subjective: docSubjective(d), assessment: d.data.assessment || "",
         findings: findingsFromPoints(d.data.mapPoints), measurements: measOf(d),
       }));
+    // the 12 most recent visits go in full; anything older (e.g. years of
+    // imported records) is compressed into a digest so the AI context stays
+    // about a page no matter how long the chart gets
+    const history = all.slice(0, 12);
+    const historyDigest = all.length > 12 ? window.TheraInsights.buildHistoryDigest(all.slice(12)) : null;
     return {
       patient: p ? { age: age(p.dob), sex: p.sex || "" } : {},
       referral: (evalDoc && evalDoc.data.reason) || (p && p.referringPhysician) || "",
       pmh: (evalDoc && evalDoc.data.pmh) || "",
       current: { subjective: docSubjective(doc), findings: findingsFromPoints(doc.data.mapPoints), measurements: measOf(doc) },
-      history,
+      history, historyDigest,
     };
   }
 
@@ -2313,6 +2538,7 @@ ${ths.map((t) => {
       <p style="font-size:13px"><b>Note cleanup &amp; clinical insights${geminiOn ? " — Google Gemini" : ""}.</b> ${geminiOn
         ? "When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — the transcript, or a summary of the chart's findings and history, never audio and never the patient's name — is sent to Google's Gemini AI. It reads that, tidies the wording, and suggests findings or connections. Nothing is saved until you've reviewed it, and you can edit or reject every suggestion."
         : "These run on a built-in reviewer right on this device — nothing is sent anywhere. (A clinic can optionally connect Google's Gemini AI for smarter results; this one hasn't.)"}</p>
+      <p style="font-size:13px"><b>Importing scanned records.</b> When you import a PDF of past visits, that <b>whole document</b> — which usually includes the patient's details — is sent to Gemini to be read into chart entries. Every extracted visit is shown to you for review and correction before anything is saved. ${geminiOn ? "" : "(This clinic hasn't connected Gemini, so PDF import is unavailable rather than guessed at.)"}</p>
       <p style="font-size:13px; margin-bottom:0"><b>Worth knowing.</b> Using a cloud AI simply means one piece of data — dictated audio (browser engine) or note text (Gemini) — travels to Google to be processed, and the result comes back. These are Google's general services without a healthcare-specific agreement, so clinics handling regulated patient data can stick to the private options above, or connect Gemini through <b>Vertex AI under a signed agreement</b> (set the key as an environment variable or in Facility Admin). Either way, the AI only ever suggests — a licensed clinician reviews and signs everything.</p>
     </div>
   </div>

@@ -103,15 +103,18 @@
 
   /* ---------------- generic Gemini JSON ---------------- */
 
+  // prompt: a string (single text part) or a parts array — e.g. an inline PDF
+  // part plus an instruction part for document extraction.
   async function geminiJson(prompt, schema, opts) {
     const model = opts.model || DEFAULT_MODEL;
     const base = opts.base || DEFAULT_BASE;
     const url = `${base}/models/${model}:generateContent?key=${encodeURIComponent(opts.key)}`;
+    const parts = typeof prompt === "string" ? [{ text: prompt }] : prompt;
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts }],
         generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: opts.temperature ?? 0.2 },
       }),
       signal: AbortSignal.timeout(opts.timeout || 40000),
@@ -120,6 +123,159 @@
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "{}";
     return JSON.parse(text);
+  }
+
+  /* ---------------- scanned-document extraction ----------------
+     Reads a PDF (scan or digital) of past therapy records and pulls out one
+     structured entry per visit, so years of paper charts can be onboarded.
+     No local fallback exists for reading documents — without a key this
+     feature reports itself unavailable rather than guessing. */
+
+  const EXTRACT_SCHEMA = {
+    type: "object",
+    properties: {
+      patientName: { type: "string" },
+      docDescription: { type: "string" },
+      visits: { type: "array", items: { type: "object", properties: {
+        date: { type: "string" },
+        type: { type: "string", enum: ["eval", "daily", "progress", "discharge"] },
+        therapist: { type: "string" },
+        subjective: { type: "string" },
+        objective: { type: "string" },
+        assessment: { type: "string" },
+        treatment: { type: "string" },
+        findings: { type: "array", items: { type: "object", properties: {
+          bodyPart: { type: "string" }, side: { type: "string", enum: ["left", "right", "none"] }, summary: { type: "string" },
+        }, required: ["bodyPart", "summary"] } },
+        rom: { type: "array", items: { type: "object", properties: {
+          side: { type: "string", enum: ["left", "right", "none"] }, joint: { type: "string" },
+          motion: { type: "string" }, degrees: { type: "number" },
+        }, required: ["joint", "motion", "degrees"] } },
+        mmt: { type: "array", items: { type: "object", properties: {
+          context: { type: "string" }, grade: { type: "string" },
+        }, required: ["grade"] } },
+        pain: { type: "array", items: { type: "object", properties: {
+          location: { type: "string" }, score: { type: "number" },
+        }, required: ["score"] } },
+        special: { type: "array", items: { type: "object", properties: {
+          name: { type: "string" }, result: { type: "string", enum: ["positive", "negative"] },
+        }, required: ["name", "result"] } },
+      }, required: ["type"] } },
+    },
+    required: ["visits"],
+  };
+
+  function extractSystem() {
+    return [
+      "You are a meticulous clinical-records abstractor for a physical-therapy",
+      "EMR. You receive a document — often a SCAN of past therapy records, which",
+      "may be typed, handwritten, faxed, multi-page, or partly illegible, in",
+      "English, Tagalog, or Cebuano.",
+      "",
+      "Extract EXACTLY ONE entry per distinct patient visit found in the",
+      "document — never repeat or duplicate a visit:",
+      "",
+      "- date: the visit date as YYYY-MM-DD. If you cannot read a date, leave it",
+      "  an empty string — never guess a date.",
+      "- type: 'eval' (initial evaluation/assessment), 'daily' (treatment/session",
+      "  note), 'progress' (progress/re-evaluation report), or 'discharge'.",
+      "  Default to 'daily' when unclear.",
+      "- therapist: the treating clinician's name as written, if shown.",
+      "- subjective: what the patient reported (complaints, pain, function).",
+      "- objective: observations and narrative objective findings.",
+      "- assessment: the clinician's assessment/impression.",
+      "- treatment: interventions performed or planned (exercises, modalities,",
+      "  manual therapy, HEP, plan of care).",
+      "- findings: one entry per distinct symptomatic body region the PATIENT",
+      "  reported: bodyPart, side (left/right/none), and a short clinical summary.",
+      "- rom / mmt / pain / special: objective measurements exactly as recorded",
+      "  (range of motion in degrees, muscle grades like 4-/5, pain 0-10 ratings,",
+      "  special orthopedic tests positive/negative).",
+      "",
+      "Be conservative and faithful: extract only what the document actually",
+      "says; NEVER invent values, dates, or findings; keep the original language",
+      "of quoted text. Also return patientName as written on the document (for a",
+      "mismatch check) and docDescription, a one-line description of what this",
+      "document is. If the document contains no therapy visit records, return an",
+      "empty visits array and explain what it is in docDescription.",
+      "",
+      "Return ONLY JSON matching the schema.",
+    ].join("\n");
+  }
+
+  function normalizeExtraction(parsed) {
+    const isoDate = (s) => {
+      const t = String(s || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+      const d = new Date(t);
+      if (t && !isNaN(d.getTime())) {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      }
+      return "";
+    };
+    const side = (s) => (s === "left" || s === "right" ? s : null);
+    const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, Number(n) || 0));
+
+    const visits = (Array.isArray(parsed.visits) ? parsed.visits : []).map((v) => {
+      const type = ["eval", "daily", "progress", "discharge"].includes(v.type) ? v.type : "daily";
+      const findings = (v.findings || []).map((f) => {
+        const c = parser.coordForName(f.bodyPart, side(f.side));
+        return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y,
+          summary: String(f.summary || "").trim() };
+      }).filter((f) => f.summary);
+      return {
+        date: isoDate(v.date),
+        type,
+        therapist: String(v.therapist || "").trim(),
+        subjective: String(v.subjective || "").trim(),
+        objective: String(v.objective || "").trim(),
+        assessment: String(v.assessment || "").trim(),
+        treatment: String(v.treatment || "").trim(),
+        findings,
+        rom: (v.rom || []).map((r) => ({ side: side(r.side), joint: String(r.joint || "").toLowerCase().trim(),
+          motion: String(r.motion || "").toLowerCase().trim(), degrees: clamp(r.degrees, 0, 360) }))
+          .filter((r) => r.joint && r.motion),
+        mmt: (v.mmt || []).map((r) => ({ context: String(r.context || "").trim() || null, grade: String(r.grade || "").trim() }))
+          .filter((r) => r.grade),
+        pain: (v.pain || []).map((r) => ({ location: String(r.location || "").trim() || null, score: clamp(r.score, 0, 10) })),
+        special: (v.special || []).map((r) => ({ name: String(r.name || "").trim(), result: r.result === "negative" ? "negative" : "positive" }))
+          .filter((r) => r.name),
+      };
+    }).filter((v) => v.subjective || v.objective || v.assessment || v.treatment || v.findings.length ||
+      v.rom.length || v.mmt.length || v.pain.length || v.special.length);
+
+    // drop exact duplicates (models occasionally emit a visit twice)
+    const seen = new Set();
+    const unique = visits.filter((v) => {
+      const sig = JSON.stringify(v);
+      if (seen.has(sig)) return false;
+      seen.add(sig);
+      return true;
+    });
+
+    // chronological order; undated visits sink to the end
+    unique.sort((a, b) => ((a.date || "9999") < (b.date || "9999") ? -1 : 1));
+
+    return {
+      visits: unique,
+      patientName: String(parsed.patientName || "").trim(),
+      docDescription: String(parsed.docDescription || "").trim(),
+    };
+  }
+
+  async function extractRecords(fileBase64, mime, opts) {
+    opts = opts || {};
+    if (!opts.key) {
+      const e = new Error("Reading scanned documents needs Gemini configured (set a key on the server).");
+      e.code = 501;
+      throw e;
+    }
+    const parts = [
+      { inline_data: { mime_type: mime || "application/pdf", data: fileBase64 } },
+      { text: extractSystem() },
+    ];
+    const parsed = await geminiJson(parts, EXTRACT_SCHEMA, { ...opts, timeout: opts.timeout || 120000 });
+    return { ...normalizeExtraction(parsed), source: "gemini" };
   }
 
   /* ---------------- public entry points ---------------- */
@@ -148,5 +304,6 @@
     return { ...local, source: opts.key ? "local (gemini failed)" : "local" };
   }
 
-  return { refine, insightsRun, refineSystem, refinePrompt, REFINE_SCHEMA, normalizeRefinement, geminiJson, DEFAULT_MODEL, DEFAULT_BASE };
+  return { refine, insightsRun, extractRecords, refineSystem, refinePrompt, extractSystem,
+    REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, DEFAULT_MODEL, DEFAULT_BASE };
 });

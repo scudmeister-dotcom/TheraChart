@@ -255,6 +255,15 @@
     return { ...window.TheraParser.refineTranscript(utterances), source: "local" };
   };
 
+  // Read a scanned/uploaded document (base64) into structured visit records.
+  // Needs the Gemini backend — there is no local OCR fallback.
+  sync.extractRecords = async (fileBase64, mime) => {
+    if (!sync.ai) throw new Error("no AI backend");
+    const r = await api("/api/extract-doc", { method: "POST", body: { pdf: fileBase64, mime } });
+    if (!r.ok) throw new Error((r.data && r.data.error) || "Couldn't read the document.");
+    return r.data;
+  };
+
   sync.getInsights = async (ctx) => {
     if (sync.ai) {
       try {

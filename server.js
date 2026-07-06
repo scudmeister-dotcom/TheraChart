@@ -316,6 +316,18 @@ const server = http.createServer(async (req, res) => {
         const result = await clinicalInsights(ctx || {});
         return json(res, 200, result);
       }
+      if (url.pathname === "/api/extract-doc" && req.method === "POST") {
+        if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        const { pdf, mime } = await readBody(req);
+        if (!pdf || typeof pdf !== "string") return json(res, 400, { error: "No document received." });
+        if (pdf.length > 11 * 1024 * 1024) return json(res, 400, { error: "Document too large (limit ~8 MB)." });
+        try {
+          const result = await ai.extractRecords(pdf, mime, GEMINI_OPTS());
+          return json(res, 200, result);
+        } catch (e) {
+          return json(res, e.code === 501 ? 501 : 500, { error: e.message });
+        }
+      }
       if (url.pathname === "/api/transcribe" && req.method === "POST") {
         const lang = (url.searchParams.get("lang") || "auto").replace(/[^a-z-]/gi, "");
         const wav = await readRawBody(req);

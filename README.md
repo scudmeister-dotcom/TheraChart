@@ -156,6 +156,29 @@ text can contain PHI, using the consumer Gemini API means sending PHI to
 Google; the Privacy panel explains the compliant path (paid Vertex AI Gemini
 under a signed BAA) and the local reviewer alternative.
 
+## Onboarding old charts: import visit history from PDF scans
+
+Bringing a patient over from paper? On the patient's chart, **⇪ Import visit
+history (PDF)** sends a scanned document to Gemini, which reads it into one
+structured entry per visit — dates, note type (eval / daily / progress /
+discharge), subjective/objective/assessment/treatment, body-map findings, and
+measurements (ROM, MMT, pain, special tests). A **review screen** shows every
+extracted visit for you to check against the scan and edit; likely duplicates
+of existing visits are pre-unchecked, and a name-mismatch warning fires if the
+document doesn't match the open chart. Applying creates each kept visit as a
+**locked historical document dated to its original visit**, e-signed with an
+"imported from scanned document" attestation (corrections go through the normal
+amendment flow). This needs Gemini configured — there is no offline reader for
+scans, so without a key the feature reports itself unavailable rather than
+guessing. The whole document (which usually contains the patient's details) is
+what's sent to Gemini; the Privacy panel discloses this.
+
+Because a chart onboarded this way can hold **years of visits**, the clinical
+insights pass keeps only the 12 most recent visits in full and compresses
+everything older into a **history digest** (date range, recurring regions,
+ROM/pain endpoints, key assessments) — so the AI context stays about a page no
+matter how long the chart gets, and trends still span the whole history.
+
 ## Navigation & visual design
 
 - **Modern sidebar** — grouped nav (Clinic / Account), gradient brand mark,
@@ -243,6 +266,7 @@ node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, ca
 node test/merge.test.js    # 13 checks: offline merge never loses records
 node test/refine.test.js   # 30 checks: speaker split, sections, measurements
 node test/insights.test.js # 15 checks: connections, red flags, recommendations
+node test/import.test.js   # 38 checks: PDF-record extraction, history digest, imported docs
 ```
 
 ## Files

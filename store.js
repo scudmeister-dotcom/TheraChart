@@ -416,6 +416,38 @@
     return { doc };
   }
 
+  /** Create a locked historical document from an imported (scanned) record.
+      Dated with the original visit date so it sorts into the chart's
+      chronology; locked from the start (the scan is the source of truth) with
+      the importing clinician's attestation — corrections go via amendment. */
+  function addImportedDoc(patientId, { type, date, title, data }, byUser, sourceName) {
+    if (!canDocument(byUser)) return { error: "Your account can’t create clinical documents." };
+    load();
+    const t = DOC_TITLES[type] ? type : "daily";
+    const when = date ? new Date(date + "T12:00:00") : new Date();
+    const doc = {
+      id: uid("d"), patientId, type: t,
+      title: title || `${DOC_TITLES[t]} — ${date || "undated"} (imported)`,
+      createdBy: byUser.id,
+      createdAt: (isNaN(when.getTime()) ? new Date() : when).toISOString(),
+      status: "signed",
+      imported: true,
+      signatures: [{
+        userId: byUser.id, name: byUser.name,
+        license: byUser.license ? byUser.license.number : null,
+        time: new Date().toISOString(),
+        reason: `Imported from scanned document${sourceName ? ` (${sourceName})` : ""}`,
+      }],
+      amendments: [],
+      data: Object.assign({ mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [] }, data),
+    };
+    touch(doc);
+    state.documents.push(doc);
+    save();
+    audit(byUser.id, "doc-imported", `${doc.title} for ${patientName(getPatient(patientId))}`);
+    return { doc };
+  }
+
   function updateDocData(docId, patch, byUser) {
     const doc = getDoc(docId);
     if (!doc) return { error: "Document not found." };
@@ -638,7 +670,7 @@
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient,
     // documents
-    docsFor, getDoc, DOC_TITLES, createDoc, updateDocData, signDoc, amendDoc,
+    docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, signDoc, amendDoc,
     visitCount, progressDue,
     // calendar
     appointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, cancelAppointment,
