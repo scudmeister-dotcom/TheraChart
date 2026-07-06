@@ -44,17 +44,33 @@ GEMINI_API_KEY=... node server.js      # serves app + shared DB on :8080
 ```
 
 Every phone/tablet/computer on the network opens `http://<that-machine>:8080`.
-This mode adds the shared database, server-side login, offline sync, the
-reminder scheduler, and self-hosted Whisper. The Gemini key can be the
-`GEMINI_API_KEY` env var (recommended) or pasted in **Facility Admin**.
+This mode adds the shared database, server-side login, offline sync, and the
+reminder scheduler. The Gemini key can be the `GEMINI_API_KEY` env var
+(recommended) or pasted in **Facility Admin**.
 
-See `README.md` for the full clinic-server details (Whisper, reminders,
-reaching it from outside the clinic via Tailscale, PWA install).
+Voice dictation uses the browser engine out of the box; to enable **Google
+Cloud Speech-to-Text** (Standard/Chirp, under a BAA) set `GCP_PROJECT` +
+credentials — see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
+
+See `README.md` for the full clinic-server details (reminders, reaching it
+from outside the clinic via Tailscale, PWA install).
 
 ## 3. Plain static hosting (no AI backend)
 
 Serve the folder from any static host (or `python3 -m http.server`). Everything
 works on-device; the AI features fall back to the local reviewer (no Gemini).
+
+## 4. Google Cloud Run — recommended for going live worldwide
+
+The same `server.js` runs as a container on **Cloud Run**, reachable by every
+clinic anywhere, with hosting + database + Speech-to-Text + Gemini all under
+**one Google Cloud BAA**. Because Cloud Run supplies the service-account
+credentials automatically, no key files are needed. This is the path off Vercel
+(which won't sign a BAA on standard plans).
+
+Full step-by-step for a first-timer — create the account, sign the BAA, enable
+the APIs, deploy, and flip on Google Cloud STT + Vertex Gemini — is in
+**[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
 ---
 

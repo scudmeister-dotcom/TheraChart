@@ -177,12 +177,13 @@
   let activeDictation = null; // stop mic when leaving a document
 
   const NAV = [
-    { hash: "#/dashboard", label: "Dashboard", icon: ICON.dash, emr: true },
-    { hash: "#/patients", label: "Patients", icon: ICON.people, emr: true },
-    { hash: "#/calendar", label: "Calendar", icon: ICON.cal, emr: true },
-    { hash: "#/privacy", label: "Privacy & Security", icon: ICON.shield, emr: false },
-    { hash: "#/facility", label: "Facility Admin", icon: ICON.gear, emr: true, adminOnly: true },
-    { hash: "#/profile", label: "My Profile", icon: ICON.user, emr: false },
+    // `short` is the compact label used in the mobile bottom tab bar.
+    { hash: "#/dashboard", label: "Dashboard", short: "Home", icon: ICON.dash, emr: true },
+    { hash: "#/patients", label: "Patients", short: "Patients", icon: ICON.people, emr: true },
+    { hash: "#/calendar", label: "Calendar", short: "Calendar", icon: ICON.cal, emr: true },
+    { hash: "#/privacy", label: "Privacy & Security", short: "Privacy", icon: ICON.shield, emr: false },
+    { hash: "#/facility", label: "Facility Admin", short: "Admin", icon: ICON.gear, emr: true, adminOnly: true },
+    { hash: "#/profile", label: "My Profile", short: "Profile", icon: ICON.user, emr: false },
   ];
 
   function render() {
@@ -254,7 +255,7 @@
       const active = hash.startsWith(n.hash) ||
         (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
       return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
-        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span></a>`;
+        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span></a>`;
     };
     const nav = groups.map((g) => {
       const items = g.items.map(linkHtml).filter(Boolean).join("");
@@ -1079,12 +1080,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <option value="fil-PH">Tagalog / Filipino</option>
         <option value="ceb-PH">Cebuano</option>
       </select>
-      <select id="engineSel" title="Transcription engine — compare them yourself">
-        <option value="browser">Engine: Browser (Google)</option>
-        <option value="whisper">Engine: Private — Whisper</option>
+      <select id="engineSel" title="Dictation engine">
+        <option value="browser">Dictation: Browser (current)</option>
+        <option value="cloud:standard">Dictation: Google Cloud — Standard (BAA)</option>
+        <option value="cloud:chirp">Dictation: Google Cloud — Chirp (BAA)</option>
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
+    ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="figures">
       <figure><figcaption>Front <span class="hint">(patient's L on your right)</span></figcaption><div class="bodymap" id="mapFront">${figureMarkup("front")}</div></figure>
       <figure><figcaption>Back</figcaption><div class="bodymap" id="mapBack">${figureMarkup("back")}</div></figure>
@@ -1115,6 +1118,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
     renderInsightsCard(doc, user);
+    if (S.settings().audioReview) bindAudioReview(doc, user, editable);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
@@ -1423,13 +1427,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   const TREAT_RE = /\b(performed|completed|exercis\w*|therex|sets?|reps?|ultrasound|massage|stretch\w*|mobilizat\w*|manual therapy|gait|ice|heat|e-?stim\w*|modalit\w*|educat\w*|hep|home program|tens)\b/i;
 
-  /* Two interchangeable transcription engines, so clinics can compare:
+  /* Two interchangeable dictation engines the clinician switches between:
      - "browser": the Web Speech API (fast, streams audio to the browser
-       vendor's servers — on Chrome, Google)
-     - "whisper": records locally, converts to 16 kHz WAV in the page, and
-       sends segments to the clinic server's self-hosted Whisper. Audio never
-       leaves the clinic. Segments queue in order — if the server is slow
-       (CPU-only), the transcript simply arrives late; nothing is dropped. */
+       vendor's servers — on Chrome, Google's consumer service). The current
+       default; no BAA, so not for real PHI once live.
+     - "cloud":   records short WAV segments in the page and POSTs them to the
+       server's /api/stt, which proxies to Google Cloud Speech-to-Text under the
+       clinic's BAA (model "standard" or "chirp"). See cloudEngine below. */
 
   function browserEngine({ lang, onText, onInterim, onStatus }) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1453,9 +1457,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         listening = false;
         onStatus("Mic blocked — allow microphone access and retry.", false);
       } else if (event.error === "language-not-supported") {
-        onStatus("This speech language isn't supported here — try the Whisper engine or another device.", listening);
+        onStatus("This speech language isn't supported here — try another device, or type below.", listening);
       } else if (event.error === "network") {
-        onStatus("No internet — the browser engine needs Google's servers. Switch the engine to Whisper (queues offline) or type below.", listening);
+        onStatus("No connection — dictation needs the internet. Type into the box below until you're back online.", listening);
       } else if (event.error !== "no-speech" && event.error !== "aborted") {
         onStatus(`Mic error: ${event.error}`, listening);
       }
@@ -1493,128 +1497,48 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return buf;
   }
 
-  const WHISPER_LANG = { "en-US": "en", "fil-PH": "tl", "ceb-PH": "auto" };
+  // BCP-47 codes Google Cloud Speech-to-Text expects for each UI language
+  const STT_LANG = { "en-US": "en-US", "fil-PH": "fil-PH", "ceb-PH": "ceb-PH" };
 
-  /* Persistent audio queue for the Whisper engine. Segments live in
-     IndexedDB until the clinic server confirms transcription, so dictation
-     recorded offline (home visit, brownout) survives even a page reload and
-     transcribes automatically on reconnect. Audio is deleted the moment its
-     transcript arrives. */
-  const AudioQueue = (() => {
-    let dbp = null;
-    const listeners = new Set();
-    let cachedCount = 0;
-
-    function db() {
-      if (dbp) return dbp;
-      dbp = new Promise((resolve, reject) => {
-        const req = indexedDB.open("therachart-audio", 1);
-        req.onupgradeneeded = () => req.result.createObjectStore("segments", { keyPath: "id", autoIncrement: true });
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-      return dbp;
-    }
-    const tx = async (mode, fn) => {
-      const d = await db();
-      return new Promise((resolve, reject) => {
-        const t = d.transaction("segments", mode);
-        const out = fn(t.objectStore("segments"));
-        t.oncomplete = () => resolve(out && "result" in out ? out.result : undefined);
-        t.onerror = () => reject(t.error);
-      });
-    };
-    const all = () => tx("readonly", (s) => s.getAll());
-    const notify = () => listeners.forEach((fn) => { try { fn(cachedCount); } catch (_) { } });
-    async function refreshCount() {
-      try { cachedCount = ((await all()) || []).length; } catch { cachedCount = 0; }
-      notify();
-    }
-    refreshCount();
-
-    let draining = false;
-    async function drain() {
-      if (draining) return;
-      draining = true;
-      try {
-        for (; ;) {
-          const sync = window.TheraSync || {};
-          if (!(sync.mode === "server" && sync.token)) break;
-          const items = (await all()) || [];
-          cachedCount = items.length;
-          notify();
-          if (!items.length) break;
-          const it = items[0];
-          try {
-            const res = await fetch(`/api/transcribe?lang=${it.lang}`, {
-              method: "POST",
-              headers: { "content-type": "audio/wav", authorization: `Bearer ${sync.token}` },
-              body: it.wav,
-            });
-            const data = await res.json().catch(() => ({}));
-            if (res.ok) {
-              await tx("readwrite", (s) => s.delete(it.id));
-              if (data.text) deliver(it.docId, data.text);
-            } else if (res.status === 400 || res.status === 501) {
-              await tx("readwrite", (s) => s.delete(it.id)); // unrecoverable segment
-              deliver(it.docId, "", data.error);
-            } else break; // auth/server issue — retry next tick
-          } catch { break; } // network — retry next tick
-        }
-      } finally {
-        draining = false;
-        refreshCount();
-      }
-    }
-    setInterval(drain, 5000);
-
-    function deliver(docId, text, error) {
-      const doc = S.getDoc(docId);
-      const user = S.currentUser();
-      if (error) { if (user) S.audit(user.id, "transcription-error", error.slice(0, 200)); return; }
-      if (!doc || !user) return;
-      if (doc.status === "signed" || !S.canDocument(user)) {
-        // the note locked while this segment waited: keep the words in the audit log
-        S.audit(user.id, "late-transcript", `${doc.title}: “${text.slice(0, 200)}”`);
-        return;
-      }
-      // only touch the screen if THIS document is the one open — otherwise a
-      // late segment would draw one note's findings into another note's view
-      const seg = location.hash.split("/");
-      const docOpen = seg[1] === "doc" && seg[2] === docId;
-      routeUtterance(doc, user, text, docOpen ? currentDocState : null, !docOpen);
-    }
-
-    return {
-      async add(docId, lang, wav) {
-        await tx("readwrite", (s) => s.add({ docId, lang, wav, time: Date.now() }));
-        await refreshCount();
-        drain();
-      },
-      pending: () => cachedCount,
-      onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    };
-  })();
-  window.TheraAudioQueue = AudioQueue;
-
-  function whisperEngine({ docId, lang, onText, onInterim, onStatus }) {
+  /* Google Cloud Speech-to-Text engine. Records short WAV segments in the page
+     and POSTs each straight to /api/stt (model = "standard" | "chirp"), which
+     proxies to Google Cloud under the clinic's BAA. Segments are held only in
+     memory and sent immediately — no audio is written to the device — and are
+     delivered in order via a promise chain. */
+  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
+    let pending = 0;               // segments in flight
+    let chain = Promise.resolve(); // keeps segments transcribing in order
 
+    const label = model === "chirp" ? "Google Cloud · Chirp" : "Google Cloud · Standard";
     const status = () => {
-      const pending = AudioQueue.pending();
-      const sync = window.TheraSync || {};
-      const offline = sync.mode !== "server";
-      const q = pending
-        ? offline
-          ? ` — ${pending} segment${pending > 1 ? "s" : ""} queued, will transcribe on reconnect`
-          : ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…`
-        : "";
-      if (listening) onStatus("Listening (private" + (offline ? ", offline" : ", on clinic server") + ")" + q, true);
-      else if (pending) onStatus("Mic off" + q, false);
-      else onStatus("Mic off — all segments transcribed.", false);
+      const q = pending ? ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…` : "";
+      if (listening) onStatus(`Listening (${label})${q}`, true);
+      else if (pending) onStatus(`Mic off${q}`, false);
+      else onStatus("Mic off", false);
     };
-    const unsub = AudioQueue.onChange(status);
+
+    function send(wav) {
+      pending++; status();
+      chain = chain.then(async () => {
+        const sync = window.TheraSync || {};
+        try {
+          const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang()] || "en-US")}&model=${encodeURIComponent(model)}&docId=${encodeURIComponent(docId)}`, {
+            method: "POST",
+            headers: Object.assign({ "content-type": "audio/wav" }, sync.token ? { authorization: `Bearer ${sync.token}` } : {}),
+            body: wav,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) { if (data.text) onText(data.text); }
+          else onStatus(res.status === 501
+            ? "Google Cloud dictation isn't set up on the server yet — see Privacy & Security."
+            : `Dictation error: ${(data.error || "server " + res.status)}`, listening);
+        } catch (_) {
+          onStatus("Couldn't reach the server for dictation — check your connection.", listening);
+        } finally { pending = Math.max(0, pending - 1); status(); }
+      });
+    }
 
     function cut(force) {
       const dur = segMs;
@@ -1625,8 +1549,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const flat = new Float32Array(samples.reduce((n, a) => n + a.length, 0));
       let off = 0;
       for (const a of samples) { flat.set(a, off); off += a.length; }
-      AudioQueue.add(docId, WHISPER_LANG[lang()] || "auto", encodeWav(flat, ctx ? ctx.sampleRate : 16000))
-        .catch(() => onStatus("Couldn't store this dictation segment on the device — check free storage.", listening));
+      send(encodeWav(flat, ctx ? ctx.sampleRate : 16000));
     }
     // rough check that a segment contains any speech-level audio at all
     function voicedTotal(samples) {
@@ -1636,9 +1559,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
 
     return {
-      name: "whisper",
-      pending: () => AudioQueue.pending(),
-      _unsub: unsub,
+      name: "cloud",
+      pending: () => pending,
       async start() {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
@@ -1678,7 +1600,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         try { if (proc) proc.disconnect(); } catch (_) { }
         try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
         try { if (ctx) ctx.close(); } catch (_) { }
-        unsub();
         status();
       },
       setLang() { },
@@ -1703,38 +1624,43 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const engineSel = document.getElementById("engineSel");
     langSel.value = localStorage.getItem("therachart-lang") || "en-US";
 
-    const sync = window.TheraSync || { mode: "local" };
-    // offline still allows Whisper: segments queue and transcribe on reconnect
-    const whisperAvailable = sync.whisper && (sync.mode === "server" || sync.mode === "offline");
-    const whisperOpt = engineSel.querySelector('option[value="whisper"]');
-    if (!whisperAvailable) {
-      whisperOpt.disabled = true;
-      whisperOpt.textContent = sync.mode === "server"
-        ? "Engine: Whisper — not installed on clinic server"
-        : "Engine: Whisper — needs the clinic server";
-    } else if (sync.mode === "offline") {
-      whisperOpt.textContent = "Engine: Whisper — offline, segments will queue";
+    // Google Cloud dictation is offered whenever the server reports it's set up.
+    // Until then (e.g. this preview), the cloud options stay disabled and the
+    // browser engine remains the working default.
+    const stt = (window.TheraSync && window.TheraSync.stt) || { available: false };
+    if (!stt.available) {
+      engineSel.querySelectorAll('option[value^="cloud:"]').forEach((o) => {
+        o.disabled = true;
+        o.textContent = o.textContent.replace(" (BAA)", " — needs Google Cloud setup");
+      });
     }
     let engineChoice = localStorage.getItem("therachart-engine") || "browser";
-    if (engineChoice === "whisper" && !whisperAvailable) engineChoice = "browser";
+    if (engineChoice.startsWith("cloud:") && !stt.available) engineChoice = "browser";
     engineSel.value = engineChoice;
 
     let listening = false;
+    // deliver a finished utterance, but only draw into the note if it's still
+    // the one on screen — a cloud segment can land just after we navigate away
+    const deliver = (text) => {
+      const seg = location.hash.split("/");
+      const open = seg[1] === "doc" && seg[2] === doc.id;
+      routeUtterance(doc, user, text, open ? currentDocState : null, !open);
+    };
     const callbacks = {
       docId: doc.id,
       lang: () => langSel.value,
-      onText: (text) => routeUtterance(doc, user, text, dstate),
+      onText: deliver,
       onInterim: (t) => { interimEl.textContent = t ? t + " …" : "…"; },
       onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
     };
 
     let engine = null;
     function makeEngine() {
-      engine = engineChoice === "whisper" ? whisperEngine(callbacks) : browserEngine(callbacks);
-      if (!engine) {
-        statusEl.textContent = whisperAvailable
-          ? "Browser speech not supported here — switch the engine to Whisper."
-          : "Speech not supported in this browser — type into the dictation box instead.";
+      if (engineChoice.startsWith("cloud:")) {
+        engine = cloudEngine(Object.assign({}, callbacks, { model: engineChoice.split(":")[1] || "standard" }));
+      } else {
+        engine = browserEngine(callbacks);
+        if (!engine) statusEl.textContent = "Speech not supported in this browser — type into the dictation box instead.";
       }
       window.__theraDict = engine; // test hook
     }
@@ -1744,10 +1670,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       micBtn.classList.toggle("listening", listening);
       micLabel.textContent = listening ? "Stop" : "Listen";
       if (!listening && engine && engine.pending() === 0) statusEl.textContent = "Mic off";
-      if (listening) {
-        statusEl.textContent = engineChoice === "whisper"
-          ? "Listening (private, on clinic server)"
-          : `Listening… (${langSel.selectedOptions[0].text}, via browser/Google)`;
+      // the cloud engine writes its own richer status (model + queue); only the
+      // browser engine needs setUI to set the "Listening…" line
+      if (listening && !engineChoice.startsWith("cloud:")) {
+        statusEl.textContent = `Listening… (${langSel.selectedOptions[0].text})`;
       }
     };
 
@@ -1772,8 +1698,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     engineSel.addEventListener("change", () => {
       const wasListening = listening;
-      // always stop the old engine — even when the mic is off it may hold a
-      // queue listener (whisper) that would otherwise leak on every switch
       if (engine) engine.stop();
       listening = false;
       engineChoice = engineSel.value;
@@ -1781,9 +1705,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       makeEngine();
       if (wasListening && engine) {
         listening = true;
-        Promise.resolve(engine.start()).then((ok) => {
-          if (ok === false) { listening = false; setUI(); }
-        });
+        Promise.resolve(engine.start()).then((ok) => { if (ok === false) { listening = false; setUI(); } });
       }
       setUI();
     });
@@ -1791,6 +1713,88 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     activeDictation = {
       stop() { if (engine) engine.stop(); listening = false; },
     };
+  }
+
+  /* Temporary session-audio review panel. Shows only when the facility enabled
+     the feature. Lets the clinician record the patient's consent, then (once
+     Google Cloud dictation is in use) replay the kept segments to double-check
+     the transcript. Audio auto-deletes when the note is signed or after the
+     retention window; here we also offer an immediate "Delete now". */
+  async function bindAudioReview(doc, user, editable) {
+    const host = document.getElementById("audioReview");
+    if (!host) return;
+    const sync = window.TheraSync || {};
+    const onServer = sync.mode === "server" && sync.token;
+    const p = S.getPatient(doc.patientId);
+    const consent = p && p.audioConsent && p.audioConsent.granted;
+
+    // fetch kept segments (server-side; only meaningful in clinic/cloud mode)
+    let segments = [], reviewDays = 7;
+    if (onServer) {
+      try {
+        const r = await fetch(`/api/audio?docId=${encodeURIComponent(doc.id)}`, { headers: { authorization: `Bearer ${sync.token}` } });
+        if (r.ok) { const d = await r.json(); segments = d.segments || []; reviewDays = d.reviewDays || 7; }
+      } catch (_) { /* offline: just show the consent state */ }
+    }
+
+    const consentLine = consent
+      ? `<span class="chip good">🎙 Consented</span> <span style="color:var(--muted)">Patient agreed ${p.audioConsent.at ? fmtDT(p.audioConsent.at) : ""} · audio is kept only to double-check dictation, then deleted when you sign (or after ${reviewDays} days).</span>${editable ? ` <button class="btn small" id="arRevoke">Revoke consent</button>` : ""}`
+      : `<span class="chip muted">Session-audio review available</span> <span style="color:var(--muted)">With the patient's consent, Google Cloud dictation audio is kept briefly so you can re-check the transcript, then auto-deleted.</span>${editable ? ` <button class="btn small" id="arConsent">Record patient consent</button>` : ""}`;
+
+    const segList = segments.length
+      ? `<div style="margin-top:8px; display:flex; flex-direction:column; gap:6px">
+          ${segments.map((s, i) => `<div style="display:flex; align-items:center; gap:8px; font-size:12.5px">
+            <button class="btn small" data-ar-play="${esc(s.id)}">▶ Segment ${i + 1}</button>
+            <span style="color:var(--muted)">${fmtDT(new Date(s.time).toISOString())} · ${(s.size / 1024).toFixed(0)} KB</span>
+          </div>`).join("")}
+          <div><button class="btn small danger" id="arDeleteAll">Delete all session audio now</button></div>
+        </div>`
+      : consent
+        ? `<div style="margin-top:6px; font-size:12.5px; color:var(--muted)">No session audio kept yet — dictate with a Google Cloud engine and segments will appear here for review.</div>`
+        : "";
+
+    host.innerHTML = `<div class="banner info" style="display:block">
+      <div style="font-weight:600; margin-bottom:4px">Session audio (temporary)</div>
+      <div style="font-size:12.5px; line-height:1.6">${consentLine}</div>
+      ${segList}
+    </div>`;
+
+    const rec = document.getElementById("arConsent");
+    if (rec) rec.addEventListener("click", () => {
+      S.updatePatient(p.id, { audioConsent: { granted: true, at: new Date().toISOString(), by: user.id } }, user.id);
+      S.audit(user.id, "audio-consent-granted", S.patientName(p));
+      bindAudioReview(doc, user, editable);
+    });
+    const rev = document.getElementById("arRevoke");
+    if (rev) rev.addEventListener("click", () => {
+      S.updatePatient(p.id, { audioConsent: { granted: false, at: new Date().toISOString(), by: user.id } }, user.id);
+      S.audit(user.id, "audio-consent-revoked", S.patientName(p));
+      deleteSessionAudio(doc.id); // stop keeping any audio already captured
+      bindAudioReview(doc, user, editable);
+    });
+    const del = document.getElementById("arDeleteAll");
+    if (del) del.addEventListener("click", async () => { await deleteSessionAudio(doc.id); bindAudioReview(doc, user, editable); });
+    host.querySelectorAll("[data-ar-play]").forEach((b) => b.addEventListener("click", () => playSegment(doc.id, b.dataset.arPlay, b)));
+  }
+
+  async function deleteSessionAudio(docId) {
+    const sync = window.TheraSync || {};
+    if (!(sync.mode === "server" && sync.token)) return;
+    try { await fetch(`/api/audio?docId=${encodeURIComponent(docId)}`, { method: "DELETE", headers: { authorization: `Bearer ${sync.token}` } }); } catch (_) { }
+  }
+
+  async function playSegment(docId, segId, btn) {
+    const sync = window.TheraSync || {};
+    if (!(sync.mode === "server" && sync.token)) return;
+    const old = btn.textContent; btn.textContent = "Loading…"; btn.disabled = true;
+    try {
+      const r = await fetch(`/api/audio?docId=${encodeURIComponent(docId)}&seg=${encodeURIComponent(segId)}`, { headers: { authorization: `Bearer ${sync.token}` } });
+      if (!r.ok) throw new Error("unavailable");
+      const url = URL.createObjectURL(await r.blob());
+      const a = new Audio(url);
+      a.onended = () => URL.revokeObjectURL(url);
+      await a.play();
+    } catch (_) { /* ignore */ } finally { btn.textContent = old; btn.disabled = false; }
   }
 
   function appendField(doc, field, sentence, silent) {
@@ -2283,6 +2287,7 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
       if (m.querySelector("#sigPin").value !== user.pin) { err.textContent = "Incorrect PIN."; return; }
       const res = S.signDoc(doc.id, user, m.querySelector("#sigName").value, "");
       if (res.error) { err.textContent = res.error; return; }
+      deleteSessionAudio(doc.id); // signing locks the note — the review audio is no longer needed
       closeModal();
       render();
     });
@@ -2501,51 +2506,51 @@ ${ths.map((t) => {
 
   function privacyView(user) {
     const log = S.auditLog().slice().reverse().slice(0, 100);
-    const onServer = window.TheraSync && window.TheraSync.mode === "server";
     const geminiOn = window.TheraSync && window.TheraSync.refine === "gemini";
     return `
 <div class="page-head">
   <div><h1>Privacy &amp; Security</h1><div class="sub">Where your information lives and what the AI features do with it — in plain terms</div></div>
 </div>
-<div class="cards-2">
-  <div>
-    <div class="card">
-      <h2>🔐 Your records stay with you</h2>
-      <p style="font-size:13px">${onServer
-        ? "Patient records live on <b>your clinic's own server</b> — a computer your facility owns, on your own network. Each device keeps a copy so you can work through outages and home visits, and changes sync back automatically. No records are stored in a third-party cloud."
-        : "Everything — patients, notes, schedules, transcripts — is stored <b>right here on this device</b>. Nothing is uploaded anywhere. (Run the included clinic server to share records between your clinic's devices, still entirely on your own hardware.)"}</p>
-      <p style="font-size:13px">And you stay in control: download a complete backup or erase everything, any time.</p>
-      <div style="display:flex; gap:8px; flex-wrap:wrap">
-        <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
-        <button class="btn small danger" id="wipeBtn">Erase all data</button>
-      </div>
-    </div>
-    <div class="card">
-      <h2>🛡 Who can see what</h2>
-      <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
-        <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
-        <li>Expired licenses and voided accounts lose access automatically</li>
-        <li>Signed documents lock — later changes need a signed, authorized amendment</li>
-        <li>Notable actions are recorded in the activity log below</li>
-      </ul>
+<div class="cards-3" style="align-items:stretch">
+  <div class="card">
+    <h2>🔐 Where your data lives</h2>
+    <p style="font-size:13px">TheraChart runs as one secure service on <b>Google Cloud</b>, so your clinic can open it from anywhere — the office, a home visit, another city — with the same login. Records are kept in an <b>encrypted database</b>, and each clinic's data is walled off from every other clinic's.</p>
+    <p style="font-size:13px">Google Cloud holds that data under a signed <b>Business Associate Agreement (BAA)</b> — the healthcare contract that legally binds them to protect patient information. Nothing is stored on a service that isn't under that agreement.</p>
+    <p style="font-size:13px">You stay in control: download a complete backup or erase everything, any time.</p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
+      <button class="btn small danger" id="wipeBtn">Erase all data</button>
     </div>
   </div>
-  <div>
-    <div class="card">
-      <h2>✦ What the AI features do with your information</h2>
-      <p style="font-size:13px">TheraChart uses AI for three things — turning speech into text, tidying up the finished note, and suggesting clinical insights. Here is exactly what each one sends, and where.</p>
-      <p style="font-size:13px"><b>Voice dictation.</b> With the <b>Browser engine</b>, the audio of what's spoken goes to Google, comes back as text, and that's the whole trip — TheraChart never keeps audio. Prefer to keep audio in-house? Switch any note to the <b>Whisper engine</b> and speech is transcribed on your clinic's own server instead. (Dictating offline? The recording waits safely on this device and is deleted the moment it's transcribed.)</p>
-      <p style="font-size:13px"><b>Note cleanup &amp; clinical insights${geminiOn ? " — Google Gemini" : ""}.</b> ${geminiOn
-        ? "When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — the transcript, or a summary of the chart's findings and history, never audio and never the patient's name — is sent to Google's Gemini AI. It reads that, tidies the wording, and suggests findings or connections. Nothing is saved until you've reviewed it, and you can edit or reject every suggestion."
-        : "These run on a built-in reviewer right on this device — nothing is sent anywhere. (A clinic can optionally connect Google's Gemini AI for smarter results; this one hasn't.)"}</p>
-      <p style="font-size:13px"><b>Importing scanned records.</b> When you import a PDF of past visits, that <b>whole document</b> — which usually includes the patient's details — is sent to Gemini to be read into chart entries. Every extracted visit is shown to you for review and correction before anything is saved. ${geminiOn ? "" : "(This clinic hasn't connected Gemini, so PDF import is unavailable rather than guessed at.)"}</p>
-      <p style="font-size:13px; margin-bottom:0"><b>Worth knowing.</b> Using a cloud AI simply means one piece of data — dictated audio (browser engine) or note text (Gemini) — travels to Google to be processed, and the result comes back. These are Google's general services without a healthcare-specific agreement, so clinics handling regulated patient data can stick to the private options above, or connect Gemini through <b>Vertex AI under a signed agreement</b> (set the key as an environment variable or in Facility Admin). Either way, the AI only ever suggests — a licensed clinician reviews and signs everything.</p>
-    </div>
+  <div class="card">
+    <h2>🎤 Voice dictation</h2>
+    <p style="font-size:13px">When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b>, which turns it into text and sends it straight back — under the <b>same Google Cloud BAA</b>, never a free consumer speech service. <b>By default the audio itself is kept only in memory and discarded</b> the moment it's transcribed; only the transcript is saved.</p>
+    <p style="font-size:13px"><b>Optional session-audio review.</b> A clinic can turn on a feature — off by default — that keeps the dictation audio briefly <b>for patients who consent</b>, so a clinician can replay it to double-check the transcript. That kept audio is <b>automatically deleted the moment the note is signed</b>, or after the clinic's short retention window, whichever comes first. It's never kept long-term, and the patient's consent is recorded in the chart.</p>
+  </div>
+  <div class="card">
+    <h2>✦ AI cleanup &amp; insights${geminiOn ? " (Gemini)" : ""}</h2>
+    ${geminiOn
+      ? `<p style="font-size:13px">When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, under the same Google Cloud BAA. Under that agreement, <b>Google does not use your data to train its models</b>.</p>
+    <p style="font-size:13px"><b>Importing a scanned PDF</b> of past visits sends that document the same way, to be read into chart entries.</p>
+    <p style="font-size:13px; margin-bottom:0">The AI only ever suggests — every result is shown for your review, and <b>nothing is saved until a licensed clinician approves and signs it</b>.</p>`
+      : `<p style="font-size:13px">Cleanup and insights run on a built-in reviewer <b>right on this device</b> — nothing is sent anywhere.</p>
+    <p style="font-size:13px; margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> (under the BAA) for smarter results and scanned-PDF import; this one hasn't. Either way, a licensed clinician reviews and signs everything.</p>`}
   </div>
 </div>
-<div class="card">
-  <h2>A note on real-world use</h2>
-  <p style="font-size:13px; margin:0">This is a demonstration build. Before storing real patient data, deploy TheraChart to meet your local requirements — the <b>Data Privacy Act of 2012 (RA 10173)</b> in the Philippines, <b>HIPAA</b> in the US — adding encrypted storage, per-user credentials, and consented reminder messaging.</p>
+<div class="cards-2">
+  <div class="card">
+    <h2>🛡 Who can see what</h2>
+    <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
+      <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
+      <li>Expired licenses and voided accounts lose access automatically</li>
+      <li>Signed documents lock — later changes need a signed, authorized amendment</li>
+      <li>Notable actions are recorded in the activity log below</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>A note on real-world use</h2>
+    <p style="font-size:13px; margin:0">This is a demonstration build. Before storing real patient data, deploy TheraChart's production configuration — sign the <b>Google Cloud BAA</b>, enable the encrypted database and the Vertex AI &amp; Speech-to-Text endpoints, and replace the demo PIN logins with real per-user credentials — to meet <b>HIPAA</b> (US) or the <b>Data Privacy Act of 2012 / RA 10173</b> (Philippines).</p>
+  </div>
 </div>
 <div class="card">
   <h2>Activity log <span style="font-weight:400; color:var(--muted); font-size:12px">most recent 100 events</span></h2>
@@ -2607,6 +2612,13 @@ ${ths.map((t) => {
         <input type="checkbox" class="st-day" value="${i}" ${st.workDays.includes(i) ? "checked" : ""}/>${d}</label>`).join("")}
       </div>
     </div>
+    <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px">
+        <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
+        Allow temporary session-audio review</label>
+      <div style="font-size:12px; color:var(--muted); margin:4px 0 8px">Off by default. When on, Google Cloud dictation audio is kept — <b>only for patients who consent</b> — so a clinician can re-check the transcript, then it's auto-deleted when the note is signed or after the window below. Audio is never kept long-term. See Privacy &amp; Security.</div>
+      <div class="field" style="max-width:220px"><label>Auto-delete kept audio after (days)</label><input id="st-audio-days" type="number" min="1" max="90" value="${st.audioReviewDays || 7}" /></div>
+    </div>
     <button class="btn primary" id="stSave">Save settings</button>
   </div>
   <div class="card">
@@ -2652,6 +2664,8 @@ ${ths.map((t) => {
         dayStartHour: Number(document.getElementById("st-start").value) || 8,
         dayEndHour: Number(document.getElementById("st-end").value) || 17,
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
+        audioReview: document.getElementById("st-audio").checked,
+        audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
       }, user);
       render();
     });

@@ -170,6 +170,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   transition: background 0.16s, box-shadow 0.16s;
 }
 .nav-ico svg { opacity: 0.9; }
+/* compact label only used in the mobile bottom tab bar */
+.nav-label-short { display: none; }
 .nav-link:hover { background: rgba(255, 255, 255, 0.06); transform: translateX(2px); }
 .nav-link.active {
   color: #fff;
@@ -294,8 +296,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .chip.info { background: var(--accent-soft); color: var(--accent); }
 .chip.muted { background: var(--hover); color: var(--muted); }
 
+/* Block flow (not flex): banner text mixes plain text with inline <b>/<a>,
+   and a flex row would split each run into its own cramped column on narrow
+   screens. Leading glyphs (◈ △ ⚠) are literal text, so no flex is needed. */
 .banner {
-  display: flex; align-items: center; gap: 10px;
+  display: block;
   padding: 11px 14px; border-radius: 11px; margin-bottom: 16px;
   font-size: 13.5px; font-weight: 500;
   border: 1px solid var(--border);
@@ -659,11 +664,92 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   #printArea .sig-line { margin-top: 8px; font-style: italic; }
 }
 
+/* ---------------- mobile (phones & small tablets) ----------------
+   Native app shell: a slim fixed top bar (brand + account) and a fixed
+   bottom tab bar (navigation), so the main content owns the screen like a
+   real iOS/Android app instead of scrolling past a tall sidebar. */
 @media (max-width: 860px) {
-  .shell { flex-direction: column; }
-  .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .sidebar .brand { padding-bottom: 4px; }
+  .shell { display: block; }
+
+  /* sidebar → fixed top app bar */
+  .sidebar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+    width: 100%; height: auto;
+    flex-direction: row; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .sidebar .brand { padding: 0; flex: 1; min-width: 0; }
+  .sidebar .brand .logo { width: 34px; height: 34px; border-radius: 10px; }
+  .sidebar .brand-text b { font-size: 15px; }
+  .sidebar .brand-text span { font-size: 9px; letter-spacing: 2px; }
   .sidebar .spacer { display: none; }
-  .userchip { border-top: none; margin-left: auto; }
-  .content { padding: 16px; }
+  .sidebar .userchip { border-top: none; margin: 0; padding: 0; gap: 8px; flex: none; }
+  .sidebar .userchip .who { display: none; }          /* name shown in the page header instead */
+  .sidebar .userchip .avatar { width: 32px; height: 32px; font-size: 12px; }
+  .sidebar .userchip .signout { width: 36px; height: 36px; }
+
+  /* nav lifts out of the sidebar into a fixed bottom tab bar */
+  .nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+    flex-direction: row; justify-content: space-around; gap: 0;
+    padding: 6px 4px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 92%, #000), var(--sidebar));
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.28);
+  }
+  .nav-group { display: contents; }                   /* flatten both groups into one tab row */
+  .nav-group-label { display: none; }
+  .nav-label { display: none; }
+  .nav-label-short { display: block; font-size: 10px; font-weight: 600; line-height: 1.1; }
+  .nav-link {
+    flex: 1; min-width: 0; margin: 0;
+    flex-direction: column; justify-content: center; align-items: center; text-align: center;
+    gap: 3px; padding: 5px 2px; border-radius: 10px;
+  }
+  .nav-link:hover { background: none; transform: none; }
+  .nav-link.active { background: none; color: #fff; }
+  .nav-link.active::before { display: none; }          /* drop the left accent bar */
+  .nav-link.active .nav-ico {
+    background: linear-gradient(145deg, #3ec6d0, #0e7c86);
+    box-shadow: 0 3px 10px rgba(14, 124, 134, 0.5);
+  }
+  .nav-ico { width: 30px; height: 30px; }
+
+  /* content clears both fixed bars (plus notch / home indicator) */
+  .content {
+    padding: 16px;
+    padding-top: calc(66px + env(safe-area-inset-top));
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+
+  /* 16px form controls stop iOS Safari from zooming in on focus */
+  input, select, textarea { font-size: 16px; }
+  /* roomier tap targets */
+  .btn { padding: 10px 15px; }
+  .btn.small { padding: 7px 12px; }
+  .login-user { padding: 12px 14px; }
+
+  /* wide tables scroll horizontally instead of crushing their columns */
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.list th, table.list td { white-space: nowrap; }
+  .cal-grid { min-width: 480px; }
 }
+
+/* modal becomes a bottom sheet on phones — thumb-reachable, native feel */
+@media (max-width: 560px) {
+  .modal-backdrop { align-items: end; padding: 0; }
+  .modal, .modal.wide {
+    width: 100%; max-width: 100%;
+    border-radius: 18px 18px 0 0;
+    max-height: 92vh;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+    animation: sheet-up 0.22s ease-out;
+  }
+  .modal .modal-actions { position: sticky; bottom: 0; background: var(--panel); padding-top: 10px; }
+}
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .modal { animation: none !important; } }

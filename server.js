@@ -27,7 +27,6 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { execFile } = require("child_process");
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOT = __dirname;
@@ -35,6 +34,11 @@ const DATA_DIR = process.env.THERACHART_DATA || path.join(ROOT, "data");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const DATA_FILE = path.join(DATA_DIR, "therachart.json");
 const REV_FILE = path.join(DATA_DIR, "rev");
+// Temporary session-audio review (opt-in). Kept only to let a clinician re-check
+// dictation, then auto-deleted on sign or after a few days. INTERIM: on Cloud Run
+// this local disk is ephemeral — at go-live move these blobs to Cloud Storage
+// (encrypted, lifecycle auto-delete) alongside the Cloud SQL migration.
+const AUDIO_DIR = path.join(DATA_DIR, "audio");
 
 /* ---- file-backed storage injected into the shared store ---- */
 globalThis.THERACHART_STORAGE = {
@@ -125,48 +129,165 @@ function bootstrapInfo() {
   };
 }
 
-/* ---- self-hosted transcription (Whisper) ----
-   The browser records speech, converts it to 16 kHz WAV locally, and POSTs
-   it here. Audio is transcribed on THIS machine and deleted — it never
-   reaches a third party. Engine resolution:
-     1. WHISPER_CMD env — any shell command with {file} and optional {lang}
-        placeholders (e.g. whisper.cpp: 'whisper-cli -m model.bin -nt -f {file}')
-     2. bundled whisper/transcribe.py if python3 + faster-whisper are installed
-     3. otherwise transcription reports "engine not installed" with setup help */
+/* ---- speech-to-text (Google Cloud Speech-to-Text v2, under your BAA) ----
+   The browser records speech, encodes 16 kHz WAV in the page, and POSTs each
+   short segment here. This proxies the audio to Google Cloud Speech-to-Text, so
+   the audio travels only from your own server to Google under your Google Cloud
+   BAA — never to a free/consumer speech service. Two models are offered:
+     - "standard" → Google's latest_long model (lower cost)
+     - "chirp"    → Google's Chirp model (best multilingual, incl. Tagalog/Cebuano)
 
-let whisperCmd = process.env.WHISPER_CMD || null;
-let whisperReady = !!whisperCmd;
+   Configure with environment variables (see GOOGLE_SETUP.md):
+     GCP_PROJECT   your Google Cloud project id           (required)
+     STT_LOCATION  recognition region (default us-central1; chirp needs a region, not "global")
+   Credentials — first one found wins:
+     GCP_ACCESS_TOKEN                a short-lived OAuth token (quick tests: `gcloud auth print-access-token`)
+     GOOGLE_APPLICATION_CREDENTIALS  path to a service-account key JSON (local dev)
+     GCP_SA_KEY                      the service-account key JSON inline (one env var)
+     (on Cloud Run / GCE nothing is needed — the attached service account is used automatically) */
 
-function detectWhisper() {
-  if (whisperCmd) { console.log(`[whisper] using WHISPER_CMD`); return; }
-  execFile("python3", ["-c", "import faster_whisper"], (err) => {
-    if (!err) {
-      whisperCmd = `python3 ${JSON.stringify(path.join(ROOT, "whisper", "transcribe.py"))} {file} {lang}`;
-      whisperReady = true;
-      console.log(`[whisper] faster-whisper detected — private transcription enabled (model: ${process.env.WHISPER_MODEL || "small"})`);
-    } else {
-      console.log("[whisper] not installed — run 'pip install faster-whisper' (or set WHISPER_CMD) to enable private transcription");
-    }
+const GCP_PROJECT = process.env.GCP_PROJECT || "";
+const STT_LOCATION = process.env.STT_LOCATION || "us-central1";
+const STT_MODELS = { standard: "latest_long", chirp: "chirp" };
+
+function sttCredentialSource() {
+  if (process.env.GCP_ACCESS_TOKEN) return "token";
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) return "key-file";
+  if (process.env.GCP_SA_KEY) return "key-inline";
+  if (process.env.K_SERVICE || process.env.GCE_METADATA_HOST) return "metadata"; // Cloud Run / GCE
+  return null;
+}
+function sttConfigured() { return !!(GCP_PROJECT && sttCredentialSource()); }
+function sttStatus() { return { available: sttConfigured(), models: Object.keys(STT_MODELS), location: STT_LOCATION }; }
+
+// ---- OAuth access token (cached until shortly before expiry) ----
+let _tok = { value: null, exp: 0 };
+async function gcpAccessToken() {
+  const now = Date.now();
+  if (_tok.value && now < _tok.exp - 60000) return _tok.value;
+  const src = sttCredentialSource();
+  if (src === "token") { _tok = { value: process.env.GCP_ACCESS_TOKEN, exp: now + 50 * 60 * 1000 }; return _tok.value; }
+  if (src === "key-file" || src === "key-inline") {
+    const keyJson = JSON.parse(src === "key-inline"
+      ? process.env.GCP_SA_KEY
+      : fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
+    const t = await jwtBearerToken(keyJson);
+    _tok = { value: t.access_token, exp: now + (t.expires_in - 30) * 1000 };
+    return _tok.value;
+  }
+  // metadata server (Cloud Run / GCE) — no key file needed
+  const host = process.env.GCE_METADATA_HOST || "metadata.google.internal";
+  const r = await fetch(`http://${host}/computeMetadata/v1/instance/service-accounts/default/token`,
+    { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error("Could not get a Google Cloud token from the metadata server.");
+  const t = await r.json();
+  _tok = { value: t.access_token, exp: now + (t.expires_in - 30) * 1000 };
+  return _tok.value;
+}
+
+// self-signed JWT → OAuth2 token (service-account flow), zero-dependency
+async function jwtBearerToken(key) {
+  const b64 = (o) => Buffer.from(typeof o === "string" ? o : JSON.stringify(o)).toString("base64url");
+  const iat = Math.floor(Date.now() / 1000);
+  const claim = { iss: key.client_email, scope: "https://www.googleapis.com/auth/cloud-platform",
+    aud: "https://oauth2.googleapis.com/token", iat, exp: iat + 3600 };
+  const input = `${b64({ alg: "RS256", typ: "JWT" })}.${b64(claim)}`;
+  const sig = crypto.createSign("RSA-SHA256").update(input).sign(key.private_key).toString("base64url");
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${input}.${sig}`,
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Google token exchange failed: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+
+async function transcribe(wavBuffer, lang, modelKey) {
+  if (!sttConfigured()) {
+    throw Object.assign(new Error(
+      "Google Cloud Speech-to-Text isn't set up on this server yet. Set GCP_PROJECT and a Google credential (see GOOGLE_SETUP.md), then restart."), { code: 501 });
+  }
+  const model = STT_MODELS[modelKey] || STT_MODELS.standard;
+  const token = await gcpAccessToken();
+  const host = STT_LOCATION === "global" ? "speech.googleapis.com" : `${STT_LOCATION}-speech.googleapis.com`;
+  const url = `https://${host}/v2/projects/${GCP_PROJECT}/locations/${STT_LOCATION}/recognizers/_:recognize`;
+  const body = {
+    config: { autoDecodingConfig: {}, model, languageCodes: [lang && lang !== "auto" ? lang : "en-US"] },
+    content: wavBuffer.toString("base64"),
+  };
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Speech-to-Text failed: ${(data.error && data.error.message) || `HTTP ${r.status}`}`);
+  return (data.results || [])
+    .map((res) => (res.alternatives && res.alternatives[0] && res.alternatives[0].transcript) || "")
+    .join(" ").trim();
+}
+
+/* ---- temporary session-audio review (opt-in, auto-deleting) ----
+   Audio is kept ONLY when the whole chain opts in: the facility turned the
+   feature on, the patient consented, and the note isn't signed yet. It exists
+   just long enough for a clinician to re-check the dictation, then it's deleted
+   the moment the note is signed (or by the sweep after `audioReviewDays`). This
+   is the one exception to "TheraChart never stores audio," and it's disclosed. */
+function audioReviewDays() { return Math.max(1, Number(store.settings().audioReviewDays) || 7); }
+function audioReviewOn() { return !!store.settings().audioReview; }
+
+// server-side gate: may we keep audio for this document right now?
+function audioRetentionOK(doc) {
+  if (!audioReviewOn() || !doc || doc.status === "signed") return false;
+  const p = store.getPatient(doc.patientId);
+  return !!(p && p.audioConsent && p.audioConsent.granted);
+}
+const docAudioDir = (docId) => path.join(AUDIO_DIR, String(docId).replace(/[^a-z0-9_-]/gi, ""));
+
+function saveAudioSegment(docId, wavBuffer) {
+  const dir = docAudioDir(docId);
+  fs.mkdirSync(dir, { recursive: true });
+  const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.wav`;
+  fs.writeFileSync(path.join(dir, name), wavBuffer);
+  return name;
+}
+function listAudioSegments(docId) {
+  const dir = docAudioDir(docId);
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".wav")); } catch { return []; }
+  return files.sort().map((f) => {
+    let size = 0; try { size = fs.statSync(path.join(dir, f)).size; } catch {}
+    return { id: f, time: Number(f.split("-")[0]) || 0, size };
   });
 }
-detectWhisper();
-
-function transcribe(wavBuffer, lang) {
-  return new Promise((resolve, reject) => {
-    if (!whisperReady) {
-      return reject(Object.assign(new Error(
-        "Whisper is not installed on the clinic server. Run 'pip install faster-whisper' there (or set WHISPER_CMD) and restart."), { code: 501 }));
-    }
-    const tmp = path.join(DATA_DIR, `dictation-${crypto.randomBytes(6).toString("hex")}.wav`);
-    fs.writeFileSync(tmp, wavBuffer);
-    const cmd = whisperCmd.replace("{file}", JSON.stringify(tmp)).replace("{lang}", lang || "auto");
-    execFile("/bin/sh", ["-c", cmd], { timeout: 180000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-      try { fs.unlinkSync(tmp); } catch { }
-      if (err) return reject(new Error(`transcription failed: ${(stderr || err.message).slice(0, 400)}`));
-      resolve(stdout.trim());
-    });
-  });
+function deleteAudio(docId) {
+  const dir = docAudioDir(docId);
+  let n = 0;
+  try { for (const f of fs.readdirSync(dir)) { fs.unlinkSync(path.join(dir, f)); n++; } fs.rmdirSync(dir); } catch {}
+  return n;
 }
+
+// backstop sweep: drop audio for notes that are now signed, gone, or too old
+function audioSweep() {
+  let dirs = [];
+  try { dirs = fs.readdirSync(AUDIO_DIR); } catch { return; }
+  const maxAgeMs = audioReviewDays() * 24 * 3600 * 1000;
+  let purged = false;
+  for (const docId of dirs) {
+    const doc = store.getDoc(docId);
+    let newest = 0;
+    for (const s of listAudioSegments(docId)) newest = Math.max(newest, s.time);
+    const stale = newest && Date.now() - newest > maxAgeMs;
+    if (!doc || doc.status === "signed" || !audioReviewOn() || stale) {
+      const n = deleteAudio(docId);
+      if (n) { purged = true; store.audit(null, "audio-purged", `${docId}: ${n} segment(s) deleted (${!doc ? "note gone" : doc.status === "signed" ? "signed" : stale ? "expired" : "review off"})`); }
+    }
+  }
+  if (purged) bumpRev(); // let devices pick up the new audit entries
+}
+setInterval(() => { try { audioSweep(); } catch (e) { console.error("[audio] sweep failed:", e.message); } }, 3600 * 1000);
 
 function readRawBody(req, limit = 25 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -254,7 +375,7 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
-      return json(res, 200, { ok: true, server: "therachart", rev, whisper: whisperReady, refine: activeGeminiKey() ? "gemini" : "local" });
+      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: activeGeminiKey() ? "gemini" : "local" });
     }
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
@@ -264,7 +385,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/ai-status") {
       const mode = activeGeminiKey() ? "gemini" : "local";
-      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL });
+      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL, stt: sttStatus() });
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const { userId, pin } = await readBody(req);
@@ -328,16 +449,46 @@ const server = http.createServer(async (req, res) => {
           return json(res, e.code === 501 ? 501 : 500, { error: e.message });
         }
       }
-      if (url.pathname === "/api/transcribe" && req.method === "POST") {
-        const lang = (url.searchParams.get("lang") || "auto").replace(/[^a-z-]/gi, "");
+      if (url.pathname === "/api/stt" && req.method === "POST") {
+        const lang = (url.searchParams.get("lang") || "en-US").replace(/[^a-z-]/gi, "");
+        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z_]/gi, "");
+        const docId = url.searchParams.get("docId") || "";
         const wav = await readRawBody(req);
         if (wav.length < 200) return json(res, 400, { error: "Empty audio." });
+        // opt-in temporary retention: keep the raw segment for later review if
+        // the facility enabled it and the patient consented (even if transcription
+        // fails — the audio is exactly what you'd want to fall back on)
+        const doc = docId ? store.getDoc(docId) : null;
+        let retained = false;
+        if (doc && audioRetentionOK(doc)) { try { saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         try {
-          const text = await transcribe(wav, lang);
-          return json(res, 200, { text });
+          const text = await transcribe(wav, lang, model);
+          return json(res, 200, { text, retained });
         } catch (e) {
-          return json(res, e.code === 501 ? 501 : 500, { error: e.message });
+          return json(res, e.code === 501 ? 501 : 500, { error: e.message, retained });
         }
+      }
+      if (url.pathname === "/api/audio") {
+        const docId = url.searchParams.get("docId") || "";
+        const doc = docId ? store.getDoc(docId) : null;
+        if (!doc) return json(res, 404, { error: "Document not found." });
+        if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
+        if (req.method === "GET") {
+          const seg = url.searchParams.get("seg");
+          if (!seg) return json(res, 200, { segments: listAudioSegments(docId), reviewDays: audioReviewDays() });
+          // stream one segment (auth already checked above)
+          const safe = seg.replace(/[^a-z0-9_.-]/gi, "");
+          const file = path.join(docAudioDir(docId), safe);
+          if (!safe.endsWith(".wav") || !fs.existsSync(file)) return json(res, 404, { error: "Segment not found." });
+          res.writeHead(200, { "content-type": "audio/wav", "cache-control": "no-store" });
+          return fs.createReadStream(file).pipe(res);
+        }
+        if (req.method === "DELETE") {
+          const n = deleteAudio(docId);
+          if (n) { store.audit(user.id, "audio-deleted", `${doc.title}: ${n} segment(s)`); bumpRev(); }
+          return json(res, 200, { deleted: n });
+        }
+        return json(res, 405, { error: "Method not allowed." });
       }
       if (url.pathname === "/api/state" && req.method === "GET") {
         return json(res, 200, { rev, state: publicState() });
@@ -360,6 +511,7 @@ const server = http.createServer(async (req, res) => {
         if (keepKey) s.geminiKey = keepKey; else delete s.geminiKey;
         store.save();
         bumpRev();
+        try { audioSweep(); } catch (e) { console.error("[audio] sweep failed:", e.message); } // drop audio for notes just signed
         return json(res, 200, { rev });
       }
       return json(res, 404, { error: "Unknown API endpoint." });
@@ -390,4 +542,7 @@ server.listen(PORT, () => {
   console.log(`  data: ${DATA_FILE}`);
   console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
   console.log(`  AI cleanup: ${activeGeminiKey() ? `Gemini (${GEMINI_MODEL})` : "local heuristic (set GEMINI_API_KEY or a key in Facility Admin for Gemini)"}`);
+  console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
+  console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days, then auto-deleted (interim: ${AUDIO_DIR})` : "off (no audio stored)"}`);
+  try { audioSweep(); } catch (e) { console.error("[audio] initial sweep failed:", e.message); }
 });

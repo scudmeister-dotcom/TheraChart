@@ -116,9 +116,9 @@ typing or handwriting.**
   cloud required.
 - **Works offline** — home visits and power outages don't stop documentation;
   everything syncs and safely merges when the connection returns.
-- **Private transcription option** — self-hosted Whisper so patient audio never
-  leaves the clinic, alongside an honest privacy panel that explains exactly
-  where data goes.
+- **Speech-to-text under a healthcare agreement** — dictation can run through
+  Google Cloud Speech-to-Text under a signed BAA, alongside an honest privacy
+  panel that explains exactly where data goes.
 - **Accessible & bilingual by design** — because the clinics that need this most
   can't assume the newest phones or the fastest internet.
 

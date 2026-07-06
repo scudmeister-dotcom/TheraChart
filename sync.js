@@ -22,7 +22,7 @@
   const LS_SEEN = "therachart-server-seen";
   const LS_LASTSYNC = "therachart-lastsync";
   const LS_DIRTY = "therachart-dirty";
-  const LS_WHISPER = "therachart-whisper-seen";
+  const LS_STT = "therachart-stt-avail";
   const OFFLINE_UNLOCK_MS = 72 * 3600 * 1000;
 
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -34,7 +34,7 @@
     token: lsGet(LS_TOKEN) || null,
     dirty: Number(lsGet(LS_DIRTY) || 0),
     lastSync: Number(lsGet(LS_LASTSYNC) || 0),
-    whisper: lsGet(LS_WHISPER) === "1",
+    stt: { available: lsGet(LS_STT) === "1" }, // Google Cloud Speech-to-Text availability from the server
     ai: null, // { refine, insights, model } when an AI backend is reachable
     lastError: null,
   };
@@ -172,8 +172,8 @@
       const data = await res.json();
       if (!data || data.server !== "therachart") return;
       sync.mode = "server";
-      sync.whisper = !!data.whisper;
-      lsSet(LS_WHISPER, sync.whisper ? "1" : "0");
+      sync.stt = data.stt || { available: false };
+      lsSet(LS_STT, sync.stt.available ? "1" : "0");
       // refresh the AI-engine indicator too, so it isn't stale after reconnect
       await sync.probeAI();
       if (sync.ai) sync.refine = sync.ai.refine;
@@ -313,10 +313,10 @@
       if (data && data.server === "therachart") {
         sync.mode = "server";
         sync.rev = data.rev;
-        sync.whisper = !!data.whisper;
+        sync.stt = data.stt || { available: false };
         sync.refine = data.refine || "local"; // "gemini" | "local"
         lsSet(LS_SEEN, "1");
-        lsSet(LS_WHISPER, sync.whisper ? "1" : "0");
+        lsSet(LS_STT, sync.stt.available ? "1" : "0");
 
         // refresh login screen info from the server
         const boot = await fetch("/api/bootstrap").then((r) => r.json());
@@ -358,7 +358,12 @@
     // a Vercel deployment (serverless functions using the GEMINI_API_KEY env
     // var) as well as a self-hosted clinic server. Static hosting → local.
     await sync.probeAI();
-    if (sync.ai) { sync.refine = sync.ai.refine; sync.whisper = sync.whisper || false; }
+    if (sync.ai) {
+      sync.refine = sync.ai.refine;
+      // ai-status also reports STT availability (works on a clinic server or any
+      // host that exposes /api/ai-status); keep the cached flag in step
+      if (sync.ai.stt) { sync.stt = sync.ai.stt; lsSet(LS_STT, sync.ai.stt.available ? "1" : "0"); }
+    }
     setBadge();
     S.setChangeHook(sync.mode === "local" ? null : schedulePush);
     if (window.TheraRender) window.TheraRender();

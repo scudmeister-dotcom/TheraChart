@@ -90,34 +90,36 @@ works; the body-part lexicon understands all three at once):
   (including what the browser's speech service does), role/PIN/license
   access controls, export/erase controls, and a live audit log.
 
-## Two transcription engines — compare them yourself
+## Two dictation engines — switch in the app
 
-Every note's dictation bar has an engine toggle:
+Every note's dictation bar has an engine selector:
 
-- **Browser (Google servers)** — the Web Speech API. Fast and streams live,
-  but audio goes to the browser vendor's servers with **no healthcare data
-  agreement** (HIPAA BAA / RA 10173).
-- **Private — Whisper on clinic server** — the page records locally, detects
-  natural pauses, converts each segment to 16 kHz WAV in the browser, and
-  posts it to your own server, which transcribes with OpenAI's free
-  MIT-licensed Whisper model and deletes the audio. **Nothing reaches a
-  third party.** Segments upload in order and queue if the server is busy —
-  on a CPU-only server the transcript arrives a few seconds behind your
-  speech, but nothing is ever lost.
+- **Browser (current)** — the Web Speech API. Fast and streams live, but audio
+  goes to the browser vendor's servers (on Chrome, Google's **consumer**
+  service) with **no healthcare data agreement** (HIPAA BAA / RA 10173). Fine
+  for demos and testing; **not for real PHI**.
+- **Google Cloud — Standard / Chirp** — the page records short WAV segments and
+  posts them to the server's `/api/stt`, which proxies to **Google Cloud
+  Speech-to-Text under your Google Cloud BAA**. Audio is held only in memory and
+  sent immediately — never written to the device. Two models: **Standard**
+  (`latest_long`, lower cost) and **Chirp** (best multilingual, incl.
+  Tagalog/Cebuano).
 
-Enable the private engine on the clinic server (one time):
+The Google Cloud options stay **disabled until the server is configured** — set
+`GCP_PROJECT` and Google credentials and they light up automatically. Full
+step-by-step (account, BAA, APIs, Cloud Run hosting): see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
-```bash
-pip install faster-whisper        # the engine (free, MIT)
-WHISPER_MODEL=small node server.js   # model auto-downloads on first use, then cached
-```
+### Optional: temporary session-audio review
 
-Model sizes: `tiny`/`base` for older CPUs (fastest), `small` (default,
-good accuracy), `medium`/`large-v3` with a GPU. Any other engine works via
-`WHISPER_CMD='whisper-cli -m model.bin -nt -f {file}' node server.js`
-(e.g. whisper.cpp). Whisper supports English and Tagalog directly; for
-Cebuano the engine auto-detects (and the body-part lexicon understands
-Cebuano regardless of engine).
+Off by default. A facility can enable it in **Facility Admin**; then, **for
+patients who consent**, the Google Cloud dictation audio is kept briefly so a
+clinician can replay it to double-check the transcript. The audio is
+**auto-deleted the moment the note is signed**, or after the clinic's retention
+window (default 7 days) — whichever comes first — and consent is recorded in the
+chart. It never touches the browser engine (that audio goes straight to the
+vendor). Kept audio lives server-side (interim: the data dir; **Cloud Storage
+with encryption + lifecycle auto-delete at go-live**). This is the one
+disclosed exception to "TheraChart doesn't store audio."
 
 ## Two-pass documentation: live capture, then AI clean-up
 
@@ -229,11 +231,10 @@ Devices that belong to a clinic server keep working when it's unreachable:
   a signed document always beats a draft, signatures/amendments/history are
   unioned, and every superseded edit is preserved in the audit log
   (`sync-conflict` entries).
-- **Offline Whisper dictation**: recordings queue in the device's browser
-  storage, then transcribe on the clinic server and are deleted the moment
-  the transcript lands — this temporary on-device audio is disclosed in the
-  Privacy panel. If a note was signed while a segment waited, its words are
-  preserved as a `late-transcript` audit entry instead of being lost.
+- **Dictation needs a connection**: both engines are online — the browser
+  engine uses the vendor's speech servers, and Google Cloud STT streams to
+  Google. While offline you can still **type** into any note; voice dictation
+  resumes when the connection is back. No audio is ever stored on the device.
 
 ## Reaching the clinic server from outside the clinic
 
@@ -251,8 +252,8 @@ TheraChart is an installable web app (PWA). Open the clinic server's address
 on the phone, then **Add to Home Screen** (Safari share menu on iOS, Chrome
 menu on Android) — it launches fullscreen like a native app, with its own
 icon, and the app shell loads instantly from cache. Dictation, the body
-chart, printing to PDF, and sync all work from the phone; heavy Whisper
-transcription runs on the clinic server, so phones don't need any special
+chart, printing to PDF, and sync all work from the phone; speech-to-text runs
+on Google Cloud (or the browser engine), so phones don't need any special
 hardware.
 
 ## Testing

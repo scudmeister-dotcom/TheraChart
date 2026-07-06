@@ -60,6 +60,8 @@
         dayStartHour: 8,
         dayEndHour: 17,
         workDays: [1, 2, 3, 4, 5, 6], // Mon–Sat
+        audioReview: false, // opt-in: temporarily keep Cloud STT audio for review
+        audioReviewDays: 7, // backstop auto-delete window for kept audio
       },
       users: [
         {
