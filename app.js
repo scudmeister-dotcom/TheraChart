@@ -1290,7 +1290,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     box.innerHTML = pts.length ? pts.map((pt, i) => `
       <div class="map-note ${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
         <div class="map-note-head">
-          <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</b>
+          <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</span></b>
           ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
@@ -1305,6 +1305,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     );
     if (editable) {
       const user = S.currentUser();
+      // Rename a finding's body area — re-pin the marker to wherever it now names.
+      box.querySelectorAll("[data-editpart]").forEach((el) => {
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
+        el.addEventListener("blur", () => {
+          const pt = (doc.data.mapPoints || []).find((x) => x.key === el.dataset.editpart);
+          if (!pt) return;
+          const raw = el.textContent.trim();
+          // The label already carries the side word (e.g. "Left Knee"), so let the
+          // typed text alone decide part + side.
+          const c = PR.coordForName(raw, null);
+          if (!raw || (c.part === pt.part && (c.side || null) === (pt.side || null))) {
+            drawMapNotes(doc, dstate); // no real change — restore the tidy label
+            return;
+          }
+          pt.part = c.part; pt.side = c.side || null; pt.view = c.view; pt.x = c.x; pt.y = c.y;
+          pt.key = `${c.part}|${c.side || ""}`;
+          if (dstate.selectedKey === el.dataset.editpart) dstate.selectedKey = pt.key;
+          S.updateDocData(doc.id, doc.data, user);
+          drawAllPoints(doc);
+          drawMapNotes(doc, dstate);
+        });
+      });
       box.querySelectorAll("[data-editnote]").forEach((el) => {
         el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
         el.addEventListener("blur", () => {

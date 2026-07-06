@@ -55,19 +55,43 @@ store.load();
 
 /* ---- AI transcript refinement (Gemini, with a local fallback) ----
    Sends the TEXT transcript (not audio) to Google Gemini to split speakers,
-   clean transcription errors, and re-extract the patient's findings. Set
-   GEMINI_API_KEY to enable; otherwise a local heuristic refiner runs so the
-   feature works with no key and no network. For PHI, use paid/Vertex AI
-   Gemini under a signed BAA (point GEMINI_BASE_URL at your Vertex endpoint). */
-const GEMINI_KEY = process.env.GEMINI_API_KEY || null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
-// refine mode is computed dynamically (key may come from env OR facility settings)
+   clean transcription errors, and re-extract the patient's findings.
 
-const GEMINI_OPTS = () => ({ key: activeGeminiKey(), model: GEMINI_MODEL, base: GEMINI_BASE, onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) });
+   Two backends, both handled by ai.js (same request body, different auth):
+     • Gemini API (consumer key) — set GEMINI_API_KEY. Simple, but NOT covered
+       by a BAA — for demo / non-PHI only.
+     • Vertex AI (OAuth, under a Google Cloud BAA) — set GEMINI_VERTEX=1 plus
+       GCP_PROJECT and a Google credential (the SAME credential chain STT uses:
+       GCP_ACCESS_TOKEN | GOOGLE_APPLICATION_CREDENTIALS | GCP_SA_KEY | Cloud Run
+       metadata). This is the PHI-safe path. GEMINI_LOCATION defaults to the STT
+       location. No API key needed in this mode.
+   With neither configured, a local heuristic refiner runs so the feature works
+   with no key and no network. Mode is computed per-request (key may also come
+   from facility settings). */
+const GEMINI_MODEL = process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
+const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL;
+const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "");
+const GEMINI_LOCATION = process.env.GEMINI_LOCATION || process.env.STT_LOCATION || "us-central1";
+
+const GEMINI_OPTS = () => vertexConfigured()
+  ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
+      model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL,
+      onError: (w, e) => console.error(`[${w}] Gemini (Vertex) failed, using local:`, e.message) }
+  : { key: activeGeminiKey(), model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, base: GEMINI_BASE,
+      onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) };
 
 function activeGeminiKey() {
   return process.env.GEMINI_API_KEY || (store.settings().geminiKey || "").trim() || null;
+}
+// Vertex needs the flag + a project + a usable Google credential (reuses STT's chain).
+function vertexConfigured() { return GEMINI_VERTEX && !!GCP_PROJECT && !!sttCredentialSource(); }
+// Is any real Gemini backend reachable (vs. the local heuristic)?
+function geminiActive() { return vertexConfigured() || !!activeGeminiKey(); }
+function geminiEngineDesc() {
+  if (vertexConfigured()) return `Vertex AI (project ${GCP_PROJECT} · ${GEMINI_LOCATION})`;
+  if (activeGeminiKey()) return "Gemini API (consumer key)";
+  return "local heuristic (set GEMINI_API_KEY, or GEMINI_VERTEX=1 + GCP creds for a BAA)";
 }
 
 const refineSystem = ai.refineSystem;
@@ -375,17 +399,17 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
-      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: activeGeminiKey() ? "gemini" : "local" });
+      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: geminiActive() ? "gemini" : "local" });
     }
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
     }
     if (url.pathname === "/api/refine-prompt") {
-      return json(res, 200, { prompt: refineSystem(), model: GEMINI_MODEL, active: activeGeminiKey() ? "gemini" : "local" });
+      return json(res, 200, { prompt: refineSystem(), model: GEMINI_MODEL, active: geminiActive() ? "gemini" : "local" });
     }
     if (url.pathname === "/api/ai-status") {
-      const mode = activeGeminiKey() ? "gemini" : "local";
-      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL, stt: sttStatus() });
+      const mode = geminiActive() ? "gemini" : "local";
+      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const { userId, pin } = await readBody(req);
@@ -423,7 +447,7 @@ const server = http.createServer(async (req, res) => {
         store.save();
         store.audit(user.id, k ? "gemini-key-set" : "gemini-key-cleared", k ? "Gemini API key saved (server-only)" : "Gemini API key removed");
         bumpRev();
-        return json(res, 200, { ok: true, rev, geminiKeySet: !!k, refine: activeGeminiKey() ? "gemini" : "local" });
+        return json(res, 200, { ok: true, rev, geminiKeySet: !!k, refine: geminiActive() ? "gemini" : "local" });
       }
       if (url.pathname === "/api/refine" && req.method === "POST") {
         const { transcript } = await readBody(req);
@@ -541,7 +565,7 @@ server.listen(PORT, () => {
   console.log(`  app:  http://localhost:${PORT}`);
   console.log(`  data: ${DATA_FILE}`);
   console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
-  console.log(`  AI cleanup: ${activeGeminiKey() ? `Gemini (${GEMINI_MODEL})` : "local heuristic (set GEMINI_API_KEY or a key in Facility Admin for Gemini)"}`);
+  console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
   console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
   console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days, then auto-deleted (interim: ${AUDIO_DIR})` : "off (no audio stored)"}`);
   try { audioSweep(); } catch (e) { console.error("[audio] initial sweep failed:", e.message); }

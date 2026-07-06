@@ -196,13 +196,32 @@ on your own machine:
 Two separate things share your Google Cloud project:
 
 - **Speech-to-Text** (dictation) — **fully wired now**, as above.
-- **Gemini** (the "Review & clean up" + insights + PDF import) — today the app
-  calls Gemini with a **consumer API key** (`GEMINI_API_KEY`). That works, but it
-  is **not** the BAA-covered path. Running Gemini through **Vertex AI** (which
-  *is* under the BAA) needs a small change to `ai.js` (switch to the Vertex
-  endpoint + the same service-account token STT already uses). It's a quick
-  follow-up — ask when you want it turned on, and until then leave Gemini off (the
-  built-in local reviewer) for real PHI.
+- **Gemini** (the "Review & clean up" + insights + PDF import) — **now supports
+  Vertex AI**, the BAA-covered path. Two ways to run it:
+
+  | Mode | How to enable | BAA? | Use for |
+  |---|---|---|---|
+  | **Consumer API key** | `GEMINI_API_KEY=...` | ❌ no | demo / non-PHI |
+  | **Vertex AI** | `GEMINI_VERTEX=1` + `GCP_PROJECT` + a Google credential | ✅ yes | real PHI |
+
+  **Vertex needs no API key.** It reuses the **exact same credential chain as
+  Speech-to-Text** (`GCP_ACCESS_TOKEN` for quick tests, `GOOGLE_APPLICATION_CREDENTIALS`
+  / `GCP_SA_KEY` for a service-account key, or nothing on Cloud Run — the attached
+  service account is used automatically). So if STT already works on this server,
+  Vertex Gemini just needs `GEMINI_VERTEX=1`.
+
+  ```bash
+  gcloud run deploy therachart \
+    --set-env-vars GEMINI_VERTEX=1,GCP_PROJECT=YOUR_PROJECT_ID,GEMINI_LOCATION=us-central1
+  ```
+
+  Requirements: enable the **Vertex AI API** (`aiplatform.googleapis.com`) on the
+  project, and grant the service account the **Vertex AI User** role
+  (`roles/aiplatform.user`). `GEMINI_LOCATION` defaults to your STT location.
+  Confirm at `/api/ai-status` → `"provider":"vertex"`. The models used are
+  `gemini-3.5-flash` (cleanup/import) and `gemini-3.1-pro-preview` (insights);
+  override per env with `GEMINI_MODEL` / `GEMINI_INSIGHTS_MODEL` if a model name
+  differs on Vertex or once `gemini-3.5-pro` ships.
 
 ## Rough monthly cost (per active clinic)
 

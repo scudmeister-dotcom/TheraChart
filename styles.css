@@ -283,9 +283,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .btn:hover { background: var(--hover); }
 .btn.primary { background: var(--brand-grad); border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(14, 124, 134, 0.32); }
 .btn.primary:hover { filter: brightness(1.06); }
-/* AI actions carry the teal→violet brand gradient to signal "assisted" */
-.btn.ai, #refineBtn { background: var(--brand-grad-tv); border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(109, 90, 224, 0.28); }
-.btn.ai:hover, #refineBtn:hover { filter: brightness(1.06); background: var(--brand-grad-tv); }
+/* AI actions carry a teal→indigo→violet sweep to signal "assisted". Both ends
+   are deepened (no neon cyan on the left, no bright violet on the right) so the
+   button blends against light panels instead of its edges jumping out. */
+.btn.ai, #refineBtn {
+  background: linear-gradient(135deg, #2b8f99 0%, #3a6aa8 50%, #5647b8 100%);
+  border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(70, 60, 150, 0.22);
+}
+.btn.ai:hover, #refineBtn:hover { filter: brightness(1.05); }
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger-border); }
 .btn.small { padding: 5px 10px; font-size: 12.5px; }
@@ -480,6 +485,9 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 .map-note .badge.sev-low { background: var(--sev-low); }
 .map-note .badge.sev-none { background: var(--sev-none); }
 .map-note .quote { color: var(--muted); font-style: italic; }
+.map-note .note-part[contenteditable] { border-radius: 4px; padding: 0 2px; cursor: text; }
+.map-note .note-part[contenteditable]:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.map-note .note-part[contenteditable]:focus { outline: 2px solid var(--hl-strong); outline-offset: 1px; background: var(--panel); }
 
 /* ---------------- document editor ---------------- */
 

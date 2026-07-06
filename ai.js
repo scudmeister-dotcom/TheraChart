@@ -11,7 +11,15 @@
 })(typeof self !== "undefined" ? self : this, function (parser, insights) {
   "use strict";
 
+  // Two tiers. Flash is fast + cheap and handles the high-volume, schema-bound
+  // extraction work (transcript cleanup, document reading). Pro is the stronger
+  // reasoner reserved for Clinical Insights, where reading between the lines
+  // across a patient's history matters more than speed or cost.
+  //   NOTE: as of writing there is no "gemini-3.5-pro" — the newest Pro is
+  //   gemini-3.1-pro-preview. Bump DEFAULT_PRO_MODEL (or set GEMINI_INSIGHTS_MODEL)
+  //   to "gemini-3.5-pro" the moment it ships.
   const DEFAULT_MODEL = "gemini-3.5-flash";
+  const DEFAULT_PRO_MODEL = "gemini-3.1-pro-preview";
   const DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
   /* ---------------- transcript refinement ---------------- */
@@ -103,16 +111,42 @@
 
   /* ---------------- generic Gemini JSON ---------------- */
 
+  // True when opts can reach Gemini: either a consumer API key, or Vertex AI
+  // (OAuth token + project) for PHI under a Google Cloud BAA.
+  const aiReady = (opts) => !!(opts && (opts.key || opts.vertex));
+
+  // Build the request target + auth headers for either backend.
+  //   Consumer API: GET-key on ...generativelanguage.../models/M:generateContent?key=
+  //   Vertex AI:    Bearer token on {loc}-aiplatform.../publishers/google/models/M:generateContent
+  // The request BODY is identical for both — same contents + generationConfig.
+  async function geminiTarget(model, opts) {
+    if (opts.vertex) {
+      const loc = opts.location || "us-central1";
+      const host = loc === "global" ? "aiplatform.googleapis.com" : `${loc}-aiplatform.googleapis.com`;
+      const token = typeof opts.getToken === "function" ? await opts.getToken() : opts.token;
+      if (!token) throw new Error("Vertex AI is enabled but no OAuth token was available.");
+      if (!opts.project) throw new Error("Vertex AI is enabled but GCP project is not set.");
+      return {
+        url: `https://${host}/v1/projects/${opts.project}/locations/${loc}/publishers/google/models/${model}:generateContent`,
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      };
+    }
+    const base = opts.base || DEFAULT_BASE;
+    return {
+      url: `${base}/models/${model}:generateContent?key=${encodeURIComponent(opts.key)}`,
+      headers: { "content-type": "application/json" },
+    };
+  }
+
   // prompt: a string (single text part) or a parts array — e.g. an inline PDF
   // part plus an instruction part for document extraction.
   async function geminiJson(prompt, schema, opts) {
     const model = opts.model || DEFAULT_MODEL;
-    const base = opts.base || DEFAULT_BASE;
-    const url = `${base}/models/${model}:generateContent?key=${encodeURIComponent(opts.key)}`;
     const parts = typeof prompt === "string" ? [{ text: prompt }] : prompt;
+    const { url, headers } = await geminiTarget(model, opts);
     const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
         generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: opts.temperature ?? 0.2 },
@@ -265,8 +299,8 @@
 
   async function extractRecords(fileBase64, mime, opts) {
     opts = opts || {};
-    if (!opts.key) {
-      const e = new Error("Reading scanned documents needs Gemini configured (set a key on the server).");
+    if (!aiReady(opts)) {
+      const e = new Error("Reading scanned documents needs Gemini configured (set a key or enable Vertex AI on the server).");
       e.code = 501;
       throw e;
     }
@@ -282,28 +316,30 @@
 
   async function refine(utterances, opts) {
     opts = opts || {};
-    if (opts.key) {
+    if (aiReady(opts)) {
       try {
         const parsed = await geminiJson(refinePrompt(utterances), REFINE_SCHEMA, opts);
         return normalizeRefinement(parsed, utterances, "gemini");
       } catch (e) { if (opts.onError) opts.onError("refine", e); }
     }
     const local = parser.refineTranscript(utterances);
-    return { ...local, source: opts.key ? "local (gemini failed)" : "local" };
+    return { ...local, source: aiReady(opts) ? "local (gemini failed)" : "local" };
   }
 
   async function insightsRun(ctx, opts) {
     opts = opts || {};
-    if (opts.key) {
+    if (aiReady(opts)) {
       try {
-        const parsed = await geminiJson(insights.insightsPrompt(ctx), insights.INSIGHTS_SCHEMA, { ...opts, temperature: 0.3 });
+        // Insights runs on the Pro tier — the reasoning-heavy path.
+        const proModel = opts.insightsModel || DEFAULT_PRO_MODEL;
+        const parsed = await geminiJson(insights.insightsPrompt(ctx), insights.INSIGHTS_SCHEMA, { ...opts, model: proModel, temperature: 0.3 });
         return { connections: parsed.connections || [], redFlags: parsed.redFlags || [], recommendations: parsed.recommendations || [], source: "gemini" };
       } catch (e) { if (opts.onError) opts.onError("insights", e); }
     }
     const local = insights.buildInsights(ctx);
-    return { ...local, source: opts.key ? "local (gemini failed)" : "local" };
+    return { ...local, source: aiReady(opts) ? "local (gemini failed)" : "local" };
   }
 
   return { refine, insightsRun, extractRecords, refineSystem, refinePrompt, extractSystem,
-    REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, DEFAULT_MODEL, DEFAULT_BASE };
+    REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, geminiTarget, aiReady, DEFAULT_MODEL, DEFAULT_PRO_MODEL, DEFAULT_BASE };
 });

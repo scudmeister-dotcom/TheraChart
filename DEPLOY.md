@@ -19,8 +19,12 @@ key from an **environment variable**. There is no shared database in this mode
    | Name | Value |
    |---|---|
    | `GEMINI_API_KEY` | your Google Gemini API key |
-   | `GEMINI_MODEL` *(optional)* | `gemini-3.5-flash` (default) |
+   | `GEMINI_MODEL` *(optional)* | `gemini-3.5-flash` (default) — Flash tier: transcript cleanup + document reading |
+   | `GEMINI_INSIGHTS_MODEL` *(optional)* | `gemini-3.1-pro-preview` (default) — Pro tier: Clinical Insights. Bump to `gemini-3.5-pro` once it ships |
    | `GEMINI_BASE_URL` *(optional)* | a Vertex AI endpoint if using a BAA |
+
+   Set these **once** in the platform's env settings and every future deploy
+   inherits them automatically — you don't re-enter the key per deploy.
 
 4. **Deploy.** Open the URL — the "✦ Review & clean up with AI" and
    "✦ Clinical insights" features now use Gemini. Without the key, the app
@@ -51,6 +55,10 @@ reminder scheduler. The Gemini key can be the `GEMINI_API_KEY` env var
 Voice dictation uses the browser engine out of the box; to enable **Google
 Cloud Speech-to-Text** (Standard/Chirp, under a BAA) set `GCP_PROJECT` +
 credentials — see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
+
+For **real PHI**, run Gemini through **Vertex AI** (BAA-covered) instead of the
+consumer key: set `GEMINI_VERTEX=1` + `GCP_PROJECT` + a Google credential (the
+same chain STT uses). No API key needed. See **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
 See `README.md` for the full clinic-server details (reminders, reaching it
 from outside the clinic via Tailscale, PWA install).
