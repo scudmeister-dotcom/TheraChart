@@ -52,6 +52,30 @@ globalThis.THERACHART_STORAGE = {
 const store = require("./store.js");
 const ai = require("./ai.js");
 
+/* ---- password hashing (scrypt, node crypto, zero-dependency) ----
+   Injected into the store so login/set-password hash + verify server-side.
+   Format: scrypt$<saltHex>$<hashHex>. Legacy plaintext pins are migrated to
+   this at startup (hashLegacyPins) and never stored in cleartext thereafter. */
+const AUTH = {
+  hash(plain) {
+    const salt = crypto.randomBytes(16);
+    const h = crypto.scryptSync(String(plain), salt, 64);
+    return `scrypt$${salt.toString("hex")}$${h.toString("hex")}`;
+  },
+  verify(user, plain) {
+    const stored = user.passwordHash;
+    if (!stored) return user.pin != null && user.pin === String(plain); // not yet migrated
+    const [scheme, saltHex, hashHex] = String(stored).split("$");
+    if (scheme !== "scrypt" || !saltHex || !hashHex) return false;
+    const expected = Buffer.from(hashHex, "hex");
+    let actual;
+    try { actual = crypto.scryptSync(String(plain), Buffer.from(saltHex, "hex"), expected.length); }
+    catch { return false; }
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  },
+};
+store.setAuthenticator(AUTH);
+
 /* ---- AI transcript refinement (Gemini, with a local fallback) ----
    Sends the TEXT transcript (not audio) to Google Gemini to split speakers,
    clean transcription errors, and re-extract the patient's findings.
@@ -131,6 +155,8 @@ function userForReq(req) {
 function publicState() {
   const s = JSON.parse(store.exportAll());
   s.sessionUserId = null;
+  // credentials are server-only — never sync password hashes (or legacy pins) to devices
+  if (Array.isArray(s.users)) s.users = s.users.map((u) => { const c = { ...u }; delete c.passwordHash; delete c.pin; return c; });
   if (s.settings) {
     // devices only need to know whether a key is set, never its value
     s.settings.geminiKeySet = !!(s.settings.geminiKey && String(s.settings.geminiKey).trim());
@@ -408,12 +434,14 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
-      const { userId, pin } = await readBody(req);
+      const body = await readBody(req);
+      const userId = body.userId;
+      const secret = body.password != null ? body.password : body.pin; // pin kept for back-compat
       const lf = loginFails.get(userId) || { n: 0, lockUntil: 0 };
       if (lf.lockUntil > Date.now()) {
         return json(res, 429, { error: "Too many failed attempts — wait a minute and try again." });
       }
-      const fail = store.login(userId, pin);
+      const fail = store.login(userId, secret);
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
       if (fail) {
@@ -433,6 +461,26 @@ const server = http.createServer(async (req, res) => {
       if (!user) return json(res, 401, { error: "Not signed in." });
 
       if (url.pathname === "/api/rev") return json(res, 200, { rev });
+      if (url.pathname === "/api/verify-password" && req.method === "POST") {
+        // re-authenticate the signed-in user (used for e-signing / amending)
+        const { password } = await readBody(req);
+        return json(res, 200, { ok: store.verifyPassword(user.id, password) });
+      }
+      if (url.pathname === "/api/set-password" && req.method === "POST") {
+        // self-service change (needs current password), or an admin setting
+        // another user's password (needs the admin role, no current password).
+        const { userId, currentPassword, newPassword } = await readBody(req);
+        const targetId = userId && userId !== user.id ? userId : user.id;
+        if (targetId !== user.id) {
+          if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change another user's password." });
+        } else if (!store.verifyPassword(user.id, currentPassword)) {
+          return json(res, 403, { error: "Current password is incorrect." });
+        }
+        const result = store.setPassword(targetId, newPassword, user); // hashes + audits
+        if (result.error) return json(res, 400, { error: result.error });
+        bumpRev();
+        return json(res, 200, { ok: true, rev });
+      }
       if (url.pathname === "/api/gemini-key" && req.method === "POST") {
         // the key is server-only config — set it here, never through synced state
         if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change the Gemini key." });
@@ -525,7 +573,15 @@ const server = http.createServer(async (req, res) => {
         // the Gemini key is server-only and never travels in client state —
         // preserve it across the import so a device push can't wipe or set it
         const keepKey = store.settings().geminiKey;
+        // same for credentials: capture server-side password hashes so a device
+        // push (whose state has them stripped) can't wipe or forge them
+        const creds = new Map(store.users().map((u) => [u.id, u.passwordHash]));
         store.importAll(state, { preserveSession: false });
+        for (const u of store.users()) {
+          const h = creds.get(u.id);
+          if (h) u.passwordHash = h; else delete u.passwordHash;
+          delete u.pin; // clients can never introduce a plaintext credential
+        }
         const s = store.settings();
         delete s.geminiKeySet; // derived flag must never persist to disk
         if (keepKey) s.geminiKey = keepKey; else delete s.geminiKey;
@@ -561,6 +617,7 @@ async function start() {
   // the in-memory store, revision, and sessions from it before serving.
   const dbInfo = await db.init({ dataDir: DATA_DIR, databaseUrl: process.env.DATABASE_URL || null });
   store.load();
+  const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
   const r = Number(db.get("rev")); if (r) rev = r;
   try { for (const [t, s] of Object.entries(JSON.parse(db.get("sessions") || "{}"))) sessions.set(t, s); } catch { }
 
@@ -572,6 +629,7 @@ async function start() {
     console.log(`TheraChart clinic server running:`);
     console.log(`  app:  http://localhost:${PORT}`);
     console.log(`  data: ${dbInfo.backend === "postgres" ? "Postgres (durable) — keys: " + dbInfo.keys.join(", ") : DATA_DIR + " (flat file)"}`);
+    console.log(`  auth: hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s) this boot` : ""}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
     console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);

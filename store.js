@@ -298,8 +298,54 @@
     return !!user.license && !licenseExpired(user);
   }
 
+  /* Credentials. The server injects a hashed-password authenticator (scrypt via
+     node crypto); the browser-only demo has no authenticator and falls back to
+     the legacy plaintext `pin` (local-only, protects nothing the user can't
+     already read in localStorage). So password hashing stays out of this shared,
+     synchronous module and lives on the server. */
+  let authenticator = null;
+  function setAuthenticator(a) { authenticator = a; }
+
+  function verifyCredential(user, secret) {
+    if (authenticator) return authenticator.verify(user, secret);
+    return user.pin != null && user.pin === String(secret); // demo fallback
+  }
+
+  /** Verify a user's password WITHOUT starting a session (for re-auth checks). */
+  function verifyPassword(userId, secret) {
+    const u = getUser(userId);
+    return !!u && verifyCredential(u, secret);
+  }
+
+  /** Set/replace a user's password. With an authenticator it's hashed and the
+      legacy plaintext pin is dropped; without one (demo) it stays a plain pin. */
+  function setPassword(userId, secret, byUser) {
+    const u = getUser(userId);
+    if (!u) return { error: "User not found." };
+    const s = String(secret == null ? "" : secret);
+    if (s.length < 8) return { error: "Password must be at least 8 characters." };
+    if (authenticator) { u.passwordHash = authenticator.hash(s); delete u.pin; }
+    else { u.pin = s; }
+    touch(u);
+    save();
+    audit(byUser ? byUser.id : userId, "password-changed", u.name);
+    return { user: u };
+  }
+
+  /** One-time: hash any legacy plaintext pins into passwordHash (server only). */
+  function hashLegacyPins() {
+    if (!authenticator) return 0;
+    load();
+    let n = 0;
+    for (const u of state.users) {
+      if (u.pin != null && !u.passwordHash) { u.passwordHash = authenticator.hash(String(u.pin)); delete u.pin; touch(u); n++; }
+    }
+    if (n) save();
+    return n;
+  }
+
   /** null on success, or a human-readable reason the login was refused. */
-  function login(userId, pin) {
+  function login(userId, secret) {
     load();
     const user = getUser(userId);
     if (!user) return "Unknown user.";
@@ -307,9 +353,9 @@
       audit(userId, "login-denied", "access voided");
       return "Access for this account has been voided. Contact your administrator.";
     }
-    if (user.pin !== String(pin)) {
-      audit(userId, "login-denied", "wrong PIN");
-      return "Incorrect PIN.";
+    if (!verifyCredential(user, secret)) {
+      audit(userId, "login-denied", "wrong password");
+      return "Incorrect password.";
     }
     state.sessionUserId = userId;
     save();
@@ -668,6 +714,7 @@
     audit, auditLog: () => load().audit,
     // users/auth
     users: () => load().users, getUser, login, logout, currentUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient,

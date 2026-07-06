@@ -366,12 +366,12 @@
           ${loginChip(u)}
         </button>`).join("")}
       <div class="field" style="margin-top:12px">
-        <label for="pinInput">PIN</label>
-        <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="Enter your PIN" />
+        <label for="pinInput">Password</label>
+        <input id="pinInput" type="password" autocomplete="current-password" placeholder="Enter your password" />
       </div>
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
-      <div class="demo-note">Demo accounts — PIN is <b>1234</b> for everyone. Records stay on this device only.</div>
+      <div class="demo-note">Default password is <b>1234</b> — change it under <b>My Profile</b> after signing in.</div>
     </div>
   </div>
 </div>`;
@@ -2297,16 +2297,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending > 1 ? "s are" : " is"} still being transcribed — wait for them to land before signing, or they will need an amendment.</div>` : ""}
 <p style="font-size:13px; color:var(--muted)">Signing certifies this documentation is accurate and complete. The document will lock; later changes require a signed amendment with an authorization reason.</p>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="sigName" autocomplete="off" /></div>
-<div class="field"><label>PIN</label><input id="sigPin" type="password" inputmode="numeric" autocomplete="off" /></div>
+<div class="field"><label>Password</label><input id="sigPin" type="password" autocomplete="current-password" /></div>
 <div class="error" id="sigErr"></div>
 <div class="modal-actions">
   <button class="btn" id="sigCancel">Cancel</button>
   <button class="btn primary" id="sigOk">✒ Sign &amp; lock</button>
 </div>`);
     m.querySelector("#sigCancel").addEventListener("click", closeModal);
-    m.querySelector("#sigOk").addEventListener("click", () => {
+    m.querySelector("#sigOk").addEventListener("click", async () => {
       const err = m.querySelector("#sigErr");
-      if (m.querySelector("#sigPin").value !== user.pin) { err.textContent = "Incorrect PIN."; return; }
+      if (!(await window.TheraSync.verifyPassword(m.querySelector("#sigPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.signDoc(doc.id, user, m.querySelector("#sigName").value, "");
       if (res.error) { err.textContent = res.error; return; }
       deleteSessionAudio(doc.id); // signing locks the note — the review audio is no longer needed
@@ -2322,16 +2322,16 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
 <div class="field"><label>Amendment text *</label><textarea id="amText" rows="3"></textarea></div>
 <div class="field"><label>Authorization reason *</label><input id="amReason" placeholder="e.g. Documentation error, late entry…" /></div>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="amName" autocomplete="off" /></div>
-<div class="field"><label>PIN</label><input id="amPin" type="password" autocomplete="off" /></div>
+<div class="field"><label>Password</label><input id="amPin" type="password" autocomplete="current-password" /></div>
 <div class="error" id="amErr"></div>
 <div class="modal-actions">
   <button class="btn" id="amCancel">Cancel</button>
   <button class="btn primary" id="amOk">✒ Sign amendment</button>
 </div>`);
     m.querySelector("#amCancel").addEventListener("click", closeModal);
-    m.querySelector("#amOk").addEventListener("click", () => {
+    m.querySelector("#amOk").addEventListener("click", async () => {
       const err = m.querySelector("#amErr");
-      if (m.querySelector("#amPin").value !== user.pin) { err.textContent = "Incorrect PIN."; return; }
+      if (!(await window.TheraSync.verifyPassword(m.querySelector("#amPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.amendDoc(doc.id, user, m.querySelector("#amName").value,
         m.querySelector("#amText").value, m.querySelector("#amReason").value);
       if (res.error) { err.textContent = res.error; return; }
@@ -2748,21 +2748,32 @@ ${ths.map((t) => {
     ${S.licenseExpired(user) ? `<div class="banner bad" style="margin-top:12px">Your license has expired — EMR access and document creation/editing are disabled until an administrator updates it.</div>` : ""}
   </div>
   <div class="card">
-    <h2>Change PIN</h2>
-    <div class="field"><label>New PIN (4–6 digits)</label><input id="newPin" type="password" inputmode="numeric" /></div>
-    <button class="btn" id="pinSave">Update PIN</button>
-    <div id="pinMsg" style="font-size:12.5px; color:var(--good); min-height:18px; margin-top:6px"></div>
+    <h2>Change password</h2>
+    <div class="field"><label>Current password</label><input id="curPw" type="password" autocomplete="current-password" /></div>
+    <div class="field"><label>New password (at least 8 characters)</label><input id="newPw" type="password" autocomplete="new-password" /></div>
+    <div class="field"><label>Confirm new password</label><input id="confPw" type="password" autocomplete="new-password" /></div>
+    <button class="btn" id="pwSave">Update password</button>
+    <div id="pwMsg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
   </div>
 </div>`;
   }
 
   function bindProfile(user) {
-    document.getElementById("pinSave").addEventListener("click", () => {
-      const v = document.getElementById("newPin").value.trim();
-      if (!/^\d{4,6}$/.test(v)) { document.getElementById("pinMsg").textContent = "PIN must be 4–6 digits."; return; }
-      S.updateUser(user.id, { pin: v }, user);
-      document.getElementById("pinMsg").textContent = "PIN updated.";
-      document.getElementById("newPin").value = "";
+    const btn = document.getElementById("pwSave");
+    btn.addEventListener("click", async () => {
+      const cur = document.getElementById("curPw").value;
+      const nw = document.getElementById("newPw").value;
+      const cf = document.getElementById("confPw").value;
+      const msg = document.getElementById("pwMsg");
+      const fail = (t) => { msg.style.color = "var(--danger)"; msg.textContent = t; };
+      if (nw.length < 8) return fail("New password must be at least 8 characters.");
+      if (nw !== cf) return fail("New passwords don't match.");
+      msg.style.color = "var(--muted)"; msg.textContent = "Updating…"; btn.disabled = true;
+      const err = await window.TheraSync.changePassword({ currentPassword: cur, newPassword: nw });
+      btn.disabled = false;
+      if (err) return fail(err);
+      msg.style.color = "var(--good)"; msg.textContent = "Password updated.";
+      ["curPw", "newPw", "confPw"].forEach((id) => (document.getElementById(id).value = ""));
     });
   }
 

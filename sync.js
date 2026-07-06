@@ -208,6 +208,13 @@
           (sync.lastSync ? Math.round(age / 3600000) + "h ago" : "never") +
           "). Connect to the clinic server to sign in.";
       }
+      // Passwords live only on the server; synced state carries no credential to
+      // check against — a fresh sign-in needs the server. (An already-signed-in
+      // device keeps working offline on its existing token.)
+      const u = S.getUser(userId);
+      if (u && u.pin == null && u.passwordHash == null) {
+        return "You're offline. Signing in requires the clinic server (passwords are verified there). Reconnect to sign in.";
+      }
       const fail = localLogin(userId, pin);
       if (!fail) S.audit(userId, "login-offline", `last sync ${Math.round(age / 60000)} min ago`);
       return fail;
@@ -237,6 +244,35 @@
       goOffline("server unreachable during login");
       return S.login(userId, pin); // falls into the offline-unlock path
     }
+  };
+
+  /* Re-authenticate the current user (for e-signing / amending). Server-side
+     when online (passwords are hashed there); local check in demo mode. */
+  sync.verifyPassword = async (pw) => {
+    const u = S.currentUser();
+    if (!u) return false;
+    if (sync.mode === "local") return S.verifyPassword(u.id, pw);
+    try {
+      const res = await api("/api/verify-password", { method: "POST", body: { password: pw } });
+      return !!(res.ok && res.data && res.data.ok);
+    } catch (_) {
+      return S.verifyPassword(u.id, pw); // offline best-effort
+    }
+  };
+
+  /* Change a password. Self-change needs the current one; an admin may set
+     another user's (pass userId). Returns null on success or an error string. */
+  sync.changePassword = async ({ userId, currentPassword, newPassword }) => {
+    if (sync.mode === "local") {
+      const me = S.currentUser();
+      const target = userId && userId !== me.id ? userId : me.id;
+      if (target === me.id) { if (!S.verifyPassword(me.id, currentPassword)) return "Current password is incorrect."; }
+      else if (me.role !== "admin") return "Only an administrator can change another user's password.";
+      const r = S.setPassword(target, newPassword, me);
+      return r.error || null;
+    }
+    const res = await api("/api/set-password", { method: "POST", body: { userId, currentPassword, newPassword } });
+    return res.ok ? null : ((res.data && res.data.error) || "Could not change password.");
   };
 
   /* ---- AI transcript refinement ----
