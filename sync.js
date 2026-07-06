@@ -174,6 +174,9 @@
       sync.mode = "server";
       sync.whisper = !!data.whisper;
       lsSet(LS_WHISPER, sync.whisper ? "1" : "0");
+      // refresh the AI-engine indicator too, so it isn't stale after reconnect
+      await sync.probeAI();
+      if (sync.ai) sync.refine = sync.ai.refine;
       // token still valid?
       const check = await api("/api/rev");
       if (check.status === 401) {

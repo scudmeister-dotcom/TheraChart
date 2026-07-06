@@ -85,6 +85,9 @@ function saveSessions() {
   fs.writeFileSync(SESS_FILE, JSON.stringify(Object.fromEntries(sessions)));
 }
 
+// PINs are short — slow down guessing (per-account: 5 misses = 1-minute hold)
+const loginFails = new Map(); // userId -> { n, lockUntil }
+
 function tokenFor(userId) {
   const token = crypto.randomBytes(24).toString("hex");
   sessions.set(token, { userId, at: Date.now() });
@@ -259,10 +262,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const { userId, pin } = await readBody(req);
+      const lf = loginFails.get(userId) || { n: 0, lockUntil: 0 };
+      if (lf.lockUntil > Date.now()) {
+        return json(res, 429, { error: "Too many failed attempts — wait a minute and try again." });
+      }
       const fail = store.login(userId, pin);
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
-      if (fail) return json(res, 401, { error: fail });
+      if (fail) {
+        lf.n += 1;
+        if (lf.n >= 5) { lf.n = 0; lf.lockUntil = Date.now() + 60 * 1000; }
+        if (loginFails.size > 1000) loginFails.clear(); // bound memory
+        loginFails.set(userId, lf);
+        return json(res, 401, { error: fail });
+      }
+      loginFails.delete(userId);
       bumpRev(); // audit entry was added
       return json(res, 200, { token: tokenFor(userId), rev, state: publicState() });
     }
@@ -318,7 +332,12 @@ const server = http.createServer(async (req, res) => {
     let file = url.pathname === "/" ? "/index.html" : url.pathname;
     file = path.normalize(file).replace(/^(\.\.[/\\])+/, "");
     const full = path.join(ROOT, file);
-    if (!full.startsWith(ROOT) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) {
+    const rel = path.relative(ROOT, full);
+    // never serve the database/session files (they hold PHI and the Gemini
+    // key) or any hidden path over HTTP
+    const inDataDir = !path.relative(path.resolve(DATA_DIR), full).startsWith("..");
+    if (rel.startsWith("..") || inDataDir || rel.split(path.sep).some((s) => s.startsWith(".")) ||
+        !fs.existsSync(full) || fs.statSync(full).isDirectory()) {
       res.writeHead(404); return res.end("Not found");
     }
     res.writeHead(200, { "content-type": MIME[path.extname(full)] || "application/octet-stream" });

@@ -33,7 +33,10 @@
    *  the moment it opens. PIN for every demo user: 1234.
    * ---------------------------------------------------------------- */
 
-  const iso = (d) => d.toISOString().slice(0, 10);
+  // local calendar date — a UTC slice lands on the wrong day for part of
+  // every day in non-UTC timezones (licenses, "today", day filters)
+  const iso = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const daysFromNow = (n) => {
     const d = new Date();
     d.setDate(d.getDate() + n);
@@ -489,7 +492,7 @@
   }
 
   const apptsOn = (dateIso) =>
-    load().appointments.filter((a) => a.status !== "cancelled" && a.start.slice(0, 10) === dateIso);
+    load().appointments.filter((a) => a.status !== "cancelled" && iso(new Date(a.start)) === dateIso);
 
   function bookAppointment({ patientId, therapistId, start, note }, byUser) {
     load();

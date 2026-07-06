@@ -50,7 +50,10 @@
   const fmtTime = (iso) =>
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
-  const todayIso = () => new Date().toISOString().slice(0, 10);
+  // local calendar date (UTC slices shift the date near midnight in +/- zones)
+  const localIso = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const todayIso = () => localIso(new Date());
   const nowTime = () =>
     new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const initials = (name) =>
@@ -77,10 +80,7 @@
 
   /* scroll memory: return to where you were when navigating back */
   const scrollMem = {};
-  let lastHashForScroll = location.hash || "#/dashboard";
-  function captureScroll() { scrollMem[lastHashForScroll] = window.scrollY; }
   function restoreScroll(hash) {
-    lastHashForScroll = hash;
     requestAnimationFrame(() => window.scrollTo(0, scrollMem[hash] || 0));
   }
 
@@ -97,6 +97,8 @@
     printArea.innerHTML = html;
     window.print();
   }
+  // release the printed chart's HTML instead of holding it in the DOM forever
+  window.addEventListener("afterprint", () => { printArea.innerHTML = ""; });
 
   /* ---------------- body map figure (shared) ---------------- */
 
@@ -184,14 +186,15 @@
   ];
 
   function render() {
-    if (activeDictation) { activeDictation.stop(); activeDictation = null; }
+    if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; }
+    currentDocState = null; // never carry one document's edit state into another
     closeModal();
     const user = S.currentUser();
     if (!user) return renderLogin();
 
     const hash = location.hash || "#/dashboard";
     const emrAllowed = S.canAccessEmr(user);
-    const route = hash.split("/")[1] || "dashboard";
+    const route = (hash.split("/")[1] || "dashboard").split("?")[0];
 
     const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "calendar", "facility"];
     if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
@@ -215,7 +218,7 @@
      the "remember where I was" navigation inside a patient. */
   function breadcrumbFor(hash, user) {
     const seg = hash.replace(/^#\//, "").split("/");
-    const route = seg[0] || "dashboard";
+    const route = (seg[0] || "dashboard").split("?")[0];
     const trail = [];
     const patientCrumb = (pid) => {
       const p = S.getPatient(pid);
@@ -886,6 +889,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     // ------- shared dictation/map state -------
     const dstate = { selectedKey: null, editable };
+    currentDocState = dstate;
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
@@ -1002,8 +1006,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // re-pin every point to the current lexicon coordinates + tag its number
     pts.forEach((pt, i) => {
       if (pt.part) { const c = PR.coordForName(pt.part, pt.side); pt.x = c.x; pt.y = c.y; pt.view = c.view; }
-      pt._num = i + 1;
-      pt._sev = severityOf(pt);
+      // display-only annotations: non-enumerable so they never get saved/synced
+      Object.defineProperty(pt, "_num", { value: i + 1, configurable: true });
+      Object.defineProperty(pt, "_sev", { value: severityOf(pt), configurable: true });
     });
     for (const view of ["front", "back"]) {
       const layer = layerFor(view);
@@ -1353,7 +1358,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         S.audit(user.id, "late-transcript", `${doc.title}: “${text.slice(0, 200)}”`);
         return;
       }
-      routeUtterance(doc, user, text, currentDocState);
+      // only touch the screen if THIS document is the one open — otherwise a
+      // late segment would draw one note's findings into another note's view
+      const seg = location.hash.split("/");
+      const docOpen = seg[1] === "doc" && seg[2] === docId;
+      routeUtterance(doc, user, text, docOpen ? currentDocState : null, !docOpen);
     }
 
     return {
@@ -1396,7 +1405,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const flat = new Float32Array(samples.reduce((n, a) => n + a.length, 0));
       let off = 0;
       for (const a of samples) { flat.set(a, off); off += a.length; }
-      AudioQueue.add(docId, WHISPER_LANG[lang()] || "auto", encodeWav(flat, ctx ? ctx.sampleRate : 16000));
+      AudioQueue.add(docId, WHISPER_LANG[lang()] || "auto", encodeWav(flat, ctx ? ctx.sampleRate : 16000))
+        .catch(() => onStatus("Couldn't store this dictation segment on the device — check free storage.", listening));
     }
     // rough check that a segment contains any speech-level audio at all
     function voicedTotal(samples) {
@@ -1542,11 +1552,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     engineSel.addEventListener("change", () => {
       const wasListening = listening;
-      if (engine && listening) { engine.stop(); listening = false; }
+      // always stop the old engine — even when the mic is off it may hold a
+      // queue listener (whisper) that would otherwise leak on every switch
+      if (engine) engine.stop();
+      listening = false;
       engineChoice = engineSel.value;
       localStorage.setItem("therachart-engine", engineChoice);
       makeEngine();
-      if (wasListening && engine) { listening = true; Promise.resolve(engine.start()); }
+      if (wasListening && engine) {
+        listening = true;
+        Promise.resolve(engine.start()).then((ok) => {
+          if (ok === false) { listening = false; setUI(); }
+        });
+      }
       setUI();
     });
 
@@ -1555,14 +1573,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     };
   }
 
-  function appendField(doc, field, sentence) {
+  function appendField(doc, field, sentence, silent) {
     const cur = (doc.data[field] || "").trim();
     doc.data[field] = cur ? cur + (cur.endsWith(".") ? " " : ". ") + sentence : sentence;
+    if (silent) return; // data only — the open view belongs to another doc
     const t = document.querySelector(`textarea[data-field="${field}"]`);
     if (t) t.value = doc.data[field];
   }
 
-  function routeUtterance(doc, user, raw, dstate) {
+  function routeUtterance(doc, user, raw, dstate, silent) {
     const parsed = PR.parseUtterance(raw);
     if (!parsed.text) return;
     const time = nowTime();
@@ -1604,11 +1623,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       field = "summary";
     }
     if (field) {
-      appendField(doc, field, cap(parsed.text));
+      appendField(doc, field, cap(parsed.text), silent);
       routed.push(`text → ${fieldLabel(doc.type, field)}`);
     }
 
     S.updateDocData(doc.id, doc.data, user);
+    if (silent) return;
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
@@ -1837,7 +1857,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const kept = rows.filter((r) => r.include && r.summary.trim());
     doc.data.mapPoints = kept.map((r) => {
       const c = PR.coordForName(r.part, r.side);
-      const uttId = findText(r.quote) >= 0 ? findText(r.quote) : findText(r.part);
+      const quoteIdx = findText(r.quote);
+      const uttId = quoteIdx >= 0 ? quoteIdx : findText(r.part);
       const turnText = uttId >= 0 ? doc.data.transcript[uttId].text : "";
       return {
         key: r.key, part: c.part, side: r.side, view: c.view, x: c.x, y: c.y,
@@ -2079,11 +2100,15 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
 
   function calendarView(user) {
     const ths = therapists();
+    // the selected therapist may have been voided/expired since — fall back
+    if (calTherapist !== "all" && !ths.some((t) => t.id === calTherapist)) calTherapist = "all";
     const slots = S.slotsForDay(calDate);
     const appts = S.apptsOn(calDate);
     const cols = calTherapist === "all" ? ths : ths.filter((t) => t.id === calTherapist);
 
-    const grid = slots.length ? `
+    const grid = !cols.length
+      ? `<div class="card"><div class="empty-state">No active licensed therapists to schedule — update staff licenses in Facility Admin.</div></div>`
+      : slots.length ? `
 <div class="cal-grid" style="grid-template-columns: 80px repeat(${cols.length}, 1fr)">
   <div class="cal-cell cal-head">Time</div>
   ${cols.map((t) => `<div class="cal-cell cal-head">${esc(t.name)}${S.licenseExpired(t) ? ' <span class="chip bad">expired</span>' : ""}</div>`).join("")}
@@ -2162,11 +2187,12 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
   const shiftDay = (iso, n) => {
     const d = new Date(iso + "T00:00:00");
     d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    return localIso(d);
   };
 
   function bookingModal(user, slot, therId) {
     const pats = S.patients().slice().sort((a, b) => (a.lastName < b.lastName ? -1 : 1));
+    if (!pats.length) return alertBanner("No patients on file yet — register one in Intake first.");
     const m = showModal(`
 <h2>Book visit — ${fmtDT(slot)}</h2>
 <div class="field"><label>Patient</label><select id="bkPat">
@@ -2251,50 +2277,49 @@ ${ths.map((t) => {
 
   function privacyView(user) {
     const log = S.auditLog().slice().reverse().slice(0, 100);
+    const onServer = window.TheraSync && window.TheraSync.mode === "server";
+    const geminiOn = window.TheraSync && window.TheraSync.refine === "gemini";
     return `
 <div class="page-head">
-  <div><h1>Privacy &amp; Security</h1><div class="sub">How TheraChart keeps patient information protected</div></div>
+  <div><h1>Privacy &amp; Security</h1><div class="sub">Where your information lives and what the AI features do with it — in plain terms</div></div>
 </div>
 <div class="cards-3">
   <div class="card">
-    <h2>🔐 Where your records live</h2>
-    <p style="font-size:13px">${window.TheraSync && window.TheraSync.mode === "server"
-      ? "This device is synced with <b>your clinic's own server</b> — a machine your facility controls, on your network. Records are shared between your clinic's devices and never touch a third-party cloud. A copy is cached on this device so you can keep working offline (home visits, outages); offline changes merge back automatically, sign-in is refused if the offline copy is older than 72 hours, and superseded edits are preserved in the audit log."
-      : "All patient records, documents, schedules, and transcripts are stored <b>only in this device's local storage</b>. Run the included clinic server (<code>node server.js</code>) to share records between your clinic's devices — still entirely on hardware you control, never a third-party cloud."}</p>
+    <h2>🔐 Your records stay with you</h2>
+    <p style="font-size:13px">${onServer
+      ? "Patient records live on <b>your clinic's own server</b> — a computer your facility owns, on your own network. Each device keeps a copy so you can work through outages and home visits, and changes sync back automatically. No records are stored in a third-party cloud."
+      : "Everything — patients, notes, schedules, transcripts — is stored <b>right here on this device</b>. Nothing is uploaded anywhere. (Run the included clinic server to share records between your clinic's devices, still entirely on your own hardware.)"}</p>
+    <p style="font-size:13px">And you stay in control: download a complete backup or erase everything, any time.</p>
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
       <button class="btn small danger" id="wipeBtn">Erase all data</button>
     </div>
   </div>
   <div class="card">
-    <h2>🎙 Voice dictation, honestly</h2>
-    <p style="font-size:13px">Browser dictation (the Web Speech API) typically sends <b>audio to the browser vendor's servers</b> for transcription — on Chrome that is Google. Google states dictation audio is used only to return the transcript, but there is <b>no healthcare data agreement (HIPAA BAA / RA 10173 outsourcing agreement)</b> behind the free browser API, so treat spoken PHI as leaving your control during dictation.</p>
-    <p style="font-size:13px"><b>The private option is built in:</b> switch the engine to <b>Whisper on the clinic server</b> in any note's dictation bar — audio is transcribed on your own machine, never reaching a third party (requires <code>pip install faster-whisper</code> on the server). The browser/Google engine remains available so you can compare accuracy yourself.</p>
-    <p style="font-size:13px; margin-bottom:0"><b>Offline dictation:</b> when the clinic server is unreachable, Whisper recordings are <b>held in this device's browser storage</b> until reconnection, then transcribed and immediately deleted. That temporary on-device audio is the one exception to "audio is never stored" — it exists only while offline, only on this device, so enable full-disk/device encryption on phones used in the field.</p>
+    <h2>✦ What the AI features do with your information</h2>
+    <p style="font-size:13px">TheraChart uses AI for three things — turning speech into text, tidying up the finished note, and suggesting clinical insights. Here is exactly what each one sends, and where.</p>
+    <p style="font-size:13px"><b>Voice dictation.</b> With the <b>Browser engine</b>, the audio of what's spoken goes to Google, comes back as text, and that's the whole trip — TheraChart never keeps audio. Prefer to keep audio in-house? Switch any note to the <b>Whisper engine</b> and speech is transcribed on your clinic's own server instead. (Dictating offline? The recording waits safely on this device and is deleted the moment it's transcribed.)</p>
+    <p style="font-size:13px"><b>Note cleanup &amp; clinical insights${geminiOn ? " — Google Gemini" : ""}.</b> ${geminiOn
+      ? "When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — the transcript, or a summary of the chart's findings and history, never audio and never the patient's name — is sent to Google's Gemini AI. It reads that, tidies the wording, and suggests findings or connections. Nothing is saved until you've reviewed it, and you can edit or reject every suggestion."
+      : "These run on a built-in reviewer right on this device — nothing is sent anywhere. (A clinic can optionally connect Google's Gemini AI for smarter results; this one hasn't.)"}</p>
+    <p style="font-size:13px; margin-bottom:0"><b>Worth knowing.</b> Using a cloud AI simply means one piece of data — dictated audio (browser engine) or note text (Gemini) — travels to Google to be processed, and the result comes back. These are Google's general services without a healthcare-specific agreement, so clinics handling regulated patient data can stick to the private options above, or connect Gemini through <b>Vertex AI under a signed agreement</b> (set the key as an environment variable or in Facility Admin). Either way, the AI only ever suggests — a licensed clinician reviews and signs everything.</p>
   </div>
   <div class="card">
-    <h2>✦ AI cleanup (Gemini)</h2>
-    <p style="font-size:13px">The optional "Review &amp; clean up with AI" pass sends the <b>transcript text</b> (never audio) to Google Gemini to split patient vs clinician speech and tidy the findings. ${window.TheraSync && window.TheraSync.refine === "gemini"
-      ? "This clinic server is configured to use Gemini."
-      : "No Gemini key is configured here, so a <b>local, on-device reviewer</b> runs instead — nothing leaves the device."}</p>
-    <p style="font-size:13px; margin-bottom:0">Because the transcript can contain PHI, using Gemini means sending PHI to Google. For compliant use, run it through <b>Vertex AI Gemini under a signed BAA</b> (paid), not the free consumer API — the consumer free tier may use submitted data to improve models. The local reviewer is always available as the private alternative.</p>
-  </div>
-  <div class="card">
-    <h2>🛡 Access controls</h2>
+    <h2>🛡 Who can see what</h2>
     <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
-      <li>PIN sign-in with role-based access (therapist / front desk / admin)</li>
-      <li>Voided accounts cannot sign in; expired licenses lose EMR &amp; documentation access automatically</li>
-      <li>Signed documents lock; edits require an e-signed, authorized amendment</li>
-      <li>Every access-relevant action is recorded in the audit log below</li>
+      <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
+      <li>Expired licenses and voided accounts lose access automatically</li>
+      <li>Signed documents lock — later changes need a signed, authorized amendment</li>
+      <li>Notable actions are recorded in the activity log below</li>
     </ul>
   </div>
 </div>
 <div class="card">
-  <h2>Compliance note</h2>
-  <p style="font-size:13px; margin:0">This is an on-device demonstration build. Before storing real patient data, deploy TheraChart against your compliance requirements — in the Philippines, the <b>Data Privacy Act of 2012 (RA 10173)</b>; in the US, <b>HIPAA</b>. A production deployment would add encrypted storage, per-user credentials, and consented reminder messaging.</p>
+  <h2>A note on real-world use</h2>
+  <p style="font-size:13px; margin:0">This is a demonstration build. Before storing real patient data, deploy TheraChart to meet your local requirements — the <b>Data Privacy Act of 2012 (RA 10173)</b> in the Philippines, <b>HIPAA</b> in the US — adding encrypted storage, per-user credentials, and consented reminder messaging.</p>
 </div>
 <div class="card">
-  <h2>Audit log <span style="font-weight:400; color:var(--muted); font-size:12px">most recent 100 events</span></h2>
+  <h2>Activity log <span style="font-weight:400; color:var(--muted); font-size:12px">most recent 100 events</span></h2>
   <div class="table-scroll"><table class="list"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead><tbody>
     ${log.map((e) => `<tr><td class="num">${fmtDT(e.time)}</td><td>${esc((S.getUser(e.userId) || {}).name || e.userId || "—")}</td><td><span class="chip muted">${esc(e.action)}</span></td><td>${esc(e.detail)}</td></tr>`).join("") || `<tr><td colspan="4"><div class="empty-state">No events yet.</div></td></tr>`}
   </tbody></table></div>
