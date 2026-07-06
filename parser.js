@@ -488,8 +488,14 @@
     const hasObjMeas = r.measurements.rom.length || r.measurements.mmt.length || r.measurements.special.length;
     if (hasObjMeas) return "clinician"; // therapist reads out ROM/MMT/tests
     if (CLINICIAN_RE.test(t)) return "clinician";
+    // the therapist narrates the interventions performed ("we did scaption…")
+    if (TREATMENT_NARRATION_RE.test(t)) return "clinician";
     return "patient"; // default: hone in on the patient
   }
+
+  // therapist narrating what was done this visit (distinct from a patient
+  // simply mentioning "exercise"): needs an action verb or a clinical technique
+  const TREATMENT_NARRATION_RE = /\b(perform|administered|applied|complete[ds]?|we did|did (?:some|the)|therex|scaption|manual therapy|soft tissue|mobiliz|ultrasound|e-?stim|dry needl|traction|taping|modalit)\w*/i;
 
   function tidy(raw) {
     let t = String(raw || "").trim().replace(/\s+/g, " ");
@@ -501,9 +507,14 @@
 
   const uniqueJoin = (arr) => [...new Set(arr.filter(Boolean))].join(" · ");
 
+  // treatments the therapist narrates ("we did scaption, manual therapy…")
+  const TREATMENT_RE = /\b(perform|did|complete|exercis|therex|scaption|isometric|stretch|mobiliz|manual therapy|soft tissue|ultrasound|e-?stim|tens|modalit|hot pack|cold pack|ice|heat|gait|balance|strengthen|hep|home (?:exercise )?program|educat|taping|traction|dry needl)\w*/i;
+
   function refineTranscript(utterances) {
     const dialogue = [];
     const findingsMap = new Map();
+    const patientSentences = [];
+    const treatmentSentences = [];
     let lastKey = null;
 
     (utterances || []).forEach((raw) => {
@@ -512,7 +523,10 @@
       const speaker = guessSpeaker(raw);
       const turnIndex = dialogue.length;
       dialogue.push({ speaker, text });
+
+      if (TREATMENT_RE.test(raw)) treatmentSentences.push(text);
       if (speaker !== "patient") return;
+      patientSentences.push(text);
 
       const r = parseUtterance(raw);
       if (r.mentions.length) {
@@ -538,7 +552,29 @@
       key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
       summary: uniqueJoin(f.summaries), quote: f.quotes[0] || "", turns: f.turns,
     }));
-    return { dialogue, findings, source: "local" };
+
+    const measurements = aggregateMeasurements(dialogue.map((d) => d.text));
+    return {
+      dialogue, findings, measurements, source: "local",
+      subjective: patientSentences.join(" "),
+      treatment: treatmentSentences.join(" "),
+    };
+  }
+
+  // run measurement extraction across every turn and de-duplicate
+  function aggregateMeasurements(texts) {
+    const out = { rom: [], mmt: [], special: [], pain: [] };
+    const seen = new Set();
+    for (const t of texts) {
+      const m = extractMeasurements(t, []);
+      for (const kind of ["rom", "mmt", "special", "pain"]) {
+        for (const item of m[kind]) {
+          const sig = kind + ":" + JSON.stringify(item);
+          if (!seen.has(sig)) { seen.add(sig); out[kind].push(item); }
+        }
+      }
+    }
+    return out;
   }
 
   return {
@@ -547,6 +583,7 @@
     coordFor,
     coordForName,
     extractMeasurements,
+    aggregateMeasurements,
     classifyUtterance,
     guessSpeaker,
     refineTranscript,

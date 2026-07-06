@@ -1,0 +1,27 @@
+<svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TheraChart">
+  <defs>
+    <linearGradient id="tc-bar1" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#4fc48c"/></linearGradient>
+    <linearGradient id="tc-bar2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#57cf95"/></linearGradient>
+    <linearGradient id="tc-bar3" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#33a77a"/><stop offset="1" stop-color="#63d59d"/></linearGradient>
+    <linearGradient id="tc-spine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b7bbd"/><stop offset="1" stop-color="#33b083"/></linearGradient>
+  </defs>
+  <!-- spine motif -->
+  <path d="M15.5 11 C 10.5 17.5, 19 23, 13.5 29.5 C 9 35, 17 40, 12.5 46.5"
+        stroke="url(#tc-spine)" stroke-width="2.2" stroke-linecap="round" fill="none" opacity="0.55"/>
+  <circle cx="15.4" cy="11.5" r="2.2" fill="#2b7bbd"/>
+  <circle cx="13.2" cy="18.6" r="2.2" fill="#2f8fb0"/>
+  <circle cx="16.4" cy="25.2" r="2.2" fill="#2fa2a0"/>
+  <circle cx="12.8" cy="32.2" r="2.2" fill="#31ab90"/>
+  <circle cx="15.2" cy="39.2" r="2.2" fill="#37b385"/>
+  <circle cx="12.6" cy="46" r="2.2" fill="#3fb87f"/>
+  <!-- clipboard -->
+  <rect x="24" y="13" width="27" height="33" rx="4" fill="#ffffff" stroke="#2b8fb0" stroke-width="3"/>
+  <rect x="32.5" y="8.5" width="10" height="7.5" rx="2.4" fill="#2b7bbd"/>
+  <!-- bars -->
+  <rect x="29.5" y="31" width="4.6" height="9" rx="1.2" fill="url(#tc-bar1)"/>
+  <rect x="36" y="27" width="4.6" height="13" rx="1.2" fill="url(#tc-bar2)"/>
+  <rect x="42.5" y="23" width="4.6" height="17" rx="1.2" fill="url(#tc-bar3)"/>
+  <!-- trend line + breakout arrow -->
+  <path d="M29 31 L35 25.5 L41 27.5 L52 15.5" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M46.5 14.6 L53 13.5 L52 20" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

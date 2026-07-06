@@ -50,6 +50,28 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
   check("shoulder finding has front-view coordinates", shoulder && shoulder.view === "front" && typeof shoulder.x === "number");
   check("lower back finding is back view", r.findings.find((f) => f.key === "Lower back|").view === "back");
   check("findings link to their patient turn indices", shoulder && shoulder.turns.includes(1), shoulder && JSON.stringify(shoulder.turns));
+
+  // section text + measurements (the AI now updates the note's fields too)
+  check("subjective built from patient statements only",
+    /right shoulder/i.test(r.subjective) && /lower back/i.test(r.subjective) && !/scale of one to ten/i.test(r.subjective), r.subjective);
+  check("clinician ROM read-out captured as a measurement",
+    r.measurements.rom.some((m) => m.joint === "shoulder" && m.degrees === 95), JSON.stringify(r.measurements.rom));
+  check("patient pain ratings captured as measurements",
+    r.measurements.pain.length >= 1, JSON.stringify(r.measurements.pain));
+}
+
+{
+  // treatment sentences the therapist narrates are captured for the summary
+  const r = PR.refineTranscript([
+    "how is the shoulder today",
+    "still a bit sore about a four out of ten",
+    "we performed scaption three sets and manual therapy to the posterior capsule",
+    "then reviewed the home exercise program",
+  ]);
+  check("treatment summary captured from interventions",
+    /scaption/i.test(r.treatment) && /manual therapy/i.test(r.treatment), r.treatment);
+  check("treatment not mixed into subjective",
+    !/scaption/i.test(r.subjective), r.subjective);
 }
 
 /* ---- clinician-only transcript yields no findings ---- */

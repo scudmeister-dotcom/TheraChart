@@ -12,6 +12,29 @@
 
   const app = document.getElementById("app");
   const modalRoot = document.getElementById("modalRoot");
+
+  /* TheraChart logo — clipboard + rising bar chart + breakout arrow, with the
+     spine motif. Recreated as clean SVG so it scales crisply and is truly
+     transparent (no baked-in checkerboard). */
+  const LOGO_MARK = `<svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="tcBar1" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#4fc48c"/></linearGradient>
+    <linearGradient id="tcBar2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#57cf95"/></linearGradient>
+    <linearGradient id="tcBar3" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#33a77a"/><stop offset="1" stop-color="#63d59d"/></linearGradient>
+    <linearGradient id="tcSpine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b7bbd"/><stop offset="1" stop-color="#33b083"/></linearGradient>
+  </defs>
+  <path d="M15.5 11 C 10.5 17.5, 19 23, 13.5 29.5 C 9 35, 17 40, 12.5 46.5" stroke="url(#tcSpine)" stroke-width="2.2" stroke-linecap="round" fill="none" opacity="0.55"/>
+  <circle cx="15.4" cy="11.5" r="2.2" fill="#2b7bbd"/><circle cx="13.2" cy="18.6" r="2.2" fill="#2f8fb0"/>
+  <circle cx="16.4" cy="25.2" r="2.2" fill="#2fa2a0"/><circle cx="12.8" cy="32.2" r="2.2" fill="#31ab90"/>
+  <circle cx="15.2" cy="39.2" r="2.2" fill="#37b385"/><circle cx="12.6" cy="46" r="2.2" fill="#3fb87f"/>
+  <rect x="24" y="13" width="27" height="33" rx="4" fill="#ffffff" stroke="#2b8fb0" stroke-width="3"/>
+  <rect x="32.5" y="8.5" width="10" height="7.5" rx="2.4" fill="#2b7bbd"/>
+  <rect x="29.5" y="31" width="4.6" height="9" rx="1.2" fill="url(#tcBar1)"/>
+  <rect x="36" y="27" width="4.6" height="13" rx="1.2" fill="url(#tcBar2)"/>
+  <rect x="42.5" y="23" width="4.6" height="17" rx="1.2" fill="url(#tcBar3)"/>
+  <path d="M29 31 L35 25.5 L41 27.5 L52 15.5" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M46.5 14.6 L53 13.5 L52 20" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>`;
   const printArea = document.getElementById("printArea");
 
   /* ---------------- helpers ---------------- */
@@ -49,7 +72,7 @@
     user: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5.2" r="2.7"/><path d="M2.8 14c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3"/></svg>',
     back: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>',
     signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
-    logo: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 13h3l2-5 3 9 2.5-6 1.5 2h4" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    logo: LOGO_MARK,
   };
 
   /* scroll memory: return to where you were when navigating back */
@@ -324,7 +347,7 @@
 <div class="login-wrap">
   <div class="login-box">
     <div class="brandline">
-      <div class="logo">T</div>
+      <div class="logo">${LOGO_MARK}</div>
       <div>
         <h1>TheraChart EMR</h1>
         <div class="sub">${esc(S.settings().facilityName)}</div>
@@ -1704,6 +1727,27 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const engineChip = result.source && result.source.startsWith("gemini")
       ? `<span class="chip info">Gemini</span>` : `<span class="chip muted">local AI</span>`;
 
+    // which note field the cleaned subjective / treatment text writes into
+    const subjField = { eval: "subjective", daily: "subjective", progress: "currentStatus", discharge: "summary" }[doc.type];
+    const treatField = doc.type === "daily" ? "summary" : null;
+    const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
+    const measCount = meas.rom.length + meas.mmt.length + meas.special.length + meas.pain.length;
+    const measList = [
+      ...meas.rom.map((r) => `ROM · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`),
+      ...meas.mmt.map((r) => `MMT · ${r.context || ""} ${r.grade}`),
+      ...meas.special.map((r) => `${r.name} — ${r.result}`),
+      ...meas.pain.map((r) => `Pain · ${r.location || "—"} ${r.score}/10`),
+    ];
+    const sectionsHtml = `
+      <div class="rev-legend">The AI's cleaned write-up. Applying <b>replaces</b> the note's text sections and files the measurements below — all still editable afterward.</div>
+      <div class="field"><label>${esc(fieldLabel(doc.type, subjField))} — from the patient's statements</label>
+        <textarea data-sec="subjective" class="rev-text" rows="3">${esc(result.subjective || "")}</textarea></div>
+      ${treatField ? `<div class="field"><label>Treatment summary — interventions performed</label>
+        <textarea data-sec="treatment" class="rev-text" rows="2">${esc(result.treatment || "")}</textarea></div>` : ""}
+      <div class="field"><label>Objective measurements to file (${measCount})</label>
+        ${measCount ? `<ul class="rev-meas">${measList.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
+        : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>`;
+
     const dialogueHtml = result.dialogue.map((d, i) => `
       <div class="rev-turn">
         <select data-spk="${i}" class="rev-spk">
@@ -1729,6 +1773,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 <div class="rev-tabs">
   <button class="rev-tab active" data-tab="dialogue">Conversation</button>
   <button class="rev-tab" data-tab="findings">Findings (${rows.length})</button>
+  <button class="rev-tab" data-tab="sections">Note sections</button>
 </div>
 <div class="rev-pane" data-pane="dialogue">
   <div class="rev-legend">Who said what — click a speaker to change it, edit text inline.</div>
@@ -1738,6 +1783,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely.</div>
   ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
 </div>
+<div class="rev-pane" data-pane="sections" style="display:none">${sectionsHtml}</div>
 <div class="modal-actions">
   <button class="btn" id="revCancel">Cancel</button>
   <button class="btn primary" id="revApply">Apply cleaned-up version</button>
@@ -1761,17 +1807,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     m.querySelectorAll("[data-turn]").forEach((t) => t.addEventListener("input", () => { result.dialogue[Number(t.dataset.turn)].text = t.value; }));
     m.querySelectorAll("[data-fsum]").forEach((t) => t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; }));
     m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => { rows[Number(c.dataset.inc)].include = c.checked; }));
+    m.querySelectorAll("[data-sec]").forEach((t) => t.addEventListener("input", () => { result[t.dataset.sec] = t.value; }));
 
     m.querySelector("#revCancel").addEventListener("click", closeModal);
     m.querySelector("#revApply").addEventListener("click", () => {
-      applyRefinement(doc, user, dstate, result, rows);
+      applyRefinement(doc, user, dstate, result, rows, { subjField, treatField });
       closeModal();
     });
   }
 
-  function applyRefinement(doc, user, dstate, result, rows) {
+  function applyRefinement(doc, user, dstate, result, rows, fields) {
+    const { subjField, treatField } = fields || {};
     const before = doc.data.mapPoints || [];
     const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
+    const sectionChanges = [];
 
     // 1) transcript becomes the speaker-labeled, cleaned dialogue
     doc.data.transcript = result.dialogue.map((d) => ({ time: "", speaker: d.speaker, text: d.text, edited: true }));
@@ -1796,8 +1845,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       };
     });
 
+    // 2b) update the note's text sections + objective measurements from the AI
+    if (subjField && (result.subjective || "").trim()) {
+      doc.data[subjField] = result.subjective.trim();
+      sectionChanges.push({ tag: "section", label: fieldLabel(doc.type, subjField), detail: "updated from patient statements" });
+    }
+    if (treatField && (result.treatment || "").trim()) {
+      doc.data[treatField] = result.treatment.trim();
+      sectionChanges.push({ tag: "section", label: "Treatment summary", detail: "updated from interventions performed" });
+    }
+    const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
+    let filed = 0;
+    for (const kind of ["rom", "mmt", "special", "pain"]) {
+      if (!doc.data[kind]) doc.data[kind] = [];
+      const seen = new Set(doc.data[kind].map((x) => JSON.stringify(x)));
+      for (const item of meas[kind] || []) {
+        if (!seen.has(JSON.stringify(item))) { doc.data[kind].push(item); seen.add(JSON.stringify(item)); filed++; }
+      }
+    }
+    if (filed) sectionChanges.push({ tag: "section", label: "Objective measurements", detail: `${filed} filed` });
+
     // 3) compute the change list (live vs cleaned) for the comparison view
-    const changes = [];
+    const changes = sectionChanges.slice();
     const keptKeys = new Set(kept.map((r) => r.key));
     for (const r of kept) {
       const label = `${r.side ? cap(r.side) + " " : ""}${r.part}`;
@@ -1813,23 +1882,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const reworded = changes.filter((c) => c.tag === "reworded").length;
     const dropped = changes.filter((c) => c.tag === "dropped").length;
 
+    const secBit = sectionChanges.length ? ` · ${sectionChanges.length} section${sectionChanges.length === 1 ? "" : "s"} updated` : "";
     doc.data.refinement = {
       applied: true,
       ranAt: new Date().toISOString(),
       engine: result.source && result.source.startsWith("gemini") ? "gemini" : "local",
       changes, clinicianTurns,
-      headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept.`,
+      headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept${secBit}.`,
     };
 
     S.updateDocData(doc.id, doc.data, user);
-    S.audit(user.id, "transcript-refined", `${doc.title}: ${doc.data.refinement.engine} · ${kept.length} findings`);
+    S.audit(user.id, "transcript-refined", `${doc.title}: ${doc.data.refinement.engine} · ${kept.length} findings${secBit}`);
     dstate.selectedKey = null;
-    drawAllPoints(doc);
-    drawMapNotes(doc, dstate);
-    drawTranscript(doc, null, dstate);
-    renderCleanupSummary(doc);
-    const log = document.getElementById("routeLog");
-    if (log) log.textContent = "AI cleanup applied — review the findings and sign when ready.";
+    // full re-render so the updated Subjective / Treatment / measurements and
+    // body map all reflect the cleaned-up note
+    render();
   }
 
   /* ---- sign & amend ---- */
@@ -2169,6 +2236,18 @@ ${ths.map((t) => {
     <button class="btn primary" id="stSave">Save settings</button>
   </div>
   <div class="card">
+    <h2>✦ AI cleanup (Gemini)</h2>
+    <p style="font-size:12.5px; color:var(--muted)">Paste a Google Gemini API key to use Gemini for the "Review &amp; clean up with AI" pass (applies when running the clinic server; otherwise a local on-device reviewer is used). Only transcript <b>text</b> is sent — see Privacy &amp; Security for the PHI/BAA note. The key is stored in the clinic database; for stricter security set the <code>GEMINI_API_KEY</code> environment variable on the server instead, which never touches the database.</p>
+    <div class="field"><label>Gemini API key</label>
+      <input id="st-gemini" type="password" autocomplete="off" placeholder="${st.geminiKey ? "•••••••• (saved)" : "AI… (leave blank to use the local reviewer)"}" value="" /></div>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <button class="btn small" id="geminiSave">Save key</button>
+      ${st.geminiKey ? `<button class="btn small danger" id="geminiClear">Remove key</button>` : ""}
+      <span class="dict-status">${st.geminiKey ? "A key is saved." : "No key — using local reviewer."}</span>
+    </div>
+    <div id="geminiMsg" style="font-size:12.5px; margin-top:6px; color:var(--good)"></div>
+  </div>
+  <div class="card">
     <h2>Staff &amp; licenses</h2>
     <p style="font-size:12.5px; color:var(--muted)">An expired license or voided access automatically blocks the EMR and document signing for that account.</p>
     ${S.users().map((u) => `
@@ -2200,6 +2279,20 @@ ${ths.map((t) => {
         dayEndHour: Number(document.getElementById("st-end").value) || 17,
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
       }, user);
+      render();
+    });
+    const gSave = document.getElementById("geminiSave");
+    if (gSave) gSave.addEventListener("click", () => {
+      const v = document.getElementById("st-gemini").value.trim();
+      if (!v) { document.getElementById("geminiMsg").textContent = "Enter a key, or use Remove key to clear."; return; }
+      S.updateSettings({ geminiKey: v }, user);
+      S.audit(user.id, "gemini-key-set", "Gemini API key saved");
+      render();
+    });
+    const gClear = document.getElementById("geminiClear");
+    if (gClear) gClear.addEventListener("click", () => {
+      S.updateSettings({ geminiKey: "" }, user);
+      S.audit(user.id, "gemini-key-cleared", "Gemini API key removed");
       render();
     });
     document.querySelectorAll("[data-save-user]").forEach((b) =>
