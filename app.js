@@ -2355,6 +2355,8 @@ ${ths.map((t) => {
 
   function facilityView(user) {
     const st = S.settings();
+    // in server mode the key value never reaches this device — only a flag
+    const geminiKeySet = !!(st.geminiKeySet || st.geminiKey);
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
 <div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Settings and staff licenses</div></div></div>
@@ -2382,11 +2384,11 @@ ${ths.map((t) => {
     <h2>✦ AI cleanup (Gemini)</h2>
     <p style="font-size:12.5px; color:var(--muted)">Gemini powers the "Review &amp; clean up" pass <b>and</b> Clinical Insights. The most secure way to enable it is the <code>GEMINI_API_KEY</code> <b>environment variable</b> — on the clinic server, or on Vercel (Project → Settings → Environment Variables) if you deploy there. The field below is a convenience that stores the key in the clinic database instead; leave it blank to use the env var or the local reviewer. Only transcript <b>text</b> is sent — see Privacy &amp; Security for the PHI/BAA note.</p>
     <div class="field"><label>Gemini API key</label>
-      <input id="st-gemini" type="password" autocomplete="off" placeholder="${st.geminiKey ? "•••••••• (saved)" : "AI… (leave blank to use the local reviewer)"}" value="" /></div>
+      <input id="st-gemini" type="password" autocomplete="off" placeholder="${geminiKeySet ? "•••••••• (saved)" : "AI… (leave blank to use the local reviewer)"}" value="" /></div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <button class="btn small" id="geminiSave">Save key</button>
-      ${st.geminiKey ? `<button class="btn small danger" id="geminiClear">Remove key</button>` : ""}
-      <span class="dict-status">${st.geminiKey ? "A key is saved." : "No key — using local reviewer."}</span>
+      ${geminiKeySet ? `<button class="btn small danger" id="geminiClear">Remove key</button>` : ""}
+      <span class="dict-status">${geminiKeySet ? "A key is saved on the server." : "No key — using local reviewer."}</span>
     </div>
     <div id="geminiMsg" style="font-size:12.5px; margin-top:6px; color:var(--good)"></div>
   </div>
@@ -2424,20 +2426,23 @@ ${ths.map((t) => {
       }, user);
       render();
     });
+    const sync = window.TheraSync || {};
+    const setKey = async (v, msg) => {
+      const el = document.getElementById("geminiMsg");
+      try {
+        if (sync.setGeminiKey) await sync.setGeminiKey(v);
+        else { S.updateSettings({ geminiKey: v }, user); S.audit(user.id, v ? "gemini-key-set" : "gemini-key-cleared", msg); }
+      } catch (e) { el.textContent = e.message || "Couldn't save the key."; return; }
+      render();
+    };
     const gSave = document.getElementById("geminiSave");
     if (gSave) gSave.addEventListener("click", () => {
       const v = document.getElementById("st-gemini").value.trim();
       if (!v) { document.getElementById("geminiMsg").textContent = "Enter a key, or use Remove key to clear."; return; }
-      S.updateSettings({ geminiKey: v }, user);
-      S.audit(user.id, "gemini-key-set", "Gemini API key saved");
-      render();
+      setKey(v, "Gemini API key saved");
     });
     const gClear = document.getElementById("geminiClear");
-    if (gClear) gClear.addEventListener("click", () => {
-      S.updateSettings({ geminiKey: "" }, user);
-      S.audit(user.id, "gemini-key-cleared", "Gemini API key removed");
-      render();
-    });
+    if (gClear) gClear.addEventListener("click", () => setKey("", "Gemini API key removed"));
     document.querySelectorAll("[data-save-user]").forEach((b) =>
       b.addEventListener("click", () => {
         const id = b.dataset.saveUser;

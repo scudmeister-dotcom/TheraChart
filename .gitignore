@@ -1,0 +1,8 @@
+# Local runtime data + secrets — never commit these
+/.secrets/
+/data/
+node_modules/
+*.log
+
+# Local Claude Code machine settings (keep launch config, ignore local perms)
+.claude/settings.local.json

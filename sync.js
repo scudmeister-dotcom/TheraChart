@@ -265,6 +265,27 @@
     return window.TheraInsights.buildInsights(ctx);
   };
 
+  // Set/clear the Gemini key. It is server-only config, so on a clinic server
+  // this goes through a dedicated admin endpoint (never the synced state) and
+  // the key value never touches this device's storage. On the single-device
+  // demo (no server) it is kept locally, where it never leaves the device.
+  sync.setGeminiKey = async (key) => {
+    if (sync.mode === "offline") throw new Error("Reconnect to the clinic server to change the Gemini key.");
+    if (sync.mode === "server" && sync.token) {
+      const r = await api("/api/gemini-key", { method: "POST", body: { key } });
+      if (!r.ok) throw new Error((r.data && r.data.error) || "Couldn't save the key.");
+      const st = await api("/api/state"); // pull the audit entry + geminiKeySet flag
+      if (st.ok) adopt(st.data);
+      await sync.probeAI();
+      if (sync.ai) sync.refine = sync.ai.refine;
+      return r.data;
+    }
+    S.updateSettings({ geminiKey: key }, S.currentUser());
+    S.audit((S.currentUser() || {}).id, key && key.trim() ? "gemini-key-set" : "gemini-key-cleared",
+      key && key.trim() ? "Gemini API key saved (on-device)" : "Gemini API key removed");
+    return { geminiKeySet: !!(key && key.trim()) };
+  };
+
   // Probe whether an AI backend is reachable (Vercel serverless or clinic
   // server). Sets sync.ai = { refine, insights, model } or leaves it null.
   sync.probeAI = async () => {

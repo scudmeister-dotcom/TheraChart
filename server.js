@@ -102,10 +102,16 @@ function userForReq(req) {
 }
 
 /* ---- state sanitizers ----
-   sessionUserId is per-device; PINs never go out over the API. */
+   sessionUserId is per-device; PINs never go out over the API; the Gemini
+   key is server-only config and never leaves the server. */
 function publicState() {
   const s = JSON.parse(store.exportAll());
   s.sessionUserId = null;
+  if (s.settings) {
+    // devices only need to know whether a key is set, never its value
+    s.settings.geminiKeySet = !!(s.settings.geminiKey && String(s.settings.geminiKey).trim());
+    delete s.settings.geminiKey;
+  }
   return s;
 }
 function bootstrapInfo() {
@@ -286,6 +292,18 @@ const server = http.createServer(async (req, res) => {
       if (!user) return json(res, 401, { error: "Not signed in." });
 
       if (url.pathname === "/api/rev") return json(res, 200, { rev });
+      if (url.pathname === "/api/gemini-key" && req.method === "POST") {
+        // the key is server-only config — set it here, never through synced state
+        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change the Gemini key." });
+        const { key } = await readBody(req);
+        const k = String(key || "").trim();
+        const s = store.settings();
+        if (k) s.geminiKey = k; else delete s.geminiKey;
+        store.save();
+        store.audit(user.id, k ? "gemini-key-set" : "gemini-key-cleared", k ? "Gemini API key saved (server-only)" : "Gemini API key removed");
+        bumpRev();
+        return json(res, 200, { ok: true, rev, geminiKeySet: !!k, refine: activeGeminiKey() ? "gemini" : "local" });
+      }
       if (url.pathname === "/api/refine" && req.method === "POST") {
         const { transcript } = await readBody(req);
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
@@ -321,7 +339,14 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Malformed state." });
         }
         state.sessionUserId = null;
+        // the Gemini key is server-only and never travels in client state —
+        // preserve it across the import so a device push can't wipe or set it
+        const keepKey = store.settings().geminiKey;
         store.importAll(state, { preserveSession: false });
+        const s = store.settings();
+        delete s.geminiKeySet; // derived flag must never persist to disk
+        if (keepKey) s.geminiKey = keepKey; else delete s.geminiKey;
+        store.save();
         bumpRev();
         return json(res, 200, { rev });
       }
