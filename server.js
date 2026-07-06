@@ -471,12 +471,29 @@ const server = http.createServer(async (req, res) => {
         // another user's password (needs the admin role, no current password).
         const { userId, currentPassword, newPassword } = await readBody(req);
         const targetId = userId && userId !== user.id ? userId : user.id;
+        let mustChange = false;
         if (targetId !== user.id) {
           if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change another user's password." });
+          mustChange = true; // an admin-set password is temporary — force a change at next login
         } else if (!store.verifyPassword(user.id, currentPassword)) {
           return json(res, 403, { error: "Current password is incorrect." });
         }
-        const result = store.setPassword(targetId, newPassword, user); // hashes + audits
+        const result = store.setPassword(targetId, newPassword, user, { mustChange }); // hashes + audits
+        if (result.error) return json(res, 400, { error: result.error });
+        bumpRev();
+        return json(res, 200, { ok: true, rev });
+      }
+      if (url.pathname === "/api/users" && req.method === "POST") {
+        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can add employees." });
+        const result = store.addUser(await readBody(req), user); // password hashed server-side
+        if (result.error) return json(res, 400, { error: result.error });
+        bumpRev();
+        return json(res, 200, { ok: true, rev, userId: result.user.id });
+      }
+      if (url.pathname === "/api/delete-user" && req.method === "POST") {
+        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can remove employees." });
+        const { userId } = await readBody(req);
+        const result = store.deleteUser(userId, user);
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
         return json(res, 200, { ok: true, rev });

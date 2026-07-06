@@ -192,6 +192,8 @@
     closeModal();
     const user = S.currentUser();
     if (!user) return renderLogin();
+    // New hires and admin-reset accounts must set their own password before doing anything.
+    if (user.mustChangePassword) return renderForcePassword(user);
 
     const hash = location.hash || "#/dashboard";
     const emrAllowed = S.canAccessEmr(user);
@@ -344,6 +346,41 @@
   /* ================= LOGIN ================= */
 
   let loginSelected = null;
+
+  function renderForcePassword(user) {
+    app.innerHTML = `
+<div class="login-wrap">
+  <div class="login-box">
+    <div class="brandline">
+      <div class="logo">${LOGO_MARK}</div>
+      <div><h1>TheraChart EMR</h1><div class="sub">${esc(S.settings().facilityName)}</div></div>
+    </div>
+    <div class="card">
+      <h2>Set your password</h2>
+      <p style="font-size:13px; color:var(--muted)">Welcome, ${esc(user.name)}. Your account uses a temporary password — choose your own to continue.</p>
+      <div class="field"><label>Current (temporary) password</label><input id="fpCur" type="password" autocomplete="current-password" /></div>
+      <div class="field"><label>New password (at least 8 characters)</label><input id="fpNew" type="password" autocomplete="new-password" /></div>
+      <div class="field"><label>Confirm new password</label><input id="fpConf" type="password" autocomplete="new-password" /></div>
+      <button class="btn primary" id="fpSave" style="width:100%; justify-content:center">Set password &amp; continue</button>
+      <div class="error" id="fpErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
+      <button class="btn small" id="fpLogout" style="margin-top:10px">Sign out</button>
+    </div>
+  </div>
+</div>`;
+    const err = document.getElementById("fpErr");
+    document.getElementById("fpLogout").addEventListener("click", async () => { await Promise.resolve(S.logout()); render(); });
+    document.getElementById("fpSave").addEventListener("click", async () => {
+      const cur = document.getElementById("fpCur").value;
+      const nw = document.getElementById("fpNew").value;
+      const cf = document.getElementById("fpConf").value;
+      if (nw.length < 8) { err.textContent = "New password must be at least 8 characters."; return; }
+      if (nw !== cf) { err.textContent = "New passwords don't match."; return; }
+      err.style.color = "var(--muted)"; err.textContent = "Saving…";
+      const fail = await window.TheraSync.changePassword({ currentPassword: cur, newPassword: nw });
+      if (fail) { err.style.color = "var(--danger)"; err.textContent = fail; return; }
+      render(); // mustChangePassword is now cleared server-side + re-pulled
+    });
+  }
 
   function renderLogin() {
     const users = S.users();
@@ -2657,21 +2694,44 @@ ${ths.map((t) => {
   </div>
   <div class="card">
     <h2>Staff &amp; licenses</h2>
-    <p style="font-size:12.5px; color:var(--muted)">An expired license or voided access automatically blocks the EMR and document signing for that account.</p>
+    <p style="font-size:12.5px; color:var(--muted)">An expired license or voided access automatically blocks the EMR and document signing for that account. New employees get a temporary password and must set their own at first login.</p>
+    <details style="margin:6px 0 14px">
+      <summary style="cursor:pointer; font-weight:600; font-size:13px">+ Add employee</summary>
+      <div style="border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:8px">
+        <div class="field-row">
+          <div class="field"><label>Full name</label><input id="nu-name" placeholder="e.g. Ana Reyes, PT" /></div>
+          <div class="field"><label>Role</label><select id="nu-role">
+            <option value="therapist">Therapist</option><option value="admin">Administrator</option><option value="frontdesk">Front desk</option>
+          </select></div>
+        </div>
+        <div class="field-row" id="nu-license-row">
+          <div class="field"><label>License number</label><input id="nu-lic-num" placeholder="PT-…" /></div>
+          <div class="field"><label>License expires</label><input id="nu-lic-exp" type="date" /></div>
+        </div>
+        <div class="field"><label>Temporary password (min 8 — they'll change it at first login)</label>
+          <div style="display:flex; gap:8px"><input id="nu-pw" type="text" autocomplete="off" style="flex:1" /><button class="btn small" id="nu-gen" type="button">Generate</button></div></div>
+        <button class="btn primary small" id="nu-add">Create employee</button>
+        <div id="nu-msg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
+      </div>
+    </details>
     ${S.users().map((u) => `
       <div style="border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px">
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
           <b>${esc(u.name)}</b> <span class="chip muted">${esc(roleLabel(u))}</span>
           ${!u.active ? '<span class="chip bad">voided</span>' : S.licenseExpired(u) ? '<span class="chip bad">expired</span>' : S.licenseExpiresSoon(u) ? '<span class="chip warn">expiring soon</span>' : u.license ? '<span class="chip good">active</span>' : ""}
+          ${u.mustChangePassword ? '<span class="chip warn">must set password</span>' : ""}
         </div>
         ${u.license ? `<div class="field-row" style="margin-top:8px">
           <div class="field" style="margin-bottom:4px"><label>License number</label><input data-lic-num="${u.id}" value="${esc(u.license.number)}" /></div>
           <div class="field" style="margin-bottom:4px"><label>Expires</label><input data-lic-exp="${u.id}" type="date" value="${esc(u.license.expires)}" /></div>
         </div>` : ""}
-        <div style="display:flex; gap:8px; margin-top:6px">
+        <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap">
           <button class="btn small" data-save-user="${u.id}">Save</button>
           <button class="btn small ${u.active ? "danger" : ""}" data-toggle-user="${u.id}">${u.active ? "Void access" : "Restore access"}</button>
+          <button class="btn small" data-reset-user="${u.id}">Reset password</button>
+          ${u.id !== user.id ? `<button class="btn small danger" data-delete-user="${u.id}">Delete</button>` : ""}
         </div>
+        <div class="user-msg" data-msg="${u.id}" style="font-size:12px; min-height:16px; margin-top:4px"></div>
       </div>`).join("")}
   </div>
 </div>`;
@@ -2723,6 +2783,62 @@ ${ths.map((t) => {
       b.addEventListener("click", () => {
         const u = S.getUser(b.dataset.toggleUser);
         S.updateUser(u.id, { active: !u.active }, user);
+        render();
+      })
+    );
+
+    // ---- employee management (create / reset password / delete) ----
+    const genTempPw = () => {
+      const a = new Uint8Array(9);
+      (window.crypto && window.crypto.getRandomValues) ? window.crypto.getRandomValues(a) : a.forEach((_, i) => (a[i] = Math.floor(Math.random() * 256)));
+      return btoa(String.fromCharCode(...a)).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+    };
+    const T = window.TheraSync || {};
+    const roleSel = document.getElementById("nu-role");
+    if (roleSel) roleSel.addEventListener("change", () => {
+      document.getElementById("nu-license-row").style.display = roleSel.value === "frontdesk" ? "none" : "";
+    });
+    const genBtn = document.getElementById("nu-gen");
+    if (genBtn) genBtn.addEventListener("click", () => { document.getElementById("nu-pw").value = genTempPw(); });
+    const addBtn = document.getElementById("nu-add");
+    if (addBtn) addBtn.addEventListener("click", async () => {
+      const msg = document.getElementById("nu-msg");
+      const fail = (t) => { msg.style.color = "var(--danger)"; msg.textContent = t; };
+      const role = document.getElementById("nu-role").value;
+      const fields = {
+        name: document.getElementById("nu-name").value.trim(),
+        role,
+        password: document.getElementById("nu-pw").value,
+        license: role === "frontdesk" ? null : { number: document.getElementById("nu-lic-num").value.trim(), expires: document.getElementById("nu-lic-exp").value },
+      };
+      if (!fields.name) return fail("Enter a name.");
+      if ((fields.password || "").length < 8) return fail("Temporary password must be at least 8 characters (use Generate).");
+      msg.style.color = "var(--muted)"; msg.textContent = "Creating…"; addBtn.disabled = true;
+      const r = T.addUser ? await T.addUser(fields) : S.addUser(fields, user);
+      addBtn.disabled = false;
+      if (r.error) return fail(r.error);
+      render();
+    });
+
+    const userMsg = (id, text, ok) => { const el = document.querySelector(`[data-msg="${id}"]`); if (el) { el.style.color = ok ? "var(--good)" : "var(--danger)"; el.textContent = text; } };
+    document.querySelectorAll("[data-reset-user]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const id = b.dataset.resetUser;
+        const temp = genTempPw();
+        b.disabled = true; userMsg(id, "Resetting…", true);
+        const err = T.resetPassword ? await T.resetPassword(id, temp) : (S.setPassword(id, temp, user, { mustChange: true }).error || null);
+        b.disabled = false;
+        if (err) return userMsg(id, err, false);
+        userMsg(id, `Temporary password: ${temp} — share it securely; they'll be asked to change it at next login.`, true);
+      })
+    );
+    document.querySelectorAll("[data-delete-user]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const id = b.dataset.deleteUser;
+        if (!confirm(`Delete ${S.getUser(id) ? S.getUser(id).name : "this employee"}? Their login is removed. Their signed documents and audit history stay intact.`)) return;
+        b.disabled = true;
+        const err = T.deleteUser ? await T.deleteUser(id) : (S.deleteUser(id, user).error || null);
+        if (err) { b.disabled = false; return userMsg(id, err, false); }
         render();
       })
     );

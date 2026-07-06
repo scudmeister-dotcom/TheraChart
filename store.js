@@ -318,18 +318,61 @@
   }
 
   /** Set/replace a user's password. With an authenticator it's hashed and the
-      legacy plaintext pin is dropped; without one (demo) it stays a plain pin. */
-  function setPassword(userId, secret, byUser) {
+      legacy plaintext pin is dropped; without one (demo) it stays a plain pin.
+      opts.mustChange=true marks it as temporary (forces a change at next login). */
+  function setPassword(userId, secret, byUser, opts) {
     const u = getUser(userId);
     if (!u) return { error: "User not found." };
     const s = String(secret == null ? "" : secret);
     if (s.length < 8) return { error: "Password must be at least 8 characters." };
     if (authenticator) { u.passwordHash = authenticator.hash(s); delete u.pin; }
     else { u.pin = s; }
+    if (opts && opts.mustChange) u.mustChangePassword = true; else delete u.mustChangePassword;
     touch(u);
     save();
     audit(byUser ? byUser.id : userId, "password-changed", u.name);
     return { user: u };
+  }
+
+  const ROLES = ["therapist", "admin", "frontdesk"];
+
+  /** Create a new employee. Their initial password is temporary — they're
+      forced to set their own at first login (mustChangePassword). */
+  function addUser(fields, byUser) {
+    load();
+    const name = String((fields && fields.name) || "").trim();
+    const role = ROLES.includes(fields && fields.role) ? fields.role : "therapist";
+    const password = String((fields && fields.password) || "");
+    if (!name) return { error: "Name is required." };
+    if (password.length < 8) return { error: "Temporary password must be at least 8 characters." };
+    const user = {
+      id: uid("u"), name, role, active: true,
+      license: role === "frontdesk" ? null
+        : { number: String((fields.license && fields.license.number) || "").trim(),
+            expires: String((fields.license && fields.license.expires) || "").trim() },
+      mustChangePassword: true,
+    };
+    if (authenticator) user.passwordHash = authenticator.hash(password);
+    else user.pin = password;
+    touch(user);
+    state.users.push(user);
+    save();
+    audit(byUser ? byUser.id : null, "user-created", `${name} (${role})`);
+    return { user };
+  }
+
+  /** Remove an employee. Can't delete yourself or the last active admin. */
+  function deleteUser(userId, byUser) {
+    load();
+    const u = getUser(userId);
+    if (!u) return { error: "User not found." };
+    if (byUser && byUser.id === userId) return { error: "You can't delete your own account." };
+    const otherAdmins = state.users.filter((x) => x.role === "admin" && x.active && x.id !== userId);
+    if (u.role === "admin" && u.active && otherAdmins.length === 0) return { error: "Can't delete the last active administrator." };
+    state.users = state.users.filter((x) => x.id !== userId);
+    save();
+    audit(byUser ? byUser.id : null, "user-deleted", u.name);
+    return { ok: true };
   }
 
   /** One-time: hash any legacy plaintext pins into passwordHash (server only). */
@@ -714,7 +757,7 @@
     audit, auditLog: () => load().audit,
     // users/auth
     users: () => load().users, getUser, login, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, addUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient,

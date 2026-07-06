@@ -272,7 +272,49 @@
       return r.error || null;
     }
     const res = await api("/api/set-password", { method: "POST", body: { userId, currentPassword, newPassword } });
+    if (res.ok && !userId) { const st = await api("/api/state"); if (st.ok) adopt(st.data); } // clear mustChangePassword locally
     return res.ok ? null : ((res.data && res.data.error) || "Could not change password.");
+  };
+
+  /* Admin: create an employee. Server-authoritative (password hashed there),
+     then re-pull so the new user appears. Returns { error } or { userId }. */
+  sync.addUser = async (fields) => {
+    if (sync.mode === "offline") return { error: "Reconnect to the clinic server to add an employee." };
+    if (sync.mode === "server" && sync.token) {
+      const r = await api("/api/users", { method: "POST", body: fields });
+      if (!r.ok) return { error: (r.data && r.data.error) || "Couldn't add the employee." };
+      const st = await api("/api/state"); if (st.ok) adopt(st.data);
+      return { userId: r.data.userId };
+    }
+    const r = S.addUser(fields, S.currentUser());
+    return r.error ? { error: r.error } : { userId: r.user.id };
+  };
+
+  /* Admin: remove an employee. */
+  sync.deleteUser = async (userId) => {
+    if (sync.mode === "offline") return "Reconnect to the clinic server to remove an employee.";
+    if (sync.mode === "server" && sync.token) {
+      const r = await api("/api/delete-user", { method: "POST", body: { userId } });
+      if (!r.ok) return (r.data && r.data.error) || "Couldn't remove the employee.";
+      const st = await api("/api/state"); if (st.ok) adopt(st.data);
+      return null;
+    }
+    const r = S.deleteUser(userId, S.currentUser());
+    return r.error || null;
+  };
+
+  /* Admin: reset another user's password to a temporary one (forces a change
+     at their next login). Delegates to set-password with a userId. */
+  sync.resetPassword = async (userId, tempPassword) => {
+    if (sync.mode === "offline") return "Reconnect to the clinic server to reset a password.";
+    if (sync.mode === "server" && sync.token) {
+      const r = await api("/api/set-password", { method: "POST", body: { userId, newPassword: tempPassword } });
+      if (!r.ok) return (r.data && r.data.error) || "Couldn't reset the password.";
+      const st = await api("/api/state"); if (st.ok) adopt(st.data);
+      return null;
+    }
+    const r = S.setPassword(userId, tempPassword, S.currentUser(), { mustChange: true });
+    return r.error || null;
   };
 
   /* ---- AI transcript refinement ----

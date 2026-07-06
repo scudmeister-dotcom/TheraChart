@@ -61,5 +61,23 @@ const h1 = AUTH.hash("samePw12"), h2 = AUTH.hash("samePw12");
 check("hashes are salted (distinct for same input)", h1 !== h2);
 check("both salted hashes still verify", AUTH.verify({ passwordHash: h1 }, "samePw12") && AUTH.verify({ passwordHash: h2 }, "samePw12"));
 
+// --- admin: create / reset / delete employees ---------------------------
+const admin = store.getUser("u-grace"); // seeded admin
+const created = store.addUser({ name: "New Hire, PT", role: "therapist", password: "tempPass12", license: { number: "PT-9", expires: "2030-01-01" } }, admin);
+check("addUser creates a user", !created.error && !!created.user);
+check("new hire must change password", created.user && created.user.mustChangePassword === true);
+check("new hire can log in with temp password", store.login(created.user.id, "tempPass12") === null);
+check("addUser rejects short temp password", !!store.addUser({ name: "X", role: "therapist", password: "short" }, admin).error);
+
+// self-change clears the must-change flag; admin reset re-arms it
+store.setPassword(created.user.id, "realPass345", created.user);
+check("self set-password clears mustChangePassword", store.getUser(created.user.id).mustChangePassword === undefined);
+store.setPassword(created.user.id, "tempReset99", admin, { mustChange: true });
+check("admin reset re-arms mustChangePassword", store.getUser(created.user.id).mustChangePassword === true);
+
+check("can't delete the last active admin", !!store.deleteUser("u-grace", admin).error);
+check("can't delete your own account", !!store.deleteUser(admin.id, admin).error);
+check("deleteUser removes an employee", store.deleteUser(created.user.id, admin).ok === true && store.getUser(created.user.id) === null);
+
 console.log(`TheraChart auth checker: ${passed}/${passed + failures.length} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n")); process.exit(1); }
