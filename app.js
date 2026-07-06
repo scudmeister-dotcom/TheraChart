@@ -191,7 +191,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="logo">T</div>
-      <div><b>TheraChart</b><small>${esc(S.settings().facilityName)}</small></div>
+      <div><b>TheraChart</b></div>
     </div>
     ${links}
     <div class="spacer"></div>
@@ -752,7 +752,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <figure><figcaption>Back</figcaption><div class="bodymap" id="mapBack">${figureMarkup("back")}</div></figure>
     </div>
     <div class="map-notes" id="mapNotes"></div>
-    <h3 style="margin-top:12px">Transcript <span style="font-weight:400; color:var(--muted); font-size:11px">saved with this note — click a finding to see its source</span></h3>
+    <div id="cleanupSummary"></div>
+    <div class="transcript-head" style="margin-top:12px">
+      <h3>Transcript <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? "click a line to edit · click the speaker tag to relabel" : "click a finding to see its source"}</span></h3>
+      ${editable ? `<button class="btn small" id="refineBtn" title="AI re-reads the whole conversation, splits patient vs clinician, and cleans up the findings">✦ Review &amp; clean up with AI</button>` : ""}
+    </div>
     <div class="transcript-log" id="docTranscript"></div>
     <div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>
     ${editable ? `<div class="measure-add"><input id="typedDictation" placeholder="No mic? Type what the patient says and press Enter…" /></div>` : ""}
@@ -761,10 +765,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 </div>`;
 
     // ------- shared dictation/map state -------
-    const dstate = { selectedKey: null };
+    const dstate = { selectedKey: null, editable };
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
-    drawTranscript(doc);
+    drawTranscript(doc, null, dstate);
+    renderCleanupSummary(doc);
+    const refineBtn = document.getElementById("refineBtn");
+    if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
       printHTML(`<h1>${esc(S.settings().facilityName)}</h1>
         <div class="print-muted">${esc(S.patientName(p))} · DOB ${esc(p.dob)}</div>${docPrintHtml(doc)}`);
@@ -864,6 +871,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   function drawPoint(doc, pt, num) {
     const svgNS = "http://www.w3.org/2000/svg";
+    // Re-derive coordinates from the current lexicon so any saved dictation
+    // (even from before a mannequin change) pins to the right spot.
+    if (pt.part) {
+      const c = PR.coordForName(pt.part, pt.side);
+      pt.x = c.x; pt.y = c.y; pt.view = c.view;
+    }
     const layer = layerFor(pt.view);
     if (!layer) return;
     const g = document.createElementNS(svgNS, "g");
@@ -890,16 +903,46 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   function drawMapNotes(doc, dstate) {
     const box = document.getElementById("mapNotes");
     if (!box) return;
+    const editable = dstate && dstate.editable;
     const pts = doc.data.mapPoints || [];
     box.innerHTML = pts.length ? pts.map((pt, i) => `
       <div class="map-note ${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
-        <b><span class="badge">${i + 1}</span>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</b>
-        ${pt.notes.map((n) => `<div>· ${esc(n.summary)} ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
+        <div class="map-note-head">
+          <b><span class="badge">${i + 1}</span>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</b>
+          ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
+        </div>
+        ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
       </div>`).join("")
       : `<div class="empty-state" style="padding:8px">Body areas the patient mentions will be pinned here automatically.</div>`;
+
     box.querySelectorAll(".map-note").forEach((el) =>
-      el.addEventListener("click", () => selectMapPoint(doc, el.dataset.key))
+      el.addEventListener("click", (e) => {
+        if (e.target.closest("[contenteditable], [data-delpoint]")) return;
+        selectMapPoint(doc, el.dataset.key);
+      })
     );
+    if (editable) {
+      const user = S.currentUser();
+      box.querySelectorAll("[data-editnote]").forEach((el) => {
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
+        el.addEventListener("blur", () => {
+          const [key, ni] = el.dataset.editnote.split("::");
+          const pt = (doc.data.mapPoints || []).find((x) => x.key === key);
+          if (!pt || !pt.notes[ni]) return;
+          const v = el.textContent.trim();
+          if (v && v !== pt.notes[ni].summary) { pt.notes[ni].summary = v; S.updateDocData(doc.id, doc.data, user); }
+        });
+      });
+      box.querySelectorAll("[data-delpoint]").forEach((b) =>
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          doc.data.mapPoints = (doc.data.mapPoints || []).filter((x) => x.key !== b.dataset.delpoint);
+          S.updateDocData(doc.id, doc.data, user);
+          drawAllPoints(doc);
+          drawMapNotes(doc, dstate);
+        })
+      );
+    }
   }
 
   let currentDocState = null;
@@ -918,7 +961,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         marksByUtt.get(n.uttId).push(...(n.marks || []));
       }
     }
-    drawTranscript(doc, marksByUtt);
+    drawTranscript(doc, marksByUtt, dstate);
     if (dstate.selectedKey && marksByUtt.size) {
       const first = Math.min(...marksByUtt.keys());
       const target = document.querySelector(`#docTranscript [data-utt="${first}"]`);
@@ -948,15 +991,54 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return html;
   }
 
-  function drawTranscript(doc, marksByUtt) {
+  const SPEAKER_NEXT = { patient: "clinician", clinician: "", "": "patient" };
+  const speakerTag = (sp) =>
+    sp === "patient" ? `<span class="spk spk-patient">Patient</span>`
+      : sp === "clinician" ? `<span class="spk spk-clin">Clinician</span>`
+        : `<span class="spk spk-none">—</span>`;
+
+  function drawTranscript(doc, marksByUtt, dstate) {
     const box = document.getElementById("docTranscript");
     if (!box) return;
+    const editable = dstate && dstate.editable;
     const t = doc.data.transcript || [];
     box.innerHTML = t.length ? t.map((u, i) => `
-      <div class="utt" data-utt="${i}"><span class="utt-time">${esc(u.time)}</span>
-      <span class="utt-text">${uttHtml(u.text, marksByUtt ? marksByUtt.get(i) : null)}</span></div>`).join("")
+      <div class="utt ${u.speaker ? "utt-" + u.speaker : ""}" data-utt="${i}">
+        <span class="utt-meta">
+          ${editable
+        ? `<span class="spk-toggle" data-spk="${i}" role="button" tabindex="0" title="Click to relabel speaker">${speakerTag(u.speaker || "")}</span>`
+        : (u.speaker ? speakerTag(u.speaker) : `<span class="utt-time">${esc(u.time || "")}</span>`)}
+        </span>
+        <span class="utt-text" ${editable ? `contenteditable="true" data-edittext="${i}"` : ""}>${uttHtml(u.text, marksByUtt ? marksByUtt.get(i) : null)}</span>
+      </div>`).join("")
       : `<div class="empty-state" style="padding:8px">Everything said while listening is saved here, word for word.</div>`;
     if (!marksByUtt) box.scrollTop = box.scrollHeight;
+
+    if (editable) {
+      const user = S.currentUser();
+      box.querySelectorAll("[data-edittext]").forEach((el) => {
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
+        el.addEventListener("blur", () => {
+          const i = Number(el.dataset.edittext);
+          const v = el.textContent.trim();
+          if (v && doc.data.transcript[i] && v !== doc.data.transcript[i].text) {
+            doc.data.transcript[i].text = v;
+            doc.data.transcript[i].edited = true;
+            S.updateDocData(doc.id, doc.data, user);
+          }
+        });
+      });
+      const relabel = (i) => {
+        const u = doc.data.transcript[i];
+        u.speaker = SPEAKER_NEXT[u.speaker || ""];
+        S.updateDocData(doc.id, doc.data, user);
+        drawTranscript(doc, null, dstate);
+      };
+      box.querySelectorAll("[data-spk]").forEach((el) => {
+        el.addEventListener("click", () => relabel(Number(el.dataset.spk)));
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); relabel(Number(el.dataset.spk)); } });
+      });
+    }
   }
 
   /* ---- dictation + routing ---- */
@@ -1376,7 +1458,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     S.updateDocData(doc.id, doc.data, user);
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
-    drawTranscript(doc);
+    drawTranscript(doc, null, dstate);
     refreshMeasTable(doc);
     const log = document.getElementById("routeLog");
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
@@ -1414,6 +1496,212 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!last || last.summary !== m.summary || last.uttId !== uttId) {
       pt.notes.push({ time, summary: m.summary, quote: m.quote, uttId, marks: [[m.winStart, m.winEnd, false], [m.start, m.end, true]] });
     }
+  }
+
+  /* ================= AI review & clean-up (second pass) ================= */
+
+  function renderCleanupSummary(doc) {
+    const box = document.getElementById("cleanupSummary");
+    if (!box) return;
+    const r = doc.data.refinement;
+    if (!r || !r.applied) { box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <div class="cleanup-card">
+        <div class="cleanup-head">
+          <b>✦ AI cleanup applied</b>
+          <span class="chip ${r.engine === "gemini" ? "info" : "muted"}">${r.engine === "gemini" ? "Gemini" : "local AI"}</span>
+          <button class="btn small" id="viewChangesBtn">See what changed</button>
+        </div>
+        <div class="cleanup-line">${esc(r.headline || "")}</div>
+      </div>`;
+    const btn = document.getElementById("viewChangesBtn");
+    if (btn) btn.addEventListener("click", () => showChangesModal(doc));
+  }
+
+  function showChangesModal(doc) {
+    const r = doc.data.refinement;
+    if (!r) return;
+    const rows = (r.changes || []).map((c) => `
+      <tr><td><span class="chip ${c.tag === "added" ? "good" : c.tag === "dropped" ? "bad" : c.tag === "reworded" ? "warn" : "muted"}">${esc(c.tag)}</span></td>
+      <td>${esc(c.label)}</td><td>${esc(c.detail || "")}</td></tr>`).join("");
+    const m = showModal(`
+<h2>Live transcript vs AI cleanup</h2>
+<p style="font-size:12.5px; color:var(--muted)">What the live pass captured while you spoke, and what the ${r.engine === "gemini" ? "Gemini" : "local"} review changed on ${fmtDT(r.ranAt)}.</p>
+<div class="table-scroll"><table class="list"><thead><tr><th>Change</th><th>Finding</th><th>Detail</th></tr></thead>
+<tbody>${rows || `<tr><td colspan="3"><div class="empty-state">No differences — the AI confirmed the live findings.</div></td></tr>`}</tbody></table></div>
+<div style="font-size:12.5px; margin-top:10px"><b>${r.clinicianTurns || 0}</b> line${r.clinicianTurns === 1 ? "" : "s"} were identified as the clinician speaking and excluded from the patient findings.</div>
+<div class="modal-actions"><button class="btn primary" id="chOk">Close</button></div>`);
+    m.querySelector("#chOk").addEventListener("click", closeModal);
+  }
+
+  async function runRefine(doc, user, dstate) {
+    const utterances = (doc.data.transcript || []).map((u) => u.text).filter(Boolean);
+    if (!utterances.length) return alertBanner("There's no transcript to review yet — dictate or type something first.");
+    const sync = window.TheraSync || {};
+    const engineName = sync.refine === "gemini" ? "Google Gemini" : "the local AI reviewer";
+
+    const m = showModal(`<h2>✦ Reviewing with AI…</h2>
+      <p style="font-size:13px">Sending the transcript to <b>${esc(engineName)}</b> to split patient vs clinician speech, clean up wording, and re-check the findings.</p>
+      <div class="empty-state">Working…</div>`);
+    let result;
+    try {
+      result = sync.refineTranscript
+        ? await sync.refineTranscript(utterances)
+        : { ...PR.refineTranscript(utterances), source: "local" };
+    } catch (e) {
+      closeModal();
+      return alertBanner("AI review failed: " + e.message + ". Your transcript is unchanged.");
+    }
+    openReviewModal(doc, user, dstate, result);
+  }
+
+  function openReviewModal(doc, user, dstate, result) {
+    // Build the merged, editable finding list: live points vs AI findings.
+    const livePts = doc.data.mapPoints || [];
+    const liveKeys = new Set(livePts.map((p) => p.key));
+    const aiByKey = new Map(result.findings.map((f) => [f.key, f]));
+    const rows = [];
+    for (const f of result.findings) {
+      const inLive = liveKeys.has(f.key);
+      rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
+        summary: f.summary, quote: f.quote, include: true, origin: inLive ? "confirmed" : "added" });
+    }
+    for (const p of livePts) {
+      if (aiByKey.has(p.key)) continue;
+      const sum = p.notes.map((n) => n.summary).join(" · ");
+      rows.push({ key: p.key, part: p.part, side: p.side, view: p.view, x: p.x, y: p.y,
+        summary: sum, quote: (p.notes[0] || {}).quote || "", include: true, origin: "live-only" });
+    }
+
+    const engineChip = result.source && result.source.startsWith("gemini")
+      ? `<span class="chip info">Gemini</span>` : `<span class="chip muted">local AI</span>`;
+
+    const dialogueHtml = result.dialogue.map((d, i) => `
+      <div class="rev-turn">
+        <select data-spk="${i}" class="rev-spk">
+          <option value="patient" ${d.speaker === "patient" ? "selected" : ""}>Patient</option>
+          <option value="clinician" ${d.speaker === "clinician" ? "selected" : ""}>Clinician</option>
+        </select>
+        <textarea data-turn="${i}" rows="1" class="rev-text">${esc(d.text)}</textarea>
+      </div>`).join("");
+
+    const findingRow = (r, i) => `
+      <div class="rev-finding">
+        <label class="rev-inc"><input type="checkbox" data-inc="${i}" ${r.include ? "checked" : ""}/></label>
+        <div class="rev-fbody">
+          <div class="rev-fhead"><b>${esc(r.side ? cap(r.side) + " " : "")}${esc(r.part)}</b>
+            <span class="chip ${r.origin === "added" ? "good" : r.origin === "live-only" ? "warn" : "muted"}">${r.origin === "added" ? "AI added" : r.origin === "live-only" ? "live only — AI didn't confirm" : "confirmed"}</span></div>
+          <textarea data-fsum="${i}" rows="1" class="rev-text">${esc(r.summary)}</textarea>
+        </div>
+      </div>`;
+
+    const m = showModal(`
+<h2>Review &amp; clean up ${engineChip}</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:-4px">Edit anything below. Speaker labels and wording are yours to correct; only the findings you keep will be saved to the note and body map.</p>
+<div class="rev-tabs">
+  <button class="rev-tab active" data-tab="dialogue">Conversation</button>
+  <button class="rev-tab" data-tab="findings">Findings (${rows.length})</button>
+</div>
+<div class="rev-pane" data-pane="dialogue">
+  <div class="rev-legend">Who said what — click a speaker to change it, edit text inline.</div>
+  ${dialogueHtml || `<div class="empty-state">No dialogue.</div>`}
+</div>
+<div class="rev-pane" data-pane="findings" style="display:none">
+  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely.</div>
+  ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
+</div>
+<div class="modal-actions">
+  <button class="btn" id="revCancel">Cancel</button>
+  <button class="btn primary" id="revApply">Apply cleaned-up version</button>
+</div>`);
+    m.classList.add("wide");
+
+    const fit = (ta) => { ta.style.height = "auto"; ta.style.height = Math.max(32, ta.scrollHeight) + "px"; };
+    m.querySelectorAll(".rev-tab").forEach((t) => t.addEventListener("click", () => {
+      m.querySelectorAll(".rev-tab").forEach((x) => x.classList.toggle("active", x === t));
+      m.querySelectorAll(".rev-pane").forEach((p) => { p.style.display = p.dataset.pane === t.dataset.tab ? "" : "none"; });
+      // re-fit textareas now that their pane is visible (scrollHeight was 0 while hidden)
+      m.querySelectorAll(`.rev-pane[data-pane="${t.dataset.tab}"] textarea.rev-text`).forEach(fit);
+    }));
+    m.querySelectorAll("textarea.rev-text").forEach((ta) => {
+      ta.addEventListener("input", () => fit(ta));
+      setTimeout(() => fit(ta), 0);
+    });
+
+    // live edits back into the working copies
+    m.querySelectorAll("[data-spk]").forEach((s) => s.addEventListener("change", () => { result.dialogue[Number(s.dataset.spk)].speaker = s.value; }));
+    m.querySelectorAll("[data-turn]").forEach((t) => t.addEventListener("input", () => { result.dialogue[Number(t.dataset.turn)].text = t.value; }));
+    m.querySelectorAll("[data-fsum]").forEach((t) => t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; }));
+    m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => { rows[Number(c.dataset.inc)].include = c.checked; }));
+
+    m.querySelector("#revCancel").addEventListener("click", closeModal);
+    m.querySelector("#revApply").addEventListener("click", () => {
+      applyRefinement(doc, user, dstate, result, rows);
+      closeModal();
+    });
+  }
+
+  function applyRefinement(doc, user, dstate, result, rows) {
+    const before = doc.data.mapPoints || [];
+    const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
+
+    // 1) transcript becomes the speaker-labeled, cleaned dialogue
+    doc.data.transcript = result.dialogue.map((d) => ({ time: "", speaker: d.speaker, text: d.text, edited: true }));
+
+    // 2) rebuild body-map points from the findings the user kept, relinking
+    //    each to the dialogue turn that contains its words (click-to-source)
+    const findText = (needle) => {
+      if (!needle) return -1;
+      const key = needle.toLowerCase().replace(/^[…\s]+|[…\s]+$/g, "").slice(0, 20);
+      return doc.data.transcript.findIndex((u) => u.text.toLowerCase().includes(key));
+    };
+    const kept = rows.filter((r) => r.include && r.summary.trim());
+    doc.data.mapPoints = kept.map((r) => {
+      const c = PR.coordForName(r.part, r.side);
+      const uttId = findText(r.quote) >= 0 ? findText(r.quote) : findText(r.part);
+      const turnText = uttId >= 0 ? doc.data.transcript[uttId].text : "";
+      return {
+        key: r.key, part: c.part, side: r.side, view: c.view, x: c.x, y: c.y,
+        notes: [{ time: "", summary: r.summary.trim(), quote: r.quote || "",
+          uttId: uttId >= 0 ? uttId : null,
+          marks: uttId >= 0 ? [[0, turnText.length, false]] : [] }],
+      };
+    });
+
+    // 3) compute the change list (live vs cleaned) for the comparison view
+    const changes = [];
+    const keptKeys = new Set(kept.map((r) => r.key));
+    for (const r of kept) {
+      const label = `${r.side ? cap(r.side) + " " : ""}${r.part}`;
+      if (!beforeByKey.has(r.key)) changes.push({ tag: "added", label, detail: r.summary });
+      else if (beforeByKey.get(r.key) !== r.summary) changes.push({ tag: "reworded", label, detail: `“${beforeByKey.get(r.key)}” → “${r.summary}”` });
+      else changes.push({ tag: "kept", label, detail: r.summary });
+    }
+    for (const p of before) {
+      if (!keptKeys.has(p.key)) changes.push({ tag: "dropped", label: `${p.side ? cap(p.side) + " " : ""}${p.part}`, detail: "removed in cleanup" });
+    }
+    const clinicianTurns = result.dialogue.filter((d) => d.speaker === "clinician").length;
+    const added = changes.filter((c) => c.tag === "added").length;
+    const reworded = changes.filter((c) => c.tag === "reworded").length;
+    const dropped = changes.filter((c) => c.tag === "dropped").length;
+
+    doc.data.refinement = {
+      applied: true,
+      ranAt: new Date().toISOString(),
+      engine: result.source && result.source.startsWith("gemini") ? "gemini" : "local",
+      changes, clinicianTurns,
+      headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept.`,
+    };
+
+    S.updateDocData(doc.id, doc.data, user);
+    S.audit(user.id, "transcript-refined", `${doc.title}: ${doc.data.refinement.engine} · ${kept.length} findings`);
+    dstate.selectedKey = null;
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    drawTranscript(doc, null, dstate);
+    renderCleanupSummary(doc);
+    const log = document.getElementById("routeLog");
+    if (log) log.textContent = "AI cleanup applied — review the findings and sign when ready.";
   }
 
   /* ---- sign & amend ---- */
@@ -1670,6 +1958,13 @@ ${ths.map((t) => {
     <p style="font-size:13px">Browser dictation (the Web Speech API) typically sends <b>audio to the browser vendor's servers</b> for transcription — on Chrome that is Google. Google states dictation audio is used only to return the transcript, but there is <b>no healthcare data agreement (HIPAA BAA / RA 10173 outsourcing agreement)</b> behind the free browser API, so treat spoken PHI as leaving your control during dictation.</p>
     <p style="font-size:13px"><b>The private option is built in:</b> switch the engine to <b>Whisper on the clinic server</b> in any note's dictation bar — audio is transcribed on your own machine, never reaching a third party (requires <code>pip install faster-whisper</code> on the server). The browser/Google engine remains available so you can compare accuracy yourself.</p>
     <p style="font-size:13px; margin-bottom:0"><b>Offline dictation:</b> when the clinic server is unreachable, Whisper recordings are <b>held in this device's browser storage</b> until reconnection, then transcribed and immediately deleted. That temporary on-device audio is the one exception to "audio is never stored" — it exists only while offline, only on this device, so enable full-disk/device encryption on phones used in the field.</p>
+  </div>
+  <div class="card">
+    <h2>✦ AI cleanup (Gemini)</h2>
+    <p style="font-size:13px">The optional "Review &amp; clean up with AI" pass sends the <b>transcript text</b> (never audio) to Google Gemini to split patient vs clinician speech and tidy the findings. ${window.TheraSync && window.TheraSync.refine === "gemini"
+      ? "This clinic server is configured to use Gemini."
+      : "No Gemini key is configured here, so a <b>local, on-device reviewer</b> runs instead — nothing leaves the device."}</p>
+    <p style="font-size:13px; margin-bottom:0">Because the transcript can contain PHI, using Gemini means sending PHI to Google. For compliant use, run it through <b>Vertex AI Gemini under a signed BAA</b> (paid), not the free consumer API — the consumer free tier may use submitted data to improve models. The local reviewer is always available as the private alternative.</p>
   </div>
   <div class="card">
     <h2>🛡 Access controls</h2>

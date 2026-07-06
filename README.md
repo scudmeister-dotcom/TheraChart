@@ -114,6 +114,43 @@ good accuracy), `medium`/`large-v3` with a GPU. Any other engine works via
 Cebuano the engine auto-detects (and the body-part lexicon understands
 Cebuano regardless of engine).
 
+## Two-pass documentation: live capture, then AI clean-up
+
+TheraChart captures in two passes so the therapist gets instant feedback *and*
+a verified final record:
+
+1. **Live pass (while you talk)** — every finished sentence is transcribed,
+   pinned to the body map, and filed into sections in real time, so the PT can
+   watch what's being logged and catch problems immediately.
+2. **Review & clean-up pass (at the end)** — press **✦ Review & clean up with
+   AI** and the whole transcript is re-read by AI, which:
+   - **splits the dialogue into patient vs clinician** turns (a therapist's
+     questions, instructions, and read-out measurements are separated from
+     what the patient reports),
+   - **cleans up transcription errors** without changing meaning or language,
+   - **re-extracts the findings, focused on the patient's statements.**
+
+   A review screen then lets the user **edit everything** — relabel any
+   speaker, fix any wording, edit or uncheck any finding — before applying.
+   Applying writes the speaker-labeled transcript back, rebuilds the body-map
+   findings, and records a **live-vs-cleanup comparison** ("what changed") you
+   can reopen any time. Transcript lines and finding summaries are also
+   **editable inline** at any point, independent of the AI pass.
+
+The AI pass uses **Google Gemini** when the clinic server is configured with a
+key; otherwise a **local, on-device reviewer** runs (no network, no key), so
+the feature always works. Enable Gemini on the clinic server:
+
+```bash
+GEMINI_API_KEY=... GEMINI_MODEL=gemini-2.0-flash node server.js
+# for PHI/compliance, point GEMINI_BASE_URL at Vertex AI Gemini under a BAA
+```
+
+Only transcript **text** (never audio) is sent for refinement. Because that
+text can contain PHI, using the consumer Gemini API means sending PHI to
+Google; the Privacy panel explains the compliant path (paid Vertex AI Gemini
+under a signed BAA) and the local reviewer alternative.
+
 ## Working offline (home visits, brownouts)
 
 Devices that belong to a clinic server keep working when it's unreachable:
@@ -162,6 +199,7 @@ checked offline:
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
 node test/merge.test.js    # 13 checks: offline merge never loses records
+node test/refine.test.js   # 25 checks: speaker split + AI-cleanup finding extraction
 ```
 
 ## Files
@@ -172,7 +210,8 @@ node test/merge.test.js    # 13 checks: offline merge never loses records
 - `sync.js` — client sync layer (auto-detects the server, degrades to
   on-device mode)
 - `parser.js` — multilingual body-part lexicon, symptom summarizer,
-  measurement extraction, section classifier
+  measurement extraction, section classifier, speaker split + local refiner,
+  coordinate-by-name (saved findings re-pin to the current mannequin)
 - `store.js` — on-device data layer: users, patients, documents, calendar,
   audit log, license gating
 - `app.js` — application: routing, views, dictation, body maps, printing

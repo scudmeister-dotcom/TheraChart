@@ -428,6 +428,57 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 .modal h2 { font-size: 16px; margin-bottom: 12px; }
 .modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal .error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 16px; }
+.modal.wide { width: 720px; }
+
+/* ---------------- transcript speakers + inline edit ---------------- */
+
+.utt-meta { flex: none; display: flex; align-items: center; }
+.spk {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+}
+.spk-patient { background: var(--accent-soft); color: var(--accent); }
+.spk-clin { background: var(--review-soft); color: var(--review); }
+.spk-none { background: var(--hover); color: var(--muted); }
+.spk-toggle { cursor: pointer; }
+.spk-toggle:hover { filter: brightness(0.96); }
+.utt-clinician .utt-text { color: var(--muted); }
+.utt-text[contenteditable] { border-radius: 4px; padding: 0 2px; }
+.utt-text[contenteditable]:focus { outline: 2px solid var(--accent-soft); background: var(--panel); }
+.note-summary[contenteditable]:focus { outline: 2px solid var(--accent-soft); border-radius: 4px; }
+.map-note-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.icon-btn { border: none; background: none; color: var(--muted); font-size: 13px; padding: 0 4px; border-radius: 5px; }
+.icon-btn:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------------- AI cleanup card ---------------- */
+
+.cleanup-card {
+  border: 1px solid var(--border); border-left: 4px solid var(--accent);
+  background: var(--accent-soft); border-radius: 10px; padding: 9px 12px; margin: 10px 0 4px;
+}
+.cleanup-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cleanup-head b { font-size: 13px; }
+.cleanup-line { font-size: 12px; color: var(--ink); margin-top: 4px; }
+
+/* ---------------- review modal ---------------- */
+
+.rev-tabs { display: flex; gap: 6px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.rev-tab {
+  background: none; border: none; padding: 8px 12px; font-size: 13px; font-weight: 600;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.rev-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.rev-pane { max-height: 52vh; overflow-y: auto; }
+.rev-legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.rev-turn { display: flex; gap: 8px; margin-bottom: 7px; align-items: flex-start; }
+.rev-spk { flex: none; width: 104px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 12px; }
+.rev-text { flex: 1; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); resize: none; overflow: hidden; line-height: 1.4; font-size: 13px; }
+.rev-text:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.rev-finding { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.rev-inc { flex: none; padding-top: 3px; }
+.rev-fbody { flex: 1; }
+.rev-fhead { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.rev-fhead b { font-size: 13px; }
 
 /* ---------------- print ---------------- */
 

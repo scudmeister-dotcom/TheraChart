@@ -46,7 +46,119 @@ globalThis.THERACHART_STORAGE = {
   removeItem() { try { fs.unlinkSync(DATA_FILE); } catch { } },
 };
 const store = require("./store.js");
+const parser = require("./parser.js");
 store.load();
+
+/* ---- AI transcript refinement (Gemini, with a local fallback) ----
+   Sends the TEXT transcript (not audio) to Google Gemini to split speakers,
+   clean transcription errors, and re-extract the patient's findings. Set
+   GEMINI_API_KEY to enable; otherwise a local heuristic refiner runs so the
+   feature works with no key and no network. For PHI, use paid/Vertex AI
+   Gemini under a signed BAA (point GEMINI_BASE_URL at your Vertex endpoint). */
+const GEMINI_KEY = process.env.GEMINI_API_KEY || null;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
+const refineMode = GEMINI_KEY ? "gemini" : "local";
+
+const REFINE_SCHEMA = {
+  type: "object",
+  properties: {
+    dialogue: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          speaker: { type: "string", enum: ["patient", "clinician"] },
+          text: { type: "string" },
+        },
+        required: ["speaker", "text"],
+      },
+    },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          bodyPart: { type: "string" },
+          side: { type: "string", enum: ["left", "right", "none"] },
+          summary: { type: "string" },
+          sourceQuote: { type: "string" },
+        },
+        required: ["bodyPart", "summary"],
+      },
+    },
+  },
+  required: ["dialogue", "findings"],
+};
+
+function refinePrompt(utterances) {
+  return [
+    "You are a clinical scribe for a physical-therapy EMR. You receive a raw,",
+    "possibly messy voice transcript of a session. Both the CLINICIAN and the",
+    "PATIENT may be talking, in English, Tagalog, or Cebuano (Taglish is common).",
+    "",
+    "Tasks:",
+    "1) Split the transcript into dialogue turns, labeling each 'patient' or",
+    "   'clinician'. Clinicians ask questions, give instructions, and read out",
+    "   objective measurements; patients describe how they feel.",
+    "2) Lightly fix obvious transcription errors WITHOUT changing meaning or",
+    "   translating — keep the speaker's original language.",
+    "3) Extract clinical findings PRIMARILY from what the PATIENT said: the body",
+    "   region, side (left/right/none), and a concise clinical summary (symptom,",
+    "   severity, 0-10 rating, duration, aggravating factor). Ignore the",
+    "   clinician's own remarks unless they clarify a patient finding.",
+    "",
+    "Return ONLY JSON matching the schema. Transcript lines:",
+    ...utterances.map((u, i) => `${i + 1}. ${u}`),
+  ].join("\n");
+}
+
+async function callGemini(utterances) {
+  const url = `${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_KEY)}`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: refinePrompt(utterances) }] }],
+    generationConfig: { responseMimeType: "application/json", responseSchema: REFINE_SCHEMA, temperature: 0.2 },
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "{}";
+  const parsed = JSON.parse(text);
+  return normalizeRefinement(parsed, utterances, "gemini");
+}
+
+// Attach map coordinates (via the shared lexicon) and turn indices so the
+// client can pin findings and highlight their source — same shape as local.
+function normalizeRefinement(parsed, utterances, source) {
+  const dialogue = Array.isArray(parsed.dialogue) && parsed.dialogue.length
+    ? parsed.dialogue.map((d) => ({ speaker: d.speaker === "clinician" ? "clinician" : "patient", text: String(d.text || "").trim() })).filter((d) => d.text)
+    : utterances.map((u) => ({ speaker: parser.guessSpeaker(u), text: String(u).trim() }));
+
+  const findings = (parsed.findings || []).map((f) => {
+    const side = f.side === "left" || f.side === "right" ? f.side : null;
+    const c = parser.coordForName(f.bodyPart, side);
+    const quote = f.sourceQuote || "";
+    const turns = [];
+    dialogue.forEach((d, i) => { if (quote && d.text.toLowerCase().includes(quote.toLowerCase().slice(0, 24))) turns.push(i); });
+    return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns };
+  }).filter((f) => f.summary);
+
+  return { dialogue, findings, source };
+}
+
+async function refineTranscript(utterances) {
+  if (GEMINI_KEY) {
+    try { return await callGemini(utterances); }
+    catch (e) { console.error("[refine] Gemini failed, using local:", e.message); }
+  }
+  const local = parser.refineTranscript(utterances);
+  return { ...local, source: GEMINI_KEY ? "local (gemini failed)" : "local" };
+}
 
 let rev = (() => { try { return Number(fs.readFileSync(REV_FILE, "utf8")) || 1; } catch { return 1; } })();
 function bumpRev() { rev += 1; fs.writeFileSync(REV_FILE, String(rev)); }
@@ -223,7 +335,7 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
-      return json(res, 200, { ok: true, server: "therachart", rev, whisper: whisperReady });
+      return json(res, 200, { ok: true, server: "therachart", rev, whisper: whisperReady, refine: refineMode });
     }
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
@@ -243,6 +355,13 @@ const server = http.createServer(async (req, res) => {
       if (!user) return json(res, 401, { error: "Not signed in." });
 
       if (url.pathname === "/api/rev") return json(res, 200, { rev });
+      if (url.pathname === "/api/refine" && req.method === "POST") {
+        const { transcript } = await readBody(req);
+        if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
+        const clean = transcript.map((t) => String(t || "").slice(0, 2000)).slice(0, 500);
+        const result = await refineTranscript(clean);
+        return json(res, 200, result);
+      }
       if (url.pathname === "/api/transcribe" && req.method === "POST") {
         const lang = (url.searchParams.get("lang") || "auto").replace(/[^a-z-]/gi, "");
         const wav = await readRawBody(req);
@@ -292,4 +411,5 @@ server.listen(PORT, () => {
   console.log(`  app:  http://localhost:${PORT}`);
   console.log(`  data: ${DATA_FILE}`);
   console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
+  console.log(`  AI cleanup: ${refineMode === "gemini" ? `Gemini (${GEMINI_MODEL})` : "local heuristic (set GEMINI_API_KEY for Gemini)"}`);
 });

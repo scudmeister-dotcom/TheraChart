@@ -235,6 +235,20 @@
     }
   };
 
+  /* ---- AI transcript refinement ----
+     Uses the clinic server (Gemini if configured, else server-local) when
+     online; falls back to the in-browser local refiner otherwise, so the
+     "Review & clean up" pass always works. */
+  sync.refineTranscript = async (utterances) => {
+    if (sync.mode === "server" && sync.token) {
+      try {
+        const r = await api("/api/refine", { method: "POST", body: { transcript: utterances } });
+        if (r.ok) return r.data;
+      } catch (_) { /* fall through to local */ }
+    }
+    return { ...window.TheraParser.refineTranscript(utterances), source: "local" };
+  };
+
   /* ---- boot ---- */
   (async () => {
     try {
@@ -244,6 +258,7 @@
         sync.mode = "server";
         sync.rev = data.rev;
         sync.whisper = !!data.whisper;
+        sync.refine = data.refine || "local"; // "gemini" | "local"
         lsSet(LS_SEEN, "1");
         lsSet(LS_WHISPER, sync.whisper ? "1" : "0");
 

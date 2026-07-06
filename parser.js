@@ -445,12 +445,111 @@
     return { text, mentions, loose, measurements };
   }
 
+  /* ---------------------------------------------------------------- *
+   *  Coordinates by name — so a saved finding (from any past dictation,
+   *  or from the AI refiner) always re-pins to the CURRENT mannequin,
+   *  even if the figure's proportions change later.
+   * ---------------------------------------------------------------- */
+
+  const partByName = {};
+  for (const p of BODY_PARTS) partByName[p.name.toLowerCase()] = p;
+
+  function coordForName(name, side) {
+    const clean = String(name || "").toLowerCase().trim();
+    let part = partByName[clean];
+    if (!part) {
+      // free-form name (e.g. from Gemini): parse it to find the region
+      const r = parseUtterance(name || "");
+      if (r.mentions.length) {
+        const m = r.mentions[0];
+        return { x: coordFor(partByName[m.partName.toLowerCase()], side || m.side).x, y: m.y, view: m.view, part: m.partName, side: side || m.side || null };
+      }
+      part = partByName["back"]; // last-resort fallback
+    }
+    const { x, y } = coordFor(part, side || null);
+    return { x, y, view: part.view, part: part.name, side: side || null };
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Local transcript refiner (the offline / no-key fallback for the
+   *  "Review & clean up with AI" pass). Splits a raw transcript into
+   *  patient vs clinician turns and re-extracts findings from what the
+   *  PATIENT said. The Gemini refiner returns the same shape but smarter.
+   * ---------------------------------------------------------------- */
+
+  // Marks a turn as the clinician speaking: a question, an instruction, or a
+  // called-out objective measurement.
+  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i'?m going to|i will|i'?ll|push (?:against|into|up|down)|resist|relax|breathe|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ituro|itudlo|subukan|asa|kanus-?a|pila ka|unsa imong)\b/i;
+
+  function guessSpeaker(raw) {
+    const t = String(raw || "").trim();
+    if (!t) return "clinician";
+    const r = parseUtterance(t);
+    const hasObjMeas = r.measurements.rom.length || r.measurements.mmt.length || r.measurements.special.length;
+    if (hasObjMeas) return "clinician"; // therapist reads out ROM/MMT/tests
+    if (CLINICIAN_RE.test(t)) return "clinician";
+    return "patient"; // default: hone in on the patient
+  }
+
+  function tidy(raw) {
+    let t = String(raw || "").trim().replace(/\s+/g, " ");
+    if (!t) return "";
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    if (!/[.?!]$/.test(t)) t += ".";
+    return t;
+  }
+
+  const uniqueJoin = (arr) => [...new Set(arr.filter(Boolean))].join(" · ");
+
+  function refineTranscript(utterances) {
+    const dialogue = [];
+    const findingsMap = new Map();
+    let lastKey = null;
+
+    (utterances || []).forEach((raw) => {
+      const text = tidy(raw);
+      if (!text) return;
+      const speaker = guessSpeaker(raw);
+      const turnIndex = dialogue.length;
+      dialogue.push({ speaker, text });
+      if (speaker !== "patient") return;
+
+      const r = parseUtterance(raw);
+      if (r.mentions.length) {
+        for (const m of r.mentions) {
+          const key = `${m.partName}|${m.side || ""}`;
+          let f = findingsMap.get(key);
+          if (!f) {
+            f = { key, part: m.partName, side: m.side, view: m.view, x: m.x, y: m.y, summaries: [], quotes: [], turns: [] };
+            findingsMap.set(key, f);
+          }
+          f.summaries.push(m.summary);
+          f.quotes.push(m.quote);
+          f.turns.push(turnIndex);
+          lastKey = key;
+        }
+      } else if (r.loose && lastKey) {
+        const f = findingsMap.get(lastKey);
+        if (f) { f.summaries.push(r.loose.summary); f.quotes.push(r.loose.quote); f.turns.push(turnIndex); }
+      }
+    });
+
+    const findings = [...findingsMap.values()].map((f) => ({
+      key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
+      summary: uniqueJoin(f.summaries), quote: f.quotes[0] || "", turns: f.turns,
+    }));
+    return { dialogue, findings, source: "local" };
+  }
+
   return {
     parseUtterance,
     summarize,
     coordFor,
+    coordForName,
     extractMeasurements,
     classifyUtterance,
+    guessSpeaker,
+    refineTranscript,
     BODY_PARTS,
   };
 });
