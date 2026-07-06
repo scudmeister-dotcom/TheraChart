@@ -6,6 +6,10 @@ speaks, TheraChart pins what they say onto a body map, files measurements into
 the right sections, keeps the full word-for-word transcript, and lets you
 click any finding to see exactly where it was said.
 
+> **New here? Read [ABOUT.md](ABOUT.md)** — what TheraChart is, what it gives
+> physical therapists, and why it beats a hand-written paper chart. It's the
+> heart and soul of the project.
+
 Runs on phone, iPad, or computer as a responsive web app.
 
 ## Run it
