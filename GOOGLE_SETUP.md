@@ -104,6 +104,23 @@ gcloud run deploy therachart \
   PIN login still protects the data.
 - It prints a public **URL** (like `https://therachart-xxxx.run.app`) — that's
   your app, reachable from anywhere.
+- **Replace `YOUR_PROJECT_ID` with your real id** (e.g. `therachart-prod`) — don't
+  paste the placeholder literally.
+
+> ### Deploy fails with `storage.objects.get denied` / `403` on
+> ### `PROJECT_NUMBER-compute@developer.gserviceaccount.com`?
+> New projects don't auto-grant permissions to the build service account, so the
+> first source deploy can't read your uploaded code. Grant it (use **your**
+> project id and the compute service account from the error message), wait ~1
+> minute, then re-run the deploy:
+> ```bash
+> gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+>   --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+>   --role="roles/cloudbuild.builds.builder"
+> gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+>   --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+>   --role="roles/storage.objectViewer"
+> ```
 
 **Credentials are automatic.** On Cloud Run the app uses the service account
 attached to the service — no key files. Grant that account permission to call

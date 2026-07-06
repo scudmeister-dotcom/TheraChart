@@ -1,0 +1,12 @@
+{
+  "name": "therachart",
+  "version": "1.0.0",
+  "description": "TheraChart EMR — zero-dependency Node clinic server",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
