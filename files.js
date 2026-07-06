@@ -1,18 +1,17 @@
 /* TheraChart file storage backend.
 
-   Patient attachments (referrals, imaging, scanned old charts) and, later,
-   session audio are BYTES — too big to live inside the synced JSON state /
-   Postgres blob, where they'd bloat every save. This module stores those bytes
-   out-of-band:
+   Bytes that are too big to live inside the synced JSON state / Postgres blob:
+   patient attachments (referrals, imaging, scanned charts) and opt-in session-
+   audio review segments. Stored out-of-band so they never bloat the database.
 
-     • local  (default) — files under DATA_DIR/files. Zero-dependency; local dev
-                and demos. (Ephemeral on Cloud Run, like the flat DB.)
+     • local  (default) — files under DATA_DIR/files, preserving the key path as
+                real subdirectories. Zero-dependency; local dev and demos.
+                (Ephemeral on Cloud Run, like the flat DB.)
      • gcs    — Google Cloud Storage, when GCS_BUCKET is set. Cheap (~$0.02/GB),
-                durable, and keeps the database small + fast. Uses the SAME OAuth
-                credential chain as STT/Vertex (no key files on Cloud Run).
+                durable. Uses the SAME OAuth credential chain as STT/Vertex.
 
-   The store keeps only a small reference per attachment ({ id, name, type, size,
-   key }) — never the bytes. Downloads are streamed back through the server so
+   Keys look like "att/<id>" (attachments) or "audio/<docId>/<seg>.wav" (audio).
+   The store keeps only small references; downloads stream through the server so
    they stay behind the login. */
 
 const fs = require("fs");
@@ -40,14 +39,16 @@ function createFiles() {
     return info();
   }
 
-  // Local key → a safe flat filename under DATA_DIR/files.
-  const localPath = (key) => path.join(dir, String(key).replace(/[^a-zA-Z0-9._-]/g, "_"));
   const gcsBase = "https://storage.googleapis.com";
+  const encKey = (k) => encodeURIComponent(k);
+  // Local: keep the key's "/" structure as real folders; sanitize each segment.
+  const segs = (key) => String(key).split("/").filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9._-]/g, "_"));
+  const localPath = (key) => path.join(dir, ...segs(key));
 
   async function put(key, buffer, contentType) {
     if (backend === "gcs") {
       const token = await getToken();
-      const url = `${gcsBase}/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(key)}`;
+      const url = `${gcsBase}/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encKey(key)}`;
       const res = await fetchImpl(url, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": contentType || "application/octet-stream" },
@@ -56,7 +57,9 @@ function createFiles() {
       if (!res.ok) throw new Error(`GCS upload ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return { key };
     }
-    fs.writeFileSync(localPath(key), buffer);
+    const p = localPath(key);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, buffer);
     return { key };
   }
 
@@ -64,12 +67,11 @@ function createFiles() {
   async function get(key) {
     if (backend === "gcs") {
       const token = await getToken();
-      const url = `${gcsBase}/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(key)}?alt=media`;
+      const url = `${gcsBase}/storage/v1/b/${encodeURIComponent(bucket)}/o/${encKey(key)}?alt=media`;
       const res = await fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`GCS download ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      const buffer = Buffer.from(await res.arrayBuffer());
-      return { buffer, contentType: res.headers.get ? res.headers.get("content-type") : null };
+      return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get ? res.headers.get("content-type") : null };
     }
     try { return { buffer: fs.readFileSync(localPath(key)), contentType: null }; }
     catch { return null; }
@@ -78,17 +80,49 @@ function createFiles() {
   async function del(key) {
     if (backend === "gcs") {
       const token = await getToken();
-      const url = `${gcsBase}/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(key)}`;
-      const res = await fetchImpl(url, { method: "DELETE", headers: { authorization: `Bearer ${token}` } });
+      const res = await fetchImpl(`${gcsBase}/storage/v1/b/${encodeURIComponent(bucket)}/o/${encKey(key)}`,
+        { method: "DELETE", headers: { authorization: `Bearer ${token}` } });
       if (!res.ok && res.status !== 404) throw new Error(`GCS delete ${res.status}`);
       return;
     }
     try { fs.unlinkSync(localPath(key)); } catch { }
   }
 
+  // List every object whose key starts with `prefix` (e.g. "audio/<docId>/").
+  // Returns [{ key, size }]. Prefixes should end in "/" (a folder boundary).
+  async function list(prefix) {
+    if (backend === "gcs") {
+      const token = await getToken();
+      const out = [];
+      let pageToken = "";
+      do {
+        const url = `${gcsBase}/storage/v1/b/${encodeURIComponent(bucket)}/o?prefix=${encodeURIComponent(prefix)}` +
+          (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+        const res = await fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`GCS list ${res.status}`);
+        const data = await res.json();
+        for (const it of data.items || []) out.push({ key: it.name, size: Number(it.size) || 0 });
+        pageToken = data.nextPageToken || "";
+      } while (pageToken);
+      return out;
+    }
+    const startDir = path.join(dir, ...segs(prefix));
+    const out = [];
+    (function walk(d, keyPrefix) {
+      let entries;
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) walk(full, keyPrefix + e.name + "/");
+        else { let size = 0; try { size = fs.statSync(full).size; } catch { } out.push({ key: keyPrefix + e.name, size }); }
+      }
+    })(startDir, prefix.endsWith("/") ? prefix : prefix + "/");
+    return out;
+  }
+
   function info() { return backend === "gcs" ? { backend, bucket } : { backend, dir }; }
 
-  return { init, put, get, del, info };
+  return { init, put, get, del, list, info };
 }
 
 module.exports = createFiles();

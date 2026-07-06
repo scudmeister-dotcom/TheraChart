@@ -30,6 +30,11 @@ function mockGcs() {
     }
     const m = url.match(/\/b\/[^/]+\/o\/([^?]+)/);
     const key = m && decodeURIComponent(m[1]);
+    if (/\/o\?prefix=/.test(url)) {
+      const prefix = decodeURIComponent(url.match(/[?&]prefix=([^&]+)/)[1]);
+      const items = [...objects.entries()].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => ({ name: k, size: v.length }));
+      return { ok: true, status: 200, async json() { return { items }; } };
+    }
     if ((opts.method || "GET") === "DELETE") { objects.delete(key); return { ok: true, status: 200 }; }
     if (!objects.has(key)) return { ok: false, status: 404, async text() { return "not found"; } };
     const buf = objects.get(key);
@@ -51,6 +56,17 @@ function mockGcs() {
   await lf.del("att/f-1");
   check("local del removes the file", (await lf.get("att/f-1")) === null);
 
+  // local list over subdirectory keys (audio/<doc>/<seg>)
+  await lf.put("audio/d-1/100-a.wav", Buffer.from("aa"), "audio/wav");
+  await lf.put("audio/d-1/200-b.wav", Buffer.from("bbbb"), "audio/wav");
+  await lf.put("audio/d-2/300-c.wav", Buffer.from("cc"), "audio/wav");
+  const oneDoc = await lf.list("audio/d-1/");
+  check("local list by prefix returns that doc's segments", oneDoc.length === 2, JSON.stringify(oneDoc));
+  check("local list keys keep their full path", oneDoc.every((x) => x.key.startsWith("audio/d-1/")));
+  check("local list reports sizes", oneDoc.find((x) => x.key.endsWith("200-b.wav")).size === 4);
+  const allAudio = await lf.list("audio/");
+  check("local list of all audio spans docs", allAudio.length === 3 && new Set(allAudio.map((x) => x.key.split("/")[1])).size === 2);
+
   // ---- gcs backend (mock) ----
   const gcs = mockGcs();
   const gf = createFiles();
@@ -67,6 +83,12 @@ function mockGcs() {
   check("gcs missing key returns null", (await gf.get("att/missing")) === null);
   await gf.del("att/f-2");
   check("gcs del removes the object", !gcs.objects.has("att/f-2"));
+
+  // gcs list by prefix
+  await gf.put("audio/d-9/111-x.wav", Buffer.from("xy"), "audio/wav");
+  await gf.put("audio/d-9/222-y.wav", Buffer.from("zzz"), "audio/wav");
+  const gl = await gf.list("audio/d-9/");
+  check("gcs list by prefix returns objects + sizes", gl.length === 2 && gl.find((x) => x.key.endsWith("222-y.wav")).size === 3, JSON.stringify(gl));
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`TheraChart files checker: ${passed}/${passed + failures.length} checks passed`);

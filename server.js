@@ -32,11 +32,10 @@ const PORT = Number(process.env.PORT || 8080);
 const ROOT = __dirname;
 const DATA_DIR = process.env.THERACHART_DATA || path.join(ROOT, "data");
 fs.mkdirSync(DATA_DIR, { recursive: true });
-// Temporary session-audio review (opt-in). Kept only to let a clinician re-check
-// dictation, then auto-deleted on sign or after a few days. INTERIM: on Cloud Run
-// this local disk is ephemeral — at go-live move these blobs to Cloud Storage
-// (encrypted, lifecycle auto-delete) alongside the Cloud SQL migration.
-const AUDIO_DIR = path.join(DATA_DIR, "audio");
+// Temporary session-audio review (opt-in): raw dictation segments kept only to
+// let a clinician re-check the transcript, then auto-deleted on sign or after a
+// few days. Stored via files.js (Cloud Storage when GCS_BUCKET is set, so it's
+// durable + lifecycle-managed; local disk otherwise).
 
 /* ---- durable storage injected into the shared store ----
    Backed by db.js: a flat file by default, or Postgres when DATABASE_URL is set
@@ -301,50 +300,55 @@ function audioRetentionOK(doc) {
   const p = store.getPatient(doc.patientId);
   return !!(p && p.audioConsent && p.audioConsent.granted);
 }
-const docAudioDir = (docId) => path.join(AUDIO_DIR, String(docId).replace(/[^a-z0-9_-]/gi, ""));
+// Audio segments live in the file store (GCS or local) under audio/<docId>/,
+// so on Cloud Run they persist + auto-delete just like attachments — not on the
+// ephemeral disk. Filenames still start with the timestamp for ordering/aging.
+const audioPrefix = (docId) => `audio/${String(docId).replace(/[^a-z0-9_-]/gi, "")}/`;
+const audioSegKey = (docId, name) => audioPrefix(docId) + String(name).replace(/[^0-9a-zA-Z._-]/g, "");
 
-function saveAudioSegment(docId, wavBuffer) {
-  const dir = docAudioDir(docId);
-  fs.mkdirSync(dir, { recursive: true });
+async function saveAudioSegment(docId, wavBuffer) {
   const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.wav`;
-  fs.writeFileSync(path.join(dir, name), wavBuffer);
+  await files.put(audioPrefix(docId) + name, wavBuffer, "audio/wav");
   return name;
 }
-function listAudioSegments(docId) {
-  const dir = docAudioDir(docId);
-  let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith(".wav")); } catch { return []; }
-  return files.sort().map((f) => {
-    let size = 0; try { size = fs.statSync(path.join(dir, f)).size; } catch {}
-    return { id: f, time: Number(f.split("-")[0]) || 0, size };
-  });
+async function listAudioSegments(docId) {
+  const items = await files.list(audioPrefix(docId));
+  return items
+    .map((it) => { const name = it.key.split("/").pop(); return { id: name, time: Number(name.split("-")[0]) || 0, size: it.size }; })
+    .sort((a, b) => a.time - b.time);
 }
-function deleteAudio(docId) {
-  const dir = docAudioDir(docId);
-  let n = 0;
-  try { for (const f of fs.readdirSync(dir)) { fs.unlinkSync(path.join(dir, f)); n++; } fs.rmdirSync(dir); } catch {}
-  return n;
+async function deleteAudio(docId) {
+  const items = await files.list(audioPrefix(docId));
+  for (const it of items) await files.del(it.key);
+  return items.length;
 }
 
 // backstop sweep: drop audio for notes that are now signed, gone, or too old
-function audioSweep() {
-  let dirs = [];
-  try { dirs = fs.readdirSync(AUDIO_DIR); } catch { return; }
+async function audioSweep() {
+  const items = await files.list("audio/");
+  const byDoc = new Map(); // docId -> [{ key, time }]
+  for (const it of items) {
+    const parts = it.key.split("/"); // audio/<docId>/<name>
+    if (parts.length < 3) continue;
+    const name = parts[2];
+    if (!byDoc.has(parts[1])) byDoc.set(parts[1], []);
+    byDoc.get(parts[1]).push({ key: it.key, time: Number(name.split("-")[0]) || 0 });
+  }
   const maxAgeMs = audioReviewDays() * 24 * 3600 * 1000;
   let purged = false;
-  for (const docId of dirs) {
+  for (const [docId, segs] of byDoc) {
     const doc = store.getDoc(docId);
-    let newest = 0;
-    for (const s of listAudioSegments(docId)) newest = Math.max(newest, s.time);
+    const newest = segs.reduce((m, s) => Math.max(m, s.time), 0);
     const stale = newest && Date.now() - newest > maxAgeMs;
     if (!doc || doc.status === "signed" || !audioReviewOn() || stale) {
-      const n = deleteAudio(docId);
-      if (n) { purged = true; store.audit(null, "audio-purged", `${docId}: ${n} segment(s) deleted (${!doc ? "note gone" : doc.status === "signed" ? "signed" : stale ? "expired" : "review off"})`); }
+      for (const s of segs) await files.del(s.key);
+      purged = true;
+      store.audit(null, "audio-purged", `${docId}: ${segs.length} segment(s) deleted (${!doc ? "note gone" : doc.status === "signed" ? "signed" : stale ? "expired" : "review off"})`);
     }
   }
   if (purged) bumpRev(); // let devices pick up the new audit entries
 }
-setInterval(() => { try { audioSweep(); } catch (e) { console.error("[audio] sweep failed:", e.message); } }, 3600 * 1000);
+setInterval(() => { audioSweep().catch((e) => console.error("[audio] sweep failed:", e.message)); }, 3600 * 1000);
 
 function readRawBody(req, limit = 25 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -576,7 +580,7 @@ const server = http.createServer(async (req, res) => {
         // fails — the audio is exactly what you'd want to fall back on)
         const doc = docId ? store.getDoc(docId) : null;
         let retained = false;
-        if (doc && audioRetentionOK(doc)) { try { saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
+        if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         try {
           const text = await transcribe(wav, lang, model);
           return json(res, 200, { text, retained });
@@ -591,16 +595,17 @@ const server = http.createServer(async (req, res) => {
         if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
         if (req.method === "GET") {
           const seg = url.searchParams.get("seg");
-          if (!seg) return json(res, 200, { segments: listAudioSegments(docId), reviewDays: audioReviewDays() });
+          if (!seg) return json(res, 200, { segments: await listAudioSegments(docId), reviewDays: audioReviewDays() });
           // stream one segment (auth already checked above)
           const safe = seg.replace(/[^a-z0-9_.-]/gi, "");
-          const file = path.join(docAudioDir(docId), safe);
-          if (!safe.endsWith(".wav") || !fs.existsSync(file)) return json(res, 404, { error: "Segment not found." });
+          if (!safe.endsWith(".wav")) return json(res, 404, { error: "Segment not found." });
+          const f = await files.get(audioSegKey(docId, safe));
+          if (!f) return json(res, 404, { error: "Segment not found." });
           res.writeHead(200, { "content-type": "audio/wav", "cache-control": "no-store" });
-          return fs.createReadStream(file).pipe(res);
+          return res.end(f.buffer);
         }
         if (req.method === "DELETE") {
-          const n = deleteAudio(docId);
+          const n = await deleteAudio(docId);
           if (n) { store.audit(user.id, "audio-deleted", `${doc.title}: ${n} segment(s)`); bumpRev(); }
           return json(res, 200, { deleted: n });
         }
@@ -634,7 +639,7 @@ const server = http.createServer(async (req, res) => {
         delete s.geminiKeySet;
         store.save();
         bumpRev();
-        try { audioSweep(); } catch (e) { console.error("[audio] sweep failed:", e.message); } // drop audio for notes just signed
+        audioSweep().catch((e) => console.error("[audio] sweep failed:", e.message)); // drop audio for notes just signed
         return json(res, 200, { rev });
       }
       return json(res, 404, { error: "Unknown API endpoint." });
@@ -683,8 +688,8 @@ async function start() {
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
     console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
-    console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days, then auto-deleted (interim: ${AUDIO_DIR})` : "off (no audio stored)"}`);
-    try { audioSweep(); } catch (e) { console.error("[audio] initial sweep failed:", e.message); }
+    console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days in ${filesInfo.backend === "gcs" ? "Cloud Storage" : "local files"}, then auto-deleted` : "off (no audio stored)"}`);
+    audioSweep().catch((e) => console.error("[audio] initial sweep failed:", e.message));
   });
 }
 

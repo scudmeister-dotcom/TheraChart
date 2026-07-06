@@ -138,10 +138,10 @@ Speech-to-Text:
 > Cloud Run's disk is **wiped every time it restarts or scales**, so the flat
 > file is **not safe for real records** on Cloud Run. **The fix is built:** set
 > `DATABASE_URL` and the app persists to **Cloud SQL (Postgres)** instead (see
-> the next section). Kept **session-audio** in `data/audio/` is still ephemeral —
-> for real go-live that moves to **Cloud Storage** (encrypted, lifecycle
-> auto-delete). Don't store real patient data on Cloud Run until `DATABASE_URL`
-> points at Cloud SQL.
+> the next section). Similarly, set **`GCS_BUCKET`** so patient attachments **and**
+> kept session-audio go to **Cloud Storage** rather than the ephemeral disk. Don't
+> store real patient data on Cloud Run until both `DATABASE_URL` and `GCS_BUCKET`
+> are set (the `deploy-gcp.sh` script sets both).
 
 ### Durable storage: Cloud SQL (Postgres)
 
@@ -201,9 +201,11 @@ double-check the transcript, then it auto-deletes (on sign, or after the
 retention window). It's **off by default** and only kept for **patients who
 consent** — turn it on in **Facility Admin → Allow temporary session-audio
 review**. It works only with the Google Cloud dictation engines (the browser
-engine's audio never reaches your server). At go-live, point this at **Cloud
-Storage** with a lifecycle auto-delete rule and object encryption, all under the
-same BAA — see the storage caveat above.
+engine's audio never reaches your server). When `GCS_BUCKET` is set the segments
+are stored in **Cloud Storage** (durable, under the same BAA) and auto-deleted on
+sign or after the retention window; without it they use local disk. For defense
+in depth you can add a bucket **lifecycle rule** to hard-delete anything under
+`audio/` after N days as a backstop to the app's own sweep.
 
 ## Part 6 — Turn on Google Cloud dictation and verify
 
@@ -294,4 +296,4 @@ halve it, or **Chirp** when you need the best Tagalog/Cebuano accuracy.
 - [ ] Demo PIN logins (1234) replaced with real per-user credentials
 - [ ] Google Cloud STT selected and tested (Part 6)
 - [ ] Gemini either off, or moved to Vertex under the BAA (`GEMINI_VERTEX=1`)
-- [ ] If session-audio review is on: kept audio moved to Cloud Storage (encrypted, lifecycle auto-delete) and patient consent captured
+- [ ] `GCS_BUCKET` set so attachments + session-audio go to Cloud Storage (boot log shows `files: Google Cloud Storage`); patient consent captured before enabling audio review
