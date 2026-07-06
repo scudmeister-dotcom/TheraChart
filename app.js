@@ -50,6 +50,7 @@
   const fmtTime = (iso) =>
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
+  const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B");
   // local calendar date (UTC slices shift the date near midnight in +/- zones)
   const localIso = (d) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -665,8 +666,8 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
     <div class="card">
       <h2>Referrals, imaging & other files</h2>
       ${p.attachments.length ? `<table class="list"><tbody>${p.attachments.map((a) => `
-        <tr><td><b>${esc(a.name)}</b><br><small style="color:var(--muted)">added ${fmtDT(a.uploadedAt)} by ${esc((S.getUser(a.uploadedBy) || {}).name || "—")}</small></td>
-        <td style="text-align:right"><a class="btn small" href="${a.dataUrl}" download="${esc(a.name)}">Download</a></td></tr>`).join("")}</tbody></table>`
+        <tr><td><b>${esc(a.name)}</b>${a.size ? ` <small style="color:var(--muted)">(${fmtBytes(a.size)})</small>` : ""}<br><small style="color:var(--muted)">added ${fmtDT(a.uploadedAt)} by ${esc((S.getUser(a.uploadedBy) || {}).name || "—")}</small></td>
+        <td style="text-align:right"><button class="btn small" data-dl-att="${esc(a.id)}">Download</button></td></tr>`).join("")}</tbody></table>`
         : `<div class="empty-state">No files yet — add the physician referral, X-rays, or other documents.</div>`}
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
         <label class="btn small" style="position:relative; overflow:hidden">
@@ -675,7 +676,7 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
         ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
           ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
         </label>` : ""}
-        <small style="color:var(--muted)">Files stay on your own storage · up to ~1.5 MB kept per file</small>
+        <small style="color:var(--muted)">Referrals, imaging & scans · up to 20 MB per file</small>
       </div>
     </div>
   </div>
@@ -723,22 +724,30 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
     );
 
     const up = document.getElementById("fileUpload");
-    if (up) up.addEventListener("change", () => {
+    if (up) up.addEventListener("change", async () => {
       const f = up.files[0];
       if (!f) return;
-      if (f.size > 1.5 * 1024 * 1024) return alertBanner("File is too large for on-device storage (limit ~1.5 MB).");
-      const reader = new FileReader();
-      reader.onload = () => {
+      if (f.size > 20 * 1024 * 1024) return alertBanner("File is too large (limit 20 MB).");
+      try {
+        // bytes go to storage (GCS/local); only a small reference is kept on the patient
+        const ref = await window.TheraSync.uploadFile(f);
         p.attachments.push({
-          id: S.uid("a"), name: f.name, type: f.type,
-          dataUrl: reader.result, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
+          id: S.uid("a"), name: f.name, type: f.type, size: f.size,
+          ...ref, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
         });
         S.save();
         S.audit(user.id, "attachment-added", `${f.name} → ${S.patientName(p)}`);
         render();
-      };
-      reader.readAsDataURL(f);
+      } catch (e) { alertBanner(e.message || "Upload failed."); }
     });
+    document.querySelectorAll("[data-dl-att]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const att = (p.attachments || []).find((a) => a.id === b.dataset.dlAtt);
+        if (!att) return;
+        try { await window.TheraSync.downloadFile(att); }
+        catch (e) { alertBanner(e.message || "Download failed."); }
+      })
+    );
 
     const imp = document.getElementById("pdfImport");
     if (imp) imp.addEventListener("change", () => {
@@ -766,7 +775,7 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
   async function importPdfFlow(p, user, f) {
     const sync = window.TheraSync || {};
     if (!sync.ai) {
-      return alertBanner("Reading scanned documents needs the Gemini AI backend — add a Gemini API key in Facility Admin (or set GEMINI_API_KEY where the app is hosted). There is no offline reader for scans.");
+      return alertBanner("Reading scanned documents needs the Gemini AI backend — set GEMINI_API_KEY where the app is hosted. There is no offline reader for scans.");
     }
     // Vercel serverless caps request bodies at ~4.5 MB; the clinic server allows 8 MB
     const maxMb = sync.mode === "server" ? 8 : 3;
@@ -912,8 +921,9 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     updateApplyLabel();
 
     m.querySelector("#impCancel").addEventListener("click", closeModal);
-    applyBtn.addEventListener("click", () => {
-      applyImport(p, user, f, b64, visits);
+    applyBtn.addEventListener("click", async () => {
+      applyBtn.disabled = true;
+      await applyImport(p, user, f, b64, visits);
       closeModal();
     });
   }
@@ -948,21 +958,23 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     return data;
   }
 
-  function applyImport(p, user, f, b64, visits) {
+  async function applyImport(p, user, f, b64, visits) {
     let n = 0;
     for (const v of visits) {
       if (!v._inc) continue;
       const res = S.addImportedDoc(p.id, { type: v.type, date: v.date, data: importDocData(v) }, user, f.name);
       if (!res.error) n++;
     }
-    // keep the source scan on the chart when it fits the attachment limit
-    if (n && f.size <= 1.5 * 1024 * 1024 && !p.attachments.some((a) => a.name === f.name)) {
-      p.attachments.push({
-        id: S.uid("a"), name: f.name, type: f.type || "application/pdf",
-        dataUrl: `data:${f.type || "application/pdf"};base64,${b64}`,
-        uploadedBy: user.id, uploadedAt: new Date().toISOString(),
-      });
-      S.save();
+    // keep the source scan on the chart — bytes go to storage, not the blob
+    if (n && f.size <= 20 * 1024 * 1024 && !p.attachments.some((a) => a.name === f.name)) {
+      try {
+        const ref = await window.TheraSync.storeBytes(f.name, f.type || "application/pdf", b64, f.size);
+        p.attachments.push({
+          id: S.uid("a"), name: f.name, type: f.type || "application/pdf", size: f.size,
+          ...ref, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
+        });
+        S.save();
+      } catch (_) { /* extraction still succeeded; skip keeping the scan */ }
     }
     S.audit(user.id, "pdf-import-applied", `${f.name}: ${n} visit${n === 1 ? "" : "s"} → ${S.patientName(p)}`);
     render();
@@ -2648,8 +2660,6 @@ ${ths.map((t) => {
 
   function facilityView(user) {
     const st = S.settings();
-    // in server mode the key value never reaches this device — only a flag
-    const geminiKeySet = !!(st.geminiKeySet || st.geminiKey);
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
 <div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Settings and staff licenses</div></div></div>
@@ -2679,18 +2689,6 @@ ${ths.map((t) => {
       <div class="field" style="max-width:220px"><label>Auto-delete kept audio after (days)</label><input id="st-audio-days" type="number" min="1" max="90" value="${st.audioReviewDays || 7}" /></div>
     </div>
     <button class="btn primary" id="stSave">Save settings</button>
-  </div>
-  <div class="card">
-    <h2>✦ AI cleanup (Gemini)</h2>
-    <p style="font-size:12.5px; color:var(--muted)">Gemini powers the "Review &amp; clean up" pass <b>and</b> Clinical Insights. The most secure way to enable it is the <code>GEMINI_API_KEY</code> <b>environment variable</b> — on the clinic server, or on Vercel (Project → Settings → Environment Variables) if you deploy there. The field below is a convenience that stores the key in the clinic database instead; leave it blank to use the env var or the local reviewer. Only transcript <b>text</b> is sent — see Privacy &amp; Security for the PHI/BAA note.</p>
-    <div class="field"><label>Gemini API key</label>
-      <input id="st-gemini" type="password" autocomplete="off" placeholder="${geminiKeySet ? "•••••••• (saved)" : "AI… (leave blank to use the local reviewer)"}" value="" /></div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-      <button class="btn small" id="geminiSave">Save key</button>
-      ${geminiKeySet ? `<button class="btn small danger" id="geminiClear">Remove key</button>` : ""}
-      <span class="dict-status">${geminiKeySet ? "A key is saved on the server." : "No key — using local reviewer."}</span>
-    </div>
-    <div id="geminiMsg" style="font-size:12.5px; margin-top:6px; color:var(--good)"></div>
   </div>
   <div class="card">
     <h2>Staff &amp; licenses</h2>
@@ -2751,23 +2749,6 @@ ${ths.map((t) => {
       }, user);
       render();
     });
-    const sync = window.TheraSync || {};
-    const setKey = async (v, msg) => {
-      const el = document.getElementById("geminiMsg");
-      try {
-        if (sync.setGeminiKey) await sync.setGeminiKey(v);
-        else { S.updateSettings({ geminiKey: v }, user); S.audit(user.id, v ? "gemini-key-set" : "gemini-key-cleared", msg); }
-      } catch (e) { el.textContent = e.message || "Couldn't save the key."; return; }
-      render();
-    };
-    const gSave = document.getElementById("geminiSave");
-    if (gSave) gSave.addEventListener("click", () => {
-      const v = document.getElementById("st-gemini").value.trim();
-      if (!v) { document.getElementById("geminiMsg").textContent = "Enter a key, or use Remove key to clear."; return; }
-      setKey(v, "Gemini API key saved");
-    });
-    const gClear = document.getElementById("geminiClear");
-    if (gClear) gClear.addEventListener("click", () => setKey("", "Gemini API key removed"));
     document.querySelectorAll("[data-save-user]").forEach((b) =>
       b.addEventListener("click", () => {
         const id = b.dataset.saveUser;

@@ -49,8 +49,8 @@ GEMINI_API_KEY=... node server.js      # serves app + shared DB on :8080
 
 Every phone/tablet/computer on the network opens `http://<that-machine>:8080`.
 This mode adds the shared database, server-side login, offline sync, and the
-reminder scheduler. The Gemini key can be the `GEMINI_API_KEY` env var
-(recommended) or pasted in **Facility Admin**.
+reminder scheduler. The Gemini backend is configured with the `GEMINI_API_KEY`
+env var (or the Vertex path below) — there is no in-app key field.
 
 By default the database is a flat file under `data/`. For durable, restart-safe
 storage (required on Cloud Run), set **`DATABASE_URL`** to a Postgres instance —

@@ -51,6 +51,12 @@ globalThis.THERACHART_STORAGE = {
 };
 const store = require("./store.js");
 const ai = require("./ai.js");
+const files = require("./files.js");
+
+// Attachment bytes live out-of-band (see files.js). GCS when GCS_BUCKET is set
+// (+ a Google credential, same chain as STT/Vertex); otherwise local disk.
+const GCS_BUCKET = process.env.GCS_BUCKET || "";
+const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES || 20 * 1024 * 1024); // 20 MB
 
 /* ---- password hashing (scrypt, node crypto, zero-dependency) ----
    Injected into the store so login/set-password hash + verify server-side.
@@ -105,7 +111,7 @@ const GEMINI_OPTS = () => vertexConfigured()
       onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) };
 
 function activeGeminiKey() {
-  return process.env.GEMINI_API_KEY || (store.settings().geminiKey || "").trim() || null;
+  return process.env.GEMINI_API_KEY || null;
 }
 // Vertex needs the flag + a project + a usable Google credential (reuses STT's chain).
 function vertexConfigured() { return GEMINI_VERTEX && !!GCP_PROJECT && !!sttCredentialSource(); }
@@ -157,12 +163,19 @@ function publicState() {
   s.sessionUserId = null;
   // credentials are server-only — never sync password hashes (or legacy pins) to devices
   if (Array.isArray(s.users)) s.users = s.users.map((u) => { const c = { ...u }; delete c.passwordHash; delete c.pin; return c; });
-  if (s.settings) {
-    // devices only need to know whether a key is set, never its value
-    s.settings.geminiKeySet = !!(s.settings.geminiKey && String(s.settings.geminiKey).trim());
-    delete s.settings.geminiKey;
-  }
+  // never sync any stored Gemini key value to devices (legacy installs only —
+  // the key is now configured purely via host env vars)
+  if (s.settings) delete s.settings.geminiKey;
   return s;
+}
+// Locate an attachment by its storage key across all patients — used to gate
+// downloads and to recover the file's name/type for the response headers.
+function findAttachmentByKey(key) {
+  if (!key) return null;
+  for (const p of store.patients()) {
+    for (const a of p.attachments || []) if (a.key === key) return a;
+  }
+  return null;
 }
 function bootstrapInfo() {
   return {
@@ -466,6 +479,36 @@ const server = http.createServer(async (req, res) => {
         const { password } = await readBody(req);
         return json(res, 200, { ok: store.verifyPassword(user.id, password) });
       }
+      if (url.pathname === "/api/files" && req.method === "POST") {
+        // upload attachment bytes out-of-band; returns a key the client stores
+        // on the patient (never the bytes) so the synced blob stays small.
+        const { name, type, dataBase64 } = await readBody(req);
+        if (!dataBase64) return json(res, 400, { error: "No file data." });
+        const buffer = Buffer.from(String(dataBase64), "base64");
+        if (!buffer.length) return json(res, 400, { error: "Empty or invalid file data." });
+        if (buffer.length > MAX_FILE_BYTES) return json(res, 413, { error: `File too large (limit ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB).` });
+        const key = `att/${store.uid("f")}`;
+        try { await files.put(key, buffer, type || "application/octet-stream"); }
+        catch (e) { return json(res, 502, { error: "Storage upload failed: " + e.message }); }
+        store.audit(user.id, "file-uploaded", `${name || key} (${buffer.length} bytes)`);
+        return json(res, 200, { key, size: buffer.length });
+      }
+      if (url.pathname === "/api/files" && req.method === "GET") {
+        // stream a stored file back — but only if it's referenced by a real
+        // attachment (that check is also the authorization gate + metadata source).
+        const key = url.searchParams.get("key");
+        const att = key && findAttachmentByKey(key);
+        if (!att) return json(res, 404, { error: "File not found." });
+        let f;
+        try { f = await files.get(key); } catch (e) { return json(res, 502, { error: "Storage read failed: " + e.message }); }
+        if (!f) return json(res, 404, { error: "File not found." });
+        res.writeHead(200, {
+          "content-type": att.type || f.contentType || "application/octet-stream",
+          "content-disposition": `attachment; filename="${encodeURIComponent(att.name || "file").replace(/%20/g, " ")}"`,
+          "cache-control": "private, no-store",
+        });
+        return res.end(f.buffer);
+      }
       if (url.pathname === "/api/set-password" && req.method === "POST") {
         // self-service change (needs current password), or an admin setting
         // another user's password (needs the admin role, no current password).
@@ -497,18 +540,6 @@ const server = http.createServer(async (req, res) => {
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
         return json(res, 200, { ok: true, rev });
-      }
-      if (url.pathname === "/api/gemini-key" && req.method === "POST") {
-        // the key is server-only config — set it here, never through synced state
-        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change the Gemini key." });
-        const { key } = await readBody(req);
-        const k = String(key || "").trim();
-        const s = store.settings();
-        if (k) s.geminiKey = k; else delete s.geminiKey;
-        store.save();
-        store.audit(user.id, k ? "gemini-key-set" : "gemini-key-cleared", k ? "Gemini API key saved (server-only)" : "Gemini API key removed");
-        bumpRev();
-        return json(res, 200, { ok: true, rev, geminiKeySet: !!k, refine: geminiActive() ? "gemini" : "local" });
       }
       if (url.pathname === "/api/refine" && req.method === "POST") {
         const { transcript } = await readBody(req);
@@ -587,11 +618,8 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Malformed state." });
         }
         state.sessionUserId = null;
-        // the Gemini key is server-only and never travels in client state —
-        // preserve it across the import so a device push can't wipe or set it
-        const keepKey = store.settings().geminiKey;
-        // same for credentials: capture server-side password hashes so a device
-        // push (whose state has them stripped) can't wipe or forge them
+        // capture server-side password hashes so a device push (whose state has
+        // them stripped) can't wipe or forge them
         const creds = new Map(store.users().map((u) => [u.id, u.passwordHash]));
         store.importAll(state, { preserveSession: false });
         for (const u of store.users()) {
@@ -599,9 +627,11 @@ const server = http.createServer(async (req, res) => {
           if (h) u.passwordHash = h; else delete u.passwordHash;
           delete u.pin; // clients can never introduce a plaintext credential
         }
+        // Gemini is configured only via host env vars now — never let a client
+        // push introduce or persist a stored key/flag
         const s = store.settings();
-        delete s.geminiKeySet; // derived flag must never persist to disk
-        if (keepKey) s.geminiKey = keepKey; else delete s.geminiKey;
+        delete s.geminiKey;
+        delete s.geminiKeySet;
         store.save();
         bumpRev();
         try { audioSweep(); } catch (e) { console.error("[audio] sweep failed:", e.message); } // drop audio for notes just signed
@@ -633,6 +663,7 @@ async function start() {
   // Bring up durable storage FIRST (Postgres preload is async), then hydrate
   // the in-memory store, revision, and sessions from it before serving.
   const dbInfo = await db.init({ dataDir: DATA_DIR, databaseUrl: process.env.DATABASE_URL || null });
+  const filesInfo = await files.init({ dataDir: DATA_DIR, bucket: GCS_BUCKET || null, getToken: GCS_BUCKET ? gcpAccessToken : null });
   store.load();
   const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
   const r = Number(db.get("rev")); if (r) rev = r;
@@ -647,6 +678,7 @@ async function start() {
     console.log(`  app:  http://localhost:${PORT}`);
     console.log(`  data: ${dbInfo.backend === "postgres" ? "Postgres (durable) — keys: " + dbInfo.keys.join(", ") : DATA_DIR + " (flat file)"}`);
     console.log(`  auth: hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s) this boot` : ""}`);
+    console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
     console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);

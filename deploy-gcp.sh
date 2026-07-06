@@ -9,6 +9,7 @@ REGION=us-central1
 SA=1060950042386-compute@developer.gserviceaccount.com
 CONN="$PROJ:$REGION:therachart-db"
 SECRET=therachart-db-url
+BUCKET="${PROJ}-files"   # patient attachments / scans live here (not in the DB)
 
 cd "$(dirname "$0")"
 
@@ -28,18 +29,29 @@ else
 fi
 unset DBPASS DBURL
 
-echo "==> 4/5  Granting the runtime service account its roles…"
+echo "==> 4/6  Ensuring the Cloud Storage bucket for attachments exists…"
+if ! gcloud storage buckets describe "gs://${BUCKET}" --project "$PROJ" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${BUCKET}" --project "$PROJ" --location="$REGION" --uniform-bucket-level-access
+else
+  echo "    bucket gs://${BUCKET} already exists"
+fi
+
+echo "==> 5/6  Granting the runtime service account its roles…"
 for R in roles/cloudsql.client roles/aiplatform.user roles/secretmanager.secretAccessor; do
   gcloud projects add-iam-policy-binding "$PROJ" \
     --member="serviceAccount:$SA" --role="$R" --condition=None >/dev/null
   echo "    granted $R"
 done
+# object read/write on just the attachments bucket (least privilege)
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:$SA" --role="roles/storage.objectAdmin" >/dev/null
+echo "    granted roles/storage.objectAdmin on gs://${BUCKET}"
 
-echo "==> 5/5  Deploying current code to Cloud Run (Postgres + Vertex + STT)…"
+echo "==> 6/6  Deploying current code to Cloud Run (Postgres + Vertex + STT + file storage)…"
 gcloud run deploy therachart --source . --project "$PROJ" --region "$REGION" \
   --allow-unauthenticated --add-cloudsql-instances "$CONN" --max-instances 1 \
   --set-secrets "DATABASE_URL=${SECRET}:latest" \
-  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${REGION},GEMINI_VERTEX=1,GEMINI_LOCATION=${REGION}"
+  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${REGION},GEMINI_VERTEX=1,GEMINI_LOCATION=${REGION},GCS_BUCKET=${BUCKET}"
 
 echo ""
 echo "✅ Done. Verify with:"

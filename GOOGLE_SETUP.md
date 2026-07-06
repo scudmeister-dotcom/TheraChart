@@ -172,6 +172,28 @@ gcloud run deploy therachart --source . --region us-central1 \
 Confirm on boot: the server logs `data: Postgres (durable) …`. Locally, leaving
 `DATABASE_URL` unset keeps the zero-dependency flat-file behavior.
 
+### File attachments: Cloud Storage
+
+Patient attachments (referrals, imaging, **scanned old charts**) are bytes — too
+big to sit in the database blob. Set `GCS_BUCKET` and they're stored in **Google
+Cloud Storage** instead (~$0.02/GB/month), keeping the database small and fast.
+The database only holds a small reference per file; downloads stream back through
+the server, behind the login. `deploy-gcp.sh` sets this up automatically, or
+manually:
+
+```bash
+gcloud storage buckets create gs://YOUR_PROJECT-files \
+  --location=us-central1 --uniform-bucket-level-access
+gcloud storage buckets add-iam-policy-binding gs://YOUR_PROJECT-files \
+  --member="serviceAccount:YOUR_SA" --role="roles/storage.objectAdmin"
+# then deploy with --set-env-vars GCS_BUCKET=YOUR_PROJECT-files
+```
+
+Uses the same credential chain as STT/Vertex (no key files on Cloud Run). Boot
+log shows `files: Google Cloud Storage (bucket …)`. Without `GCS_BUCKET`, files
+go to local disk (fine for dev; ephemeral on Cloud Run). Do this **before bulk-
+uploading scanned records** so big batches stay cheap and the database stays fast.
+
 ### Optional: temporary session-audio review
 
 The app can keep dictation audio **briefly** so a clinician can replay it to
