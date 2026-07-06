@@ -133,14 +133,44 @@ Speech-to-Text:
    "Cloud Speech"; if you can't find it, use **Editor** while setting up and
    tighten later).
 
-> ### ⚠️ Important: data storage on Cloud Run is temporary
-> Right now the app keeps its database in a **file** (`data/therachart.json`),
-> and any kept **session-audio** in `data/audio/`. Cloud Run's disk is **wiped
-> every time it restarts or scales**, so those are **not safe for real records**
-> on Cloud Run. For the preview it's fine. For real go-live, the database must
-> move to **Cloud SQL (Postgres)** and kept audio to **Cloud Storage** (encrypted,
-> with a lifecycle rule that auto-deletes) — that's the next build. Don't store
-> real patient data on Cloud Run until that's done.
+> ### ⚠️ Important: data storage on Cloud Run is temporary WITHOUT Postgres
+> By default the app keeps its database in a **file** (`data/therachart.json`).
+> Cloud Run's disk is **wiped every time it restarts or scales**, so the flat
+> file is **not safe for real records** on Cloud Run. **The fix is built:** set
+> `DATABASE_URL` and the app persists to **Cloud SQL (Postgres)** instead (see
+> the next section). Kept **session-audio** in `data/audio/` is still ephemeral —
+> for real go-live that moves to **Cloud Storage** (encrypted, lifecycle
+> auto-delete). Don't store real patient data on Cloud Run until `DATABASE_URL`
+> points at Cloud SQL.
+
+### Durable storage: Cloud SQL (Postgres)
+
+The server auto-detects `DATABASE_URL`. When set, the store, sync revision, and
+device sessions live in a tiny `kv` table (auto-created on first boot) instead
+of the flat file — surviving restarts and scale events. No schema step needed.
+
+```bash
+# 1) Create a small Postgres instance
+gcloud sql instances create therachart-db \
+  --database-version=POSTGRES_15 --tier=db-f1-micro \
+  --region=us-central1 --storage-size=10GB
+# 2) Create the database + an app user
+gcloud sql databases create therachart --instance=therachart-db
+gcloud sql users create therachart --instance=therachart-db --password=SECRET
+# 3) Deploy Cloud Run wired to it (note the Cloud SQL socket in DATABASE_URL)
+gcloud run deploy therachart --source . --region us-central1 \
+  --add-cloudsql-instances YOUR_PROJECT:us-central1:therachart-db \
+  --max-instances 1 \
+  --set-env-vars "DATABASE_URL=postgresql://therachart:SECRET@/therachart?host=/cloudsql/YOUR_PROJECT:us-central1:therachart-db"
+```
+
+> **`--max-instances 1` matters.** The whole store is one row with an offline-merge
+> sync model, so it assumes a **single writer**. Keep it at one instance until the
+> schema is normalized per-table. (Cloud SQL bills ~$8–10/mo the moment the
+> instance exists — it does *not* scale to zero. Set a budget alert first.)
+
+Confirm on boot: the server logs `data: Postgres (durable) …`. Locally, leaving
+`DATABASE_URL` unset keeps the zero-dependency flat-file behavior.
 
 ### Optional: temporary session-audio review
 
@@ -238,8 +268,8 @@ halve it, or **Chirp** when you need the best Tagalog/Cebuano accuracy.
 ## Before you store real patient data — checklist
 
 - [ ] BAA accepted and confirmed active (Part 2)
-- [ ] Database moved off the flat file to Cloud SQL (Postgres)
+- [ ] `DATABASE_URL` set to Cloud SQL (boot log shows `Postgres (durable)`) + `--max-instances 1`
 - [ ] Demo PIN logins (1234) replaced with real per-user credentials
 - [ ] Google Cloud STT selected and tested (Part 6)
-- [ ] Gemini either off, or moved to Vertex under the BAA
+- [ ] Gemini either off, or moved to Vertex under the BAA (`GEMINI_VERTEX=1`)
 - [ ] If session-audio review is on: kept audio moved to Cloud Storage (encrypted, lifecycle auto-delete) and patient consent captured

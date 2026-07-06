@@ -32,26 +32,25 @@ const PORT = Number(process.env.PORT || 8080);
 const ROOT = __dirname;
 const DATA_DIR = process.env.THERACHART_DATA || path.join(ROOT, "data");
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const DATA_FILE = path.join(DATA_DIR, "therachart.json");
-const REV_FILE = path.join(DATA_DIR, "rev");
 // Temporary session-audio review (opt-in). Kept only to let a clinician re-check
 // dictation, then auto-deleted on sign or after a few days. INTERIM: on Cloud Run
 // this local disk is ephemeral — at go-live move these blobs to Cloud Storage
 // (encrypted, lifecycle auto-delete) alongside the Cloud SQL migration.
 const AUDIO_DIR = path.join(DATA_DIR, "audio");
 
-/* ---- file-backed storage injected into the shared store ---- */
+/* ---- durable storage injected into the shared store ----
+   Backed by db.js: a flat file by default, or Postgres when DATABASE_URL is set
+   (so records survive Cloud Run's ephemeral disk). The store blob, the sync
+   revision, and device sessions all persist through db. db.init() is awaited in
+   start() BEFORE any store access, so the (async) Postgres preload is ready. */
+const db = require("./db.js");
 globalThis.THERACHART_STORAGE = {
-  getItem() { try { return fs.readFileSync(DATA_FILE, "utf8"); } catch { return null; } },
-  setItem(_, v) {
-    fs.writeFileSync(DATA_FILE + ".tmp", v);
-    fs.renameSync(DATA_FILE + ".tmp", DATA_FILE);
-  },
-  removeItem() { try { fs.unlinkSync(DATA_FILE); } catch { } },
+  getItem() { return db.get("store"); },
+  setItem(_, v) { db.set("store", v); },
+  removeItem() { db.del("store"); },
 };
 const store = require("./store.js");
 const ai = require("./ai.js");
-store.load();
 
 /* ---- AI transcript refinement (Gemini, with a local fallback) ----
    Sends the TEXT transcript (not audio) to Google Gemini to split speakers,
@@ -98,19 +97,16 @@ const refineSystem = ai.refineSystem;
 const refineTranscript = (utterances) => ai.refine(utterances, GEMINI_OPTS());
 const clinicalInsights = (ctx) => ai.insightsRun(ctx, GEMINI_OPTS());
 
-let rev = (() => { try { return Number(fs.readFileSync(REV_FILE, "utf8")) || 1; } catch { return 1; } })();
-function bumpRev() { rev += 1; fs.writeFileSync(REV_FILE, String(rev)); }
+// rev + sessions persist through db (populated from it in start(), below).
+let rev = 1;
+function bumpRev() { rev += 1; db.set("rev", String(rev)); }
 
 /* ---- sessions (persisted so device tokens survive server restarts) ---- */
-const SESS_FILE = path.join(DATA_DIR, "sessions.json");
 const sessions = new Map(); // token -> { userId, at }
-try {
-  for (const [t, s] of Object.entries(JSON.parse(fs.readFileSync(SESS_FILE, "utf8")))) sessions.set(t, s);
-} catch { }
 function saveSessions() {
   const cutoff = Date.now() - 30 * 24 * 3600 * 1000; // sessions expire after 30 days
   for (const [t, s] of sessions) if (s.at < cutoff) sessions.delete(t);
-  fs.writeFileSync(SESS_FILE, JSON.stringify(Object.fromEntries(sessions)));
+  db.set("sessions", JSON.stringify(Object.fromEntries(sessions)));
 }
 
 // PINs are short — slow down guessing (per-account: 5 misses = 1-minute hold)
@@ -364,8 +360,8 @@ async function reminderTick() {
   }
   if (changed) { store.save(); bumpRev(); }
 }
-setInterval(() => reminderTick().catch((e) => console.error(e)), 60 * 1000);
-reminderTick().catch((e) => console.error(e));
+// The reminder scheduler is started in start(), AFTER db.init() + store.load() —
+// running it earlier would read the store before durable storage is ready.
 
 /* ---- http ---- */
 const MIME = {
@@ -560,13 +556,42 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`TheraChart clinic server running:`);
-  console.log(`  app:  http://localhost:${PORT}`);
-  console.log(`  data: ${DATA_FILE}`);
-  console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
-  console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
-  console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
-  console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days, then auto-deleted (interim: ${AUDIO_DIR})` : "off (no audio stored)"}`);
-  try { audioSweep(); } catch (e) { console.error("[audio] initial sweep failed:", e.message); }
-});
+async function start() {
+  // Bring up durable storage FIRST (Postgres preload is async), then hydrate
+  // the in-memory store, revision, and sessions from it before serving.
+  const dbInfo = await db.init({ dataDir: DATA_DIR, databaseUrl: process.env.DATABASE_URL || null });
+  store.load();
+  const r = Number(db.get("rev")); if (r) rev = r;
+  try { for (const [t, s] of Object.entries(JSON.parse(db.get("sessions") || "{}"))) sessions.set(t, s); } catch { }
+
+  // Reminder scheduler — safe to touch the store now that it's hydrated.
+  reminderTick().catch((e) => console.error(e));
+  setInterval(() => reminderTick().catch((e) => console.error(e)), 60 * 1000);
+
+  server.listen(PORT, () => {
+    console.log(`TheraChart clinic server running:`);
+    console.log(`  app:  http://localhost:${PORT}`);
+    console.log(`  data: ${dbInfo.backend === "postgres" ? "Postgres (durable) — keys: " + dbInfo.keys.join(", ") : DATA_DIR + " (flat file)"}`);
+    console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
+    console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
+    console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
+    console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days, then auto-deleted (interim: ${AUDIO_DIR})` : "off (no audio stored)"}`);
+    try { audioSweep(); } catch (e) { console.error("[audio] initial sweep failed:", e.message); }
+  });
+}
+
+// Graceful shutdown: flush any pending writes so Cloud Run's SIGTERM (sent
+// before an instance is stopped) doesn't drop the last in-memory changes.
+let shuttingDown = false;
+async function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${sig} received — flushing storage…`);
+  try { await db.close(); } catch (e) { console.error("[db] shutdown flush failed:", e.message); }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref(); // don't hang if a socket lingers
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+start().catch((e) => { console.error("Startup failed:", e); process.exit(1); });

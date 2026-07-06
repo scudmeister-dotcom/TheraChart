@@ -52,6 +52,10 @@ This mode adds the shared database, server-side login, offline sync, and the
 reminder scheduler. The Gemini key can be the `GEMINI_API_KEY` env var
 (recommended) or pasted in **Facility Admin**.
 
+By default the database is a flat file under `data/`. For durable, restart-safe
+storage (required on Cloud Run), set **`DATABASE_URL`** to a Postgres instance —
+the app persists there automatically. See **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
+
 Voice dictation uses the browser engine out of the box; to enable **Google
 Cloud Speech-to-Text** (Standard/Chirp, under a BAA) set `GCP_PROJECT` +
 credentials — see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
