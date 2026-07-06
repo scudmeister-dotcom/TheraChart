@@ -56,7 +56,7 @@ store.load();
    feature works with no key and no network. For PHI, use paid/Vertex AI
    Gemini under a signed BAA (point GEMINI_BASE_URL at your Vertex endpoint). */
 const GEMINI_KEY = process.env.GEMINI_API_KEY || null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 // refine mode is computed dynamically (key may come from env OR facility settings)
 

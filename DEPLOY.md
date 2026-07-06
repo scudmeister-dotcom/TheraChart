@@ -19,7 +19,7 @@ key from an **environment variable**. There is no shared database in this mode
    | Name | Value |
    |---|---|
    | `GEMINI_API_KEY` | your Google Gemini API key |
-   | `GEMINI_MODEL` *(optional)* | `gemini-2.0-flash` (default) |
+   | `GEMINI_MODEL` *(optional)* | `gemini-3.5-flash` (default) |
    | `GEMINI_BASE_URL` *(optional)* | a Vertex AI endpoint if using a BAA |
 
 4. **Deploy.** Open the URL — the "✦ Review & clean up with AI" and

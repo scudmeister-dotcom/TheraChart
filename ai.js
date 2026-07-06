@@ -11,7 +11,7 @@
 })(typeof self !== "undefined" ? self : this, function (parser, insights) {
   "use strict";
 
-  const DEFAULT_MODEL = "gemini-2.0-flash";
+  const DEFAULT_MODEL = "gemini-3.5-flash";
   const DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
   /* ---------------- transcript refinement ---------------- */
