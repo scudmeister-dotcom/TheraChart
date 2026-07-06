@@ -418,8 +418,7 @@
   <div><h1>Good day, ${esc(user.name.split(",")[0].split(" ")[0])}</h1>
   <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.settings().facilityName)}</div></div>
   <div class="page-actions">
-    ${S.canDocument(user) || user.role === "frontdesk" ? `<a class="btn" href="#/intake">+ New patient intake</a>` : ""}
-    <a class="btn primary" href="#/patients">Open patients</a>
+    ${S.canDocument(user) || user.role === "frontdesk" ? `<a class="btn primary" href="#/intake">+ New patient intake</a>` : ""}
   </div>
 </div>
 
@@ -2283,35 +2282,39 @@ ${ths.map((t) => {
 <div class="page-head">
   <div><h1>Privacy &amp; Security</h1><div class="sub">Where your information lives and what the AI features do with it — in plain terms</div></div>
 </div>
-<div class="cards-3">
-  <div class="card">
-    <h2>🔐 Your records stay with you</h2>
-    <p style="font-size:13px">${onServer
-      ? "Patient records live on <b>your clinic's own server</b> — a computer your facility owns, on your own network. Each device keeps a copy so you can work through outages and home visits, and changes sync back automatically. No records are stored in a third-party cloud."
-      : "Everything — patients, notes, schedules, transcripts — is stored <b>right here on this device</b>. Nothing is uploaded anywhere. (Run the included clinic server to share records between your clinic's devices, still entirely on your own hardware.)"}</p>
-    <p style="font-size:13px">And you stay in control: download a complete backup or erase everything, any time.</p>
-    <div style="display:flex; gap:8px; flex-wrap:wrap">
-      <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
-      <button class="btn small danger" id="wipeBtn">Erase all data</button>
+<div class="cards-2">
+  <div>
+    <div class="card">
+      <h2>🔐 Your records stay with you</h2>
+      <p style="font-size:13px">${onServer
+        ? "Patient records live on <b>your clinic's own server</b> — a computer your facility owns, on your own network. Each device keeps a copy so you can work through outages and home visits, and changes sync back automatically. No records are stored in a third-party cloud."
+        : "Everything — patients, notes, schedules, transcripts — is stored <b>right here on this device</b>. Nothing is uploaded anywhere. (Run the included clinic server to share records between your clinic's devices, still entirely on your own hardware.)"}</p>
+      <p style="font-size:13px">And you stay in control: download a complete backup or erase everything, any time.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
+        <button class="btn small danger" id="wipeBtn">Erase all data</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🛡 Who can see what</h2>
+      <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
+        <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
+        <li>Expired licenses and voided accounts lose access automatically</li>
+        <li>Signed documents lock — later changes need a signed, authorized amendment</li>
+        <li>Notable actions are recorded in the activity log below</li>
+      </ul>
     </div>
   </div>
-  <div class="card">
-    <h2>✦ What the AI features do with your information</h2>
-    <p style="font-size:13px">TheraChart uses AI for three things — turning speech into text, tidying up the finished note, and suggesting clinical insights. Here is exactly what each one sends, and where.</p>
-    <p style="font-size:13px"><b>Voice dictation.</b> With the <b>Browser engine</b>, the audio of what's spoken goes to Google, comes back as text, and that's the whole trip — TheraChart never keeps audio. Prefer to keep audio in-house? Switch any note to the <b>Whisper engine</b> and speech is transcribed on your clinic's own server instead. (Dictating offline? The recording waits safely on this device and is deleted the moment it's transcribed.)</p>
-    <p style="font-size:13px"><b>Note cleanup &amp; clinical insights${geminiOn ? " — Google Gemini" : ""}.</b> ${geminiOn
-      ? "When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — the transcript, or a summary of the chart's findings and history, never audio and never the patient's name — is sent to Google's Gemini AI. It reads that, tidies the wording, and suggests findings or connections. Nothing is saved until you've reviewed it, and you can edit or reject every suggestion."
-      : "These run on a built-in reviewer right on this device — nothing is sent anywhere. (A clinic can optionally connect Google's Gemini AI for smarter results; this one hasn't.)"}</p>
-    <p style="font-size:13px; margin-bottom:0"><b>Worth knowing.</b> Using a cloud AI simply means one piece of data — dictated audio (browser engine) or note text (Gemini) — travels to Google to be processed, and the result comes back. These are Google's general services without a healthcare-specific agreement, so clinics handling regulated patient data can stick to the private options above, or connect Gemini through <b>Vertex AI under a signed agreement</b> (set the key as an environment variable or in Facility Admin). Either way, the AI only ever suggests — a licensed clinician reviews and signs everything.</p>
-  </div>
-  <div class="card">
-    <h2>🛡 Who can see what</h2>
-    <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
-      <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
-      <li>Expired licenses and voided accounts lose access automatically</li>
-      <li>Signed documents lock — later changes need a signed, authorized amendment</li>
-      <li>Notable actions are recorded in the activity log below</li>
-    </ul>
+  <div>
+    <div class="card">
+      <h2>✦ What the AI features do with your information</h2>
+      <p style="font-size:13px">TheraChart uses AI for three things — turning speech into text, tidying up the finished note, and suggesting clinical insights. Here is exactly what each one sends, and where.</p>
+      <p style="font-size:13px"><b>Voice dictation.</b> With the <b>Browser engine</b>, the audio of what's spoken goes to Google, comes back as text, and that's the whole trip — TheraChart never keeps audio. Prefer to keep audio in-house? Switch any note to the <b>Whisper engine</b> and speech is transcribed on your clinic's own server instead. (Dictating offline? The recording waits safely on this device and is deleted the moment it's transcribed.)</p>
+      <p style="font-size:13px"><b>Note cleanup &amp; clinical insights${geminiOn ? " — Google Gemini" : ""}.</b> ${geminiOn
+        ? "When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — the transcript, or a summary of the chart's findings and history, never audio and never the patient's name — is sent to Google's Gemini AI. It reads that, tidies the wording, and suggests findings or connections. Nothing is saved until you've reviewed it, and you can edit or reject every suggestion."
+        : "These run on a built-in reviewer right on this device — nothing is sent anywhere. (A clinic can optionally connect Google's Gemini AI for smarter results; this one hasn't.)"}</p>
+      <p style="font-size:13px; margin-bottom:0"><b>Worth knowing.</b> Using a cloud AI simply means one piece of data — dictated audio (browser engine) or note text (Gemini) — travels to Google to be processed, and the result comes back. These are Google's general services without a healthcare-specific agreement, so clinics handling regulated patient data can stick to the private options above, or connect Gemini through <b>Vertex AI under a signed agreement</b> (set the key as an environment variable or in Facility Admin). Either way, the AI only ever suggests — a licensed clinician reviews and signs everything.</p>
+    </div>
   </div>
 </div>
 <div class="card">

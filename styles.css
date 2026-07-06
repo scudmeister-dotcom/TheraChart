@@ -359,6 +359,7 @@ table.list .num { font-variant-numeric: tabular-nums; }
   padding: 10px 12px; margin-bottom: 8px;
   border: 1px solid var(--border); border-radius: 11px; background: var(--panel);
   text-align: left;
+  color: var(--ink); /* buttons don't inherit text color — set it or names go black */
 }
 .login-user:hover { background: var(--hover); }
 .login-user.selected { border-color: var(--accent); background: var(--accent-soft); }
