@@ -178,13 +178,11 @@ function findAttachmentByKey(key) {
   return null;
 }
 function bootstrapInfo() {
+  // NOTE: the employee roster is deliberately NOT exposed here — employees sign
+  // in by email, so an unauthenticated visitor can't enumerate staff/PII.
   return {
     rev,
     facilityName: store.settings().facilityName,
-    users: store.users().map((u) => ({
-      id: u.id, name: u.name, role: u.role, active: u.active,
-      license: u.license ? { number: u.license.number, expires: u.license.expires } : null,
-    })),
   };
 }
 
@@ -448,25 +446,27 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const body = await readBody(req);
-      const userId = body.userId;
-      const secret = body.password != null ? body.password : body.pin; // pin kept for back-compat
-      const lf = loginFails.get(userId) || { n: 0, lockUntil: 0 };
+      const identifier = body.email != null ? body.email : body.userId; // email is the login; userId kept for back-compat
+      const secret = body.password != null ? body.password : body.pin;   // password; pin kept for back-compat
+      const rlKey = String(identifier || "").trim().toLowerCase();        // rate-limit per identifier
+      const lf = loginFails.get(rlKey) || { n: 0, lockUntil: 0 };
       if (lf.lockUntil > Date.now()) {
         return json(res, 429, { error: "Too many failed attempts — wait a minute and try again." });
       }
-      const fail = store.login(userId, secret);
+      const fail = store.login(identifier, secret);
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
       if (fail) {
         lf.n += 1;
         if (lf.n >= 5) { lf.n = 0; lf.lockUntil = Date.now() + 60 * 1000; }
         if (loginFails.size > 1000) loginFails.clear(); // bound memory
-        loginFails.set(userId, lf);
+        loginFails.set(rlKey, lf);
         return json(res, 401, { error: fail });
       }
-      loginFails.delete(userId);
+      loginFails.delete(rlKey);
+      const authed = store.findUserByLogin(identifier);
       bumpRev(); // audit entry was added
-      return json(res, 200, { token: tokenFor(userId), rev, state: publicState() });
+      return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, state: publicState() });
     }
 
     const user = userForReq(req);
@@ -666,6 +666,7 @@ async function start() {
   const filesInfo = await files.init({ dataDir: DATA_DIR, bucket: GCS_BUCKET || null, getToken: GCS_BUCKET ? gcpAccessToken : null });
   store.load();
   const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
+  const emailed = store.ensureEmails();    // one-time: give pre-email-login accounts a login email
   const r = Number(db.get("rev")); if (r) rev = r;
   try { for (const [t, s] of Object.entries(JSON.parse(db.get("sessions") || "{}"))) sessions.set(t, s); } catch { }
 
@@ -677,7 +678,7 @@ async function start() {
     console.log(`TheraChart clinic server running:`);
     console.log(`  app:  http://localhost:${PORT}`);
     console.log(`  data: ${dbInfo.backend === "postgres" ? "Postgres (durable) — keys: " + dbInfo.keys.join(", ") : DATA_DIR + " (flat file)"}`);
-    console.log(`  auth: hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s) this boot` : ""}`);
+    console.log(`  auth: email + hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s)` : ""}${emailed ? ` — assigned ${emailed} login email(s)` : ""}`);
     console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);

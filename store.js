@@ -65,26 +65,26 @@
       },
       users: [
         {
-          id: "u-maria", name: "Maria Santos, PT", role: "therapist",
+          id: "u-maria", name: "Maria Santos, PT", email: "maria@therachart.demo", role: "therapist",
           pin: "1234", active: true,
           license: { number: "PT-0012345", expires: daysFromNow(600) },
         },
         {
-          id: "u-jose", name: "Jose Ramirez, PT", role: "therapist",
+          id: "u-jose", name: "Jose Ramirez, PT", email: "jose@therachart.demo", role: "therapist",
           pin: "1234", active: true,
           license: { number: "PT-0098765", expires: daysFromNow(-40) }, // expired
         },
         {
-          id: "u-carlo", name: "Carlo Mendoza, PT", role: "therapist",
+          id: "u-carlo", name: "Carlo Mendoza, PT", email: "carlo@therachart.demo", role: "therapist",
           pin: "1234", active: false, // access voided
           license: { number: "PT-0055555", expires: daysFromNow(300) },
         },
         {
-          id: "u-ana", name: "Ana Dela Cruz", role: "frontdesk",
+          id: "u-ana", name: "Ana Dela Cruz", email: "ana@therachart.demo", role: "frontdesk",
           pin: "1234", active: true, license: null,
         },
         {
-          id: "u-grace", name: "Grace Lim, PT (Admin)", role: "admin",
+          id: "u-grace", name: "Grace Lim, PT (Admin)", email: "grace@therachart.demo", role: "admin",
           pin: "1234", active: true,
           license: { number: "PT-0000111", expires: daysFromNow(50) }, // expiring soon
         },
@@ -273,6 +273,13 @@
    * ---------------------------------------------------------------- */
 
   const getUser = (id) => load().users.find((u) => u.id === id) || null;
+  const normEmail = (e) => String(e == null ? "" : e).trim().toLowerCase();
+  const getUserByEmail = (email) => {
+    const e = normEmail(email);
+    return e ? load().users.find((u) => normEmail(u.email) === e) || null : null;
+  };
+  // Employees sign in by email; fall back to id for older links/back-compat.
+  const findUserByLogin = (identifier) => getUserByEmail(identifier) || getUser(identifier);
 
   function licenseExpired(user) {
     if (!user || !user.license) return false; // non-clinical roles have no license
@@ -341,12 +348,15 @@
   function addUser(fields, byUser) {
     load();
     const name = String((fields && fields.name) || "").trim();
+    const email = normEmail(fields && fields.email);
     const role = ROLES.includes(fields && fields.role) ? fields.role : "therapist";
     const password = String((fields && fields.password) || "");
     if (!name) return { error: "Name is required." };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "A valid email is required (it's their login)." };
+    if (getUserByEmail(email)) return { error: "That email is already in use by another account." };
     if (password.length < 8) return { error: "Temporary password must be at least 8 characters." };
     const user = {
-      id: uid("u"), name, role, active: true,
+      id: uid("u"), name, email, role, active: true,
       license: role === "frontdesk" ? null
         : { number: String((fields.license && fields.license.number) || "").trim(),
             expires: String((fields.license && fields.license.expires) || "").trim() },
@@ -387,22 +397,43 @@
     return n;
   }
 
-  /** null on success, or a human-readable reason the login was refused. */
-  function login(userId, secret) {
+  /** One-time: give every account a login email if it lacks one (so accounts
+      created before email-login can still sign in). Derived from the name;
+      the admin can edit it to a real address. Returns the number assigned. */
+  function ensureEmails() {
     load();
-    const user = getUser(userId);
-    if (!user) return "Unknown user.";
+    const taken = new Set(state.users.map((u) => normEmail(u.email)).filter(Boolean));
+    let n = 0;
+    for (const u of state.users) {
+      if (normEmail(u.email)) continue;
+      const slug = String(u.name || u.id).toLowerCase().replace(/,.*$/, "").trim()
+        .replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") || "user";
+      let email = `${slug}@therachart.demo`, i = 2;
+      while (taken.has(email)) email = `${slug}${i++}@therachart.demo`;
+      u.email = email; taken.add(email); touch(u); n++;
+    }
+    if (n) save();
+    return n;
+  }
+
+  /** identifier = email (or a user id for back-compat). null on success, or a
+      human-readable reason the login was refused. The refusal message is kept
+      generic (never "unknown email") so it can't be used to probe who exists. */
+  function login(identifier, secret) {
+    load();
+    const user = findUserByLogin(identifier);
+    if (!user) return "Incorrect email or password.";
     if (!user.active) {
-      audit(userId, "login-denied", "access voided");
+      audit(user.id, "login-denied", "access voided");
       return "Access for this account has been voided. Contact your administrator.";
     }
     if (!verifyCredential(user, secret)) {
-      audit(userId, "login-denied", "wrong password");
-      return "Incorrect password.";
+      audit(user.id, "login-denied", "wrong password");
+      return "Incorrect email or password.";
     }
-    state.sessionUserId = userId;
+    state.sessionUserId = user.id;
     save();
-    audit(userId, "login", user.role);
+    audit(user.id, "login", user.role);
     return null;
   }
 
@@ -671,6 +702,13 @@
   function updateUser(userId, patch, byUser) {
     const u = getUser(userId);
     if (!u) return null;
+    if ("email" in patch) {
+      const e = normEmail(patch.email);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return { error: "A valid email is required." };
+      const clash = getUserByEmail(e);
+      if (clash && clash.id !== u.id) return { error: "That email is already in use." };
+      u.email = e;
+    }
     if (patch.license) Object.assign(u.license || (u.license = {}), patch.license);
     for (const k of ["name", "active", "pin"]) if (k in patch) u[k] = patch[k];
     touch(u);
@@ -756,8 +794,8 @@
     load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
     audit, auditLog: () => load().audit,
     // users/auth
-    users: () => load().users, getUser, login, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, addUser, deleteUser,
+    users: () => load().users, getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient,

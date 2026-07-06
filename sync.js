@@ -196,10 +196,11 @@
     } catch { /* still offline */ }
   }
 
-  /* ---- login: server-side when reachable, offline unlock otherwise ---- */
+  /* ---- login: server-side when reachable, offline unlock otherwise.
+     `identifier` is the employee's email (a user id also works, back-compat). ---- */
   const localLogin = S.login;
-  S.login = async (userId, pin) => {
-    if (sync.mode === "local") return localLogin(userId, pin);
+  S.login = async (identifier, password) => {
+    if (sync.mode === "local") return localLogin(identifier, password);
 
     if (sync.mode === "offline") {
       const age = Date.now() - sync.lastSync;
@@ -211,38 +212,39 @@
       // Passwords live only on the server; synced state carries no credential to
       // check against — a fresh sign-in needs the server. (An already-signed-in
       // device keeps working offline on its existing token.)
-      const u = S.getUser(userId);
+      const u = S.findUserByLogin(identifier);
       if (u && u.pin == null && u.passwordHash == null) {
         return "You're offline. Signing in requires the clinic server (passwords are verified there). Reconnect to sign in.";
       }
-      const fail = localLogin(userId, pin);
-      if (!fail) S.audit(userId, "login-offline", `last sync ${Math.round(age / 60000)} min ago`);
+      const fail = localLogin(identifier, password);
+      if (!fail && u) S.audit(u.id, "login-offline", `last sync ${Math.round(age / 60000)} min ago`);
       return fail;
     }
 
     try {
-      const res = await api("/api/login", { method: "POST", body: { userId, pin } });
+      const res = await api("/api/login", { method: "POST", body: { email: identifier, password } });
       if (!res.ok) return res.data.error || "Login failed.";
       sync.token = res.data.token;
       lsSet(LS_TOKEN, sync.token);
+      const uid = res.data.userId; // server resolved email -> user id
       if (sync.dirty) {
         // offline work from before this login: merge it into the server copy
         mergeAndAdopt(res.data);
         const st = S.load();
-        st.sessionUserId = userId;
+        st.sessionUserId = uid;
         S.save();
         await push();
       } else {
         adopt(res.data);
         const st = S.load();
-        st.sessionUserId = userId;
+        st.sessionUserId = uid;
         S.save();
         setDirty(0);
       }
       return null;
     } catch (e) {
       goOffline("server unreachable during login");
-      return S.login(userId, pin); // falls into the offline-unlock path
+      return S.login(identifier, password); // falls into the offline-unlock path
     }
   };
 
@@ -411,19 +413,11 @@
         lsSet(LS_SEEN, "1");
         lsSet(LS_STT, sync.stt.available ? "1" : "0");
 
-        // refresh login screen info from the server
+        // refresh the facility name for the login screen (the employee roster is
+        // NOT fetched here anymore — employees sign in by email, no picker)
         const boot = await fetch("/api/bootstrap").then((r) => r.json());
         const st = S.load();
         st.settings.facilityName = boot.facilityName || st.settings.facilityName;
-        for (const bu of boot.users) {
-          const local = st.users.find((u) => u.id === bu.id);
-          if (local) {
-            local.name = bu.name; local.role = bu.role; local.active = bu.active;
-            if (bu.license) local.license = Object.assign(local.license || {}, bu.license);
-          } else {
-            st.users.push(Object.assign({ pin: null, license: null }, bu));
-          }
-        }
         S.save();
 
         // token from a previous visit? resume and sync any queued work

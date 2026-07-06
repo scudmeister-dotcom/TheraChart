@@ -61,13 +61,22 @@ const h1 = AUTH.hash("samePw12"), h2 = AUTH.hash("samePw12");
 check("hashes are salted (distinct for same input)", h1 !== h2);
 check("both salted hashes still verify", AUTH.verify({ passwordHash: h1 }, "samePw12") && AUTH.verify({ passwordHash: h2 }, "samePw12"));
 
+// --- email login --------------------------------------------------------
+check("login by email works", store.login("grace@therachart.demo", "1234") === null);
+check("login by email is case-insensitive", store.login("GRACE@therachart.demo", "1234") === null);
+check("getUserByEmail resolves", (store.getUserByEmail("maria@therachart.demo") || {}).id === "u-maria");
+check("wrong email is a generic refusal", store.login("nobody@x.com", "1234") === "Incorrect email or password.");
+
 // --- admin: create / reset / delete employees ---------------------------
 const admin = store.getUser("u-grace"); // seeded admin
-const created = store.addUser({ name: "New Hire, PT", role: "therapist", password: "tempPass12", license: { number: "PT-9", expires: "2030-01-01" } }, admin);
+const created = store.addUser({ name: "New Hire, PT", email: "new.hire@clinic.com", role: "therapist", password: "tempPass12", license: { number: "PT-9", expires: "2030-01-01" } }, admin);
 check("addUser creates a user", !created.error && !!created.user);
+check("new hire has the login email", created.user && created.user.email === "new.hire@clinic.com");
 check("new hire must change password", created.user && created.user.mustChangePassword === true);
-check("new hire can log in with temp password", store.login(created.user.id, "tempPass12") === null);
-check("addUser rejects short temp password", !!store.addUser({ name: "X", role: "therapist", password: "short" }, admin).error);
+check("new hire can log in by email + temp password", store.login("new.hire@clinic.com", "tempPass12") === null);
+check("addUser rejects a missing/invalid email", !!store.addUser({ name: "X", role: "therapist", password: "whatever8" }, admin).error);
+check("addUser rejects a duplicate email", !!store.addUser({ name: "Y", email: "new.hire@clinic.com", role: "therapist", password: "whatever8" }, admin).error);
+check("addUser rejects short temp password", !!store.addUser({ name: "X", email: "x@clinic.com", role: "therapist", password: "short" }, admin).error);
 
 // self-change clears the must-change flag; admin reset re-arms it
 store.setPassword(created.user.id, "realPass345", created.user);

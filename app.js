@@ -346,7 +346,6 @@
 
   /* ================= LOGIN ================= */
 
-  let loginSelected = null;
 
   function renderForcePassword(user) {
     app.innerHTML = `
@@ -384,7 +383,11 @@
   }
 
   function renderLogin() {
-    const users = S.users();
+    // Demo-mode only: since there's no server, it's safe to hint the on-device
+    // accounts so people can try it. In server mode the roster is never exposed.
+    const demoEmails = (window.TheraSync && window.TheraSync.mode === "local")
+      ? S.users().filter((u) => u.active).map((u) => u.email).filter(Boolean).slice(0, 5)
+      : [];
     app.innerHTML = `
 <div class="login-wrap">
   <div class="login-box">
@@ -397,50 +400,37 @@
     </div>
     <div class="card">
       <h2>Sign in</h2>
-      ${users.map((u) => `
-        <button class="login-user ${loginSelected === u.id ? "selected" : ""}" data-id="${u.id}">
-          <span class="avatar">${esc(initials(u.name))}</span>
-          <span><b>${esc(u.name)}</b><small>${esc(roleLabel(u))}${u.license ? ` · ${esc(u.license.number)}` : ""}</small></span>
-          ${loginChip(u)}
-        </button>`).join("")}
-      <div class="field" style="margin-top:12px">
+      <div class="field" style="margin-top:4px">
+        <label for="emailInput">Email</label>
+        <input id="emailInput" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@clinic.com" />
+      </div>
+      <div class="field">
         <label for="pinInput">Password</label>
         <input id="pinInput" type="password" autocomplete="current-password" placeholder="Enter your password" />
       </div>
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
-      <div class="demo-note">Default password is <b>1234</b> — change it under <b>My Profile</b> after signing in.</div>
+      ${demoEmails.length ? `<div class="demo-note">Demo — sign in as <b>${esc(demoEmails.join("</b>, <b>"))}</b>, password <b>1234</b>.</div>`
+        : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
   </div>
 </div>`;
-    app.querySelectorAll(".login-user").forEach((b) =>
-      b.addEventListener("click", () => {
-        loginSelected = b.dataset.id;
-        renderLogin();
-        document.getElementById("pinInput").focus();
-      })
-    );
+    const emailEl = document.getElementById("emailInput");
+    const pinEl = document.getElementById("pinInput");
     const doLogin = async () => {
       const err = document.getElementById("loginErr");
-      if (!loginSelected) { err.textContent = "Choose your account first."; return; }
-      err.textContent = "…";
+      const email = emailEl.value.trim();
+      if (!email) { err.style.color = "var(--danger)"; err.textContent = "Enter your email."; emailEl.focus(); return; }
+      err.style.color = "var(--muted)"; err.textContent = "Signing in…";
       // S.login may be wrapped by the sync layer and return a promise
-      const fail = await Promise.resolve(S.login(loginSelected, document.getElementById("pinInput").value));
-      if (fail) { err.textContent = fail; return; }
+      const fail = await Promise.resolve(S.login(email, pinEl.value));
+      if (fail) { err.style.color = "var(--danger)"; err.textContent = fail; return; }
       location.hash = "#/dashboard";
       render();
     };
     document.getElementById("loginBtn").addEventListener("click", doLogin);
-    document.getElementById("pinInput").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") doLogin();
-    });
-  }
-
-  function loginChip(u) {
-    if (!u.active) return `<span class="chip bad">access voided</span>`;
-    if (S.licenseExpired(u)) return `<span class="chip bad">license expired</span>`;
-    if (S.licenseExpiresSoon(u)) return `<span class="chip warn">license expiring</span>`;
-    return "";
+    [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
+    emailEl.focus();
   }
 
   /* ================= DASHBOARD ================= */
@@ -2702,6 +2692,7 @@ ${ths.map((t) => {
             <option value="therapist">Therapist</option><option value="admin">Administrator</option><option value="frontdesk">Front desk</option>
           </select></div>
         </div>
+        <div class="field"><label>Email (this is their login)</label><input id="nu-email" type="email" autocapitalize="off" spellcheck="false" placeholder="ana@clinic.com" /></div>
         <div class="field-row" id="nu-license-row">
           <div class="field"><label>License number</label><input id="nu-lic-num" placeholder="PT-…" /></div>
           <div class="field"><label>License expires</label><input id="nu-lic-exp" type="date" /></div>
@@ -2719,6 +2710,7 @@ ${ths.map((t) => {
           ${!u.active ? '<span class="chip bad">voided</span>' : S.licenseExpired(u) ? '<span class="chip bad">expired</span>' : S.licenseExpiresSoon(u) ? '<span class="chip warn">expiring soon</span>' : u.license ? '<span class="chip good">active</span>' : ""}
           ${u.mustChangePassword ? '<span class="chip warn">must set password</span>' : ""}
         </div>
+        <div style="margin-top:6px"><div class="field" style="margin-bottom:4px"><label>Login email</label><input data-email="${u.id}" type="email" autocapitalize="off" spellcheck="false" value="${esc(u.email || "")}" /></div></div>
         ${u.license ? `<div class="field-row" style="margin-top:8px">
           <div class="field" style="margin-bottom:4px"><label>License number</label><input data-lic-num="${u.id}" value="${esc(u.license.number)}" /></div>
           <div class="field" style="margin-bottom:4px"><label>Expires</label><input data-lic-exp="${u.id}" type="date" value="${esc(u.license.expires)}" /></div>
@@ -2754,9 +2746,12 @@ ${ths.map((t) => {
         const id = b.dataset.saveUser;
         const num = document.querySelector(`[data-lic-num="${id}"]`);
         const exp = document.querySelector(`[data-lic-exp="${id}"]`);
+        const emailEl = document.querySelector(`[data-email="${id}"]`);
         const patch = {};
         if (num && exp) patch.license = { number: num.value.trim(), expires: exp.value };
-        S.updateUser(id, patch, user);
+        if (emailEl) patch.email = emailEl.value.trim();
+        const res = S.updateUser(id, patch, user);
+        if (res && res.error) { const m = document.querySelector(`[data-msg="${id}"]`); if (m) { m.style.color = "var(--danger)"; m.textContent = res.error; } return; }
         render();
       })
     );
@@ -2788,11 +2783,13 @@ ${ths.map((t) => {
       const role = document.getElementById("nu-role").value;
       const fields = {
         name: document.getElementById("nu-name").value.trim(),
+        email: document.getElementById("nu-email").value.trim(),
         role,
         password: document.getElementById("nu-pw").value,
         license: role === "frontdesk" ? null : { number: document.getElementById("nu-lic-num").value.trim(), expires: document.getElementById("nu-lic-exp").value },
       };
       if (!fields.name) return fail("Enter a name.");
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(fields.email)) return fail("Enter a valid login email.");
       if ((fields.password || "").length < 8) return fail("Temporary password must be at least 8 characters (use Generate).");
       msg.style.color = "var(--muted)"; msg.textContent = "Creating…"; addBtn.disabled = true;
       const r = T.addUser ? await T.addUser(fields) : S.addUser(fields, user);
