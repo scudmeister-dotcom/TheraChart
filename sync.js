@@ -35,6 +35,7 @@
     dirty: Number(lsGet(LS_DIRTY) || 0),
     lastSync: Number(lsGet(LS_LASTSYNC) || 0),
     whisper: lsGet(LS_WHISPER) === "1",
+    ai: null, // { refine, insights, model } when an AI backend is reachable
     lastError: null,
   };
   window.TheraSync = sync;
@@ -239,14 +240,36 @@
      Uses the clinic server (Gemini if configured, else server-local) when
      online; falls back to the in-browser local refiner otherwise, so the
      "Review & clean up" pass always works. */
+  // These call the AI endpoints when they exist (clinic server OR a Vercel
+  // deployment with GEMINI_API_KEY set), else the in-browser local fallback.
   sync.refineTranscript = async (utterances) => {
-    if (sync.mode === "server" && sync.token) {
+    if (sync.ai) {
       try {
         const r = await api("/api/refine", { method: "POST", body: { transcript: utterances } });
         if (r.ok) return r.data;
       } catch (_) { /* fall through to local */ }
     }
     return { ...window.TheraParser.refineTranscript(utterances), source: "local" };
+  };
+
+  sync.getInsights = async (ctx) => {
+    if (sync.ai) {
+      try {
+        const r = await api("/api/insights", { method: "POST", body: ctx });
+        if (r.ok) return r.data;
+      } catch (_) { /* fall through to local */ }
+    }
+    return window.TheraInsights.buildInsights(ctx);
+  };
+
+  // Probe whether an AI backend is reachable (Vercel serverless or clinic
+  // server). Sets sync.ai = { refine, insights, model } or leaves it null.
+  sync.probeAI = async () => {
+    try {
+      const res = await fetch("/api/ai-status", { signal: AbortSignal.timeout(2500) });
+      if (res.ok) { sync.ai = await res.json(); }
+    } catch (_) { /* no AI backend: local fallback */ }
+    return sync.ai;
   };
 
   /* ---- boot ---- */
@@ -298,6 +321,11 @@
     } catch (_) {
       if (lsGet(LS_SEEN) === "1") sync.mode = "offline";
     }
+    // Detect an AI backend independently of the data-sync mode: this works on
+    // a Vercel deployment (serverless functions using the GEMINI_API_KEY env
+    // var) as well as a self-hosted clinic server. Static hosting → local.
+    await sync.probeAI();
+    if (sync.ai) { sync.refine = sync.ai.refine; sync.whisper = sync.whisper || false; }
     setBadge();
     S.setChangeHook(sync.mode === "local" ? null : schedulePush);
     if (window.TheraRender) window.TheraRender();

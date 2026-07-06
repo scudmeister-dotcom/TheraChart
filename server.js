@@ -46,7 +46,7 @@ globalThis.THERACHART_STORAGE = {
   removeItem() { try { fs.unlinkSync(DATA_FILE); } catch { } },
 };
 const store = require("./store.js");
-const parser = require("./parser.js");
+const ai = require("./ai.js");
 store.load();
 
 /* ---- AI transcript refinement (Gemini, with a local fallback) ----
@@ -60,147 +60,15 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 // refine mode is computed dynamically (key may come from env OR facility settings)
 
-const REFINE_SCHEMA = {
-  type: "object",
-  properties: {
-    dialogue: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          speaker: { type: "string", enum: ["patient", "clinician"] },
-          text: { type: "string" },
-        },
-        required: ["speaker", "text"],
-      },
-    },
-    findings: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          bodyPart: { type: "string" },
-          side: { type: "string", enum: ["left", "right", "none"] },
-          summary: { type: "string" },
-          sourceQuote: { type: "string" },
-        },
-        required: ["bodyPart", "summary"],
-      },
-    },
-    subjective: { type: "string" },
-    treatment: { type: "string" },
-  },
-  required: ["dialogue", "findings"],
-};
-
-// The clinical persona + instructions. Exposed via GET /api/refine-prompt so
-// clinics can read exactly what is asked of the model.
-function refineSystem() {
-  return [
-    "You are an experienced physical therapist writing up a treatment session,",
-    "acting as a meticulous clinical documentation specialist. You receive a raw,",
-    "unpunctuated voice transcript that may contain BOTH the therapist and the",
-    "patient speaking, in English, Tagalog, or Cebuano (Taglish code-switching is",
-    "common and normal). Think the way a PT thinks in SOAP terms.",
-    "",
-    "Do the following:",
-    "",
-    "1) SPEAKER SEPARATION. Split the transcript into dialogue turns and label",
-    "   each 'patient' or 'clinician'. The CLINICIAN asks questions ('where does",
-    "   it hurt?', 'on a scale of ten?'), gives cues/instructions ('push against",
-    "   my hand', 'relax'), and reads out objective measures ('flexion is 120",
-    "   degrees'). The PATIENT reports how they feel, when, and what makes it",
-    "   worse or better. When unsure, prefer 'patient' only if it is a symptom",
-    "   report; otherwise 'clinician'.",
-    "",
-    "2) CLEAN, DON'T REWRITE. Fix obvious speech-to-text errors and add sensible",
-    "   punctuation, but do NOT change clinical meaning, invent details, or",
-    "   translate — keep each speaker's original language.",
-    "",
-    "3) SUBJECTIVE (patient's words). Write a concise clinician-style Subjective",
-    "   paragraph in English drawn ONLY from what the patient reported: chief",
-    "   complaint, location and laterality, pain rating (0-10), quality (sharp,",
-    "   dull, burning…), onset/duration, and aggravating/easing factors. Do not",
-    "   include the therapist's commentary.",
-    "",
-    "4) FINDINGS. List discrete musculoskeletal findings from the PATIENT's",
-    "   report: bodyPart, side (left/right/none), and a short clinical summary",
-    "   (symptom + severity + rating + duration + trigger). One entry per",
-    "   distinct region/side. A denial ('no pain in the right knee') is a finding",
-    "   phrased as a denial, not omitted.",
-    "",
-    "5) TREATMENT. If the therapist described interventions performed this visit",
-    "   (therapeutic exercise, manual therapy, modalities, gait/balance training,",
-    "   HEP, education), summarize them in a brief Treatment paragraph; else ''.",
-    "",
-    "Be faithful and conservative: if something was not said, do not add it.",
-    "Return ONLY JSON matching the provided schema.",
-  ].join("\n");
-}
-
-function refinePrompt(utterances) {
-  return refineSystem() + "\n\nTRANSCRIPT LINES:\n" +
-    utterances.map((u, i) => `${i + 1}. ${u}`).join("\n");
-}
-
-async function callGemini(utterances, key) {
-  const url = `${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-  const body = {
-    contents: [{ role: "user", parts: [{ text: refinePrompt(utterances) }] }],
-    generationConfig: { responseMimeType: "application/json", responseSchema: REFINE_SCHEMA, temperature: 0.2 },
-  };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "{}";
-  const parsed = JSON.parse(text);
-  return normalizeRefinement(parsed, utterances, "gemini");
-}
-
-// Attach map coordinates (via the shared lexicon) and turn indices so the
-// client can pin findings and highlight their source — same shape as local.
-// Measurements are extracted deterministically from the cleaned dialogue so
-// the objective table is reliable regardless of the model.
-function normalizeRefinement(parsed, utterances, source) {
-  const dialogue = Array.isArray(parsed.dialogue) && parsed.dialogue.length
-    ? parsed.dialogue.map((d) => ({ speaker: d.speaker === "clinician" ? "clinician" : "patient", text: String(d.text || "").trim() })).filter((d) => d.text)
-    : utterances.map((u) => ({ speaker: parser.guessSpeaker(u), text: String(u).trim() }));
-
-  const findings = (parsed.findings || []).map((f) => {
-    const side = f.side === "left" || f.side === "right" ? f.side : null;
-    const c = parser.coordForName(f.bodyPart, side);
-    const quote = f.sourceQuote || "";
-    const turns = [];
-    dialogue.forEach((d, i) => { if (quote && d.text.toLowerCase().includes(quote.toLowerCase().slice(0, 24))) turns.push(i); });
-    return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns };
-  }).filter((f) => f.summary);
-
-  const measurements = parser.aggregateMeasurements(dialogue.map((d) => d.text));
-  return {
-    dialogue, findings, measurements, source,
-    subjective: String(parsed.subjective || "").trim(),
-    treatment: String(parsed.treatment || "").trim(),
-  };
-}
+const GEMINI_OPTS = () => ({ key: activeGeminiKey(), model: GEMINI_MODEL, base: GEMINI_BASE, onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) });
 
 function activeGeminiKey() {
   return process.env.GEMINI_API_KEY || (store.settings().geminiKey || "").trim() || null;
 }
 
-async function refineTranscript(utterances) {
-  const key = activeGeminiKey();
-  if (key) {
-    try { return await callGemini(utterances, key); }
-    catch (e) { console.error("[refine] Gemini failed, using local:", e.message); }
-  }
-  const local = parser.refineTranscript(utterances);
-  return { ...local, source: key ? "local (gemini failed)" : "local" };
-}
+const refineSystem = ai.refineSystem;
+const refineTranscript = (utterances) => ai.refine(utterances, GEMINI_OPTS());
+const clinicalInsights = (ctx) => ai.insightsRun(ctx, GEMINI_OPTS());
 
 let rev = (() => { try { return Number(fs.readFileSync(REV_FILE, "utf8")) || 1; } catch { return 1; } })();
 function bumpRev() { rev += 1; fs.writeFileSync(REV_FILE, String(rev)); }
@@ -385,6 +253,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/refine-prompt") {
       return json(res, 200, { prompt: refineSystem(), model: GEMINI_MODEL, active: activeGeminiKey() ? "gemini" : "local" });
     }
+    if (url.pathname === "/api/ai-status") {
+      const mode = activeGeminiKey() ? "gemini" : "local";
+      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL });
+    }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const { userId, pin } = await readBody(req);
       const fail = store.login(userId, pin);
@@ -405,6 +277,11 @@ const server = http.createServer(async (req, res) => {
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
         const clean = transcript.map((t) => String(t || "").slice(0, 2000)).slice(0, 500);
         const result = await refineTranscript(clean);
+        return json(res, 200, result);
+      }
+      if (url.pathname === "/api/insights" && req.method === "POST") {
+        const ctx = await readBody(req);
+        const result = await clinicalInsights(ctx || {});
         return json(res, 200, result);
       }
       if (url.pathname === "/api/transcribe" && req.method === "POST") {

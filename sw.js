@@ -2,10 +2,10 @@
    (and offline) once installed to a phone's home screen. API calls always
    go to the network; clinical data itself lives in the store/server. */
 
-const CACHE = "therachart-v6";
+const CACHE = "therachart-v7";
 const SHELL = [
   "./", "./index.html", "./styles.css",
-  "./parser.js", "./store.js", "./app.js", "./sync.js",
+  "./parser.js", "./insights.js", "./store.js", "./app.js", "./sync.js",
   "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png",
 ];
 

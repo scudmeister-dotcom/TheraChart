@@ -10,7 +10,8 @@ click any finding to see exactly where it was said.
 > physical therapists, and why it beats a hand-written paper chart. It's the
 > heart and soul of the project.
 
-Runs on phone, iPad, or computer as a responsive web app.
+Runs on phone, iPad, or computer as a responsive web app. Deploy to Vercel,
+self-host a clinic server, or serve it statically — see **[DEPLOY.md](DEPLOY.md)**.
 
 ## Run it
 
@@ -172,6 +173,26 @@ under a signed BAA) and the local reviewer alternative.
   encodes **severity** (severe / moderate / mild / resolved), derived from the
   pain rating and wording.
 
+## Clinical insights — connections & recommendations
+
+Beyond a single visit, TheraChart can reason across the whole chart. In any
+document, **✦ Clinical insights** looks at the current findings **and the
+patient's history** and surfaces:
+
+- **Possible connections** — recurrence of a region across visits, ROM/pain
+  trends over time, referred/radicular patterns, and links to past medical
+  history or the referral reason (each with a confidence and the evidence it's
+  based on).
+- **Red flags** — anything warranting caution or medical referral.
+- **Recommendations — what to do now** — concrete next steps (assessments,
+  treatment considerations, precautions, referral), each with a rationale and
+  priority, with one click to append into the note's plan/assessment.
+
+It is **decision support for a licensed PT, not a diagnosis**, and says so.
+It uses Gemini when a key is configured, otherwise a local heuristic — same as
+the clean-up pass. See **[DEPLOY.md](DEPLOY.md)** to run it on Vercel with your
+`GEMINI_API_KEY`.
+
 ## Working offline (home visits, brownouts)
 
 Devices that belong to a clinic server keep working when it's unreachable:
@@ -220,7 +241,8 @@ checked offline:
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
 node test/merge.test.js    # 13 checks: offline merge never loses records
-node test/refine.test.js   # 25 checks: speaker split + AI-cleanup finding extraction
+node test/refine.test.js   # 30 checks: speaker split, sections, measurements
+node test/insights.test.js # 15 checks: connections, red flags, recommendations
 ```
 
 ## Files

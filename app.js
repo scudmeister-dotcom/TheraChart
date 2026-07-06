@@ -881,7 +881,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     ${sections}
     ${sigBlock}
   </div>
-</div>`;
+</div>
+<div class="card" id="insightsCard"></div>`;
 
     // ------- shared dictation/map state -------
     const dstate = { selectedKey: null, editable };
@@ -889,6 +890,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
+    renderInsightsCard(doc, user);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
@@ -1899,6 +1901,122 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     render();
   }
 
+  /* ================= AI clinical insights ================= */
+
+  const findingsFromPoints = (pts) =>
+    (pts || []).map((p) => ({ part: p.part, side: p.side, summary: (p.notes || []).map((n) => n.summary).join("; ") }));
+
+  const docSubjective = (d) =>
+    d.data.subjective || d.data.currentStatus || d.data.summary || "";
+
+  const measOf = (d) => ({
+    rom: d.data.rom || [], mmt: d.data.mmt || [], special: d.data.special || [], pain: d.data.pain || [],
+  });
+
+  // Assemble the chart context (current visit + full history) for the insights model.
+  function gatherInsightContext(doc) {
+    const p = S.getPatient(doc.patientId);
+    const evalDoc = S.docsFor(doc.patientId).find((d) => d.type === "eval");
+    const history = S.docsFor(doc.patientId)
+      .filter((d) => d.id !== doc.id)
+      .sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))
+      .slice(0, 12)
+      .map((d) => ({
+        date: fmtDate(d.createdAt), type: docMeta(d.type).label,
+        subjective: docSubjective(d), assessment: d.data.assessment || "",
+        findings: findingsFromPoints(d.data.mapPoints), measurements: measOf(d),
+      }));
+    return {
+      patient: p ? { age: age(p.dob), sex: p.sex || "" } : {},
+      referral: (evalDoc && evalDoc.data.reason) || (p && p.referringPhysician) || "",
+      pmh: (evalDoc && evalDoc.data.pmh) || "",
+      current: { subjective: docSubjective(doc), findings: findingsFromPoints(doc.data.mapPoints), measurements: measOf(doc) },
+      history,
+    };
+  }
+
+  const planFieldFor = (type) =>
+    ({ eval: "plan", daily: "summary", progress: "assessment", discharge: "recommendations" })[type];
+
+  function renderInsightsCard(doc, user) {
+    const card = document.getElementById("insightsCard");
+    if (!card) return;
+    const editable = doc.status !== "signed" && S.canDocument(user);
+    const ins = doc.data.insights;
+    const engineChip = ins
+      ? `<span class="chip ${ins.source && ins.source.startsWith("gemini") ? "info" : "muted"}">${ins.source && ins.source.startsWith("gemini") ? "Gemini" : "local AI"}</span>` : "";
+
+    card.innerHTML = `
+      <div class="ins-head">
+        <h2>✦ Clinical insights ${engineChip}<span class="chip muted">decision support</span></h2>
+        <button class="btn small ai" id="insBtn">${ins ? "Refresh" : "Find connections &amp; recommendations"}</button>
+      </div>
+      <p class="ins-disclaimer">Considers this visit <b>and</b> the patient's history. This is decision support for a licensed PT — <b>not a diagnosis</b>. Verify before acting.</p>
+      <div id="insBody">${ins ? insightsHtml(ins) : `<div class="empty-state" style="padding:10px">No insights yet. Click above to check the transcript and history for possible connections and next-step recommendations.</div>`}</div>`;
+
+    document.getElementById("insBtn").addEventListener("click", () => runInsights(doc, user));
+    bindInsightActions(doc, user, editable);
+  }
+
+  function insightsHtml(ins) {
+    const confChip = (c) => c ? `<span class="chip ${c === "high" ? "good" : c === "medium" ? "warn" : "muted"}">${esc(c)}</span>` : "";
+    const prioChip = (p) => `<span class="chip ${p === "urgent" ? "bad" : p === "high" ? "warn" : "muted"}">${esc(p || "routine")}</span>`;
+    const conns = (ins.connections || []).map((c) => `
+      <div class="ins-item">
+        <div class="ins-item-head"><b>${esc(c.title)}</b>${confChip(c.confidence)}</div>
+        <div class="ins-detail">${esc(c.detail || "")}</div>
+        ${c.basis ? `<div class="ins-basis">Based on: ${esc(c.basis)}</div>` : ""}
+      </div>`).join("");
+    const flags = (ins.redFlags || []).map((f) => `
+      <div class="ins-flag"><b>⚠ ${esc(f.flag)}</b>${f.action ? `<div class="ins-detail">${esc(f.action)}</div>` : ""}</div>`).join("");
+    const recs = (ins.recommendations || []).map((r, i) => `
+      <div class="ins-item">
+        <div class="ins-item-head"><b>${esc(r.action)}</b>${prioChip(r.priority)}
+          <button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button></div>
+        ${r.rationale ? `<div class="ins-detail">${esc(r.rationale)}</div>` : ""}
+      </div>`).join("");
+    return `
+      ${flags ? `<div class="ins-section"><h3 class="ins-h">Red flags</h3>${flags}</div>` : ""}
+      <div class="ins-section"><h3 class="ins-h">Possible connections</h3>${conns || `<div class="empty-state" style="padding:8px">No cross-visit connections detected.</div>`}</div>
+      <div class="ins-section"><h3 class="ins-h">Recommendations — what to do now</h3>${recs || `<div class="empty-state" style="padding:8px">No specific recommendations.</div>`}</div>`;
+  }
+
+  function bindInsightActions(doc, user, editable) {
+    document.querySelectorAll(".ins-add").forEach((b) =>
+      b.addEventListener("click", () => {
+        if (!editable) return alertBanner("This note is locked — reopen or amend to add recommendations.");
+        const rec = doc.data.insights.recommendations[Number(b.dataset.rec)];
+        const field = planFieldFor(doc.type);
+        if (!rec || !field) return;
+        const cur = (doc.data[field] || "").trim();
+        doc.data[field] = (cur ? cur + "\n" : "") + `- ${rec.action}${rec.rationale ? ` (${rec.rationale})` : ""}`;
+        S.updateDocData(doc.id, doc.data, user);
+        const ta = document.querySelector(`textarea[data-field="${field}"]`);
+        if (ta) ta.value = doc.data[field];
+        b.textContent = "✓ Added";
+        b.disabled = true;
+      })
+    );
+  }
+
+  async function runInsights(doc, user) {
+    const body = document.getElementById("insBody");
+    if (body) body.innerHTML = `<div class="empty-state" style="padding:14px">Analyzing the transcript and history…</div>`;
+    const ctx = gatherInsightContext(doc);
+    let result;
+    try {
+      const sync = window.TheraSync || {};
+      result = sync.getInsights ? await sync.getInsights(ctx) : window.TheraInsights.buildInsights(ctx);
+    } catch (e) {
+      if (body) body.innerHTML = `<div class="banner bad">Insights failed: ${esc(e.message)}</div>`;
+      return;
+    }
+    doc.data.insights = { ...result, ranAt: new Date().toISOString() };
+    S.updateDocData(doc.id, doc.data, user);
+    S.audit(user.id, "insights-generated", `${doc.title}: ${result.source} · ${(result.connections || []).length} connections, ${(result.recommendations || []).length} recs`);
+    renderInsightsCard(doc, user);
+  }
+
   /* ---- sign & amend ---- */
 
   function signModal(doc, user) {
@@ -2237,7 +2355,7 @@ ${ths.map((t) => {
   </div>
   <div class="card">
     <h2>✦ AI cleanup (Gemini)</h2>
-    <p style="font-size:12.5px; color:var(--muted)">Paste a Google Gemini API key to use Gemini for the "Review &amp; clean up with AI" pass (applies when running the clinic server; otherwise a local on-device reviewer is used). Only transcript <b>text</b> is sent — see Privacy &amp; Security for the PHI/BAA note. The key is stored in the clinic database; for stricter security set the <code>GEMINI_API_KEY</code> environment variable on the server instead, which never touches the database.</p>
+    <p style="font-size:12.5px; color:var(--muted)">Gemini powers the "Review &amp; clean up" pass <b>and</b> Clinical Insights. The most secure way to enable it is the <code>GEMINI_API_KEY</code> <b>environment variable</b> — on the clinic server, or on Vercel (Project → Settings → Environment Variables) if you deploy there. The field below is a convenience that stores the key in the clinic database instead; leave it blank to use the env var or the local reviewer. Only transcript <b>text</b> is sent — see Privacy &amp; Security for the PHI/BAA note.</p>
     <div class="field"><label>Gemini API key</label>
       <input id="st-gemini" type="password" autocomplete="off" placeholder="${st.geminiKey ? "•••••••• (saved)" : "AI… (leave blank to use the local reviewer)"}" value="" /></div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
