@@ -702,6 +702,12 @@
   function updateUser(userId, patch, byUser) {
     const u = getUser(userId);
     if (!u) return null;
+    if ("active" in patch && patch.active === false && u.active) {
+      // same lockout guards as deleteUser: keep at least one working admin
+      if (byUser && byUser.id === userId) return { error: "You can't void your own access." };
+      const otherAdmins = state.users.filter((x) => x.role === "admin" && x.active && x.id !== userId);
+      if (u.role === "admin" && otherAdmins.length === 0) return { error: "Can't void the last active administrator." };
+    }
     if ("email" in patch) {
       const e = normEmail(patch.email);
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return { error: "A valid email is required." };

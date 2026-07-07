@@ -61,9 +61,13 @@
     name.split(/[\s,]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   const age = (dob) => {
     if (!dob) return "—";
-    const d = new Date(dob), n = new Date();
-    let a = n.getFullYear() - d.getFullYear();
-    if (n < new Date(n.getFullYear(), d.getMonth(), d.getDate())) a--;
+    // compare calendar parts directly — new Date("YYYY-MM-DD") is UTC midnight,
+    // which shifts the birthday a day in local time and miscounts near it
+    const [y, mo, day] = String(dob).split("-").map(Number);
+    if (!y) return "—";
+    const n = new Date();
+    let a = n.getFullYear() - y;
+    if (n.getMonth() + 1 < mo || (n.getMonth() + 1 === mo && n.getDate() < day)) a--;
     return a;
   };
 
@@ -721,12 +725,15 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
       try {
         // bytes go to storage (GCS/local); only a small reference is kept on the patient
         const ref = await window.TheraSync.uploadFile(f);
-        p.attachments.push({
+        // re-fetch: a background sync pull during the upload swaps the state
+        // object, and a push to the stale copy would be silently lost
+        const cur = S.getPatient(p.id) || p;
+        (cur.attachments || (cur.attachments = [])).push({
           id: S.uid("a"), name: f.name, type: f.type, size: f.size,
           ...ref, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
         });
         S.save();
-        S.audit(user.id, "attachment-added", `${f.name} → ${S.patientName(p)}`);
+        S.audit(user.id, "attachment-added", `${f.name} → ${S.patientName(cur)}`);
         render();
       } catch (e) { alertBanner(e.message || "Upload failed."); }
     });
@@ -959,7 +966,8 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     if (n && f.size <= 20 * 1024 * 1024 && !p.attachments.some((a) => a.name === f.name)) {
       try {
         const ref = await window.TheraSync.storeBytes(f.name, f.type || "application/pdf", b64, f.size);
-        p.attachments.push({
+        const cur = S.getPatient(p.id) || p; // re-fetch after await (sync pull may have swapped state)
+        (cur.attachments || (cur.attachments = [])).push({
           id: S.uid("a"), name: f.name, type: f.type || "application/pdf", size: f.size,
           ...ref, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
         });
@@ -1705,7 +1713,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const deliver = (text) => {
       const seg = location.hash.split("/");
       const open = seg[1] === "doc" && seg[2] === doc.id;
-      routeUtterance(doc, user, text, open ? currentDocState : null, !open);
+      // route into the LIVE doc object — a sync pull may have replaced the
+      // state since this engine was created (writes to the captured copy
+      // would be lost); the doc can also have been signed in the meantime
+      const live = S.getDoc(doc.id);
+      if (!live || live.status === "signed") return;
+      routeUtterance(live, user, text, open ? currentDocState : null, !open);
     };
     const callbacks = {
       docId: doc.id,
@@ -1853,8 +1866,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (!r.ok) throw new Error("unavailable");
       const url = URL.createObjectURL(await r.blob());
       const a = new Audio(url);
-      a.onended = () => URL.revokeObjectURL(url);
-      await a.play();
+      a.onended = a.onerror = () => URL.revokeObjectURL(url); // release either way
+      try { await a.play(); } catch (e) { URL.revokeObjectURL(url); throw e; }
     } catch (_) { /* ignore */ } finally { btn.textContent = old; btn.disabled = false; }
   }
 
@@ -1879,9 +1892,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (nMeas) routed.push(`${nMeas} measurement${nMeas > 1 ? "s" : ""} → Objective`);
 
     // map points — skip mentions that are only part of a measurement
-    // ("shoulder flexion 130 degrees" is data, not a complaint)
+    // ("shoulder flexion 130 degrees" is data, not a complaint) or of a
+    // treatment narration ("we did manual therapy on the shoulder")
+    const treatment = PR.guessSpeaker(parsed.text) === "clinician";
     const pinnable = parsed.mentions.filter(
-      (m) => !(nMeas && m.summary.startsWith("Mentioned this area"))
+      (m) => !((nMeas || treatment) && m.summary.startsWith("Mentioned this area"))
     );
     for (const m of pinnable) addDocMapPoint(doc, m, uttId, time);
     if (!parsed.mentions.length && parsed.loose && (doc.data.mapPoints || []).length) {
@@ -2758,7 +2773,8 @@ ${ths.map((t) => {
     document.querySelectorAll("[data-toggle-user]").forEach((b) =>
       b.addEventListener("click", () => {
         const u = S.getUser(b.dataset.toggleUser);
-        S.updateUser(u.id, { active: !u.active }, user);
+        const res = S.updateUser(u.id, { active: !u.active }, user);
+        if (res && res.error) { const m = document.querySelector(`[data-msg="${u.id}"]`); if (m) { m.style.color = "var(--danger)"; m.textContent = res.error; } return; }
         render();
       })
     );

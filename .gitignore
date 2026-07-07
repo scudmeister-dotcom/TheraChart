@@ -1,8 +1,10 @@
 # Local runtime data + secrets — never commit these
 /.secrets/
 /data/
+/live-data2/
 node_modules/
 *.log
+.DS_Store
 
 # Local Claude Code machine settings (keep launch config, ignore local perms)
 .claude/settings.local.json

@@ -134,10 +134,13 @@
   }
 
   /* ---- pull other devices' changes ---- */
+  let pollBusy = false; // never stack polls on a slow/hung connection
   async function poll() {
-    if (sync.mode === "offline") return reconnectTry();
-    if (sync.mode !== "server" || !sync.token) return;
+    if (pollBusy) return;
+    pollBusy = true;
     try {
+      if (sync.mode === "offline") return await reconnectTry();
+      if (sync.mode !== "server" || !sync.token) return;
       const r = await api("/api/rev");
       if (r.status === 401) return; // will re-auth on next login
       if (r.ok && r.data.rev !== sync.rev) {
@@ -149,6 +152,7 @@
         }
       }
     } catch (e) { goOffline(e.message); }
+    finally { pollBusy = false; }
   }
   setInterval(poll, 6000);
 
@@ -334,6 +338,13 @@
       const r = await api("/api/files", { method: "POST", body: { name, type, dataBase64: base64 } });
       if (!r.ok) throw new Error((r.data && r.data.error) || "Upload failed.");
       return { key: r.data.key, size: r.data.size };
+    }
+    // Without a server the bytes live inside browser storage (~5 MB quota for
+    // everything). A big data-URL would silently break every save after it.
+    if (base64.length > 3 * 1024 * 1024) {
+      throw new Error(sync.mode === "offline"
+        ? "Files this large need the clinic server — reconnect and try again (offline attachments are limited to ~2 MB)."
+        : "In on-device demo mode attachments are limited to ~2 MB (they share the browser's small storage quota).");
     }
     return { dataUrl: `data:${type || "application/octet-stream"};base64,${base64}`, size };
   };

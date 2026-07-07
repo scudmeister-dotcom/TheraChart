@@ -51,7 +51,10 @@ echo "==> 6/6  Deploying current code to Cloud Run (Postgres + Vertex + STT + fi
 gcloud run deploy therachart --source . --project "$PROJ" --region "$REGION" \
   --allow-unauthenticated --add-cloudsql-instances "$CONN" --max-instances 1 \
   --set-secrets "DATABASE_URL=${SECRET}:latest" \
-  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${REGION},GEMINI_VERTEX=1,GEMINI_LOCATION=${REGION},GCS_BUCKET=${BUCKET}"
+  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET}"
+# note: GEMINI_LOCATION is deliberately NOT pinned to $REGION — Gemini 3.x
+# publisher models are only served from the "global" Vertex location (the
+# server's default). Regional endpoints 404 on them.
 
 echo ""
 echo "✅ Done. Verify with:"

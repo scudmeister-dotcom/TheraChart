@@ -27,7 +27,7 @@
 
   const BODY_PARTS = [
     // Back view, specific first
-    P("Lower back", "lower\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back|baywang|hawak", { view: "back", y: 178 }),
+    P("Lower back", "low(?:er)?\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back|baywang|hawak", { view: "back", y: 178 }),
     P("Upper back", "upper\\s+back", { view: "back", y: 110 }),
     P("Mid back", "mid(?:dle)?[-\\s]?back", { view: "back", y: 145 }),
     P("Shoulder blade", "shoulder\\s+blades?|scapula|paypay", { view: "back", dx: 24, y: 112, sided: true }),
@@ -43,7 +43,8 @@
     // Generic "back" only when clearly the body part:
     // needs a possessive before it, and not "back of" / "behind my back".
     // "likod" (tl/ceb) is always the body part.
-    P("Back", "(?<=\\b(?:my|his|her|your|the)\\s)(?<!behind (?:my|his|her|your|the)\\s)back\\b(?!\\s+of)|likod", { view: "back", y: 150 }),
+    // …or when a symptom word follows it directly ("back pain", "backache").
+    P("Back", "(?<=\\b(?:my|his|her|your|the)\\s)(?<!behind (?:my|his|her|your|the)\\s)back\\b(?!\\s+of)|back(?=\\s*ache|\\s+(?:pain|aches?|aching|hurts?|spasms?|stiffness|soreness|tightness))|likod", { view: "back", y: 150 }),
 
     // Head & face
     P("Forehead", "forehead|noo|agtang", { y: 24 }),
@@ -61,7 +62,8 @@
     P("Collarbone", "collar\\s?bones?|clavicle", { dx: 13, y: 88, sided: true }),
     P("Armpit", "armpits?|underarms?|kilikili|ilok", { dx: 38, y: 105, sided: true }),
     P("Shoulder", "shoulders?|rotator cuff|deltoids?|balikat|abaga", { dx: 46, y: 95, sided: true }),
-    P("Heart", "heart|puso", { dx: 14, y: 112, fixedSide: "left" }),
+    // lookahead skips emotional idioms ("my heart wasn't in it")
+    P("Heart", "heart(?!\\s*(?:wasn'?t|isn'?t|was\\s+not|is\\s+not|goes\\s+out|went\\s+out|of\\s+gold|set\\s+on|-?\\s?to-?\\s?heart))|puso", { dx: 14, y: 112, fixedSide: "left" }),
     P("Chest", "chest|pec(?:toral)?s?|breast\\s?bone|sternum|dibdib|dughan", { dx: 14, y: 112, sided: true }),
     P("Ribs", "ribs?|rib\\s?cage|tadyang|gusok", { dx: 20, y: 135, sided: true }),
     P("Navel", "navel|belly\\s?button|pusod", { y: 170 }),
@@ -95,12 +97,15 @@
 
   // Optional left/right words, in all three languages.
   // kaliwa(ng) = left (tl) · wala(ng) = left (ceb) · kanan(g) = right (tl)
-  // tuo(ng) = right (ceb). Normalized by sideWord().
-  const SIDE_WORDS = "left|right|kaliwang?|kanang?|walang?|wala|tuong?|tuo";
+  // tuo(ng) = right (ceb). "both"/"bilateral"/"pareho" mark both sides and
+  // are expanded into two mentions. Normalized by sideWord().
+  const SIDE_WORDS = "left|right|both|bilateral|parehong?|kaliwang?|kanang?|walang?|wala|tuong?|tuo";
   const LEFT_RE = /^(left|kaliwa|wala)/i;
+  const BOTH_RE = /^(both|bilateral|pareho)/i;
 
   function sideWord(raw) {
     if (!raw) return null;
+    if (BOTH_RE.test(raw)) return "both";
     return LEFT_RE.test(raw) ? "left" : "right";
   }
 
@@ -144,22 +149,25 @@
     ["bruising", /\b(?:bruis(?:e|ed|es|ing)|pasa)\b/i],
     ["itching", /\b(?:itch(?:y|ing|es)?|makati|katol)\b/i],
     ["tenderness", /\btender(?:ness)?\b/i],
-    ["clicking", /\b(?:click(?:s|ing)?|pop(?:s|ping)|crack(?:s|ing)|grind(?:s|ing))\b/i],
+    ["clicking", /\b(?:click(?:s|ing)?|pop(?:s|ped|ping)|crack(?:s|ing)|grind(?:s|ing))\b/i],
     ["locking", /\block(?:s|ed|ing)(?:\s+up)?\b/i],
     ["dizziness", /\b(?:dizzy|dizziness|light-?headed|nahihilo|hilo|naglipong|lipong)\b/i],
-    ["pressure", /\b(?:pressure|tension)\b/i],
+    ["pressure", /\b(?:(?<!blood\s)pressure|tension)\b/i],
     ["instability", /\b(?:unstable|instability|wobbly|buckl(?:es|ing))\b/i],
     ["a possible sprain", /\bsprain(?:ed)?\b/i],
     ["a possible strain", /\b(?:strain(?:ed)?|pulled)\b/i],
     ["a possible tear", /\b(?:tore|torn)\b/i],
     ["a possible fracture", /\b(?:broke(?:n)?|fracture(?:d)?|nabali|nabuak)\b/i],
     ["a twist injury", /\b(?:twisted|napilay|nalisa)\b/i],
+    // Reassurance — "my knee is fine" must never read as a complaint.
+    ["feeling fine", /\b(?:fine|feels? (?:good|great|normal|okay)|no (?:issues|problems|complaints)|back to normal|maayos(?: ra)?|ayos(?: lang)?|okay lang)\b/i],
   ];
 
   const SEVERE_RE = /\b(really|very|extremely|severe(?:ly)?|terribl[ye]|excruciating|unbearable|awful|so much|super|badly|killing me|sobrang?|grabe(?:\s+kaayo)?|kaayo|napaka\w+)\b/i;
   const MILD_RE = /\b(slightly|a\s+(?:little|bit|touch)|mild(?:ly)?|minor|somewhat|kind of|sort of|medyo|gamay|konti|onti)\b/i;
-  const RATING_RE = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\/|out of|sa)\s*(?:10|ten|sampu)\b/i;
-  const NUM_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  // word numerals included: cloud STT (chirp) spells small numbers out
+  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\/|out of|sa)\s*(?:10|ten|sampu)\b/i;
+  const NUM_WORDS = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
   const DURATION_RE = /\b((?:for|since|over|mula|simula|sukad)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+|pa\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|kahapon|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood|surgery|accident|fall|injury)|\w+\s+(?:linggo|araw|buwan|taon|semana|adlaw|bulan|tuig)\s+na)\b/i;
   const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while|kapag|tuwing|kada|inig|pag)\s+(?:(?:i|he|she|they)\s+)?[a-z' ]{2,36})/i;
   // A symptom is treated as denied when a negation sits shortly before it.
@@ -168,6 +176,26 @@
 
   function cap(s) {
     return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /** Find the first REAL pain rating in `text`. Skips slash forms that are
+      dates ("on 6/10", "6/10/25") and caps hyperbole ("11 out of 10") at the
+      top of the scale. Returns { score, index, length } or null. */
+  function findRating(text) {
+    const re = new RegExp(RATING_RE.source, "gi");
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (/\//.test(m[0])) {
+        const before = text.slice(Math.max(0, m.index - 12), m.index);
+        const after = text.slice(m.index + m[0].length);
+        if (/\b(?:on|since|from|until|dated)\s*$/i.test(before)) continue;
+        if (/^\s*[\/\-]\s*\d/.test(after)) continue;
+      }
+      let score = NUM_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
+      if (score > 10) score = 10;
+      return { score, index: m.index, length: m[0].length };
+    }
+    return null;
   }
 
   /* ---------------------------------------------------------------- *
@@ -205,9 +233,12 @@
 
     let main = "";
     let denial = false;
-    if (posNouns.length) {
+    if (posNouns.length && posNouns[0].word === "feeling fine") {
+      // reassurance stands alone — no intensity, no piggy-backed symptoms
+      main = "feeling fine";
+    } else if (posNouns.length) {
       const primary = posNouns[0].word;
-      const extra = posNouns.slice(1, 3).filter((n) => n.d <= 40).map((n) => n.word);
+      const extra = posNouns.slice(1, 3).filter((n) => n.d <= 40 && n.word !== "feeling fine").map((n) => n.word);
       main = adjs.length ? `${adjs.slice(0, 3).join(", ")} ${primary}` : primary;
       if (extra.length) main += ` with ${extra.join(" and ")}`;
       if (SEVERE_RE.test(windowText)) main = `significant ${main}`;
@@ -225,17 +256,18 @@
     const bits = [];
     if (main) bits.push(cap(main));
 
-    const rating = windowText.match(RATING_RE);
-    if (rating && !denial) {
-      const n = NUM_WORDS[rating[1].toLowerCase()] || rating[1];
-      bits.push(`rated ${n}/10`);
+    // ratings / durations / triggers must sit NEAR the mention — a rating
+    // three clauses away belongs to a different body part
+    const rating = findRating(windowText);
+    if (rating && !denial && distFrom(rating.index, rating.length) <= 55) {
+      bits.push(`rated ${rating.score}/10`);
     }
 
-    const duration = windowText.match(DURATION_RE);
-    if (duration) bits.push(`ongoing ${duration[1].trim()}`);
+    const duration = DURATION_RE.exec(windowText);
+    if (duration && distFrom(duration.index, duration[0].length) <= 55) bits.push(`ongoing ${duration[1].trim()}`);
 
-    const trigger = windowText.match(TRIGGER_RE);
-    if (trigger && !denial) bits.push(`worse ${trigger[1].trim()}`);
+    const trigger = TRIGGER_RE.exec(windowText);
+    if (trigger && !denial && distFrom(trigger.index, trigger[0].length) <= 55) bits.push(`worse ${trigger[1].trim()}`);
 
     if (!bits.length) {
       const snippet = windowText.trim().replace(/\s+/g, " ").slice(0, 90);
@@ -256,7 +288,10 @@
       `(?:\\s+(?:is|was|to|at|measured|limited|now|about|around|approximately))*\\s+(\\d{1,3})\\s*degrees?\\b`,
     "gi"
   );
-  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*([0-5](?:\s*(?:plus|minus)|[+-])?)\s*(?:out of|\/)\s*(?:5|five)\b/gi;
+  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*((?:[0-5]|zero|one|two|three|four|five)(?:\s*(?:plus|minus)|[+-])?)\s*(?:out of|\/)\s*(?:5|five)\b/gi;
+  // an "X out of 5" only counts as MMT when the surrounding words are about
+  // strength — "he has 5 out of 5 kids" is not a muscle grade
+  const MMT_CONTEXT_RE = /\b(?:strength|mmt|grade[ds]?|quad|hamstring|bicep|tricep|delt|glute|grip|flexor|extensor|abductor|adductor|abduction|adduction|flexion|extension|rotation|rotator|trap|calf|gastroc|soleus|tibialis|serratus|lats?|pecs?|core|hip|knee|shoulder|elbow|wrist|ankle|neck|dorsiflex|plantarflex)\w*/i;
   const SPECIAL_RE = /\b(positive|negative)\s+((?:[A-Za-z'’-]+\s+){1,4}?)(?:test|sign)\b/gi;
 
   function extractMeasurements(text, mentions) {
@@ -268,18 +303,21 @@
     ROM_RE.lastIndex = 0;
     let m;
     while ((m = ROM_RE.exec(text)) !== null) {
-      rom.push({
-        side: sideWord(m[1]),
-        joint: m[2].toLowerCase(),
-        motion: m[3].toLowerCase().replace(/\s+/g, " "),
-        degrees: Number(m[4]),
-      });
+      const degrees = Number(m[4]);
+      if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
+      const side = sideWord(m[1]);
+      const entry = { joint: m[2].toLowerCase(), motion: m[3].toLowerCase().replace(/\s+/g, " "), degrees };
+      if (side === "both") rom.push({ side: "left", ...entry }, { side: "right", ...entry });
+      else rom.push({ side, ...entry });
     }
 
     MMT_RE.lastIndex = 0;
     while ((m = MMT_RE.exec(text)) !== null) {
       // "6 out of 10" style pain ratings must not read as MMT
-      const grade = m[2].replace(/\s*plus/i, "+").replace(/\s*minus/i, "-").trim();
+      if (!MMT_CONTEXT_RE.test(m[0])) continue;
+      const grade = m[2]
+        .replace(/\s*plus/i, "+").replace(/\s*minus/i, "-").trim()
+        .replace(/^(zero|one|two|three|four|five)/i, (w) => NUM_WORDS[w.toLowerCase()]);
       const context = m[1].trim();
       mmt.push({ context: context || null, grade: `${grade}/5` });
     }
@@ -289,13 +327,33 @@
       special.push({ result: m[1].toLowerCase(), name: cap(m[2].trim()) + " test" });
     }
 
-    const rating = text.match(RATING_RE);
+    const rating = findRating(text);
     if (rating && !NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
-      const score = NUM_WORDS[rating[1].toLowerCase()] || Number(rating[1]);
-      const where = mentions && mentions.length
-        ? `${mentions[0].side ? mentions[0].side + " " : ""}${mentions[0].partName.toLowerCase()}`
-        : null;
-      pain.push({ score: Number(score), location: where });
+      // attach the rating to the NEAREST non-denied mention, not just the
+      // first — "no pain in the neck, but the shoulder is a 7/10" — and
+      // prefer a mention in the same clause over one across a break
+      const sepByClause = (a, b) => {
+        CLAUSE_BREAK_RE.lastIndex = 0;
+        let bm;
+        while ((bm = CLAUSE_BREAK_RE.exec(text)) !== null) {
+          if (bm.index >= b) break;
+          if (bm.index >= a) return true;
+        }
+        return false;
+      };
+      let bestSame = null, bestSameD = Infinity, bestAny = null, bestAnyD = Infinity;
+      for (const mn of mentions || []) {
+        if (/^denies/i.test(mn.summary || "")) continue;
+        const before = mn.end <= rating.index;
+        const d = before ? rating.index - mn.end
+          : mn.start >= rating.index + rating.length ? mn.start - (rating.index + rating.length) : 0;
+        if (d < bestAnyD) { bestAnyD = d; bestAny = mn; }
+        const sep = before ? sepByClause(mn.end, rating.index) : sepByClause(rating.index + rating.length, mn.start);
+        if (!sep && d < bestSameD) { bestSameD = d; bestSame = mn; }
+      }
+      const best = bestSame || bestAny;
+      const where = best ? `${best.side ? best.side + " " : ""}${best.partName.toLowerCase()}` : null;
+      pain.push({ score: rating.score, location: where });
     }
 
     return { rom, mmt, special, pain };
@@ -355,6 +413,27 @@
     return i;
   }
 
+  // A summary window must not leak across a sentence break or a contrast
+  // ("…helps a bit BUT my neck is stiff") — symptoms on the far side of the
+  // break belong to a different body part.
+  const CLAUSE_BREAK_RE = /[.;!?]|\b(?:but|however|although|whereas|pero|apan|kaso)\b/gi;
+
+  function clipWindow(text, winStart, winEnd, start, end) {
+    CLAUSE_BREAK_RE.lastIndex = 0;
+    let s = winStart, e = winEnd, m;
+    while ((m = CLAUSE_BREAK_RE.exec(text)) !== null) {
+      if (m.index >= e) break;
+      const bEnd = m.index + m[0].length;
+      if (bEnd <= start) { if (bEnd > s) s = bEnd; }
+      else if (m.index >= end) { e = m.index; break; }
+    }
+    return [s, e];
+  }
+
+  // "my daughter broke her arm" — a body part possessed by a named third
+  // party is not the patient's finding.
+  const THIRD_PARTY_RE = /\b(?:daughter|son|wife|husband|mother|father|mom|dad|brother|sister|grand(?:ma|pa|mother|father|son|daughter|child)|aunt|uncle|cousin|friend|neighbou?r|co-?worker|boss|anak|asawa|nanay|tatay|inay|itay|kapatid|lola|lolo)(?:(?:'s)?\b[\w\s',]{0,20}\b(?:her|his|their)\s+|'s\s+)$/i;
+
   function snippet(text, start, end) {
     const s = expandLeft(text, Math.max(0, start - 45));
     const e = expandRight(text, Math.min(text.length, end + 45));
@@ -394,6 +473,7 @@
     if (!text) return { text, mentions, loose: null, measurements: { rom: [], mmt: [], special: [], pain: [] } };
 
     const claimed = [];
+    const seenMentions = new Set(); // collapse identical repeats within one utterance
     for (const part of BODY_PARTS) {
       part.re.lastIndex = 0;
       let m;
@@ -403,32 +483,55 @@
         if (claimed.some(([s, e]) => start < e && end > s)) continue;
         claimed.push([start, end]);
 
+        if (THIRD_PARTY_RE.test(text.slice(Math.max(0, start - 60), start))) continue;
+
         let side = null;
         if (part.fixedSide) side = part.fixedSide;
         else if (part.sided && m[1]) side = sideWord(m[1]);
 
-        const winStart = expandLeft(text, Math.max(0, start - 80));
-        const winEnd = expandRight(text, Math.min(text.length, end + 80));
+        let winStart = expandLeft(text, Math.max(0, start - 80));
+        let winEnd = expandRight(text, Math.min(text.length, end + 80));
+        [winStart, winEnd] = clipWindow(text, winStart, winEnd, start, end);
         const windowText = text.slice(winStart, winEnd);
         const summary = summarize(windowText, start - winStart, end - winStart);
-        const { x, y } = coordFor(part, side);
 
-        mentions.push({
-          partName: part.name,
-          side,
-          view: part.view,
-          x,
-          y,
-          start,
-          end,
-          winStart,
-          winEnd,
-          summary,
-          quote: snippet(text, start, end),
-        });
+        // "both knees" pins the left AND the right
+        const sides = side === "both" ? ["left", "right"] : [side];
+        for (const sd of sides) {
+          const sig = `${part.name}|${sd || ""}|${summary}`;
+          if (seenMentions.has(sig)) continue;
+          seenMentions.add(sig);
+          const { x, y } = coordFor(part, sd);
+          mentions.push({
+            partName: part.name,
+            side: sd,
+            view: part.view,
+            x,
+            y,
+            start,
+            end,
+            winStart,
+            winEnd,
+            summary,
+            quote: snippet(text, start, end),
+          });
+        }
       }
     }
     mentions.sort((a, b) => a.start - b.start);
+
+    // A body part inside a special-test NAME ("drop arm test", "straight leg
+    // raise test") is test vocabulary, not a patient complaint — unpin it.
+    SPECIAL_RE.lastIndex = 0;
+    let tm;
+    const testRanges = [];
+    while ((tm = SPECIAL_RE.exec(text)) !== null) testRanges.push([tm.index, tm.index + tm[0].length]);
+    if (testRanges.length) {
+      for (let i = mentions.length - 1; i >= 0; i--) {
+        const mn = mentions[i];
+        if (testRanges.some(([s, e]) => mn.start >= s && mn.end <= e)) mentions.splice(i, 1);
+      }
+    }
 
     let loose = null;
     if (!mentions.length) {

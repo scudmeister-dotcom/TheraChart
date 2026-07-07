@@ -266,12 +266,15 @@ Two separate things share your Google Cloud project:
 
   ```bash
   gcloud run deploy therachart \
-    --set-env-vars GEMINI_VERTEX=1,GCP_PROJECT=YOUR_PROJECT_ID,GEMINI_LOCATION=us-central1
+    --set-env-vars GEMINI_VERTEX=1,GCP_PROJECT=YOUR_PROJECT_ID
   ```
 
   Requirements: enable the **Vertex AI API** (`aiplatform.googleapis.com`) on the
   project, and grant the service account the **Vertex AI User** role
-  (`roles/aiplatform.user`). `GEMINI_LOCATION` defaults to your STT location.
+  (`roles/aiplatform.user`). `GEMINI_LOCATION` defaults to **`global`** — the only
+  Vertex location that serves the Gemini 3.x models (regional endpoints like
+  `us-central1` return 404 for them). Only set `GEMINI_LOCATION` if data
+  residency forces a region AND you've confirmed the models exist there.
   Confirm at `/api/ai-status` → `"provider":"vertex"`. The models used are
   `gemini-3.5-flash` (cleanup/import) and `gemini-3.1-pro-preview` (insights);
   override per env with `GEMINI_MODEL` / `GEMINI_INSIGHTS_MODEL` if a model name

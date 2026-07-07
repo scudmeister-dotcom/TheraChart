@@ -91,8 +91,9 @@ store.setAuthenticator(AUTH);
      • Vertex AI (OAuth, under a Google Cloud BAA) — set GEMINI_VERTEX=1 plus
        GCP_PROJECT and a Google credential (the SAME credential chain STT uses:
        GCP_ACCESS_TOKEN | GOOGLE_APPLICATION_CREDENTIALS | GCP_SA_KEY | Cloud Run
-       metadata). This is the PHI-safe path. GEMINI_LOCATION defaults to the STT
-       location. No API key needed in this mode.
+       metadata). This is the PHI-safe path. GEMINI_LOCATION defaults to
+       "global" — the only Vertex location serving the Gemini 3.x models.
+       No API key needed in this mode.
    With neither configured, a local heuristic refiner runs so the feature works
    with no key and no network. Mode is computed per-request (key may also come
    from facility settings). */
@@ -100,7 +101,10 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
 const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL;
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "");
-const GEMINI_LOCATION = process.env.GEMINI_LOCATION || process.env.STT_LOCATION || "us-central1";
+// Gemini 3.x publisher models are served from the "global" Vertex location —
+// regional endpoints (e.g. us-central1) 404 on them. Pin GEMINI_LOCATION only
+// if data residency requires it AND the models exist in that region.
+const GEMINI_LOCATION = process.env.GEMINI_LOCATION || "global";
 
 const GEMINI_OPTS = () => vertexConfigured()
   ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
@@ -131,9 +135,10 @@ let rev = 1;
 function bumpRev() { rev += 1; db.set("rev", String(rev)); }
 
 /* ---- sessions (persisted so device tokens survive server restarts) ---- */
+const SESSION_TTL_MS = 30 * 24 * 3600 * 1000; // sessions expire after 30 days
 const sessions = new Map(); // token -> { userId, at }
 function saveSessions() {
-  const cutoff = Date.now() - 30 * 24 * 3600 * 1000; // sessions expire after 30 days
+  const cutoff = Date.now() - SESSION_TTL_MS;
   for (const [t, s] of sessions) if (s.at < cutoff) sessions.delete(t);
   db.set("sessions", JSON.stringify(Object.fromEntries(sessions)));
 }
@@ -151,7 +156,12 @@ function userForReq(req) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
   const sess = token && sessions.get(token);
-  return sess ? store.getUser(sess.userId) : null;
+  if (!sess) return null;
+  // enforce expiry on READ, not just at login-time pruning
+  if (Date.now() - sess.at > SESSION_TTL_MS) { sessions.delete(token); saveSessions(); return null; }
+  const user = store.getUser(sess.userId);
+  // a voided account's existing tokens must stop working immediately
+  return user && user.active !== false ? user : null;
 }
 
 /* ---- state sanitizers ----
@@ -386,6 +396,7 @@ async function reminderTick() {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(10000),
           });
           delivered = "sent (webhook)";
         } catch (e) {
@@ -412,17 +423,18 @@ const MIME = {
 };
 
 function json(res, code, obj) {
+  if (res.headersSent) { try { res.end(); } catch { } return; } // never re-write headers mid-response
   const body = JSON.stringify(obj);
   res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, limit = 15 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let data = "";
     req.on("data", (c) => {
       data += c;
-      if (data.length > 15 * 1024 * 1024) { reject(new Error("body too large")); req.destroy(); }
+      if (data.length > limit) { reject(new Error("body too large")); req.destroy(); }
     });
     req.on("end", () => {
       try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); }
@@ -486,7 +498,8 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/files" && req.method === "POST") {
         // upload attachment bytes out-of-band; returns a key the client stores
         // on the patient (never the bytes) so the synced blob stays small.
-        const { name, type, dataBase64 } = await readBody(req);
+        // base64 inflates the file ~4/3, so size the body limit off MAX_FILE_BYTES
+        const { name, type, dataBase64 } = await readBody(req, Math.ceil(MAX_FILE_BYTES * 4 / 3) + 1024 * 1024);
         if (!dataBase64) return json(res, 400, { error: "No file data." });
         const buffer = Buffer.from(String(dataBase64), "base64");
         if (!buffer.length) return json(res, 400, { error: "Empty or invalid file data." });
@@ -622,6 +635,12 @@ const server = http.createServer(async (req, res) => {
         if (!state || !Array.isArray(state.patients) || !Array.isArray(state.users)) {
           return json(res, 400, { error: "Malformed state." });
         }
+        // entity ids flow into HTML attributes on every device and into audio
+        // storage prefixes — accept only plain slug ids from a device push
+        const badId = (x) => !x || typeof x.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(x.id);
+        for (const k of ["patients", "users", "documents", "appointments"]) {
+          if (!Array.isArray(state[k]) || state[k].some(badId)) return json(res, 400, { error: "Malformed state." });
+        }
         state.sessionUserId = null;
         // capture server-side password hashes so a device push (whose state has
         // them stripped) can't wipe or forge them
@@ -658,7 +677,9 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404); return res.end("Not found");
     }
     res.writeHead(200, { "content-type": MIME[path.extname(full)] || "application/octet-stream" });
-    fs.createReadStream(full).pipe(res);
+    const stream = fs.createReadStream(full);
+    stream.on("error", () => { try { res.destroy(); } catch { } });
+    stream.pipe(res);
   } catch (e) {
     json(res, 500, { error: e.message });
   }

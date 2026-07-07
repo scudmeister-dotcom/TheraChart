@@ -323,6 +323,131 @@ function mention(result, partName, side = undefined) {
   check("sweep: no symptom line dropped", dropped.length === 0, JSON.stringify(dropped));
 }
 
+/* ------------------------------------------------------------------ *
+ * Edge cases from the 2026-07 dictation stress test
+ * ------------------------------------------------------------------ */
+
+{
+  // a rating after a denial belongs to the OTHER body part
+  const r = parseUtterance("no pain in the neck, but the shoulder is a 7 out of 10");
+  const neck = mention(r, "Neck");
+  const sh = mention(r, "Shoulder");
+  check("denial+rating: neck stays denied", neck && /denies pain/i.test(neck.summary), neck && neck.summary);
+  check("denial+rating: shoulder not denied", sh && !/denies/i.test(sh.summary), sh && sh.summary);
+  check("denial+rating: pain located to shoulder", r.measurements.pain[0] && r.measurements.pain[0].location === "shoulder", JSON.stringify(r.measurements.pain));
+}
+
+{
+  // hyperbole caps at the top of the scale
+  const r = parseUtterance("the pain is 11 out of 10 in my lower back");
+  check("11/10 capped to 10", r.measurements.pain[0] && r.measurements.pain[0].score === 10, JSON.stringify(r.measurements.pain));
+}
+
+{
+  // "on 6/10" is a date, not a rating; "6/10/25" too
+  const r1 = parseUtterance("on 6/10 he reported pain in the wrist");
+  const r2 = parseUtterance("seen on 6/10/25, pain is 4 out of 10 in the knee");
+  check("date on 6/10 not a rating", r1.measurements.pain.length === 0, JSON.stringify(r1.measurements.pain));
+  check("full date skipped, real rating kept", r2.measurements.pain.length === 1 && r2.measurements.pain[0].score === 4, JSON.stringify(r2.measurements.pain));
+}
+
+{
+  // "5 out of 5 kids" is not a muscle grade; real MMT still works
+  const r1 = parseUtterance("he is 5 out of 5 kids and has knee pain");
+  const r2 = parseUtterance("biceps 4 out of 5 on the left");
+  check("kids not MMT", r1.measurements.mmt.length === 0, JSON.stringify(r1.measurements.mmt));
+  check("kids sentence stays subjective", classifyUtterance(r1.text, r1, r1.measurements) === "subjective");
+  check("biceps 4/5 still MMT", r2.measurements.mmt.length === 1 && r2.measurements.mmt[0].grade === "4/5", JSON.stringify(r2.measurements.mmt));
+}
+
+{
+  // implausible ROM (>180°) rejected as a mis-transcription
+  const r = parseUtterance("knee flexion 200 degrees");
+  check("ROM over 180 rejected", r.measurements.rom.length === 0, JSON.stringify(r.measurements.rom));
+}
+
+{
+  // "back pain" / "low back pain" without a possessive
+  const r1 = parseUtterance("presenting with back pain and stiffness");
+  const r2 = parseUtterance("chronic low back pain for years");
+  check("'back pain' pins the back", !!mention(r1, "Back"), JSON.stringify(labels(r1)));
+  check("'low back pain' pins the lower back", !!mention(r2, "Lower back"), JSON.stringify(labels(r2)));
+}
+
+{
+  // both/bilateral expands to two pins
+  const r1 = parseUtterance("pain in both knees, worse on the left");
+  const r2 = parseUtterance("bilateral shoulder tightness");
+  check("both knees → left + right", !!mention(r1, "Knee", "left") && !!mention(r1, "Knee", "right"), JSON.stringify(labels(r1)));
+  check("bilateral shoulders → left + right", !!mention(r2, "Shoulder", "left") && !!mention(r2, "Shoulder", "right"), JSON.stringify(labels(r2)));
+}
+
+{
+  // a family member's injury is not the patient's finding
+  const r = parseUtterance("my daughter broke her arm last year; my elbow is what hurts");
+  check("daughter's arm not pinned", !mention(r, "Arm"), JSON.stringify(labels(r)));
+  check("patient's elbow kept", !!mention(r, "Elbow") && /pain/i.test(mention(r, "Elbow").summary), JSON.stringify(labels(r)));
+}
+
+{
+  // reassurance is not a complaint
+  const r = parseUtterance("my own knee is fine, no pain");
+  const m = mention(r, "Knee");
+  check("'knee is fine' reads as fine", m && /feeling fine/i.test(m.summary), m && m.summary);
+}
+
+{
+  // body parts inside special-test names are vocabulary, not complaints
+  const r = parseUtterance("positive straight leg raise test on the left, pain is 6 out of 10 in the lower back");
+  check("SLR does not pin the leg", !mention(r, "Leg"), JSON.stringify(labels(r)));
+  check("SLR still recorded as a test", r.measurements.special.length === 1 && /straight leg raise/i.test(r.measurements.special[0].name), JSON.stringify(r.measurements.special));
+  check("SLR: pain still located to lower back", r.measurements.pain[0] && r.measurements.pain[0].location === "lower back", JSON.stringify(r.measurements.pain));
+}
+
+{
+  // emotional "heart" idiom is not a cardiac pin
+  const r = parseUtterance("my heart wasn't in it but I did my exercises, shoulder feels tight");
+  check("heart idiom not pinned", !mention(r, "Heart"), JSON.stringify(labels(r)));
+  check("real complaint kept", !!mention(r, "Shoulder"), JSON.stringify(labels(r)));
+}
+
+{
+  // symptoms must not leak across a contrast clause
+  const r = parseUtterance("it's about a six out of ten in the wrist and ibuprofen helps a bit but my neck is also stiff");
+  const neck = mention(r, "Neck");
+  check("clause break: rating stays off the neck", neck && !/6\/10/.test(neck.summary), neck && neck.summary);
+  check("clause break: rating located to wrist", r.measurements.pain[0] && r.measurements.pain[0].location === "wrist", JSON.stringify(r.measurements.pain));
+}
+
+{
+  // pathological repetition collapses to one mention per finding
+  const r = parseUtterance("my knee hurts and my shoulder aches. ".repeat(50));
+  check("repeated text deduplicated", r.mentions.length <= 4, `${r.mentions.length} mentions`);
+}
+
+{
+  // "blood pressure" is vitals, not a pressure symptom
+  const r = parseUtterance("blood pressure was 120 over 80, knee pain 3 out of 10");
+  const m = mention(r, "Knee");
+  check("blood pressure not a symptom", m && !/pressure/i.test(m.summary), m && m.summary);
+}
+
+{
+  // cloud STT (chirp) spells small numbers out — word numerals must parse
+  const r1 = parseUtterance("deltoid strength four out of five");
+  const r2 = parseUtterance("quad strength four plus out of five");
+  check("chirp: 'four out of five' → MMT 4/5", r1.measurements.mmt.length === 1 && r1.measurements.mmt[0].grade === "4/5", JSON.stringify(r1.measurements.mmt));
+  check("chirp: 'four plus out of five' → MMT 4+/5", r2.measurements.mmt.length === 1 && r2.measurements.mmt[0].grade === "4+/5", JSON.stringify(r2.measurements.mmt));
+}
+
+{
+  // "zero out of ten" is a real (resolved-pain) rating, not a dropped one
+  const r = parseUtterance("the knee pain is zero out of ten today");
+  check("'zero out of ten' → pain 0/10", r.measurements.pain.length === 1 && r.measurements.pain[0].score === 0, JSON.stringify(r.measurements.pain));
+  const m = mention(r, "Knee");
+  check("'zero out of ten' rated in summary", m && /rated 0\/10/.test(m.summary), m && m.summary);
+}
+
 /* ------------------------------------------------------------------ */
 
 const total = passed + failures.length;

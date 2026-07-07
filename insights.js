@@ -30,6 +30,13 @@
   const regionOf = (f) => `${f.side ? f.side + " " : ""}${f.part}`.toLowerCase().trim();
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
+  // A finding whose every note is a denial ("Denies pain") is documentation of
+  // ABSENCE — it must not count as involvement of that region.
+  const isDenial = (f) => {
+    const parts = String((f && f.summary) || "").split(";").map((s) => s.trim()).filter(Boolean);
+    return parts.length > 0 && parts.every((s) => /^denies/i.test(s));
+  };
+
   /* ---------------- history digest ----------------
      Compresses visits beyond the recent window (same {date,type,subjective,
      assessment,findings,measurements} shape) into a compact summary: date
@@ -48,6 +55,7 @@
     // recurring regions across the older visits
     const regionMap = {};
     older.forEach((d) => (d.findings || []).forEach((f) => {
+      if (isDenial(f)) return;
       const r = regionOf(f);
       const e = (regionMap[r] = regionMap[r] || { count: 0, last: "" });
       e.count++;
@@ -101,11 +109,13 @@
     const recommendations = [];
 
     const curFindings = current.findings || [];
-    const curRegions = new Set(curFindings.map(regionOf));
+    const activeFindings = curFindings.filter((f) => !isDenial(f));
+    const curRegions = new Set(activeFindings.map(regionOf));
 
     /* 1) Recurrence across visits (digest of older visits counts too) */
     const regionCount = {};
     for (const doc of history) for (const f of doc.findings || []) {
+      if (isDenial(f)) continue;
       const r = regionOf(f);
       regionCount[r] = (regionCount[r] || 0) + 1;
     }
@@ -160,21 +170,34 @@
       }
     }
 
-    /* 3) Pain trend — digest endpoints first (oldest), then history, then now */
-    const painSeries = [];
-    if (dg && dg.pain) painSeries.push(dg.pain.first, dg.pain.last);
-    history.slice().reverse().forEach((d) => (d.measurements?.pain || []).forEach((p) => painSeries.push(p.score)));
-    (current.measurements?.pain || []).forEach((p) => painSeries.push(p.score));
-    if (painSeries.length >= 2) {
-      const d = painSeries[painSeries.length - 1] - painSeries[0];
-      if (Math.abs(d) >= 2) {
-        connections.push({
-          title: `Pain ${d < 0 ? "decreasing" : "increasing"}`,
-          detail: `Reported pain has gone from ${painSeries[0]}/10 to ${painSeries[painSeries.length - 1]}/10.`,
-          confidence: "medium", basis: "pain ratings over time",
-        });
-        if (d > 0) redFlags.push({ flag: "Pain is trending up", action: "Screen for aggravating factors and red flags; consider medical review if unremitting." });
-      }
+    /* 3) Pain trend — digest endpoints first (oldest), then history, then now.
+       Ratings for DIFFERENT body regions never share a series: an old 8/10
+       shoulder and a new 2/10 knee is not "pain decreasing". */
+    const painPts = [];
+    const pushPain = (score, loc) => {
+      const s = Number(score);
+      if (Number.isFinite(s)) painPts.push({ score: s, loc: String(loc || "").toLowerCase().trim() });
+    };
+    if (dg && dg.pain) { pushPain(dg.pain.first, ""); pushPain(dg.pain.last, ""); }
+    history.slice().reverse().forEach((d) => (d.measurements?.pain || []).forEach((p) => pushPain(p.score, p.location)));
+    (current.measurements?.pain || []).forEach((p) => pushPain(p.score, p.location));
+    const painTrend = (pts, label) => {
+      if (pts.length < 2) return;
+      const d = pts[pts.length - 1].score - pts[0].score;
+      if (Math.abs(d) < 2) return;
+      const where = label ? ` (${label})` : "";
+      connections.push({
+        title: `Pain ${d < 0 ? "decreasing" : "increasing"}${where}`,
+        detail: `Reported${label ? " " + label : ""} pain has gone from ${pts[0].score}/10 to ${pts[pts.length - 1].score}/10.`,
+        confidence: "medium", basis: "pain ratings over time",
+      });
+      if (d > 0) redFlags.push({ flag: `Pain is trending up${where}`, action: "Screen for aggravating factors and red flags; consider medical review if unremitting." });
+    };
+    const painLocs = new Set(painPts.filter((p) => p.loc).map((p) => p.loc));
+    if (painLocs.size > 1) {
+      for (const l of painLocs) painTrend(painPts.filter((p) => p.loc === l), l);
+    } else {
+      painTrend(painPts, "");
     }
 
     /* 4) Radicular / referred pattern in the current visit */
@@ -182,7 +205,7 @@
     const hasLeg = [...curRegions].some((r) => /leg|thigh|calf|foot|hamstring|knee/.test(r));
     const hasNeck = [...curRegions].some((r) => /neck/.test(r));
     const hasArm = [...curRegions].some((r) => /arm|hand|finger|elbow|forearm|wrist/.test(r));
-    const cursum = curFindings.map((f) => f.summary || "").join(" ").toLowerCase();
+    const cursum = activeFindings.map((f) => f.summary || "").join(" ").toLowerCase();
     if (hasLowBack && hasLeg) {
       connections.push({ title: "Possible lumbar radicular pattern", detail: "Low-back involvement with lower-limb symptoms can indicate a radicular/referred source rather than two separate problems.", confidence: "medium", basis: "co-located low back + leg findings" });
       recommendations.push({ action: "Add a neuro/radicular screen (SLR, dermatome/myotome, reflexes)", rationale: "Rule in/out lumbar radiculopathy.", priority: "high" });
@@ -205,7 +228,7 @@
       recommendations.push({ action: "Monitor vitals with exertion", rationale: "Cardiovascular history on file.", priority: "routine" });
     }
     const ref = (ctx.referral || "").toLowerCase();
-    for (const f of curFindings) {
+    for (const f of activeFindings) {
       const part = (f.part || "").toLowerCase();
       if (part && ref.includes(part)) {
         connections.push({ title: `Consistent with referral (${f.part})`, detail: `Current ${part} findings line up with the referring reason.`, confidence: "high", basis: "referral reason" });

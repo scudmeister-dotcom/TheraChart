@@ -68,6 +68,70 @@ const titles = (r) => r.connections.map((c) => c.title).join(" | ");
   check("prompt notes empty history", /no prior documents/i.test(p));
 }
 
+/* pain trends never mix body regions (2026-07 stress test) */
+{
+  const M = (o) => Object.assign({ rom: [], mmt: [], special: [], pain: [] }, o);
+  const r = I.buildInsights({
+    current: { findings: [{ part: "Knee", side: "right", summary: "mild ache" }], measurements: M({ pain: [{ location: "right knee", score: 2 }] }) },
+    history: [
+      { date: "2026-06-01", findings: [], measurements: M({ pain: [{ location: "right knee", score: 6 }] }) },
+      { date: "2026-05-01", findings: [{ part: "Shoulder", side: "left", summary: "severe pain" }], measurements: M({ pain: [{ location: "left shoulder", score: 8 }] }) },
+    ],
+  });
+  const painConns = r.connections.filter((c) => /^Pain /.test(c.title));
+  check("mixed regions: knee trend reported per-region", painConns.some((c) => /right knee/.test(c.title) && /decreasing/i.test(c.title)), titles(r));
+  check("mixed regions: no cross-region 8→2 claim", !painConns.some((c) => /8\/10 to 2\/10/.test(c.detail)), JSON.stringify(painConns));
+}
+
+/* malformed pain scores don't crash or pollute trends */
+{
+  const M = (o) => Object.assign({ rom: [], mmt: [], special: [], pain: [] }, o);
+  const r = I.buildInsights({
+    current: { findings: [], measurements: M({ pain: [{ score: 3 }] }) },
+    history: [{ date: "2026-06-01", findings: [], measurements: M({ pain: [{ score: "not-a-number" }, { score: "7" }] }) }],
+  });
+  check("stringy/garbage scores handled", r.connections.some((c) => /7\/10 to 3\/10/.test(c.detail)), titles(r));
+}
+
+/* digest of a large chart keeps the pain trend connected to now */
+{
+  const M = (o) => Object.assign({ rom: [], mmt: [], special: [], pain: [] }, o);
+  const older = [];
+  for (let i = 0; i < 60; i++) {
+    older.push({
+      date: new Date(2024, 0, 1 + i * 5).toISOString().slice(0, 10), type: "daily",
+      findings: [{ part: "Knee", side: "right", summary: "ache" }],
+      measurements: M({ pain: [{ location: "right knee", score: Math.max(1, 8 - Math.floor(i / 10)) }] }),
+    });
+  }
+  const dg = I.buildHistoryDigest(older);
+  const r = I.buildInsights({
+    current: { findings: [{ part: "Knee", side: "right", summary: "mild ache" }], measurements: M({ pain: [{ location: "right knee", score: 1 }] }) },
+    history: [], historyDigest: dg,
+  });
+  check("digest: 60-visit chart digested", dg && dg.visits === 60, JSON.stringify(dg && dg.visits));
+  check("digest: long-run pain trend surfaces", r.connections.some((c) => /Pain decreasing/i.test(c.title)), titles(r));
+  check("digest: recurrence counts older visits", r.connections.some((c) => /Recurrent right knee/i.test(c.title) && /60/.test(c.detail)), titles(r));
+}
+
+/* denied regions are documentation of absence, not involvement */
+{
+  const r = I.buildInsights({
+    current: {
+      findings: [
+        { part: "Neck", side: null, summary: "Denies pain" },
+        { part: "Wrist", side: "right", summary: "Sharp pain" },
+        { part: "Hand", side: "right", summary: "Denies numbness and tingling" },
+      ],
+      measurements: {},
+    },
+    history: [{ date: "2026-06-01", findings: [{ part: "Neck", side: null, summary: "Denies pain" }], measurements: {} }],
+  });
+  check("denied neck: no cervical radicular pattern", !/cervical/i.test(titles(r)), titles(r));
+  check("denied neck: no recurrence connection", !/recurrent neck/i.test(titles(r)), titles(r));
+  check("denied numbness: no neuro red flag", !r.redFlags.some((f) => /numbness/i.test(f.flag)), JSON.stringify(r.redFlags));
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart insights checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }

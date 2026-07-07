@@ -121,7 +121,7 @@
   // The request BODY is identical for both — same contents + generationConfig.
   async function geminiTarget(model, opts) {
     if (opts.vertex) {
-      const loc = opts.location || "us-central1";
+      const loc = opts.location || "global"; // 3.x models live on the global endpoint
       const host = loc === "global" ? "aiplatform.googleapis.com" : `${loc}-aiplatform.googleapis.com`;
       const token = typeof opts.getToken === "function" ? await opts.getToken() : opts.token;
       if (!token) throw new Error("Vertex AI is enabled but no OAuth token was available.");

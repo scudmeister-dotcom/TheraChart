@@ -2,7 +2,7 @@
    (and offline) once installed to a phone's home screen. API calls always
    go to the network; clinical data itself lives in the store/server. */
 
-const CACHE = "therachart-v10";
+const CACHE = "therachart-v11";
 const SHELL = [
   "./", "./index.html", "./styles.css",
   "./parser.js", "./insights.js", "./store.js", "./app.js", "./sync.js",
@@ -27,8 +27,12 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(
     fetch(e.request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        // cache only good same-origin responses — never let a 404/500 or a
+        // third-party response poison the offline app shell
+        if (res.ok && url.origin === location.origin) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
         return res;
       })
       .catch(() => caches.match(e.request).then((hit) => hit || caches.match("./index.html")))
