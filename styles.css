@@ -99,6 +99,15 @@
 
 * { box-sizing: border-box; }
 
+/* Keep iOS Safari from silently rescaling: never auto-adjust text on rotate,
+   and never let the layout grow wider than the device so the browser has to
+   "zoom out" to fit. The page always renders at exact device width. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html, body { max-width: 100%; overflow-x: hidden; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -209,6 +218,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: grid; place-items: center; font-weight: 700; font-size: 13px;
   flex: none; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
 }
+.userchip button.avatar { border: none; padding: 0; }
 .userchip .who { min-width: 0; flex: 1; }
 .userchip .who b { display: block; color: #fff; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .userchip .who small { font-size: 10.5px; opacity: 0.7; }
@@ -805,12 +815,98 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   #printArea .sig-line { margin-top: 8px; font-style: italic; }
 }
 
+/* ---- mobile-only chrome: bottom pill tab bar, top sync dot, account menu.
+   All hidden on desktop, where the left sidebar owns navigation. ---- */
+.tabbar, .topbar-sync, .acct-menu { display: none; }
+
 /* ---------------- mobile (phones & small tablets) ----------------
-   Native app shell: a slim fixed top bar (brand + account) and a fixed
-   bottom tab bar (navigation), so the main content owns the screen like a
-   real iOS/Android app instead of scrolling past a tall sidebar. */
+   Native app shell: a slim fixed top bar (brand + sync + account) and a
+   fixed bottom pill tab bar for the three main workflow destinations, so the
+   main content owns the screen like a real iOS/Android app. */
 @media (max-width: 860px) {
   .shell { display: block; }
+
+  /* --- top bar: live sync dot, sits left of the account avatar --- */
+  .topbar-sync {
+    display: inline-flex; align-items: center; flex: none;
+    font-size: 13px; line-height: 1; color: var(--muted);
+    padding: 0 2px;
+  }
+
+  /* --- account avatar becomes the menu trigger --- */
+  .sidebar .userchip .avatar-btn {
+    border: none; padding: 0; display: grid; place-items: center;
+  }
+  .sidebar .userchip .avatar-btn[aria-expanded="true"] {
+    box-shadow: 0 0 0 2px var(--brand-1);
+  }
+
+  /* --- account menu: Privacy / Admin / Profile / Sign out, out of the
+     main workflow. Opens as a small sheet under the top bar. --- */
+  .acct-menu {
+    display: block; position: fixed; z-index: 60;
+    top: calc(54px + env(safe-area-inset-top)); right: 10px;
+    width: min(260px, calc(100vw - 20px));
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+    padding: 6px;
+    opacity: 0; transform: translateY(-6px) scale(0.98);
+    pointer-events: none; transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+  .acct-menu.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .acct-menu-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  }
+  .acct-menu-head .avatar { width: 34px; height: 34px; font-size: 12px; }
+  .acct-menu-head b { display: block; font-size: 14px; }
+  .acct-menu-head small { color: var(--muted); font-size: 12px; }
+  .acct-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 11px 10px; border: none; background: none; text-align: left;
+    font-size: 14.5px; color: var(--ink); text-decoration: none; border-radius: 9px;
+  }
+  .acct-item:hover, .acct-item:active { background: var(--hover); }
+  .acct-item .acct-ico { display: grid; place-items: center; width: 18px; color: var(--muted); }
+  .acct-item.danger { color: var(--danger); }
+  .acct-item.danger .acct-ico { color: var(--danger); }
+
+  /* --- bottom pill tab bar: three workflow destinations + sliding pill --- */
+  .tabbar {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+    align-items: stretch;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 92%, #000), var(--sidebar));
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.28);
+  }
+  /* one moving element behind the tabs gives the segmented-slider feel */
+  .tab-pill {
+    position: absolute; top: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 0;
+    left: 10px;
+    width: calc((100% - 20px) / var(--tab-count));
+    transform: translateX(calc(var(--tab-index) * 100%));
+    background: linear-gradient(145deg, #3ec6d0, #0e7c86);
+    border-radius: 13px;
+    box-shadow: 0 4px 12px rgba(14, 124, 134, 0.5);
+    transition: transform 0.28s cubic-bezier(0.4, 0.9, 0.3, 1);
+  }
+  .tab-pill.hidden { opacity: 0; }
+  .tab {
+    position: relative; z-index: 1;
+    flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; padding: 7px 2px; border-radius: 13px;
+    text-decoration: none; color: var(--sidebar-ink);
+    transition: color 0.2s ease;
+  }
+  .tab .tab-ico { width: 22px; height: 22px; display: grid; place-items: center; }
+  .tab .tab-ico svg { width: 20px; height: 20px; opacity: 0.9; }
+  .tab .tab-label { font-size: 11px; font-weight: 600; line-height: 1.1; }
+  .tab.active { color: #fff; }
+  .tab.active .tab-ico svg { opacity: 1; stroke: #fff; }
+  .tab.disabled { opacity: 0.34; pointer-events: none; }
 
   /* sidebar → fixed top app bar */
   .sidebar {
@@ -832,33 +928,9 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   .sidebar .userchip .avatar { width: 32px; height: 32px; font-size: 12px; }
   .sidebar .userchip .signout { width: 36px; height: 36px; }
 
-  /* nav lifts out of the sidebar into a fixed bottom tab bar */
-  .nav {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
-    flex-direction: row; justify-content: space-around; gap: 0;
-    padding: 6px 4px;
-    padding-bottom: calc(6px + env(safe-area-inset-bottom));
-    background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 92%, #000), var(--sidebar));
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.28);
-  }
-  .nav-group { display: contents; }                   /* flatten both groups into one tab row */
-  .nav-group-label { display: none; }
-  .nav-label { display: none; }
-  .nav-label-short { display: block; font-size: 10px; font-weight: 600; line-height: 1.1; }
-  .nav-link {
-    flex: 1; min-width: 0; margin: 0;
-    flex-direction: column; justify-content: center; align-items: center; text-align: center;
-    gap: 3px; padding: 5px 2px; border-radius: 10px;
-  }
-  .nav-link:hover { background: none; transform: none; }
-  .nav-link.active { background: none; color: #fff; }
-  .nav-link.active::before { display: none; }          /* drop the left accent bar */
-  .nav-link.active .nav-ico {
-    background: linear-gradient(145deg, #3ec6d0, #0e7c86);
-    box-shadow: 0 3px 10px rgba(14, 124, 134, 0.5);
-  }
-  .nav-ico { width: 30px; height: 30px; }
+  /* the full sidebar nav (all six links) is a desktop rail; on phones the
+     workflow lives in the bottom pill bar and the rest in the account menu */
+  .nav { display: none; }
 
   /* content clears both fixed bars (plus notch / home indicator) */
   .content {
@@ -869,6 +941,15 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 
   /* 16px form controls stop iOS Safari from zooming in on focus */
   input, select, textarea { font-size: 16px; }
+
+  /* login: fit the phone instead of a desktop-sized card the user has to
+     zoom out to see. The box spans the screen with comfortable margins. */
+  .login-wrap { padding: 20px 16px; align-content: center; }
+  .login-box { width: 100%; }
+  .login-box .brandline { gap: 11px; margin-bottom: 16px; }
+  .login-box .brandline .logo { width: 44px; height: 44px; border-radius: 12px; }
+  .login-box h1 { font-size: 19px; }
+  .login-box > .card { padding: 18px; }
   /* roomier tap targets */
   .btn { padding: 10px 15px; }
   .btn.small { padding: 7px 12px; }
@@ -894,8 +975,8 @@ tr.rowlink .doc-tag { margin-right: 6px; }
      its chat content from being clipped by that rule */
   .asst-card { overflow: visible; }
 
-  /* lift the sync badge above the bottom tab bar (inline styles → !important) */
-  #syncBadge { bottom: calc(76px + env(safe-area-inset-bottom)) !important; z-index: 39 !important; }
+  /* on phones the compact top-bar dot stands in for the corner badge */
+  #syncBadge { display: none !important; }
 }
 
 /* modal becomes a bottom sheet on phones — thumb-reachable, native feel */
