@@ -49,19 +49,34 @@
     "background:var(--panel); color:var(--muted); border:1px solid var(--border); pointer-events:none;";
   document.body.appendChild(badge);
   function setBadge() {
+    let text, color;
     if (sync.mode === "server") {
-      badge.textContent = sync.dirty ? `● Syncing ${sync.dirty} change${sync.dirty > 1 ? "s" : ""}…` : "● Synced with clinic server";
-      badge.style.color = "var(--good)";
+      text = sync.dirty ? `● Syncing ${sync.dirty} change${sync.dirty > 1 ? "s" : ""}…` : "● Synced with clinic server";
+      color = "var(--good)";
     } else if (sync.mode === "offline") {
-      badge.textContent = sync.dirty
+      text = sync.dirty
         ? `● Offline — ${sync.dirty} change${sync.dirty > 1 ? "s" : ""} will sync on reconnect`
         : "● Offline — reconnecting to clinic server…";
-      badge.style.color = "var(--review)";
+      color = "var(--review)";
     } else {
-      badge.textContent = "● On-device only (no clinic server)";
-      badge.style.color = "var(--muted)";
+      text = "● On-device only (no clinic server)";
+      color = "var(--muted)";
+    }
+    badge.textContent = text;
+    badge.style.color = color;
+    // Mirror the same state into the mobile top-bar dot the app shell renders.
+    // On phones the full badge is hidden and this compact dot stands in for it.
+    const dot = document.getElementById("topSyncDot");
+    if (dot) {
+      const label = text.replace(/^●\s*/, "");
+      dot.style.color = color;
+      dot.title = label;
+      dot.setAttribute("aria-label", label);
     }
   }
+  // The app shell re-renders on every navigation, replacing the top-bar dot;
+  // it calls this afterwards to repaint the dot with the current state.
+  sync.refreshBadge = setBadge;
   setBadge();
 
   function setDirty(n) {

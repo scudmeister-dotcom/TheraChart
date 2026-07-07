@@ -275,6 +275,37 @@
       return items ? `<div class="nav-group"><div class="nav-group-label">${g.label}</div>${items}</div>` : "";
     }).join("");
 
+    // --- mobile bottom bar: the three main workflow destinations as a
+    //     segmented pill slider, with a highlight that slides to where we are.
+    const primaryNav = NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash));
+    const isTabActive = (n) => hash.startsWith(n.hash) ||
+      (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
+    const activeTabIdx = primaryNav.findIndex(isTabActive);
+    const tabbar = `
+      <nav class="tabbar" style="--tab-count:${primaryNav.length}; --tab-index:${activeTabIdx < 0 ? 0 : activeTabIdx}">
+        <span class="tab-pill ${activeTabIdx < 0 ? "hidden" : ""}" aria-hidden="true"></span>
+        ${primaryNav.map((n) => {
+          const disabled = n.emr && !emrAllowed;
+          return `<a class="tab ${isTabActive(n) ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
+            <span class="tab-ico">${n.icon}</span><span class="tab-label">${n.short}</span></a>`;
+        }).join("")}
+      </nav>`;
+
+    // --- account menu: the pages that aren't part of the moment-to-moment
+    //     workflow (Privacy, Admin, Profile) live here, opened from the avatar.
+    const acctNav = NAV.filter((n) => ["#/privacy", "#/facility", "#/profile"].includes(n.hash))
+      .filter((n) => !(n.adminOnly && user.role !== "admin"))
+      .filter((n) => !(n.emr && !emrAllowed));
+    const acctMenuHtml = `
+      <div class="acct-menu" id="acctMenu" role="menu" aria-hidden="true">
+        <div class="acct-menu-head">
+          <div class="avatar">${esc(initials(user.name))}</div>
+          <div><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
+        </div>
+        ${acctNav.map((n) => `<a class="acct-item" role="menuitem" href="${n.hash}"><span class="acct-ico">${n.icon}</span>${esc(n.label)}</a>`).join("")}
+        <button class="acct-item danger" id="acctLogout" role="menuitem" type="button"><span class="acct-ico">${ICON.signout}</span>Sign out</button>
+      </div>`;
+
     const crumbs = breadcrumbFor(hash, user);
     const canBack = crumbs.length > 1;
     const crumbBar = crumbs.length ? `
@@ -294,17 +325,43 @@
       <div class="logo">${ICON.logo}</div>
       <div class="brand-text"><b>TheraChart</b><span>Clinic EMR</span></div>
     </div>
+    <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
     <div class="nav">${nav}</div>
     <div class="spacer"></div>
     <div class="userchip">
-      <div class="avatar">${esc(initials(user.name))}</div>
+      <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
       <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
       <button id="logoutBtn" class="signout" title="Sign out">${ICON.signout}</button>
     </div>
+    ${acctMenuHtml}
   </aside>
   <main class="content" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
+  ${tabbar}
 </div>`;
     document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
+
+    // account menu (Privacy / Admin / Profile / Sign out), opened from the avatar
+    const acctBtn = document.getElementById("acctBtn");
+    const acctMenu = document.getElementById("acctMenu");
+    if (acctBtn && acctMenu) {
+      const setOpen = (open) => {
+        acctMenu.classList.toggle("open", open);
+        acctBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        acctMenu.setAttribute("aria-hidden", open ? "false" : "true");
+        // only listen for outside clicks while open — no listener accumulation
+        if (open) document.addEventListener("click", onDocClick);
+        else document.removeEventListener("click", onDocClick);
+      };
+      function onDocClick(e) {
+        if (!acctMenu.contains(e.target) && !acctBtn.contains(e.target)) setOpen(false);
+      }
+      acctBtn.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!acctMenu.classList.contains("open")); });
+      acctMenu.querySelectorAll("a.acct-item").forEach((a) => a.addEventListener("click", () => setOpen(false)));
+      const acctLogout = document.getElementById("acctLogout");
+      if (acctLogout) acctLogout.addEventListener("click", () => { S.logout(); render(); });
+    }
+    // paint the top-bar sync dot with the live connection state
+    if (window.TheraSync && window.TheraSync.refreshBadge) window.TheraSync.refreshBadge();
     const back = document.getElementById("crumbBack");
     if (back) back.addEventListener("click", () => { location.hash = crumbs[crumbs.length - 2].hash; });
     if (bind) bind(user);
