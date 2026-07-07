@@ -280,6 +280,50 @@ Two separate things share your Google Cloud project:
   override per env with `GEMINI_MODEL` / `GEMINI_INSIGHTS_MODEL` if a model name
   differs on Vertex or once `gemini-3.5-pro` ships.
 
+## Serving closer to your clinics (multi-region)
+
+By default everything runs in **us-central1** (Iowa). That works from anywhere in
+the world — `us-central1` is just where the servers live, not a restriction on
+who can use the app — but users far away (e.g. the **Philippines**) see extra
+latency, and their patient data is stored in the US. To test the app served from
+Asia, `deploy-gcp.sh` takes a region argument:
+
+```bash
+./deploy-gcp.sh          # or ./deploy-gcp.sh us  — the US stack (us-central1)
+./deploy-gcp.sh asia     # a SEPARATE stack in asia-southeast1 (Singapore)
+```
+
+Key points:
+
+- **The two stacks are fully independent.** Each has its own Cloud SQL instance,
+  bucket, secret, and Cloud Run URL. Deploying `asia` never touches US prod. The
+  Singapore stack starts with an empty database (it auto-seeds the demo clinic),
+  so it's a clean sandbox — testing there can't affect real US data.
+- **You "flip" by opening the URL you want** — both run at the same time. Get
+  each URL with:
+  ```bash
+  gcloud run services describe therachart --region asia-southeast1 \
+    --project therachart-prod --format='value(status.url)'
+  ```
+- **Dictation model region.** STT follows the deploy region. If **Chirp** isn't
+  offered in `asia-southeast1`, either use the Standard model, or pin STT to a
+  Chirp region:  `STT_REGION=us-central1 ./deploy-gcp.sh asia`.
+- **Gemini stays `global`** for both stacks (the 3.x models live only there).
+- **Data residency.** Storing PH patient data in the US (or routing AI through
+  the `global` Gemini endpoint) may bump into the **Philippines Data Privacy Act
+  (RA 10173)** / National Privacy Commission — review before real patient data.
+
+**Cost of the extra stack:** the only meaningful new charge is a **second
+Cloud SQL instance (~$8–10/mo)** — it's always-on and doesn't scale to zero. The
+Asia Cloud Run service scales to zero (~$0 idle), the bucket is pennies, and
+STT/Gemini stay pay-per-use. Tear the test stack down when done to stop the bill:
+
+```bash
+gcloud run services delete therachart --region asia-southeast1 --project therachart-prod
+gcloud sql instances delete therachart-db-asia --project therachart-prod
+gcloud storage rm -r gs://therachart-prod-files-asia
+```
+
 ## Rough monthly cost (per active clinic)
 
 | Piece | Estimate |
