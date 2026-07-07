@@ -397,6 +397,16 @@
     return window.TheraInsights.buildInsights(ctx);
   };
 
+  // Ask the grounded per-patient assistant a question. Model-only — there is
+  // no local fallback for freeform Q&A, so this throws when no AI backend is
+  // reachable (the UI shows an "unavailable" state instead).
+  sync.askPatient = async ({ chart, question, history }) => {
+    if (!sync.ai || sync.ai.assistant === "unavailable") throw new Error("no AI backend");
+    const r = await api("/api/patient-assistant", { method: "POST", body: { chart, question, history } });
+    if (!r.ok) throw new Error((r.data && r.data.error) || "The assistant couldn't answer that.");
+    return r.data;
+  };
+
   // The Gemini backend is configured only through host environment variables
   // (GEMINI_API_KEY on Vercel, or GEMINI_VERTEX=1 + GCP creds on Cloud Run) —
   // there is no in-app key entry, so nothing here writes the key.

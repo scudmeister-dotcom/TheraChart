@@ -312,6 +312,121 @@
     return { ...normalizeExtraction(parsed), source: "gemini" };
   }
 
+  /* ---------------- patient assistant (grounded Q&A) ----------------
+     A NotebookLM-style assistant scoped to ONE patient's chart. It answers a
+     clinician's question using ONLY the supplied chart corpus — never outside
+     medical knowledge about this specific patient, and never another patient's
+     data (the caller assembles the corpus for a single patient). When the
+     answer isn't in the chart it says so (answered:false) instead of guessing.
+     There is no local fallback: freeform Q&A needs the model, so without a key
+     this reports itself unavailable. */
+
+  const ASSISTANT_SCHEMA = {
+    type: "object",
+    properties: {
+      answer: { type: "string" },
+      answered: { type: "boolean" },
+      citations: { type: "array", items: { type: "object", properties: {
+        source: { type: "string" }, quote: { type: "string" },
+      }, required: ["source"] } },
+    },
+    required: ["answer", "answered"],
+  };
+
+  function assistantSystem() {
+    return [
+      "You are a clinical chart assistant helping a licensed physical therapist",
+      "understand ONE patient. You answer questions about that patient using",
+      "ONLY the CHART CONTEXT provided below — the patient's own evaluations,",
+      "daily notes, progress reports, discharge notes, and imported past records.",
+      "",
+      "Hard rules:",
+      "1) Use ONLY facts found in the CHART CONTEXT. Do NOT use outside medical",
+      "   knowledge to state anything about THIS patient, and do NOT invent",
+      "   dates, values, diagnoses, or history that are not written in the chart.",
+      "2) If the chart does not contain the answer, set answered=false and say",
+      "   plainly that it is not in this patient's records — never guess or fill",
+      "   the gap. It is correct and expected to say 'that isn't documented'.",
+      "3) When you do answer, set answered=true and CITE your sources: for each",
+      "   fact, add a citation whose 'source' is the visit it came from (e.g.",
+      "   \"Evaluation 2026-03-12\" or \"Daily note 2026-04-02\") and, when useful,",
+      "   a short 'quote' of the exact chart text.",
+      "4) You may summarize, compare across visits, and surface trends already",
+      "   present in the chart, but stay faithful to what is written. This is",
+      "   decision support for a licensed clinician — not a diagnosis.",
+      "5) Be concise and clinical. Answer the question that was asked.",
+      "",
+      "Return ONLY JSON matching the schema.",
+    ].join("\n");
+  }
+
+  // Flatten a single patient's chart corpus into grounded text. Mirrors the
+  // shape insights uses (see insights.insightsPrompt) plus a plan field.
+  function assistantChartText(chart) {
+    const c = chart || {};
+    const lines = ["CHART CONTEXT", "============="];
+    if (c.patient) lines.push(`Patient: ${c.patient.age || "?"}y ${c.patient.sex || ""}`.trim());
+    if (c.referral) lines.push(`Referral / reason: ${c.referral}`);
+    if (c.pmh) lines.push(`Past medical history: ${c.pmh}`);
+    const fmtMeas = (m) => {
+      if (!m) return "";
+      const parts = [];
+      (m.rom || []).forEach((r) => parts.push(`ROM ${r.side || ""} ${r.joint} ${r.motion} ${r.degrees}°`));
+      (m.mmt || []).forEach((r) => parts.push(`MMT ${r.context || ""} ${r.grade}`));
+      (m.special || []).forEach((r) => parts.push(`${r.name}: ${r.result}`));
+      (m.pain || []).forEach((r) => parts.push(`Pain ${r.location || ""} ${r.score}/10`));
+      return parts.join("; ");
+    };
+    lines.push("", "VISITS (most recent first)", "--------------------------");
+    (c.docs || []).forEach((d, i) => {
+      lines.push(`[${i + 1}] ${d.date || "(undated)"} — ${d.type || "note"}`);
+      if (d.subjective) lines.push(`  Subjective: ${d.subjective}`);
+      if (d.objective) lines.push(`  Objective: ${d.objective}`);
+      (d.findings || []).forEach((f) => lines.push(`  Finding: ${(f.side ? f.side + " " : "")}${f.part} — ${f.summary || ""}`));
+      const m = fmtMeas(d.measurements);
+      if (m) lines.push(`  Measurements: ${m}`);
+      if (d.assessment) lines.push(`  Assessment: ${d.assessment}`);
+      if (d.plan) lines.push(`  Plan: ${d.plan}`);
+    });
+    if (!(c.docs || []).length) lines.push("(no documents on file for this patient)");
+    const dg = c.historyDigest;
+    if (dg) {
+      lines.push("", `EARLIER HISTORY — DIGEST of ${dg.visits} older visit${dg.visits === 1 ? "" : "s"} (${dg.from || "?"} → ${dg.to || "?"})`, "-".repeat(40));
+      (dg.regions || []).forEach((r) => lines.push(`Recurring region: ${r.region} (×${r.count})${r.lastSummary ? ` — last noted: ${r.lastSummary}` : ""}`));
+      (dg.romTrends || []).forEach((t) => lines.push(`ROM over that period: ${t.key} ${t.first}° → ${t.last}° (${t.n} measurements)`));
+      if (dg.pain) lines.push(`Pain over that period: ${dg.pain.first}/10 → ${dg.pain.last}/10 (${dg.pain.n} ratings)`);
+      (dg.assessments || []).forEach((a) => lines.push(`Assessment ${a.date || ""}: ${a.text}`));
+    }
+    return lines.join("\n");
+  }
+
+  function assistantPrompt(chart, question, history) {
+    const lines = [assistantSystem(), "", assistantChartText(chart)];
+    const turns = (history || []).slice(-8); // keep the recent conversation bounded
+    if (turns.length) {
+      lines.push("", "CONVERSATION SO FAR", "-------------------");
+      turns.forEach((t) => lines.push(`${t.role === "assistant" ? "Assistant" : "Clinician"}: ${t.text}`));
+    }
+    lines.push("", "CLINICIAN'S QUESTION", "--------------------", String(question || "").trim());
+    return lines.join("\n");
+  }
+
+  async function patientAssistant(chart, question, history, opts) {
+    opts = opts || {};
+    if (!aiReady(opts)) {
+      const e = new Error("The patient assistant needs Gemini configured (set a key or enable Vertex AI on the server).");
+      e.code = 501;
+      throw e;
+    }
+    const parsed = await geminiJson(assistantPrompt(chart, question, history), ASSISTANT_SCHEMA, { ...opts, temperature: 0.1 });
+    return {
+      answer: String(parsed.answer || "").trim(),
+      answered: parsed.answered !== false,
+      citations: (parsed.citations || []).map((c) => ({ source: String(c.source || "").trim(), quote: String(c.quote || "").trim() })).filter((c) => c.source),
+      source: "gemini",
+    };
+  }
+
   /* ---------------- public entry points ---------------- */
 
   async function refine(utterances, opts) {
@@ -340,6 +455,7 @@
     return { ...local, source: aiReady(opts) ? "local (gemini failed)" : "local" };
   }
 
-  return { refine, insightsRun, extractRecords, refineSystem, refinePrompt, extractSystem,
+  return { refine, insightsRun, extractRecords, patientAssistant, refineSystem, refinePrompt, extractSystem,
+    assistantSystem, assistantPrompt, assistantChartText, ASSISTANT_SCHEMA,
     REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, geminiTarget, aiReady, DEFAULT_MODEL, DEFAULT_PRO_MODEL, DEFAULT_BASE };
 });

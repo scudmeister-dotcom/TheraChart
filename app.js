@@ -180,6 +180,7 @@
   /* ---------------- router ---------------- */
 
   let activeDictation = null; // stop mic when leaving a document
+  let showLogin = false; // logged-out: false → marketing landing, true → login form
 
   const NAV = [
     // `short` is the compact label used in the mobile bottom tab bar.
@@ -196,7 +197,12 @@
     currentDocState = null; // never carry one document's edit state into another
     closeModal();
     const user = S.currentUser();
-    if (!user) return renderLogin();
+    // Logged-out visitors land on the marketing page first; the Sign-in CTA
+    // flips to the login form. A deep link into an app route skips the splash.
+    if (!user) {
+      const deepLink = location.hash && location.hash !== "#/" && location.hash !== "#/welcome";
+      return (showLogin || deepLink) ? renderLogin() : renderLanding();
+    }
     // New hires and admin-reset accounts must set their own password before doing anything.
     if (user.mustChangePassword) return renderForcePassword(user);
 
@@ -386,6 +392,71 @@
     });
   }
 
+  function renderLanding() {
+    const facility = esc(S.settings().facilityName);
+    const feature = (icon, title, body) => `
+      <div class="lp-feature">
+        <div class="lp-feature-ico">${icon}</div>
+        <h3>${title}</h3>
+        <p>${body}</p>
+      </div>`;
+    app.innerHTML = `
+<div class="landing">
+  <header class="lp-nav">
+    <div class="brandline">
+      <div class="logo">${LOGO_MARK}</div>
+      <div><b>TheraChart</b><span class="lp-nav-sub">EMR</span></div>
+    </div>
+    <button class="btn primary" id="lpSignIn">Sign in</button>
+  </header>
+
+  <section class="lp-hero">
+    <div class="lp-hero-copy">
+      <div class="lp-eyebrow">Physical therapy EMR · built for the clinic floor</div>
+      <h1>Chart by voice.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
+      <p class="lp-lead">Press listen and just talk. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English, Tagalog, and Cebuano</b>. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
+      <div class="lp-cta">
+        <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
+        <a class="btn ghost lp-cta-btn" href="#features">See how it works</a>
+      </div>
+      <div class="lp-trust">🔒 PHI stays under a Google Cloud BAA — audio is transcribed and discarded, never sold or used to train models.</div>
+    </div>
+    <div class="lp-hero-shot">
+      <img src="marketing-screenshots/4-dictation-and-body-map.png" alt="TheraChart dictation and body map" loading="lazy" />
+    </div>
+  </section>
+
+  <section class="lp-features" id="features">
+    <h2 class="lp-section-title">Everything a session needs — in one flow</h2>
+    <div class="lp-feature-grid">
+      ${feature("🎤", "Voice-first dictation", "Speak naturally. Findings pin to the body map and measurements sort themselves into ROM, MMT, special tests and pain — no typing between patients.")}
+      ${feature("🗺️", "Body-mapped findings", "Every symptom lands on a front/back body map with severity, so the whole picture is visible at a glance and printable for the chart.")}
+      ${feature("🌐", "Multilingual", "Understands English, Tagalog and Cebuano — including the Taglish code-switching real patients actually use.")}
+      ${feature("✦", "Grounded AI assistant", "Ask about a patient's history, trends or precautions. Answers are drawn strictly from that patient's records — it cites its sources and says so when something isn't documented.")}
+      ${feature("📈", "Clinical insights", "Cross-visit connections, ROM/pain trends and red flags surfaced as decision support for a licensed PT — never a diagnosis.")}
+      ${feature("🛡️", "Privacy by design", "One BAA, PHI kept in-region, e-signed and locked notes with authorized amendments. Built to be defensible.")}
+    </div>
+  </section>
+
+  <section class="lp-shots">
+    <div class="lp-shot"><img src="marketing-screenshots/3-patient-chart-documents.png" alt="Patient chart and documents" loading="lazy" /><span>A full chart — evaluations, daily notes, progress reports and imported history.</span></div>
+    <div class="lp-shot"><img src="marketing-screenshots/2-dashboard-clinic-overview.png" alt="Clinic dashboard" loading="lazy" /><span>Clinic-wide view: today's schedule, unsigned drafts and progress reports due.</span></div>
+  </section>
+
+  <section class="lp-final">
+    <h2>Ready when you are.</h2>
+    <p>Sign in with the credentials your administrator gave you.</p>
+    <button class="btn primary lp-cta-btn" id="lpStart2">Sign in</button>
+    <div class="lp-foot">TheraChart EMR · ${facility}</div>
+  </section>
+</div>`;
+    const go = () => { showLogin = true; render(); };
+    ["lpSignIn", "lpStart", "lpStart2"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("click", go);
+    });
+  }
+
   function renderLogin() {
     // Demo-mode only: since there's no server, it's safe to hint the on-device
     // accounts so people can try it. In server mode the roster is never exposed.
@@ -403,7 +474,10 @@
       </div>
     </div>
     <div class="card">
-      <h2>Sign in</h2>
+      <div class="login-cardhead">
+        <h2>Sign in</h2>
+        <button class="btn small ghost" id="backToLanding" type="button">← Back</button>
+      </div>
       <div class="field" style="margin-top:4px">
         <label for="emailInput">Email</label>
         <input id="emailInput" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@clinic.com" />
@@ -434,6 +508,8 @@
     };
     document.getElementById("loginBtn").addEventListener("click", doLogin);
     [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
+    const back = document.getElementById("backToLanding");
+    if (back) back.addEventListener("click", () => { showLogin = false; if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); });
     emailEl.focus();
   }
 
@@ -701,13 +777,17 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
       </tbody></table>
     </div>
   </div>
-</div>`;
+</div>
+
+<div class="card asst-card" id="patientAssistant"></div>`;
   }
 
   function bindPatient(user) {
     bindRowLinks();
     const p = S.getPatient(currentPatientId());
     if (!p) return;
+
+    renderAssistant(document.getElementById("patientAssistant"), p.id, user);
 
     document.querySelectorAll("[data-newdoc]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -1147,7 +1227,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     </div>
     <div class="transcript-log" id="docTranscript"></div>
     <div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>
-    ${editable ? `<div class="measure-add"><input id="typedDictation" placeholder="No mic? Type what the patient says and press Enter…" /></div>` : ""}
+    ${editable ? `<div class="typed-dictation">
+      <label for="typedDictation">Type it out — anything the mic missed</label>
+      <textarea id="typedDictation" rows="3" placeholder="No mic, or dictation missed something? Type here and press Enter to file it into the note (Shift+Enter for a new line)…"></textarea>
+      <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
+    </div>` : ""}
     <div class="route-log" id="routeLog"></div>
   </div>
   <div class="card doc-fields ${meta.cls}">
@@ -1155,7 +1239,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     ${sigBlock}
   </div>
 </div>
-<div class="card" id="insightsCard"></div>`;
+<div class="card" id="insightsCard"></div>
+<div class="card asst-card" id="docAssistant"></div>`;
 
     // ------- shared dictation/map state -------
     const dstate = { selectedKey: null, editable };
@@ -1165,6 +1250,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
     renderInsightsCard(doc, user);
+    renderAssistant(document.getElementById("docAssistant"), doc.patientId, user, { compact: true });
     if (S.settings().audioReview) bindAudioReview(doc, user, editable);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
@@ -1193,12 +1279,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (editable) {
       startDictation(doc, user, dstate);
       const typed = document.getElementById("typedDictation");
+      const submitTyped = () => {
+        const text = typed.value.trim();
+        if (!text) return;
+        // route each non-empty line as its own utterance so multi-line entries
+        // file cleanly, the same way separate dictated sentences would
+        text.split("\n").map((l) => l.trim()).filter(Boolean).forEach((line) => routeUtterance(doc, user, line, dstate));
+        typed.value = "";
+        typed.focus();
+      };
+      // Enter files it; Shift+Enter inserts a newline so longer notes stay visible
       typed.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && typed.value.trim()) {
-          routeUtterance(doc, user, typed.value, dstate);
-          typed.value = "";
-        }
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTyped(); }
       });
+      const typedAdd = document.getElementById("typedDictationAdd");
+      if (typedAdd) typedAdd.addEventListener("click", submitTyped);
     }
   }
 
@@ -2258,6 +2353,125 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       current: { subjective: docSubjective(doc), findings: findingsFromPoints(doc.data.mapPoints), measurements: measOf(doc) },
       history, historyDigest,
     };
+  }
+
+  /* ================= Patient AI assistant (grounded Q&A) =================
+     A NotebookLM-style helper scoped to a single patient. The corpus is built
+     ONLY from that patient's own documents, so nothing bleeds between charts;
+     the model is instructed to answer only from that corpus (see ai.js). */
+
+  // Narrative fields differ by document type; collect the useful ones.
+  const docObjective = (d) => d.data.objectiveText || d.data.updatedFindings || "";
+  const docPlan = (d) => d.data.plan || d.data.summary || d.data.recommendations || d.data.goalsProgress || d.data.outcome || "";
+
+  // Assemble a single patient's full chart as the assistant's grounding corpus.
+  function gatherPatientCorpus(patientId) {
+    const p = S.getPatient(patientId);
+    const evalDoc = S.docsFor(patientId).find((d) => d.type === "eval");
+    const all = S.docsFor(patientId)
+      .sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))
+      .map((d) => ({
+        date: d.createdAt.slice(0, 10), type: docMeta(d.type).label,
+        subjective: docSubjective(d), objective: docObjective(d),
+        assessment: d.data.assessment || "", plan: docPlan(d),
+        findings: findingsFromPoints(d.data.mapPoints), measurements: measOf(d),
+      }));
+    // 12 most-recent visits in full; anything older compressed to a digest so
+    // the corpus stays about a page even for years of imported records.
+    const docs = all.slice(0, 12);
+    const historyDigest = all.length > 12 ? window.TheraInsights.buildHistoryDigest(all.slice(12)) : null;
+    return {
+      patient: p ? { age: age(p.dob), sex: p.sex || "" } : {},
+      referral: (evalDoc && evalDoc.data.reason) || (p && p.referringPhysician) || "",
+      pmh: (evalDoc && evalDoc.data.pmh) || "",
+      docs, historyDigest,
+    };
+  }
+
+  const assistantAvailable = () =>
+    !!(window.TheraSync && window.TheraSync.ai && window.TheraSync.ai.assistant !== "unavailable");
+
+  const ASSISTANT_STARTERS = [
+    "Summarize this patient's history",
+    "What were the most recent measurements?",
+    "Any red flags or precautions noted?",
+    "How has pain changed across visits?",
+  ];
+
+  // Render an assistant chat panel into `container` for one patient. `compact`
+  // trims the intro for the in-note placement. Conversation is kept in memory
+  // for the life of the view (not persisted to the chart).
+  function renderAssistant(container, patientId, user, opts) {
+    opts = opts || {};
+    if (!container) return;
+    const p = S.getPatient(patientId);
+    if (!assistantAvailable()) {
+      container.innerHTML = `
+        <div class="asst-head"><h2>✦ Ask about this patient <span class="chip muted">grounded in this chart</span></h2></div>
+        <div class="banner warn" style="margin-top:6px">The AI assistant needs Google Gemini / Vertex AI configured on the server. It's currently unavailable — clinical notes and dictation still work as normal.</div>`;
+      return;
+    }
+    const turns = [];
+    container.innerHTML = `
+      <div class="asst-head">
+        <h2>✦ Ask about this patient <span class="chip info">Gemini</span><span class="chip muted">grounded in this chart</span></h2>
+      </div>
+      ${opts.compact ? "" : `<p class="asst-disclaimer">Answers come <b>only</b> from ${esc(p ? S.patientName(p) : "this patient")}'s own records — notes, visits, and imported history. If something isn't documented, it will say so. Decision support for a licensed PT — <b>verify before acting</b>.</p>`}
+      <div class="asst-log" id="asstLog">
+        <div class="asst-empty">Ask a question about this patient's history, findings, or progress.</div>
+        <div class="asst-starters">${ASSISTANT_STARTERS.map((s) => `<button class="chip asst-starter" type="button">${esc(s)}</button>`).join("")}</div>
+      </div>
+      <div class="asst-input">
+        <textarea id="asstInput" rows="1" placeholder="Ask about this patient…"></textarea>
+        <button class="btn ai" id="asstSend" title="Ask">Ask</button>
+      </div>`;
+
+    const log = container.querySelector("#asstLog");
+    const input = container.querySelector("#asstInput");
+    const sendBtn = container.querySelector("#asstSend");
+
+    const bubble = (role, html, cls) =>
+      `<div class="asst-msg ${role}${cls ? " " + cls : ""}">${html}</div>`;
+
+    const redraw = (thinking) => {
+      const rows = turns.map((t) => {
+        if (t.role === "user") return bubble("user", esc(t.text));
+        const cites = (t.citations || []).length
+          ? `<div class="asst-cites">${t.citations.map((c) => `<span class="chip muted" title="${esc(c.quote || "")}">${esc(c.source)}</span>`).join("")}</div>` : "";
+        return bubble("assistant", `${esc(t.text)}${cites}`, t.answered === false ? "unanswered" : "");
+      }).join("");
+      log.innerHTML = rows + (thinking ? bubble("assistant", `<span class="asst-typing">Reading the chart…</span>`, "thinking") : "");
+      log.scrollTop = log.scrollHeight;
+    };
+
+    const ask = async (question) => {
+      const q = String(question || "").trim();
+      if (!q) return;
+      input.value = ""; autosize();
+      const history = turns.slice();
+      turns.push({ role: "user", text: q });
+      redraw(true);
+      sendBtn.disabled = true;
+      try {
+        const r = await window.TheraSync.askPatient({ chart: gatherPatientCorpus(patientId), question: q, history });
+        turns.push({ role: "assistant", text: r.answer || "(no answer)", answered: r.answered, citations: r.citations || [] });
+        S.audit(user.id, "assistant-query", `${p ? S.patientName(p) : patientId}: "${q.slice(0, 80)}"`);
+      } catch (e) {
+        turns.push({ role: "assistant", text: `Couldn't answer that: ${e.message}`, answered: false, citations: [] });
+      }
+      sendBtn.disabled = false;
+      redraw(false);
+      input.focus();
+    };
+
+    const autosize = () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; };
+    input.addEventListener("input", autosize);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input.value); }
+    });
+    sendBtn.addEventListener("click", () => ask(input.value));
+    container.querySelectorAll(".asst-starter").forEach((b) =>
+      b.addEventListener("click", () => ask(b.textContent)));
   }
 
   const planFieldFor = (type) =>

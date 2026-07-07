@@ -129,6 +129,7 @@ function geminiEngineDesc() {
 const refineSystem = ai.refineSystem;
 const refineTranscript = (utterances) => ai.refine(utterances, GEMINI_OPTS());
 const clinicalInsights = (ctx) => ai.insightsRun(ctx, GEMINI_OPTS());
+const patientAssistant = (chart, question, history) => ai.patientAssistant(chart, question, history, GEMINI_OPTS());
 
 // rev + sessions persist through db (populated from it in start(), below).
 let rev = 1;
@@ -458,7 +459,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/ai-status") {
       const mode = geminiActive() ? "gemini" : "local";
-      return json(res, 200, { refine: mode, insights: mode, model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
+      // assistant is model-only (no local fallback): available only when Gemini/Vertex is configured
+      return json(res, 200, { refine: mode, insights: mode, assistant: geminiActive() ? mode : "unavailable", model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const body = await readBody(req);
@@ -569,6 +571,19 @@ const server = http.createServer(async (req, res) => {
         const ctx = await readBody(req);
         const result = await clinicalInsights(ctx || {});
         return json(res, 200, result);
+      }
+      if (url.pathname === "/api/patient-assistant" && req.method === "POST") {
+        if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
+        const { chart, question, history } = await readBody(req);
+        const q = String(question || "").slice(0, 2000).trim();
+        if (!q) return json(res, 400, { error: "No question provided." });
+        const turns = Array.isArray(history) ? history.slice(-8).map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", text: String(t.text || "").slice(0, 2000) })) : [];
+        try {
+          const result = await patientAssistant(chart || {}, q, turns);
+          return json(res, 200, result);
+        } catch (e) {
+          return json(res, e.code === 501 ? 501 : 500, { error: e.message });
+        }
       }
       if (url.pathname === "/api/extract-doc" && req.method === "POST") {
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });

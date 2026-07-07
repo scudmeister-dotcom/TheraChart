@@ -685,6 +685,110 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 }
 .ins-flag b { color: var(--danger); font-size: 13.5px; }
 
+/* ---------------- ghost button ---------------- */
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--hover); color: var(--ink); }
+
+/* ---------------- typed dictation (manual entry under the transcript) ---------------- */
+.typed-dictation { margin-top: 10px; }
+.typed-dictation > label {
+  display: block; font-size: 12px; font-weight: 600; color: var(--muted);
+  margin-bottom: 5px;
+}
+.typed-dictation textarea {
+  width: 100%; min-height: 68px; resize: vertical;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); color: var(--ink); font: inherit; line-height: 1.5;
+}
+.typed-dictation textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.typed-dictation-actions { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.typed-dictation-actions .hint { font-size: 11.5px; color: var(--muted); }
+.typed-dictation-actions .btn { margin-left: auto; }
+
+/* ---------------- patient AI assistant (grounded chat) ---------------- */
+.asst-card { display: block; }
+.asst-head { display: flex; align-items: center; gap: 10px; }
+.asst-head h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.asst-disclaimer { font-size: 12px; color: var(--muted); margin: 8px 0 12px; }
+.asst-log {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--hover);
+  padding: 12px; min-height: 96px; max-height: 380px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.asst-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 6px 0; }
+.asst-starters { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.asst-starter { cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--ink); }
+.asst-starter:hover { background: var(--accent-soft); border-color: var(--accent); }
+.asst-msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+.asst-msg.user { align-self: flex-end; background: var(--brand-grad); color: #fff; border-bottom-right-radius: 4px; }
+.asst-msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.asst-msg.assistant.unanswered { border-color: var(--review); background: var(--review-soft); }
+.asst-msg.thinking { color: var(--muted); }
+.asst-typing { font-style: italic; }
+.asst-cites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.asst-input { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
+.asst-input textarea {
+  flex: 1; resize: none; min-height: 42px; max-height: 140px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); color: var(--ink); font: inherit; line-height: 1.4;
+}
+.asst-input textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.asst-input .btn { flex-shrink: 0; }
+
+/* ---------------- marketing landing page ---------------- */
+.landing { max-width: 1120px; margin: 0 auto; padding: 0 22px 60px; color: var(--ink); }
+.lp-nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+.lp-nav .brandline { display: flex; align-items: center; gap: 12px; }
+.lp-nav .brandline .logo { width: 42px; height: 42px; border-radius: 12px; background: var(--brand-grad); display: flex; align-items: center; justify-content: center; }
+.lp-nav .brandline .logo svg { width: 26px; height: 26px; }
+.lp-nav .brandline b { font-size: 19px; }
+.lp-nav-sub { font-size: 10px; letter-spacing: 3px; color: var(--muted); margin-left: 6px; text-transform: uppercase; font-weight: 700; }
+
+.lp-hero { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 40px; align-items: center; padding: 40px 0 60px; }
+.lp-eyebrow { font-size: 12.5px; font-weight: 700; letter-spacing: 0.4px; color: var(--accent); text-transform: uppercase; margin-bottom: 14px; }
+.lp-hero-copy h1 { font-size: 46px; line-height: 1.08; letter-spacing: -0.5px; margin-bottom: 18px; }
+.lp-accent { color: var(--accent); }
+.lp-lead { font-size: 16px; line-height: 1.6; color: var(--muted); max-width: 560px; margin-bottom: 26px; }
+.lp-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.lp-cta-btn { padding: 12px 22px; font-size: 15px; }
+.lp-trust { font-size: 12.5px; color: var(--muted); background: var(--accent-soft); padding: 10px 14px; border-radius: 10px; display: inline-block; }
+.lp-hero-shot img {
+  width: 100%; border-radius: 16px; border: 1px solid var(--border);
+  box-shadow: 0 24px 60px rgba(15, 30, 45, 0.18);
+}
+
+.lp-section-title { font-size: 28px; text-align: center; letter-spacing: -0.3px; margin-bottom: 34px; }
+.lp-features { padding: 40px 0; }
+.lp-feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.lp-feature { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; box-shadow: var(--shadow); }
+.lp-feature-ico { font-size: 26px; margin-bottom: 12px; }
+.lp-feature h3 { font-size: 16px; margin-bottom: 8px; }
+.lp-feature p { font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+
+.lp-shots { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 30px 0; }
+.lp-shot img { width: 100%; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(15, 30, 45, 0.12); }
+.lp-shot span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 10px; text-align: center; }
+
+.lp-final { text-align: center; padding: 56px 0 20px; }
+.lp-final h2 { font-size: 30px; letter-spacing: -0.3px; margin-bottom: 10px; }
+.lp-final p { color: var(--muted); font-size: 15px; margin-bottom: 22px; }
+.lp-foot { margin-top: 34px; font-size: 12px; color: var(--muted); letter-spacing: 0.3px; }
+
+.login-cardhead { display: flex; align-items: center; justify-content: space-between; }
+.login-cardhead h2 { margin: 0; }
+
+@media (max-width: 860px) {
+  .lp-hero { grid-template-columns: 1fr; gap: 26px; padding: 20px 0 40px; text-align: center; }
+  .lp-hero-copy h1 { font-size: 34px; }
+  .lp-lead { font-size: 15px; margin-left: auto; margin-right: auto; }
+  .lp-cta { justify-content: center; }
+  .lp-cta-btn { flex: 1; justify-content: center; min-width: 140px; }
+  .lp-feature-grid { grid-template-columns: 1fr; }
+  .lp-shots { grid-template-columns: 1fr; }
+  .lp-section-title { font-size: 23px; }
+  .landing { padding: 0 16px 48px; }
+}
+
 /* ---------------- print ---------------- */
 
 #printArea { display: none; }
@@ -774,6 +878,21 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table.list th, table.list td { white-space: nowrap; }
   .cal-grid { min-width: 480px; }
+
+  /* dictation controls: mic stays prominent, the long-labelled language +
+     engine selects drop to full-width rows so they're readable & tappable */
+  .dict-bar { gap: 8px; }
+  .dict-bar .mic-btn { flex: 1 1 auto; }
+  .dict-bar select { flex: 1 1 100%; width: 100%; padding: 10px; }
+  .dict-status { flex: 1 1 100%; text-align: center; }
+
+  /* assistant chat: taller log, its input clears the bottom tab bar */
+  .asst-log { max-height: 300px; }
+  .asst-msg { max-width: 92%; }
+
+  /* the assistant card contains a horizontally-scrolling override above; keep
+     its chat content from being clipped by that rule */
+  .asst-card { overflow: visible; }
 
   /* lift the sync badge above the bottom tab bar (inline styles → !important) */
   #syncBadge { bottom: calc(76px + env(safe-area-inset-bottom)) !important; z-index: 39 !important; }
