@@ -581,7 +581,7 @@
       </div>
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
-      ${demoEmails.length ? `<div class="demo-note">Demo — sign in as <b>${esc(demoEmails.join("</b>, <b>"))}</b>, password <b>1234</b>.</div>`
+      ${demoEmails.length ? `<div class="demo-note">Demo — sign in as ${demoEmails.map((e) => `<b>${esc(e)}</b>`).join(", ")}, password <b>1234</b>.</div>`
         : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
   </div>
