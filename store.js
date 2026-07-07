@@ -54,7 +54,7 @@
 
     return {
       settings: {
-        facilityName: "Bayanihan Physical Therapy Center",
+        facilityName: "Physical Therapy Center",
         progressEvery: 5, // progress report triggers on this visit number
         slotMinutes: 45,
         dayStartHour: 8,
