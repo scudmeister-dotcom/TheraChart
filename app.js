@@ -228,6 +228,42 @@
     location.hash = "#/dashboard";
   }
 
+  /* Brief branded splash shown right after a successful sign-in — the logo,
+     product name and facility, held for a beat before the app appears. It's a
+     standard "welcome" moment; kept short so it never feels like a wait. The
+     app renders underneath while the splash fades, so the reveal is the app. */
+  function showSplash(done) {
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const el = document.createElement("div");
+    el.className = "splash";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-label", "Signing in");
+    el.innerHTML = `
+      <div class="splash-inner">
+        <div class="splash-logo">${LOGO_MARK}</div>
+        <div class="splash-name">TheraChart EMR</div>
+        <div class="splash-sub">${esc(S.settings().facilityName)}</div>
+        <div class="splash-bar"><span></span></div>
+      </div>`;
+    document.body.appendChild(el);
+    // Next frame so the fade-in transition actually runs from opacity 0.
+    requestAnimationFrame(() => el.classList.add("show"));
+
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      done(); // render the app underneath, so the fade-out reveals it — not the login screen
+      el.classList.add("leaving");
+      let removed = false;
+      const remove = () => { if (removed) return; removed = true; el.remove(); };
+      el.addEventListener("transitionend", remove, { once: true });
+      setTimeout(remove, 500); // backstop if transitionend never fires
+    };
+    // Reduced-motion users get a much shorter hold and no animation flourish.
+    setTimeout(finish, reduce ? 350 : 1500);
+  }
+
   /* Breadcrumb trail for the current location — powers the back button and
      the "remember where I was" navigation inside a patient. */
   function breadcrumbFor(hash, user) {
@@ -560,8 +596,8 @@
       // S.login may be wrapped by the sync layer and return a promise
       const fail = await Promise.resolve(S.login(email, pinEl.value));
       if (fail) { err.style.color = "var(--danger)"; err.textContent = fail; return; }
-      location.hash = "#/dashboard";
-      render();
+      // A brief branded splash marks the transition, then the app appears.
+      showSplash(() => { location.hash = "#/dashboard"; render(); });
     };
     document.getElementById("loginBtn").addEventListener("click", doLogin);
     [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
