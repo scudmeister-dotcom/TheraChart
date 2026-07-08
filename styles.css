@@ -135,17 +135,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   width: 236px;
   flex: none;
   color: var(--sidebar-ink);
+  background:
+    radial-gradient(120% 60% at 15% 0%, rgba(58, 182, 192, 0.22), transparent 60%),
+    radial-gradient(90% 50% at 100% 100%, rgba(109, 90, 224, 0.16), transparent 55%),
+    linear-gradient(180deg, var(--sidebar), color-mix(in srgb, var(--sidebar) 82%, #000));
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* The aside stretches to the full page height (so the dark panel never cuts
+   off on a long chart); this inner column sticks to the viewport so the nav
+   and user chip stay put as you scroll. */
+.sidebar-inner {
   display: flex;
   flex-direction: column;
   padding: 20px 14px 14px;
   position: sticky;
   top: 0;
   height: 100vh;
-  background:
-    radial-gradient(120% 60% at 15% 0%, rgba(58, 182, 192, 0.22), transparent 60%),
-    radial-gradient(90% 50% at 100% 100%, rgba(109, 90, 224, 0.16), transparent 55%),
-    linear-gradient(180deg, var(--sidebar), color-mix(in srgb, var(--sidebar) 82%, #000));
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 .sidebar .brand {
   display: flex; align-items: center; gap: 11px;
@@ -603,6 +608,97 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 .newdoc-btn.doc-daily { border-left-color: var(--dt-daily); }
 .newdoc-btn.doc-progress { border-left-color: var(--dt-progress); }
 .newdoc-btn.doc-discharge { border-left-color: var(--dt-discharge); }
+.newdoc-btn.active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ---------------- patient chart: sub-tabs ---------------- */
+.ptabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin: 4px 0 16px;
+}
+.ptab {
+  appearance: none; background: none; border: none; cursor: pointer;
+  padding: 9px 14px; margin-bottom: -1px;
+  font-size: 13.5px; font-weight: 600; color: var(--muted);
+  border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ptab:hover { color: var(--ink); background: var(--hover); }
+.ptab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.ptab-panel > .card { margin-bottom: 14px; }
+.ptab-panel > .card:last-child { margin-bottom: 0; }
+
+/* ---------------- needs-attention list ---------------- */
+.attn-list { display: flex; flex-direction: column; gap: 8px; }
+.attn-item {
+  display: flex; align-items: center; gap: 11px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--hover); border: 1px solid var(--border);
+}
+.attn-item .attn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.attn-item.warn .attn-dot { background: var(--review); }
+.attn-item.info .attn-dot { background: var(--accent); }
+.attn-item .attn-text { flex: 1; font-size: 13.5px; }
+.attn-item .btn { flex: none; }
+
+/* ---------------- new-doc picker (resume vs. start new) ---------------- */
+.newdoc { margin-bottom: 14px; }
+.newdoc-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.newdoc-picker {
+  margin-top: 10px; padding: 12px;
+  background: var(--hover); border: 1px solid var(--border); border-radius: 10px;
+}
+.draft-picker-head { font-size: 11.5px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.draft-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+}
+.draft-row:last-of-type { border-bottom: none; }
+.draft-picker-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* ---------------- document filters ---------------- */
+.doc-filters {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+  padding: 10px 0 12px; margin-bottom: 6px; border-bottom: 1px dashed var(--border);
+}
+.fgroup { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fglabel { font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.fgsep { color: var(--muted); }
+.fchip {
+  appearance: none; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.fchip:hover { color: var(--ink); }
+.fchip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fdate {
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--ink); font-size: 12.5px;
+}
+
+/* ---------------- bulk scheduling ---------------- */
+.bulk-form {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px;
+  align-items: end;
+}
+.bulk-form .bulk-days { grid-column: 1 / -1; }
+.bulk-form .bulk-actions { grid-column: 1 / -1; }
+.dow-picker { display: flex; gap: 6px; flex-wrap: wrap; }
+.dow {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); font-size: 12.5px; font-weight: 600; color: var(--muted);
+}
+.dow input { accent-color: var(--accent); }
+.dow:has(input:checked) { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.bulk-actions { display: flex; gap: 8px; margin-top: 4px; }
+.bulk-preview {
+  margin-top: 14px; padding: 12px;
+  background: var(--hover); border: 1px solid var(--border); border-radius: 10px;
+}
+.bulk-preview-head { font-weight: 600; font-size: 13.5px; margin-bottom: 10px; }
+@media (max-width: 640px) { .bulk-form { grid-template-columns: 1fr; } }
 
 .doc-meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
 .lock-banner {
@@ -961,6 +1057,9 @@ tr.rowlink .doc-tag { margin-right: 6px; }
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
+  /* dissolve the sticky column wrapper so brand/sync/account lay out directly
+     as the horizontal top bar again */
+  .sidebar-inner { display: contents; }
   .sidebar .brand { padding: 0; flex: 1; min-width: 0; }
   .sidebar .brand .logo { width: 34px; height: 34px; border-radius: 10px; }
   .sidebar .brand-text b { font-size: 15px; }

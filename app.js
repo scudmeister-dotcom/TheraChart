@@ -357,19 +357,21 @@
     app.innerHTML = `
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
-      <div class="logo">${ICON.logo}</div>
-      <div class="brand-text"><b>TheraChart</b><span>Clinic EMR</span></div>
+    <div class="sidebar-inner">
+      <div class="brand">
+        <div class="logo">${ICON.logo}</div>
+        <div class="brand-text"><b>TheraChart</b><span>Clinic EMR</span></div>
+      </div>
+      <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
+      <div class="nav">${nav}</div>
+      <div class="spacer"></div>
+      <div class="userchip">
+        <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
+        <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
+        <button id="logoutBtn" class="signout" title="Sign out">${ICON.signout}</button>
+      </div>
+      ${acctMenuHtml}
     </div>
-    <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
-    <div class="nav">${nav}</div>
-    <div class="spacer"></div>
-    <div class="userchip">
-      <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
-      <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
-      <button id="logoutBtn" class="signout" title="Sign out">${ICON.signout}</button>
-    </div>
-    ${acctMenuHtml}
   </aside>
   <main class="content" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
@@ -783,20 +785,49 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
 
   const currentPatientId = () => (location.hash.split("/")[2] || "").split("?")[0];
 
+  /* The patient chart is split into tabs so the busy document list isn't the
+     first thing you see. Overview leads with what needs attention; the full
+     document list, files, info and scheduling each get their own tab. */
+  let patientTab = "overview";
+  let patientTabFor = null; // the patient id the tab/filter state belongs to
+  const docFilter = { type: "all", status: "all", from: "", to: "" };
+  const aiReviewRuns = {}; // patientId -> true while an AI review request is in flight
+
+  const PATIENT_TABS = [
+    { id: "overview", label: "Overview" },
+    { id: "documents", label: "Documents" },
+    { id: "files", label: "Files" },
+    { id: "info", label: "Info" },
+    { id: "schedule", label: "Schedule" },
+  ];
+
+  const NEWDOC_TYPES = [
+    { type: "eval", label: "Evaluation", cls: "doc-eval" },
+    { type: "daily", label: "Daily note", cls: "doc-daily" },
+    { type: "progress", label: "Progress report", cls: "doc-progress" },
+    { type: "discharge", label: "Discharge", cls: "doc-discharge" },
+  ];
+
+  const docRow = (d) => `
+    <tr class="rowlink" data-href="#/doc/${d.id}">
+      <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
+      <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.imported ? ' <span class="chip muted">imported</span>' : ""}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
+      <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
+      <td class="num">${fmtDate(d.createdAt)}</td>
+    </tr>`;
+
   function patientView(user) {
     const p = S.getPatient(currentPatientId());
     if (!p) return `<div class="card"><div class="empty-state">Patient not found.</div></div>`;
-    const docs = S.docsFor(p.id);
-    const canDoc = S.canDocument(user);
-    const due = S.progressDue(p.id);
-
-    const docRow = (d) => `
-      <tr class="rowlink" data-href="#/doc/${d.id}">
-        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
-        <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.imported ? ' <span class="chip muted">imported</span>' : ""}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
-        <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
-        <td class="num">${fmtDate(d.createdAt)}</td>
-      </tr>`;
+    // reset per-patient view state when a different chart is opened
+    if (patientTabFor !== p.id) {
+      patientTab = "overview"; patientTabFor = p.id;
+      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = "";
+    }
+    const tab = patientTab;
+    const tabStrip = `<div class="ptabs" role="tablist">
+      ${PATIENT_TABS.map((t) => `<button class="ptab ${tab === t.id ? "active" : ""}" data-ptab="${t.id}" role="tab" aria-selected="${tab === t.id}">${t.label}</button>`).join("")}
+    </div>`;
 
     return `
 <div class="page-head">
@@ -809,87 +840,497 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
     <a class="btn" href="#/intake?edit=${p.id}">Edit info</a>
   </div>
 </div>
-
-${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed — a <b>progress report is due</b> (facility setting: every ${S.settings().progressEvery} visits).</div>` : ""}
-
-<div class="cards-2">
-  <div>
-    <div class="card">
-      <h2>Therapy documents</h2>
-      ${canDoc ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">
-        <button class="btn small newdoc-btn doc-eval" data-newdoc="eval"><i class="dt-swatch"></i>+ Evaluation</button>
-        <button class="btn small newdoc-btn doc-daily" data-newdoc="daily"><i class="dt-swatch"></i>+ Daily note</button>
-        <button class="btn small newdoc-btn doc-progress ${due ? "primary" : ""}" data-newdoc="progress"><i class="dt-swatch"></i>+ Progress report${due ? " (due)" : ""}</button>
-        <button class="btn small newdoc-btn doc-discharge" data-newdoc="discharge"><i class="dt-swatch"></i>+ Discharge</button>
-      </div>` : `<div class="banner warn" style="margin-bottom:12px">Your account can view this chart but cannot create or edit clinical documents.</div>`}
-      ${docs.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>Document</th><th>Status</th><th>Therapist</th><th>Date</th></tr></thead>
-        <tbody>${docs.slice().reverse().map(docRow).join("")}</tbody></table></div>`
-        : `<div class="empty-state">No documents yet.${canDoc ? " Start with an <b>Evaluation</b>." : ""}</div>`}
-    </div>
-    <div class="card">
-      <h2>Referrals, imaging & other files</h2>
-      ${p.attachments.length ? `<table class="list"><tbody>${p.attachments.map((a) => `
-        <tr><td><b>${esc(a.name)}</b>${a.size ? ` <small style="color:var(--muted)">(${fmtBytes(a.size)})</small>` : ""}<br><small style="color:var(--muted)">added ${fmtDT(a.uploadedAt)} by ${esc((S.getUser(a.uploadedBy) || {}).name || "—")}</small></td>
-        <td style="text-align:right"><button class="btn small" data-dl-att="${esc(a.id)}">Download</button></td></tr>`).join("")}</tbody></table>`
-        : `<div class="empty-state">No files yet — add the physician referral, X-rays, or other documents.</div>`}
-      <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-        <label class="btn small" style="position:relative; overflow:hidden">
-          Upload file<input id="fileUpload" type="file" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
-        </label>
-        ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
-          ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
-        </label>` : ""}
-        <small style="color:var(--muted)">Referrals, imaging & scans · up to 20 MB per file</small>
-      </div>
-    </div>
-  </div>
-  <div>
-    <div class="card">
-      <h2>Personal information</h2>
-      <table class="list"><tbody>
-        <tr><td style="color:var(--muted)">Address</td><td>${esc(p.address || "—")}</td></tr>
-        <tr><td style="color:var(--muted)">Phone</td><td class="num">${esc(p.phone)}</td></tr>
-        <tr><td style="color:var(--muted)">Email</td><td>${esc(p.email || "—")}</td></tr>
-        <tr><td style="color:var(--muted)">Referring physician</td><td>${esc(p.referringPhysician || "—")}</td></tr>
-        <tr><td style="color:var(--muted)">Registered</td><td>${fmtDT(p.createdAt)} by ${esc((S.getUser(p.createdBy) || {}).name || "—")}</td></tr>
-      </tbody></table>
-    </div>
-    <div class="card">
-      <h2>Insurance / payment</h2>
-      <table class="list"><tbody>
-        <tr><td style="color:var(--muted)">Provider</td><td>${esc((p.insurance || {}).provider || "—")}</td></tr>
-        <tr><td style="color:var(--muted)">Member ID</td><td class="num">${esc((p.insurance || {}).memberId || "—")}</td></tr>
-        <tr><td style="color:var(--muted)">Notes</td><td>${esc((p.insurance || {}).notes || "—")}</td></tr>
-      </tbody></table>
-    </div>
-    <div class="card">
-      <h2>Visit history</h2>
-      <table class="list"><tbody>
-        <tr><td>Daily visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
-        <tr><td>Upcoming bookings</td><td class="num">${S.appointments().filter((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date().toISOString()).length}</td></tr>
-      </tbody></table>
-    </div>
-  </div>
-</div>
-
-<div class="card asst-card" id="patientAssistant"></div>`;
+${tabStrip}
+<div class="ptab-panel">${patientTabContent(tab, p, user)}</div>`;
   }
+
+  function patientTabContent(tab, p, user) {
+    if (tab === "documents") return documentsPanel(p, user);
+    if (tab === "files") return filesPanel(p, user);
+    if (tab === "info") return infoPanel(p);
+    if (tab === "schedule") return schedulePanel(p, user);
+    return overviewPanel(p, user);
+  }
+
+  /* ---------- Overview: what needs attention + AI review ---------- */
+
+  // Deterministic, instant checklist of documentation/workflow gaps.
+  function needsAttention(p) {
+    const items = [];
+    const docs = S.docsFor(p.id);
+    const drafts = docs.filter((d) => d.status === "draft");
+    const today = todayIso();
+
+    if (drafts.length) items.push({ level: "warn", text: `${drafts.length} unsigned draft${drafts.length > 1 ? "s" : ""} to finish and sign`, tab: "documents", status: "draft", action: "Review drafts" });
+    if (S.progressDue(p.id)) items.push({ level: "warn", text: `Progress report due — ${S.visitCount(p.id)} visits completed`, tab: "documents", action: "Open documents" });
+    const hasEval = docs.some((d) => d.type === "eval");
+    if (!hasEval && docs.some((d) => d.type === "daily")) items.push({ level: "warn", text: "Daily notes on file but no initial evaluation", tab: "documents", action: "Open documents" });
+
+    const visitToday = S.apptsOn(today).some((a) => a.patientId === p.id && a.status !== "cancelled");
+    const noteToday = docs.some((d) => d.type === "daily" && d.createdAt.slice(0, 10) === today);
+    if (visitToday && !noteToday) items.push({ level: "info", text: "Visit booked today — no note started yet", tab: "documents", action: "Start a note" });
+
+    if (!(p.attachments || []).length) items.push({ level: "info", text: "No referral or imaging files uploaded", tab: "files", action: "Add files" });
+
+    const upcoming = S.appointments().some((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date().toISOString());
+    if (!upcoming && !docs.some((d) => d.type === "discharge")) items.push({ level: "info", text: "No upcoming visits booked", tab: "schedule", action: "Book visits" });
+
+    return items;
+  }
+
+  function overviewPanel(p, user) {
+    const items = needsAttention(p);
+    const attentionCard = `
+      <div class="card">
+        <div class="ins-head"><h2>Needs attention</h2></div>
+        ${items.length ? `<div class="attn-list">${items.map((it) => `
+          <div class="attn-item ${it.level}">
+            <span class="attn-dot"></span>
+            <span class="attn-text">${esc(it.text)}</span>
+            <button class="btn small" data-goto-tab="${it.tab}"${it.status ? ` data-goto-status="${it.status}"` : ""}>${esc(it.action)}</button>
+          </div>`).join("")}</div>`
+          : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — drafts are signed and documentation looks complete.</div>`}
+      </div>`;
+
+    // "At a glance" quick facts
+    const docs = S.docsFor(p.id);
+    const last = docs.length ? docs[docs.length - 1] : null;
+    const nextAppt = S.appointments()
+      .filter((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date().toISOString())
+      .sort((a, b) => (a.start < b.start ? -1 : 1))[0];
+    const every = S.settings().progressEvery || 5;
+    const toward = S.visitCount(p.id) % every;
+    const glance = `
+      <div class="card">
+        <h2>At a glance</h2>
+        <table class="list"><tbody>
+          <tr><td style="color:var(--muted)">Last document</td><td>${last ? `<span class="doc-tag ${docMeta(last.type).cls}">${docMeta(last.type).short}</span> ${fmtDate(last.createdAt)}` : "—"}</td></tr>
+          <tr><td style="color:var(--muted)">Next visit</td><td>${nextAppt ? fmtDT(nextAppt.start) : "None booked"}</td></tr>
+          <tr><td style="color:var(--muted)">Visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
+          <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${toward}/${every}</td></tr>
+        </tbody></table>
+      </div>`;
+
+    return `${attentionCard}
+      <div class="card" id="patientAiReview"></div>
+      ${glance}
+      <div class="card asst-card" id="patientAssistant"></div>`;
+  }
+
+  /* ---------- AI chart review (async, once per day) ---------- */
+
+  function aiReviewAvailable() {
+    return !!((window.TheraSync && window.TheraSync.getInsights) ||
+      (window.TheraInsights && window.TheraInsights.buildInsights));
+  }
+
+  // Decide what to show and, on the first open of the day, kick off the review.
+  function mountAiReview(p, user) {
+    const el = document.getElementById("patientAiReview");
+    if (!el) return;
+    if (!S.docsFor(p.id).length) {
+      el.innerHTML = `<div class="ins-head"><h2>✦ AI chart review</h2></div>
+        <div class="empty-state" style="padding:12px">No documents yet — the AI review appears once this chart has an evaluation or notes.</div>`;
+      return;
+    }
+    if (!aiReviewAvailable()) {
+      el.innerHTML = `<div class="ins-head"><h2>✦ AI chart review</h2></div>
+        <div class="banner warn" style="margin-top:6px">AI review is unavailable — configure Google Gemini / Vertex AI on the server, or use the on-device reviewer inside a note.</div>`;
+      return;
+    }
+    if (aiReviewRuns[p.id]) return renderAiReviewCard(el, p, user, "running");
+    if (p.aiReview && p.aiReview.ranOn === todayIso()) {
+      return renderAiReviewCard(el, p, user, p.aiReview.error ? "error" : "done");
+    }
+    startAiReview(p, user); // first open today → auto-run
+  }
+
+  function renderAiReviewCard(el, p, user, state) {
+    const review = p.aiReview || {};
+    const src = review.result && review.result.source;
+    const engineChip = src ? `<span class="chip ${src.startsWith("gemini") ? "info" : "muted"}">${src.startsWith("gemini") ? "Gemini" : "local AI"}</span>` : "";
+    const note = `<p class="ins-disclaimer">Runs automatically the first time you open this chart each day${review.ranAt ? ` · last run ${fmtTime(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
+    let body;
+    if (state === "running") {
+      body = `<div class="empty-state" style="padding:16px">
+        <span class="asst-typing">Reviewing this chart…</span>
+        <div style="margin-top:8px; font-size:12px; color:var(--muted)">Running in the background — the rest of the chart is ready to use.</div></div>`;
+    } else if (state === "error") {
+      body = `<div class="banner bad">AI review couldn't finish: ${esc(review.error || "unknown error")}. Try again with Re-run.</div>`;
+    } else {
+      body = review.result ? insightsHtml(review.result, { withAdd: false }) : `<div class="empty-state" style="padding:12px">No review yet.</div>`;
+    }
+    el.innerHTML = `
+      <div class="ins-head">
+        <h2>✦ AI chart review ${engineChip}<span class="chip muted">what needs attention</span></h2>
+        <button class="btn small ai" id="aiReviewBtn" ${state === "running" ? "disabled" : ""}>${state === "running" ? "Reviewing…" : "Re-run review"}</button>
+      </div>
+      ${note}
+      <div id="aiReviewBody">${body}</div>`;
+    const btn = el.querySelector("#aiReviewBtn");
+    if (btn) btn.addEventListener("click", () => startAiReview(p, user));
+  }
+
+  async function startAiReview(p, user) {
+    if (aiReviewRuns[p.id]) return;
+    aiReviewRuns[p.id] = true;
+    const el0 = document.getElementById("patientAiReview");
+    if (el0) renderAiReviewCard(el0, p, user, "running");
+
+    let result = null, error = null;
+    try {
+      const latest = S.docsFor(p.id).slice().sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))[0];
+      const ctx = gatherInsightContext(latest);
+      const sync = window.TheraSync || {};
+      result = sync.getInsights ? await sync.getInsights(ctx) : window.TheraInsights.buildInsights(ctx);
+    } catch (e) { error = e.message || "review failed"; }
+
+    delete aiReviewRuns[p.id];
+    const review = { ranOn: todayIso(), ranAt: new Date().toISOString() };
+    if (error) review.error = error; else review.result = result;
+    S.saveAiReview(p.id, review);
+    if (!error) S.audit(user.id, "ai-chart-review", `${S.patientName(p)}: ${(result.connections || []).length} connections, ${(result.recommendations || []).length} recs`);
+
+    // sync may have swapped the state object during the await — re-fetch, and
+    // only repaint if the review card is still mounted (user still on Overview)
+    const cur = S.getPatient(p.id) || p;
+    const el = document.getElementById("patientAiReview");
+    if (el) renderAiReviewCard(el, cur, user, error ? "error" : "done");
+  }
+
+  /* ---------- Documents tab: new-doc picker + filters ---------- */
+
+  function documentsPanel(p, user) {
+    const canDoc = S.canDocument(user);
+    const due = S.progressDue(p.id);
+    return `
+      <div class="card" id="documentsCard">
+        <div class="ins-head"><h2>Therapy documents</h2></div>
+        ${canDoc ? `<div class="newdoc">
+          <div class="newdoc-btns">
+            ${NEWDOC_TYPES.map((t) => `<button class="btn small newdoc-btn ${t.cls} ${t.type === "progress" && due ? "primary" : ""}" data-newdoc-type="${t.type}"><i class="dt-swatch"></i>+ ${t.label}${t.type === "progress" && due ? " (due)" : ""}</button>`).join("")}
+          </div>
+          <div class="newdoc-picker" id="newdocPicker" hidden></div>
+        </div>` : `<div class="banner warn" style="margin-bottom:12px">Your account can view this chart but cannot create or edit clinical documents.</div>`}
+        ${docFilterBar()}
+        <div class="table-scroll" id="docListWrap">${docListHtml(p)}</div>
+      </div>`;
+  }
+
+  function docFilterBar() {
+    const typeChip = (val, label) => `<button class="fchip ${docFilter.type === val ? "on" : ""}" data-ftype="${val}">${label}</button>`;
+    const statChip = (val, label) => `<button class="fchip ${docFilter.status === val ? "on" : ""}" data-fstatus="${val}">${label}</button>`;
+    return `
+      <div class="doc-filters">
+        <div class="fgroup"><span class="fglabel">Type</span>
+          ${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div>
+        <div class="fgroup"><span class="fglabel">Status</span>
+          ${statChip("all", "All")}${statChip("draft", "Draft")}${statChip("signed", "Signed")}</div>
+        <div class="fgroup"><span class="fglabel">Date</span>
+          <input type="date" class="fdate" id="fFrom" value="${docFilter.from}" aria-label="From date" />
+          <span class="fgsep">–</span>
+          <input type="date" class="fdate" id="fTo" value="${docFilter.to}" aria-label="To date" />
+          <button class="btn small" id="fClear">Clear</button></div>
+      </div>`;
+  }
+
+  function filteredDocs(p) {
+    let docs = S.docsFor(p.id).slice().reverse(); // newest first
+    if (docFilter.type !== "all") docs = docs.filter((d) => d.type === docFilter.type);
+    if (docFilter.status !== "all") docs = docs.filter((d) => d.status === docFilter.status);
+    if (docFilter.from) docs = docs.filter((d) => d.createdAt.slice(0, 10) >= docFilter.from);
+    if (docFilter.to) docs = docs.filter((d) => d.createdAt.slice(0, 10) <= docFilter.to);
+    return docs;
+  }
+
+  function docListHtml(p) {
+    const docs = filteredDocs(p);
+    const anyDocs = S.docsFor(p.id).length;
+    if (!docs.length) {
+      return `<div class="empty-state">${anyDocs ? "No documents match these filters." : `No documents yet.${S.canDocument(S.currentUser()) ? " Start with an <b>Evaluation</b> above." : ""}`}</div>`;
+    }
+    return `<table class="list"><thead><tr><th>Document</th><th>Status</th><th>Therapist</th><th>Date</th></tr></thead>
+      <tbody>${docs.map(docRow).join("")}</tbody></table>`;
+  }
+
+  // The picker that replaces auto-creating a draft: shows existing unsigned
+  // drafts of the chosen type to resume, plus an explicit "start a new one".
+  function draftPickerHtml(p, type) {
+    const meta = docMeta(type);
+    const label = NEWDOC_TYPES.find((t) => t.type === type).label.toLowerCase();
+    const drafts = S.docsFor(p.id).filter((d) => d.type === type && d.status === "draft").slice().reverse();
+    const rows = drafts.length ? drafts.map((d) => `
+      <div class="draft-row">
+        <div><span class="doc-tag ${meta.cls}">${meta.short}</span> <b>${esc(d.title)}</b>
+          <small style="color:var(--muted)"> · started ${fmtDT(d.createdAt)}</small></div>
+        <a class="btn small" href="#/doc/${d.id}">Resume</a>
+      </div>`).join("") : `<div class="empty-state" style="padding:8px">No unsigned ${label} drafts in progress.</div>`;
+    return `
+      <div class="draft-picker-head">${esc(NEWDOC_TYPES.find((t) => t.type === type).label)} drafts in progress</div>
+      ${rows}
+      <div class="draft-picker-actions">
+        <button class="btn small primary" data-startdoc="${type}">+ Start a new ${label}</button>
+        <button class="btn small" data-closepicker>Cancel</button>
+      </div>`;
+  }
+
+  /* ---------- Files tab ---------- */
+
+  function filesPanel(p, user) {
+    const canDoc = S.canDocument(user);
+    return `
+      <div class="card">
+        <h2>Referrals, imaging & other files</h2>
+        ${p.attachments.length ? `<table class="list"><tbody>${p.attachments.map((a) => `
+          <tr><td><b>${esc(a.name)}</b>${a.size ? ` <small style="color:var(--muted)">(${fmtBytes(a.size)})</small>` : ""}<br><small style="color:var(--muted)">added ${fmtDT(a.uploadedAt)} by ${esc((S.getUser(a.uploadedBy) || {}).name || "—")}</small></td>
+          <td style="text-align:right"><button class="btn small" data-dl-att="${esc(a.id)}">Download</button></td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty-state">No files yet — add the physician referral, X-rays, or other documents.</div>`}
+        <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <label class="btn small" style="position:relative; overflow:hidden">
+            Upload file<input id="fileUpload" type="file" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
+          </label>
+          ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
+            ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
+          </label>` : ""}
+          <small style="color:var(--muted)">Referrals, imaging & scans · up to 20 MB per file</small>
+        </div>
+      </div>`;
+  }
+
+  /* ---------- Info tab ---------- */
+
+  function infoPanel(p) {
+    return `
+      <div class="cards-2">
+        <div class="card">
+          <h2>Personal information</h2>
+          <table class="list"><tbody>
+            <tr><td style="color:var(--muted)">Address</td><td>${esc(p.address || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Phone</td><td class="num">${esc(p.phone)}</td></tr>
+            <tr><td style="color:var(--muted)">Email</td><td>${esc(p.email || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Referring physician</td><td>${esc(p.referringPhysician || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Registered</td><td>${fmtDT(p.createdAt)} by ${esc((S.getUser(p.createdBy) || {}).name || "—")}</td></tr>
+          </tbody></table>
+        </div>
+        <div class="card">
+          <h2>Insurance / payment</h2>
+          <table class="list"><tbody>
+            <tr><td style="color:var(--muted)">Provider</td><td>${esc((p.insurance || {}).provider || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Member ID</td><td class="num">${esc((p.insurance || {}).memberId || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Notes</td><td>${esc((p.insurance || {}).notes || "—")}</td></tr>
+          </tbody></table>
+        </div>
+      </div>`;
+  }
+
+  /* ---------- Schedule tab: bulk booking + upcoming visits ---------- */
+
+  // Clock labels for the time <select>, generated from the facility's hours.
+  function bulkTimeOptions() {
+    const s = S.settings();
+    const opts = [];
+    for (let m = s.dayStartHour * 60; m < s.dayEndHour * 60; m += s.slotMinutes) {
+      const hh = Math.floor(m / 60), mm = m % 60;
+      const value = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+      const label = fmtTime(new Date(2000, 0, 1, hh, mm).toISOString());
+      opts.push(`<option value="${value}"${hh === s.dayStartHour && mm === 0 ? " selected" : ""}>${label}</option>`);
+    }
+    return opts.join("");
+  }
+
+  // From a start date + chosen weekdays + time, produce `count` ISO slot times,
+  // skipping days the facility is closed. Deterministic, so preview == confirm.
+  function generateSeries({ startIso, weekdays, time, count }) {
+    const [hh, mm] = time.split(":").map(Number);
+    const workDays = S.settings().workDays;
+    const starts = [];
+    const d = new Date(startIso + "T00:00:00");
+    let guard = 0;
+    while (starts.length < count && guard < 730) {
+      guard++;
+      const dow = d.getDay();
+      if (weekdays.includes(dow) && workDays.includes(dow)) {
+        const slot = new Date(d); slot.setHours(hh, mm, 0, 0);
+        starts.push(slot.toISOString());
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    return starts;
+  }
+
+  function schedulePanel(p, user) {
+    const ths = therapists();
+    const dow = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
+    const defaults = [1, 3, 5]; // Mon/Wed/Fri
+    const upcoming = S.appointments()
+      .filter((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
+      .sort((a, b) => (a.start < b.start ? -1 : 1));
+
+    const form = ths.length ? `
+      <div class="bulk-form">
+        <div class="field"><label>Therapist</label><select id="bkTherapist">${ths.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Start date</label><input type="date" id="bkStart" value="${todayIso()}" /></div>
+        <div class="field"><label>Time</label><select id="bkTime">${bulkTimeOptions()}</select></div>
+        <div class="field"><label>Number of visits</label><input type="number" id="bkCount" min="1" max="60" value="12" /></div>
+        <div class="field bulk-days"><label>Days of week</label>
+          <div class="dow-picker">${dow.map(([v, l]) => `<label class="dow"><input type="checkbox" value="${v}" ${defaults.includes(v) ? "checked" : ""} />${l}</label>`).join("")}</div>
+        </div>
+        <div class="field"><label>Note (optional)</label><input id="bkNote" placeholder="e.g. Post-op ROM course" /></div>
+        <div class="bulk-actions"><button class="btn primary" id="bkPreviewBtn">Preview schedule</button></div>
+      </div>
+      <div id="bulkPreview"></div>`
+      : `<div class="banner warn">No active licensed therapists to schedule — update staff licenses in Facility Admin.</div>`;
+
+    return `
+      <div class="card">
+        <div class="ins-head"><h2>Book a course of visits</h2></div>
+        <p style="font-size:13px; color:var(--muted); margin:0 0 12px">Generate a recurring schedule in one step — you'll preview every visit (and any conflicts) before it's booked. Each visit gets the usual automatic reminders.</p>
+        ${form}
+      </div>
+      <div class="card">
+        <h2>Upcoming visits</h2>
+        ${upcoming.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>When</th><th>Therapist</th><th>Note</th><th></th></tr></thead><tbody>
+          ${upcoming.map((a) => `<tr><td class="num">${fmtDT(a.start)}</td><td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td><td>${esc(a.note || "")}</td>
+            <td style="text-align:right"><button class="btn small" data-cancelappt="${a.id}">Cancel</button></td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty-state">No upcoming visits booked.</div>`}
+      </div>
+      <div class="card">
+        <h2>Visit history</h2>
+        <table class="list"><tbody>
+          <tr><td>Daily visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
+          <tr><td>Upcoming bookings</td><td class="num">${upcoming.length}</td></tr>
+        </tbody></table>
+      </div>`;
+  }
+
+  function readBulkForm() {
+    const therapistId = document.getElementById("bkTherapist").value;
+    const startIso = document.getElementById("bkStart").value;
+    const time = document.getElementById("bkTime").value;
+    const count = Math.max(1, Math.min(60, parseInt(document.getElementById("bkCount").value, 10) || 0));
+    const weekdays = Array.from(document.querySelectorAll(".dow-picker input:checked")).map((c) => Number(c.value));
+    const note = (document.getElementById("bkNote") || {}).value || "";
+    return { therapistId, startIso, time, count, weekdays, note };
+  }
+
+  function renderBulkPreview(p, user) {
+    const wrap = document.getElementById("bulkPreview");
+    if (!wrap) return;
+    const f = readBulkForm();
+    if (!f.startIso) { wrap.innerHTML = `<div class="banner warn">Pick a start date.</div>`; return; }
+    if (!f.weekdays.length) { wrap.innerHTML = `<div class="banner warn">Pick at least one day of the week.</div>`; return; }
+
+    const starts = generateSeries({ startIso: f.startIso, weekdays: f.weekdays, time: f.time, count: f.count });
+    const existing = S.appointments().filter((a) => a.status !== "cancelled" && a.therapistId === f.therapistId);
+    const rows = starts.map((s) => ({ start: s, clash: existing.some((a) => a.start === s) }));
+    const bookable = rows.filter((r) => !r.clash).length;
+
+    wrap.innerHTML = `
+      <div class="bulk-preview">
+        <div class="bulk-preview-head">${bookable} visit${bookable === 1 ? "" : "s"} will be booked${rows.length - bookable ? ` · ${rows.length - bookable} skipped (conflict)` : ""}</div>
+        <div class="table-scroll" style="max-height:260px; overflow:auto"><table class="list"><tbody>
+          ${rows.map((r) => `<tr><td class="num">${fmtDT(r.start)}</td><td style="text-align:right">${r.clash ? '<span class="chip bad">conflict — skipped</span>' : '<span class="chip good">available</span>'}</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="bulk-actions">
+          <button class="btn primary" id="bkConfirmBtn" ${bookable ? "" : "disabled"}>Book ${bookable} visit${bookable === 1 ? "" : "s"}</button>
+          <button class="btn" id="bkCancelPreview">Cancel</button>
+        </div>
+      </div>`;
+
+    document.getElementById("bkCancelPreview").addEventListener("click", () => { wrap.innerHTML = ""; });
+    document.getElementById("bkConfirmBtn").addEventListener("click", () => {
+      const res = S.bookSeries({ patientId: p.id, therapistId: f.therapistId, starts, note: f.note }, user);
+      const msg = `${res.booked.length} visit${res.booked.length === 1 ? "" : "s"} booked${res.skipped.length ? `, ${res.skipped.length} skipped for conflicts` : ""}.`;
+      alertBanner(msg);
+      renderShell(location.hash, patientView(user), user, bindPatient);
+    });
+  }
+
+  /* ---------- patient bindings ---------- */
 
   function bindPatient(user) {
     bindRowLinks();
     const p = S.getPatient(currentPatientId());
     if (!p) return;
 
-    renderAssistant(document.getElementById("patientAssistant"), p.id, user);
-
-    document.querySelectorAll("[data-newdoc]").forEach((b) =>
+    // tab switching
+    document.querySelectorAll("[data-ptab]").forEach((b) =>
       b.addEventListener("click", () => {
-        const res = S.createDoc(p.id, b.dataset.newdoc, user);
+        patientTab = b.dataset.ptab;
+        renderShell(location.hash, patientView(user), user, bindPatient);
+      }));
+    // "needs attention" jump-to-tab actions (may also set a document filter)
+    document.querySelectorAll("[data-goto-tab]").forEach((b) =>
+      b.addEventListener("click", () => {
+        patientTab = b.dataset.gotoTab;
+        if (b.dataset.gotoStatus) docFilter.status = b.dataset.gotoStatus;
+        renderShell(location.hash, patientView(user), user, bindPatient);
+      }));
+
+    const pr = document.getElementById("printChartBtn");
+    if (pr) pr.addEventListener("click", () => printPatientChart(p));
+
+    if (patientTab === "overview") {
+      renderAssistant(document.getElementById("patientAssistant"), p.id, user);
+      mountAiReview(p, user);
+    }
+    if (patientTab === "documents") { bindNewDoc(p, user); bindDocFilters(p, user); }
+    if (patientTab === "files") bindFiles(p, user);
+    if (patientTab === "schedule") bindSchedule(p, user);
+  }
+
+  function bindNewDoc(p, user) {
+    const picker = document.getElementById("newdocPicker");
+    if (!picker) return;
+    let openType = null;
+    const closePicker = () => { picker.hidden = true; picker.innerHTML = ""; openType = null; document.querySelectorAll("[data-newdoc-type]").forEach((b) => b.classList.remove("active")); };
+    const wirePicker = () => {
+      const start = picker.querySelector("[data-startdoc]");
+      if (start) start.addEventListener("click", () => {
+        const res = S.createDoc(p.id, start.dataset.startdoc, user);
         if (res.error) return alertBanner(res.error);
         location.hash = `#/doc/${res.doc.id}`;
-      })
-    );
+      });
+      const close = picker.querySelector("[data-closepicker]");
+      if (close) close.addEventListener("click", closePicker);
+      bindRowLinks();
+    };
+    document.querySelectorAll("[data-newdoc-type]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const type = b.dataset.newdocType;
+        if (openType === type) return closePicker();
+        openType = type;
+        document.querySelectorAll("[data-newdoc-type]").forEach((x) => x.classList.toggle("active", x === b));
+        picker.innerHTML = draftPickerHtml(p, type);
+        picker.hidden = false;
+        wirePicker();
+      }));
+  }
 
+  function bindDocFilters(p, user) {
+    const refresh = () => { const w = document.getElementById("docListWrap"); if (w) { w.innerHTML = docListHtml(p); bindRowLinks(); } };
+    document.querySelectorAll("[data-ftype]").forEach((b) =>
+      b.addEventListener("click", () => {
+        docFilter.type = b.dataset.ftype;
+        document.querySelectorAll("[data-ftype]").forEach((x) => x.classList.toggle("on", x.dataset.ftype === docFilter.type));
+        refresh();
+      }));
+    document.querySelectorAll("[data-fstatus]").forEach((b) =>
+      b.addEventListener("click", () => {
+        docFilter.status = b.dataset.fstatus;
+        document.querySelectorAll("[data-fstatus]").forEach((x) => x.classList.toggle("on", x.dataset.fstatus === docFilter.status));
+        refresh();
+      }));
+    const from = document.getElementById("fFrom"), to = document.getElementById("fTo"), clr = document.getElementById("fClear");
+    if (from) from.addEventListener("change", () => { docFilter.from = from.value; refresh(); });
+    if (to) to.addEventListener("change", () => { docFilter.to = to.value; refresh(); });
+    if (clr) clr.addEventListener("click", () => {
+      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = "";
+      renderShell(location.hash, patientView(user), user, bindPatient);
+    });
+  }
+
+  function bindFiles(p, user) {
     const up = document.getElementById("fileUpload");
     if (up) up.addEventListener("change", async () => {
       const f = up.files[0];
@@ -918,16 +1359,23 @@ ${due ? `<div class="banner info">◈ ${S.visitCount(p.id)} visits completed —
         catch (e) { alertBanner(e.message || "Download failed."); }
       })
     );
-
     const imp = document.getElementById("pdfImport");
     if (imp) imp.addEventListener("change", () => {
       const f = imp.files[0];
       if (f) importPdfFlow(p, user, f);
       imp.value = "";
     });
+  }
 
-    const pr = document.getElementById("printChartBtn");
-    if (pr) pr.addEventListener("click", () => printPatientChart(p));
+  function bindSchedule(p, user) {
+    const prev = document.getElementById("bkPreviewBtn");
+    if (prev) prev.addEventListener("click", () => renderBulkPreview(p, user));
+    document.querySelectorAll("[data-cancelappt]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const res = S.cancelAppointment(b.dataset.cancelappt, user);
+        if (res.error) return alertBanner(res.error);
+        renderShell(location.hash, patientView(user), user, bindPatient);
+      }));
   }
 
   function alertBanner(msg) {
@@ -2590,7 +3038,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     bindInsightActions(doc, user, editable);
   }
 
-  function insightsHtml(ins) {
+  function insightsHtml(ins, opts) {
+    opts = opts || {};
     const confChip = (c) => c ? `<span class="chip ${c === "high" ? "good" : c === "medium" ? "warn" : "muted"}">${esc(c)}</span>` : "";
     const prioChip = (p) => `<span class="chip ${p === "urgent" ? "bad" : p === "high" ? "warn" : "muted"}">${esc(p || "routine")}</span>`;
     const conns = (ins.connections || []).map((c) => `
@@ -2604,7 +3053,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const recs = (ins.recommendations || []).map((r, i) => `
       <div class="ins-item">
         <div class="ins-item-head"><b>${esc(r.action)}</b>${prioChip(r.priority)}
-          <button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button></div>
+          ${opts.withAdd === false ? "" : `<button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button>`}</div>
         ${r.rationale ? `<div class="ins-detail">${esc(r.rationale)}</div>` : ""}
       </div>`).join("");
     return `
