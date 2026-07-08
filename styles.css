@@ -998,9 +998,15 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   .btn.small { padding: 7px 12px; }
   .login-user { padding: 12px 14px; }
 
-  /* wide tables scroll horizontally instead of crushing their columns */
+  /* wide tables scroll horizontally instead of crushing their columns.
+     the primary text column (first cell) is allowed to wrap so ordinary
+     list cards — dashboard drafts, schedules — fit the phone width instead
+     of shoving their trailing chip/date columns off-screen behind an
+     awkward nested horizontal scroll. narrow trailing columns stay nowrap. */
   .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table.list th, table.list td { white-space: nowrap; }
+  table.list th:first-child, table.list td:first-child { white-space: normal; }
+  table.list td:first-child { word-break: break-word; }
   .cal-grid { min-width: 480px; }
 
   /* dictation controls: mic stays prominent, the long-labelled language +
