@@ -81,6 +81,7 @@
     back: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>',
     signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
     logo: LOGO_MARK,
+    spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg>',
   };
 
   /* scroll memory: return to where you were when navigating back */
@@ -294,6 +295,9 @@
 
   function renderShell(hash, content, user, bind) {
     const emrAllowed = S.canAccessEmr(user);
+    // the patient assistant drawer is available whenever a patient chart is open
+    const drawerPid = /^#\/patient\//.test(hash) ? (hash.split("/")[2] || "").split("?")[0] : null;
+    if (assistantFor !== drawerPid) { assistantOpen = false; assistantFor = drawerPid; }
     const groups = [
       { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash)) },
       { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/profile"].includes(n.hash)) },
@@ -364,6 +368,10 @@
       </div>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
       <div class="nav">${nav}</div>
+      ${drawerPid ? `<div class="nav-group sidebar-context">
+        <div class="nav-group-label">This patient</div>
+        <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
+      </div>` : ""}
       <div class="spacer"></div>
       <div class="userchip">
         <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
@@ -375,6 +383,15 @@
   </aside>
   <main class="content" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
+  ${drawerPid ? `
+  <div class="assistant-backdrop" id="asstBackdrop"></div>
+  <aside class="assistant-drawer" id="assistantDrawer" aria-hidden="true" aria-label="Patient assistant">
+    <div class="assistant-drawer-head">
+      <b>${ICON.spark} Patient assistant</b>
+      <button class="drawer-close" id="asstClose" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="asst-card assistant-drawer-body" id="patientAssistant"></div>
+  </aside>` : ""}
 </div>`;
     document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
 
@@ -403,7 +420,36 @@
     const back = document.getElementById("crumbBack");
     if (back) back.addEventListener("click", () => { location.hash = crumbs[crumbs.length - 2].hash; });
     if (bind) bind(user);
+    if (drawerPid) wireAssistantDrawer(drawerPid, user);
     restoreScroll(hash);
+  }
+
+  /* Mounts the patient assistant into the left drawer and wires its launchers.
+     Open state + conversation persist across re-renders (see module state). */
+  function wireAssistantDrawer(patientId, user) {
+    const drawer = document.getElementById("assistantDrawer");
+    const backdrop = document.getElementById("asstBackdrop");
+    const body = document.getElementById("patientAssistant");
+    if (!drawer || !backdrop) return;
+    if (body) renderAssistant(body, patientId, user, { persistKey: patientId });
+
+    const setOpen = (open) => {
+      assistantOpen = open;
+      drawer.classList.toggle("open", open);
+      backdrop.classList.toggle("open", open);
+      drawer.setAttribute("aria-hidden", open ? "false" : "true");
+      if (open) { const inp = drawer.querySelector("#asstInput"); if (inp) inp.focus(); }
+    };
+    [document.getElementById("assistantLaunch"), document.getElementById("assistantLaunchM")]
+      .forEach((b) => b && b.addEventListener("click", () => setOpen(true)));
+    const close = document.getElementById("asstClose");
+    if (close) close.addEventListener("click", () => setOpen(false));
+    backdrop.addEventListener("click", () => setOpen(false));
+    document.addEventListener("keydown", function esc(e) {
+      if (!document.getElementById("assistantDrawer")) return document.removeEventListener("keydown", esc);
+      if (e.key === "Escape" && assistantOpen) setOpen(false);
+    });
+    setOpen(assistantOpen); // restore open state across tab-switch re-renders
   }
 
   const roleLabel = (u) =>
@@ -616,58 +662,68 @@
     const drafts = S.load().documents.filter((d) => d.status === "draft");
     const todays = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
     const expSoon = S.users().filter((u) => u.active && S.licenseExpiresSoon(u));
+    const upcoming = S.appointments().filter((a) => a.status === "booked" && a.start >= new Date().toISOString()).length;
+    const canIntake = S.canDocument(user) || user.role === "frontdesk";
+
+    // A single "needs attention" list for the whole clinic — same organizing
+    // idea as the patient chart's Overview, so the important things surface
+    // instead of being spread across banners.
+    const attn = [];
+    expSoon.forEach((u) => attn.push({ level: "warn", text: `${u.name} — license ${u.license.number} expires ${fmtDate(u.license.expires)}`, href: "#/facility", action: "Staff" }));
+    due.forEach((p) => attn.push({ level: "warn", text: `${S.patientName(p)} — progress report due (${S.visitCount(p.id)} visits)`, href: `#/patient/${p.id}`, action: "Open chart" }));
+    if (drafts.length) attn.push({ level: "info", text: `${drafts.length} unsigned draft${drafts.length > 1 ? "s" : ""} across the clinic`, href: null, action: null });
+
+    const tile = (num, label, href, accent) => {
+      const inner = `<div class="stat-num">${num}</div><div class="stat-label">${label}</div>`;
+      return href ? `<a class="stat-tile ${accent && num ? "accent" : ""}" href="${href}">${inner}</a>`
+        : `<div class="stat-tile ${accent && num ? "accent" : ""}">${inner}</div>`;
+    };
 
     return `
 <div class="page-head">
   <div><h1>Good day, ${esc(user.name.split(",")[0].split(" ")[0])}</h1>
   <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.settings().facilityName)}</div></div>
   <div class="page-actions">
-    ${S.canDocument(user) || user.role === "frontdesk" ? `<a class="btn primary" href="#/intake">+ New patient intake</a>` : ""}
+    ${canIntake ? `<a class="btn primary" href="#/intake">+ New patient intake</a>` : ""}
   </div>
 </div>
 
-${expSoon.map((u) => `<div class="banner warn">△ ${esc(u.name)} — license ${esc(u.license.number)} expires ${fmtDate(u.license.expires)}. Renew to avoid losing documentation access.</div>`).join("")}
-${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> has completed ${S.visitCount(p.id)} visits — a <b>progress report is due</b>. <a href="#/patient/${p.id}">Open chart</a></div>`).join("")}
+<div class="stat-tiles">
+  ${tile(patients.length, "Patients on file", "#/patients", false)}
+  ${tile(todays.length, "Visits today", "#/calendar", false)}
+  ${tile(drafts.length, "Unsigned drafts", null, true)}
+  ${tile(due.length, "Progress reports due", null, true)}
+</div>
+
+<div class="card">
+  <h2>Needs attention</h2>
+  ${attn.length ? `<div class="attn-list">${attn.map((it) => `
+    <div class="attn-item ${it.level}">
+      <span class="attn-dot"></span>
+      <span class="attn-text">${esc(it.text)}</span>
+      ${it.href ? `<a class="btn small" href="${it.href}">${esc(it.action)}</a>` : ""}
+    </div>`).join("")}</div>`
+    : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — licenses current, progress reports up to date.</div>`}
+</div>
 
 <div class="cards-2">
-  <div>
-    <div class="card">
-      <h2>Today's schedule</h2>
-      ${todays.length ? `<table class="list"><thead><tr><th>Time</th><th>Patient</th><th>Therapist</th></tr></thead><tbody>
-        ${todays.map((a) => `<tr class="rowlink" data-href="#/patient/${a.patientId}">
-          <td class="num">${fmtTime(a.start)}</td>
-          <td>${esc(S.patientName(S.getPatient(a.patientId)))}</td>
-          <td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td></tr>`).join("")}
-      </tbody></table>` : `<div class="empty-state">No visits scheduled today. <a href="#/calendar">Open the calendar</a> to book one.</div>`}
-    </div>
-    <div class="card">
-      <h2>Unsigned drafts</h2>
-      ${drafts.length ? `<table class="list"><tbody>${drafts.map((d) => `
-        <tr class="rowlink" data-href="#/doc/${d.id}">
-          <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>${esc(d.title)}<br><small style="color:var(--muted)">${esc(S.patientName(S.getPatient(d.patientId)))}</small></td>
-          <td><span class="chip warn">draft</span></td>
-          <td class="num">${fmtDate(d.createdAt)}</td></tr>`).join("")}</tbody></table>`
-        : `<div class="empty-state">Everything is signed. ✓</div>`}
-    </div>
+  <div class="card">
+    <h2>Today's schedule</h2>
+    ${todays.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>Time</th><th>Patient</th><th>Therapist</th></tr></thead><tbody>
+      ${todays.map((a) => `<tr class="rowlink" data-href="#/patient/${a.patientId}">
+        <td class="num">${fmtTime(a.start)}</td>
+        <td>${esc(S.patientName(S.getPatient(a.patientId)))}</td>
+        <td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty-state">No visits scheduled today. <a href="#/calendar">Open the calendar</a> to book one.</div>`}
   </div>
-  <div>
-    <div class="card">
-      <h2>How TheraChart works</h2>
-      <ol style="margin:0; padding-left:20px; font-size:13.5px; line-height:1.9">
-        <li><b>Front desk</b> registers the patient in <a href="#/intake">Intake</a> and books visits in the <a href="#/calendar">Calendar</a>.</li>
-        <li><b>Therapists</b> open the patient chart and start a note — press <b>🎤 Listen</b> and just talk. TheraChart pins what the patient says to a body map, files measurements (ROM, strength, pain) into the right sections, and keeps the full transcript. It understands <b>English, Tagalog, and Cebuano</b>.</li>
-        <li>When done, <b>e-sign</b> — the note locks. Any later change needs a signed, authorized amendment.</li>
-      </ol>
-    </div>
-    <div class="card">
-      <h2>Facility at a glance</h2>
-      <table class="list"><tbody>
-        <tr><td>Patients on file</td><td class="num">${patients.length}</td></tr>
-        <tr><td>Documents</td><td class="num">${S.load().documents.length}</td></tr>
-        <tr><td>Progress report cadence</td><td class="num">every ${S.settings().progressEvery} visits</td></tr>
-        <tr><td>Booked visits (upcoming)</td><td class="num">${S.appointments().filter((a) => a.status === "booked" && a.start >= new Date().toISOString()).length}</td></tr>
-      </tbody></table>
-    </div>
+  <div class="card">
+    <h2>Unsigned drafts</h2>
+    ${drafts.length ? `<div class="table-scroll"><table class="list"><tbody>${drafts.map((d) => `
+      <tr class="rowlink" data-href="#/doc/${d.id}">
+        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>${esc(d.title)}<br><small style="color:var(--muted)">${esc(S.patientName(S.getPatient(d.patientId)))}</small></td>
+        <td><span class="chip warn">draft</span></td>
+        <td class="num">${fmtDate(d.createdAt)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty-state">Everything is signed. ✓</div>`}
   </div>
 </div>`;
   }
@@ -793,6 +849,12 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
   const docFilter = { type: "all", status: "all", from: "", to: "" };
   const aiReviewRuns = {}; // patientId -> true while an AI review request is in flight
 
+  // Patient assistant drawer (left slide-in): open state + conversation survive
+  // full re-renders (tab switches) so the chat isn't lost mid-conversation.
+  let assistantOpen = false;
+  let assistantFor = null;   // patient id the open-state/conversation belongs to
+  const assistantConvos = {}; // patientId -> [turns]
+
   const PATIENT_TABS = [
     { id: "overview", label: "Overview" },
     { id: "documents", label: "Documents" },
@@ -836,6 +898,7 @@ ${due.map((p) => `<div class="banner info">◈ <b>${esc(S.patientName(p))}</b> h
     <div class="sub">${esc(p.dob)} (age ${age(p.dob)}) · ${esc(p.phone)} · Referred by ${esc(p.referringPhysician || "—")}</div>
   </div>
   <div class="page-actions">
+    <button class="btn only-mobile" id="assistantLaunchM" type="button">${ICON.spark} Ask about patient</button>
     <button class="btn" id="printChartBtn">Print / export chart (PDF)</button>
     <a class="btn" href="#/intake?edit=${p.id}">Edit info</a>
   </div>
@@ -911,10 +974,12 @@ ${tabStrip}
         </tbody></table>
       </div>`;
 
+    // AI chart review sits at the very bottom of the Overview, after the
+    // instant checklist and quick facts. (The Q&A assistant lives in the
+    // left-side drawer, launched from the sidebar / "Ask about patient".)
     return `${attentionCard}
-      <div class="card" id="patientAiReview"></div>
       ${glance}
-      <div class="card asst-card" id="patientAssistant"></div>`;
+      <div class="card" id="patientAiReview"></div>`;
   }
 
   /* ---------- AI chart review (async, once per day) ---------- */
@@ -1270,10 +1335,7 @@ ${tabStrip}
     const pr = document.getElementById("printChartBtn");
     if (pr) pr.addEventListener("click", () => printPatientChart(p));
 
-    if (patientTab === "overview") {
-      renderAssistant(document.getElementById("patientAssistant"), p.id, user);
-      mountAiReview(p, user);
-    }
+    if (patientTab === "overview") mountAiReview(p, user);
     if (patientTab === "documents") { bindNewDoc(p, user); bindDocFilters(p, user); }
     if (patientTab === "files") bindFiles(p, user);
     if (patientTab === "schedule") bindSchedule(p, user);
@@ -2952,7 +3014,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <div class="banner warn" style="margin-top:6px">The AI assistant needs Google Gemini / Vertex AI configured on the server. It's currently unavailable — clinical notes and dictation still work as normal.</div>`;
       return;
     }
-    const turns = [];
+    // when a persistKey is given, reuse the stored conversation so it survives
+    // re-renders (drawer stays mid-chat across patient-tab switches)
+    const turns = opts.persistKey ? (assistantConvos[opts.persistKey] || (assistantConvos[opts.persistKey] = [])) : [];
     container.innerHTML = `
       <div class="asst-head">
         <h2>✦ Ask about this patient <span class="chip info">Gemini</span><span class="chip muted">grounded in this chart</span></h2>
@@ -3013,6 +3077,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     sendBtn.addEventListener("click", () => ask(input.value));
     container.querySelectorAll(".asst-starter").forEach((b) =>
       b.addEventListener("click", () => ask(b.textContent)));
+    if (turns.length) redraw(false); // restore a persisted conversation
   }
 
   const planFieldFor = (type) =>

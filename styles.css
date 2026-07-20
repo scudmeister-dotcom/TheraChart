@@ -628,6 +628,63 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 .ptab-panel > .card { margin-bottom: 14px; }
 .ptab-panel > .card:last-child { margin-bottom: 0; }
 
+/* ---------------- dashboard stat tiles ---------------- */
+.stat-tiles {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px; margin-bottom: 14px;
+}
+.stat-tile {
+  display: block; text-decoration: none; color: inherit;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px 18px; transition: border-color 0.14s, transform 0.12s, box-shadow 0.14s;
+}
+a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+.stat-tile .stat-num { font-size: 30px; font-weight: 700; line-height: 1; letter-spacing: -0.5px; }
+.stat-tile .stat-label { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.stat-tile.accent { border-color: color-mix(in srgb, var(--review) 55%, var(--border)); background: color-mix(in srgb, var(--review-soft) 60%, var(--panel)); }
+.stat-tile.accent .stat-num { color: var(--review); }
+@media (max-width: 860px) { .stat-tiles { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------------- patient assistant drawer (left slide-in) ---------------- */
+.only-mobile { display: none; }
+.nav-btn {
+  appearance: none; background: none; border: none; width: 100%;
+  cursor: pointer; font: inherit; text-align: left;
+}
+.assistant-backdrop {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(8, 16, 24, 0.42);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+}
+.assistant-backdrop.open { opacity: 1; pointer-events: auto; }
+.assistant-drawer {
+  position: fixed; top: 0; left: 0; z-index: 71;
+  width: min(420px, 92vw); height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--panel); border-right: 1px solid var(--border);
+  box-shadow: 0 0 48px rgba(0, 0, 0, 0.28);
+  transform: translateX(-100%); transition: transform 0.24s cubic-bezier(0.4, 0.9, 0.3, 1);
+}
+.assistant-drawer.open { transform: translateX(0); }
+.assistant-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); flex: none;
+}
+.assistant-drawer-head b { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; }
+.drawer-close {
+  appearance: none; border: none; background: var(--hover); cursor: pointer;
+  width: 30px; height: 30px; border-radius: 8px; color: var(--muted); font-size: 15px;
+}
+.drawer-close:hover { color: var(--ink); background: var(--border); }
+.assistant-drawer-body {
+  flex: 1; min-height: 0; margin: 0; border: none; border-radius: 0; padding: 16px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* the drawer's own title bar names the panel, so drop the card's duplicate head */
+.assistant-drawer-body .asst-head { display: none; }
+.assistant-drawer-body .asst-disclaimer { margin-top: 0; }
+.assistant-drawer-body .asst-log { flex: 1; min-height: 0; max-height: none; }
+
 /* ---------------- needs-attention list ---------------- */
 .attn-list { display: flex; flex-direction: column; gap: 8px; }
 .attn-item {
@@ -1061,6 +1118,12 @@ tr.rowlink .doc-tag { margin-right: 6px; }
      as the horizontal top bar again */
   .sidebar-inner { display: contents; }
   .sidebar .brand { padding: 0; flex: 1; min-width: 0; }
+  /* the sidebar's contextual "Ask about patient" launcher is a desktop-rail
+     affordance; on phones the same drawer is reached from the page header */
+  .sidebar-context { display: none; }
+  .only-mobile { display: inline-flex; align-items: center; gap: 6px; }
+  /* the drawer becomes a full-width sheet on phones */
+  .assistant-drawer { width: 100%; }
   .sidebar .brand .logo { width: 34px; height: 34px; border-radius: 10px; }
   .sidebar .brand-text b { font-size: 15px; }
   .sidebar .brand-text span { font-size: 9px; letter-spacing: 2px; }
