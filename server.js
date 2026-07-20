@@ -263,7 +263,27 @@ function bootstrapInfo() {
     rev,
     facilityName: store.settings().facilityName,
     googleClientId: GOOGLE_CLIENT_ID, // "" when unconfigured → the button is hidden
+    testAccounts: demoLogins(),       // seeded demo logins to surface on the sign-in screen
   };
+}
+
+// Demo/test logins shown on the sign-in screen. Deliberately limited to the
+// seeded accounts (emails @therachart.demo) so real staff are never listed; if
+// the demo accounts are removed the list is empty and the panel disappears. All
+// seeded demo accounts share one password.
+const DEMO_LOGIN_PASSWORD = "1234";
+function demoLogins() {
+  const today = new Date().toISOString().slice(0, 10);
+  return store.users()
+    .filter((u) => /@therachart\.demo$/i.test(u.email || ""))
+    .slice(0, 10)
+    .map((u) => {
+      let status = "";
+      if (u.active === false) status = "sign-in blocked (voided)";
+      else if (u.role !== "frontdesk" && u.license && u.license.expires && u.license.expires < today)
+        status = "license expired — EMR read-only";
+      return { name: u.name, email: u.email, role: u.role, password: DEMO_LOGIN_PASSWORD, status };
+    });
 }
 
 /* ---- speech-to-text (Google Cloud Speech-to-Text v2, under your BAA) ----

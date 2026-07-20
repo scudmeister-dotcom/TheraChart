@@ -296,7 +296,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   text-decoration: none;
 }
 .btn:hover { background: var(--hover); }
-.btn.primary { background: var(--brand-grad); border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(14, 124, 134, 0.32); }
+/* Primary fill: deepen the left end (no bright cyan corner) so the button reads
+   as one solid teal instead of its top-left edge jumping out on light panels. */
+.btn.primary { background: linear-gradient(145deg, #23929c 0%, #0e7c86 55%, #0a5b63 100%); border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(14, 124, 134, 0.32); }
 .btn.primary:hover { filter: brightness(1.06); }
 /* AI actions carry a teal→indigo→violet sweep to signal "assisted". Both ends
    are deepened (no neon cyan on the left, no bright violet on the right) so the
@@ -450,6 +452,29 @@ table.list .num { font-variant-numeric: tabular-nums; }
 .login-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 12px; color: var(--muted); font-size: 12px; }
 .login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .google-btn-wrap { display: flex; justify-content: center; min-height: 40px; }
+
+/* Test-account quick-fill panel on the sign-in card */
+.test-accounts { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.ta-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12px; font-weight: 700; color: var(--ink); }
+.ta-head .ta-pw { font-weight: 500; color: var(--muted); font-size: 11px; }
+.ta-list { display: flex; flex-direction: column; gap: 6px; }
+.ta-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); color: var(--ink); cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, transform 0.1s;
+}
+.ta-row:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--hover); transform: translateY(-1px); }
+.ta-avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff;
+  background: linear-gradient(145deg, #238f99, #0e7c86);
+}
+.ta-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.ta-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ta-email { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ta-role { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11px; font-weight: 600; color: var(--accent); }
+.ta-status { font-weight: 500; font-size: 9.5px; color: var(--muted); text-align: right; max-width: 108px; }
 
 /* ---------------- body map + transcript (main feature) ---------------- */
 
@@ -1023,8 +1048,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 /* ---------------- mobile (phones & small tablets) ----------------
    Native app shell: a slim fixed top bar (brand + sync + account) and a
    fixed bottom pill tab bar for the three main workflow destinations, so the
-   main content owns the screen like a real iOS/Android app. */
-@media (max-width: 860px) {
+   main content owns the screen like a real iOS/Android app. Kept to narrow
+   widths (≤720px) so the desktop left rail — with the account chip pinned at
+   its bottom — stays in place on split-screen / smaller laptop windows. */
+@media (max-width: 720px) {
   .shell { display: block; }
 
   /* --- top bar: live sync dot, sits left of the account avatar --- */

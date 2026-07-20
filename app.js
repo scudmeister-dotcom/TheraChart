@@ -599,11 +599,19 @@
   }
 
   function renderLogin() {
-    // Demo-mode only: since there's no server, it's safe to hint the on-device
-    // accounts so people can try it. In server mode the roster is never exposed.
-    const demoEmails = (window.TheraSync && window.TheraSync.mode === "local")
-      ? S.users().filter((u) => u.active).map((u) => u.email).filter(Boolean).slice(0, 5)
-      : [];
+    // Test/demo accounts shown on the sign-in screen so a handful of testers can
+    // log straight in. The server advertises them via /api/bootstrap (only the
+    // seeded @therachart.demo accounts — never real staff); in local demo mode
+    // we build the same list from the on-device roster.
+    let testAccounts = (window.TheraSync && window.TheraSync.testAccounts) || [];
+    if (!testAccounts.length && window.TheraSync && window.TheraSync.mode === "local") {
+      testAccounts = S.users()
+        .filter((u) => /@therachart\.demo$/i.test(u.email || ""))
+        .map((u) => ({ name: u.name, email: u.email, role: u.role, password: "1234",
+          status: u.active === false ? "sign-in blocked (voided)" : "" }));
+    }
+    testAccounts = testAccounts.slice(0, 10); // keep the panel short
+    const roleWord = (r) => r === "therapist" ? "Therapist" : r === "frontdesk" ? "Front desk" : "Admin";
     // Google sign-in appears only when the server advertises a client id.
     const googleClientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
     app.innerHTML = `
@@ -632,7 +640,18 @@
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
       ${googleClientId ? `<div class="login-or"><span>or</span></div><div id="googleBtnWrap" class="google-btn-wrap"></div>` : ""}
-      ${demoEmails.length ? `<div class="demo-note">Demo — sign in as ${demoEmails.map((e) => `<b>${esc(e)}</b>`).join(", ")}, password <b>1234</b>.</div>`
+      ${testAccounts.length ? `
+      <div class="test-accounts">
+        <div class="ta-head">Test accounts <span class="ta-pw">tap to fill · password <b>1234</b></span></div>
+        <div class="ta-list">
+          ${testAccounts.map((a) => `
+          <button type="button" class="ta-row" data-ta-email="${esc(a.email)}" data-ta-pw="${esc(a.password || "1234")}">
+            <span class="ta-avatar">${esc(initials(a.name))}</span>
+            <span class="ta-main"><span class="ta-name">${esc(a.name)}</span><span class="ta-email">${esc(a.email)}</span></span>
+            <span class="ta-role">${esc(roleWord(a.role))}${a.status ? `<span class="ta-status">${esc(a.status)}</span>` : ""}</span>
+          </button>`).join("")}
+        </div>
+      </div>`
         : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
   </div>
@@ -652,6 +671,13 @@
     };
     document.getElementById("loginBtn").addEventListener("click", doLogin);
     [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
+    // Clicking a test account fills the form so a tester can just press Sign in.
+    document.querySelectorAll(".ta-row").forEach((row) => row.addEventListener("click", () => {
+      emailEl.value = row.getAttribute("data-ta-email") || "";
+      pinEl.value = row.getAttribute("data-ta-pw") || "";
+      const err = document.getElementById("loginErr"); if (err) err.textContent = "";
+      document.getElementById("loginBtn").focus();
+    }));
     const back = document.getElementById("backToLanding");
     if (back) back.addEventListener("click", () => { showLogin = false; if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); });
     if (googleClientId) mountGoogleButton(googleClientId);

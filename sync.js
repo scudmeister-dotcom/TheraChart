@@ -483,6 +483,7 @@
         st.settings.facilityName = boot.facilityName || st.settings.facilityName;
         S.save();
         sync.googleClientId = boot.googleClientId || ""; // "" → login screen hides the Google button
+        sync.testAccounts = boot.testAccounts || [];     // demo logins surfaced on the sign-in screen
 
         // token from a previous visit? resume and sync any queued work
         if (sync.token) {
