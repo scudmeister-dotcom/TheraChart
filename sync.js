@@ -267,6 +267,33 @@
     }
   };
 
+  /* Google sign-in: exchange a Google ID token (from the GIS button) for a
+     server session, then adopt the server copy — the same success path as the
+     password login above. Server-mode + online only: an offline device can't
+     verify a Google token. Returns null on success or an error string. */
+  sync.googleLogin = async (credential) => {
+    if (sync.mode !== "server") return "Google sign-in needs the clinic server — you appear to be offline.";
+    try {
+      const res = await api("/api/google-login", { method: "POST", body: { credential } });
+      if (!res.ok) return (res.data && res.data.error) || "Google sign-in failed.";
+      sync.token = res.data.token;
+      lsSet(LS_TOKEN, sync.token);
+      const uid = res.data.userId; // server resolved the Google email -> user id
+      if (sync.dirty) {
+        mergeAndAdopt(res.data);
+        const st = S.load(); st.sessionUserId = uid; S.save();
+        await push();
+      } else {
+        adopt(res.data);
+        const st = S.load(); st.sessionUserId = uid; S.save();
+        setDirty(0);
+      }
+      return null;
+    } catch (_) {
+      return "Couldn't reach the clinic server for Google sign-in.";
+    }
+  };
+
   /* Re-authenticate the current user (for e-signing / amending). Server-side
      when online (passwords are hashed there); local check in demo mode. */
   sync.verifyPassword = async (pw) => {
@@ -455,6 +482,7 @@
         const st = S.load();
         st.settings.facilityName = boot.facilityName || st.settings.facilityName;
         S.save();
+        sync.googleClientId = boot.googleClientId || ""; // "" → login screen hides the Google button
 
         // token from a previous visit? resume and sync any queued work
         if (sync.token) {

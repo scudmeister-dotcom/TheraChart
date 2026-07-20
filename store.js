@@ -371,6 +371,49 @@
     return { user };
   }
 
+  /** Find-or-create an account that authenticates via Google (no password).
+      The email and role arrive already verified by the server (Google ID-token
+      check + allowlist), so this trusts them. An existing account is reactivated
+      and re-roled to match the allowlist (the allowlist is the source of truth
+      for who may sign in with Google, and as what). Google accounts get NO
+      license — a clinician's license number is added later by an admin via the
+      staff editor, which is also what unlocks e-signing (canDocument). Leaving
+      it null (rather than blank) keeps EMR access open (see licenseExpired). */
+  function upsertGoogleUser(fields) {
+    load();
+    const email = normEmail(fields && fields.email);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "A valid Google email is required." };
+    const role = ROLES.includes(fields && fields.role) ? fields.role : "therapist";
+    const name = String((fields && fields.name) || "").trim() || email.split("@")[0];
+    const sub = fields && fields.googleSub ? String(fields.googleSub) : null;
+
+    let user = getUserByEmail(email);
+    if (user) {
+      user.active = true;
+      user.role = role;
+      if (role === "frontdesk") user.license = null; // front desk never carries one
+      user.authProvider = "google";
+      if (sub) user.googleSub = sub;
+      delete user.mustChangePassword; // Google users have no password to set
+      touch(user);
+      save();
+      audit(user.id, "login", "google");
+      return { user };
+    }
+
+    user = {
+      id: uid("u"), name, email, role, active: true,
+      license: null, authProvider: "google",
+    };
+    if (sub) user.googleSub = sub;
+    touch(user);
+    state.users.push(user);
+    save();
+    audit(user.id, "user-created", `${name} (${role}, google)`);
+    audit(user.id, "login", "google");
+    return { user };
+  }
+
   /** Remove an employee. Can't delete yourself or the last active admin. */
   function deleteUser(userId, byUser) {
     load();
@@ -829,7 +872,7 @@
     audit, auditLog: () => load().audit,
     // users/auth
     users: () => load().users, getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, deleteUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,

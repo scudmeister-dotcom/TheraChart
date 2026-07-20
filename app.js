@@ -604,6 +604,8 @@
     const demoEmails = (window.TheraSync && window.TheraSync.mode === "local")
       ? S.users().filter((u) => u.active).map((u) => u.email).filter(Boolean).slice(0, 5)
       : [];
+    // Google sign-in appears only when the server advertises a client id.
+    const googleClientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
     app.innerHTML = `
 <div class="login-wrap">
   <div class="login-box">
@@ -629,6 +631,7 @@
       </div>
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
+      ${googleClientId ? `<div class="login-or"><span>or</span></div><div id="googleBtnWrap" class="google-btn-wrap"></div>` : ""}
       ${demoEmails.length ? `<div class="demo-note">Demo — sign in as ${demoEmails.map((e) => `<b>${esc(e)}</b>`).join(", ")}, password <b>1234</b>.</div>`
         : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
@@ -651,7 +654,42 @@
     [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
     const back = document.getElementById("backToLanding");
     if (back) back.addEventListener("click", () => { showLogin = false; if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); });
+    if (googleClientId) mountGoogleButton(googleClientId);
     emailEl.focus();
+  }
+
+  /* Render Google's "Sign in with Google" button into the login card and wire
+     its callback. On success the server verifies the returned ID token, maps the
+     email to a role (allowlist), and hands back a session — then we splash into
+     the app, exactly like a password sign-in. The GIS library is loaded once. */
+  function mountGoogleButton(clientId) {
+    const onCredential = async (resp) => {
+      const err = document.getElementById("loginErr");
+      if (err) { err.style.color = "var(--muted)"; err.textContent = "Signing in with Google…"; }
+      const fail = await window.TheraSync.googleLogin(resp.credential);
+      if (fail) { if (err) { err.style.color = "var(--danger)"; err.textContent = fail; } return; }
+      showSplash(() => { location.hash = "#/dashboard"; render(); });
+    };
+    const draw = () => {
+      const wrap = document.getElementById("googleBtnWrap");
+      if (!wrap || !(window.google && google.accounts && google.accounts.id)) return false;
+      google.accounts.id.initialize({ client_id: clientId, callback: onCredential });
+      wrap.innerHTML = "";
+      google.accounts.id.renderButton(wrap, { theme: "outline", size: "large", text: "signin_with", width: 320 });
+      return true;
+    };
+    if (draw()) return;
+    if (!document.getElementById("gsiScript")) {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true; s.defer = true; s.id = "gsiScript";
+      s.onload = draw;
+      document.head.appendChild(s);
+    } else {
+      // tag present but library still initialising — poll briefly, then give up
+      const t = setInterval(() => { if (draw()) clearInterval(t); }, 150);
+      setTimeout(() => clearInterval(t), 5000);
+    }
   }
 
   /* ================= DASHBOARD ================= */

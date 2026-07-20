@@ -102,10 +102,25 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --member="serviceAccount:$SA" --role="roles/storage.objectAdmin" >/dev/null
 
 echo "==> 6/6  Deploying code to Cloud Run [$SERVICE @ $REGION]…"
+# Google Sign-In (optional): export GOOGLE_CLIENT_ID before running to enable the
+# "Sign in with Google" button. GOOGLE_OWNER_EMAIL is always mapped to admin.
+# The allowlist (who else may sign in, and as what) is set separately, below,
+# because it contains commas that would clash with --set-env-vars' delimiter.
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_OWNER_EMAIL="${GOOGLE_OWNER_EMAIL:-amador.moriles@gmail.com}"
+
 gcloud run deploy "$SERVICE" --source . --project "$PROJ" --region "$REGION" \
   --allow-unauthenticated --add-cloudsql-instances "$CONN" --max-instances 1 \
   --set-secrets "DATABASE_URL=${SECRET}:latest" \
-  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${STT_REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET}"
+  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${STT_REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_OWNER_EMAIL=${GOOGLE_OWNER_EMAIL}"
+
+# Optional email allowlist for additional Google users (owner is always admin).
+# Uses a custom delimiter (^@^) so the commas inside the value are preserved.
+if [ -n "${GOOGLE_ALLOWLIST:-}" ]; then
+  echo "==> Setting GOOGLE_ALLOWLIST…"
+  gcloud run services update "$SERVICE" --project "$PROJ" --region "$REGION" \
+    --update-env-vars "^@^GOOGLE_ALLOWLIST=${GOOGLE_ALLOWLIST}"
+fi
 # GEMINI_LOCATION is intentionally NOT set -> defaults to "global": the Gemini
 # 3.x publisher models are ONLY served from the global Vertex location (regional
 # endpoints 404 on them and the app would silently fall back to the local engine).

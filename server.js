@@ -81,6 +81,75 @@ const AUTH = {
 };
 store.setAuthenticator(AUTH);
 
+/* ---- Google Sign-In (verify GIS ID tokens; zero-dependency) ----
+   The browser's "Sign in with Google" button returns a signed JWT (an ID
+   token). We verify it here against Google's public keys, then map the verified
+   email to a role via the allowlist before minting our own session token — the
+   same token password login issues. No OAuth *secret* is needed for this flow;
+   only the public client id (also handed to the browser so the button can init).
+     GOOGLE_CLIENT_ID    OAuth 2.0 Web client id — REQUIRED to enable the button
+     GOOGLE_ALLOWLIST    "email:role, email:role; …" — who may sign in, and as what
+                         (role ∈ therapist|admin|frontdesk; missing → therapist)
+     GOOGLE_OWNER_EMAIL  always mapped to admin (default amador.moriles@gmail.com) */
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_OWNER_EMAIL = (process.env.GOOGLE_OWNER_EMAIL || "amador.moriles@gmail.com").trim().toLowerCase();
+const GOOGLE_ROLES = new Set(["therapist", "admin", "frontdesk"]);
+
+// email -> role, parsed once from GOOGLE_ALLOWLIST. The owner is always admin,
+// so a minimal install (client id only, no allowlist) still lets the owner in.
+const googleAllowlist = (() => {
+  const map = new Map();
+  for (const entry of String(process.env.GOOGLE_ALLOWLIST || "").split(/[,;\n]/)) {
+    const [rawEmail, rawRole] = entry.split(":");
+    const email = (rawEmail || "").trim().toLowerCase();
+    if (!email) continue;
+    const role = (rawRole || "").trim();
+    map.set(email, GOOGLE_ROLES.has(role) ? role : "therapist");
+  }
+  map.set(GOOGLE_OWNER_EMAIL, "admin");
+  return map;
+})();
+
+// Google's JWKS, cached (their signing keys rotate ~daily). Refetched on a kid
+// miss or once the cache is older than an hour.
+let _googleKeys = { at: 0, byKid: new Map() };
+async function googleSigningKey(kid) {
+  const fresh = Date.now() - _googleKeys.at < 60 * 60 * 1000;
+  if (fresh && _googleKeys.byKid.has(kid)) return _googleKeys.byKid.get(kid);
+  const r = await fetch("https://www.googleapis.com/oauth2/v3/certs");
+  if (!r.ok) throw new Error("could not fetch Google signing keys");
+  const { keys } = await r.json();
+  const byKid = new Map();
+  for (const jwk of keys || []) byKid.set(jwk.kid, crypto.createPublicKey({ key: jwk, format: "jwk" }));
+  _googleKeys = { at: Date.now(), byKid };
+  return byKid.get(kid) || null;
+}
+
+const b64urlBuf = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const b64urlJson = (s) => JSON.parse(b64urlBuf(s).toString("utf8"));
+
+// Verify a Google ID token and return its claims, or throw. Validates the RS256
+// signature against Google's keys, plus audience (our client id), issuer,
+// expiry, and a present + verified email.
+async function verifyGoogleIdToken(idToken) {
+  const parts = String(idToken || "").split(".");
+  if (parts.length !== 3) throw new Error("malformed token");
+  const [h, p, sig] = parts;
+  const header = b64urlJson(h);
+  if (header.alg !== "RS256") throw new Error("unexpected token algorithm");
+  const key = await googleSigningKey(header.kid);
+  if (!key) throw new Error("unknown signing key");
+  if (!crypto.createVerify("RSA-SHA256").update(`${h}.${p}`).verify(key, b64urlBuf(sig)))
+    throw new Error("bad signature");
+  const claims = b64urlJson(p);
+  if (claims.iss !== "accounts.google.com" && claims.iss !== "https://accounts.google.com")
+    throw new Error("wrong issuer");
+  if (!GOOGLE_CLIENT_ID || claims.aud !== GOOGLE_CLIENT_ID) throw new Error("wrong audience");
+  if (!claims.exp || claims.exp * 1000 < Date.now()) throw new Error("token expired");
+  if (!claims.email || claims.email_verified !== true) throw new Error("email not verified");
+  return claims;
+}
+
 /* ---- AI transcript refinement (Gemini, with a local fallback) ----
    Sends the TEXT transcript (not audio) to Google Gemini to split speakers,
    clean transcription errors, and re-extract the patient's findings.
@@ -193,6 +262,7 @@ function bootstrapInfo() {
   return {
     rev,
     facilityName: store.settings().facilityName,
+    googleClientId: GOOGLE_CLIENT_ID, // "" when unconfigured → the button is hidden
   };
 }
 
@@ -485,6 +555,27 @@ const server = http.createServer(async (req, res) => {
       const authed = store.findUserByLogin(identifier);
       bumpRev(); // audit entry was added
       return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, state: publicState() });
+    }
+
+    if (url.pathname === "/api/google-login" && req.method === "POST") {
+      if (!GOOGLE_CLIENT_ID) return json(res, 503, { error: "Google sign-in isn't configured on this server." });
+      const { credential } = await readBody(req);
+      let claims;
+      try { claims = await verifyGoogleIdToken(credential); }
+      catch (e) { return json(res, 401, { error: "Google sign-in couldn't be verified (" + e.message + ")." }); }
+      const email = String(claims.email).trim().toLowerCase();
+      const role = googleAllowlist.get(email);
+      if (!role) {
+        store.audit(null, "login-denied", `google:${email} (not on allowlist)`);
+        bumpRev();
+        return json(res, 403, { error: "This Google account isn't authorized for TheraChart. Ask an administrator to add it." });
+      }
+      const r = store.upsertGoogleUser({ email, name: claims.name, role, googleSub: claims.sub });
+      if (r.error) return json(res, 400, { error: r.error });
+      store.load().sessionUserId = null; // server holds no session in state
+      store.save();
+      bumpRev(); // audit entries (login / user-created) were added
+      return json(res, 200, { token: tokenFor(r.user.id), userId: r.user.id, rev, state: publicState() });
     }
 
     const user = userForReq(req);
