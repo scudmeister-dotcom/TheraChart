@@ -116,6 +116,17 @@
           attachments: [],
           createdBy: "u-ana", createdAt: t(-10, 10, 0),
         },
+        {
+          id: "p-mateo",
+          firstName: "Mateo", lastName: "Villanueva",
+          dob: "1969-07-19", sex: "M",
+          address: "5 Lapu-Lapu Ave, Mandaue City",
+          phone: "+63 917 555 0303", email: "mateo.villanueva@example.com",
+          referringPhysician: "Dr. L. Gomez (Ortho)",
+          insurance: { provider: "PhilHealth", memberId: "PH-7781-4420", notes: "" },
+          attachments: [],
+          createdBy: "u-ana", createdAt: t(-8, 9, 0),
+        },
       ],
       documents: [
         {
@@ -173,6 +184,81 @@
             mapPoints: [], transcript: [],
           },
         },
+        // Mateo: a mid-care knee patient — signed eval + visits, plus in-flight
+        // draft daily & draft progress notes for the draft picker showcase.
+        {
+          id: "d-eval-mateo", patientId: "p-mateo", type: "eval",
+          title: "Initial Evaluation",
+          createdBy: "u-maria", createdAt: t(-8, 10, 0),
+          status: "signed",
+          signatures: [{ userId: "u-maria", name: "Maria Santos, PT", license: "PT-0012345", time: t(-8, 11, 0), reason: "Original completion" }],
+          amendments: [],
+          data: {
+            reason: "Left knee pain after a fall at home; referred for rehab.",
+            precautions: "Weight-bearing as tolerated. Avoid deep squatting.",
+            pmh: "Osteoarthritis, both knees.",
+            subjective: "Aching left knee · rated 5/10 · worse on stairs.",
+            objectiveText: "Mild effusion, antalgic gait.",
+            rom: [{ side: "left", joint: "knee", motion: "flexion", degrees: 110 }],
+            mmt: [{ context: "left knee extension", grade: "4/5" }],
+            special: [], assessment: "Left knee OA flare; good rehab potential.",
+            plan: "PT 2x/week × 6 weeks: quad strengthening, gait training.",
+            mapPoints: [], transcript: [],
+          },
+        },
+        ...[6, 4, 2].map((ago, i) => ({
+          id: `d-daily-mateo-${i + 1}`, patientId: "p-mateo", type: "daily",
+          title: `Daily Treatment Note — Visit ${i + 1}`,
+          createdBy: "u-maria", createdAt: t(-ago, 11, 0),
+          status: "signed",
+          signatures: [{ userId: "u-maria", name: "Maria Santos, PT", license: "PT-0012345", time: t(-ago, 11, 40), reason: "Original completion" }],
+          amendments: [],
+          data: {
+            summary: `Visit ${i + 1}: quad sets, terminal knee extension, gait training. Tolerated well.`,
+            subjective: "Knee less stiff.", rom: [], mmt: [], special: [],
+            pain: [{ score: 4, location: "left knee" }], mapPoints: [], transcript: [],
+          },
+        })),
+        // --- Unsigned drafts: one of every document type, for the showcase ---
+        {
+          id: "d-daily-mateo-draft", patientId: "p-mateo", type: "daily",
+          title: "Daily Treatment Note — Visit 4",
+          createdBy: "u-maria", createdAt: t(-1, 11, 30),
+          status: "draft", signatures: [], amendments: [],
+          data: {
+            summary: "Visit 4: progressed to mini-squats and step-ups. Reviewed HEP.",
+            subjective: "Stairs easier this week, 3/10.",
+            rom: [{ side: "left", joint: "knee", motion: "flexion", degrees: 125 }],
+            mmt: [], special: [], pain: [{ score: 3, location: "left knee" }],
+            mapPoints: [], transcript: [],
+          },
+        },
+        {
+          id: "d-progress-mateo-draft", patientId: "p-mateo", type: "progress",
+          title: "Progress Report",
+          createdBy: "u-maria", createdAt: t(0, 10, 0),
+          status: "draft", signatures: [], amendments: [],
+          data: {
+            baselineSubjective: "Aching left knee · rated 5/10 · worse on stairs.",
+            currentStatus: "Reports 3/10 pain; managing stairs with less difficulty.",
+            updatedFindings: "Knee flexion improved to 125° (from 110° at evaluation).",
+            goalsProgress: "On track; strengthening progressing well.",
+            assessment: "",
+            rom: [], mmt: [], special: [], mapPoints: [], transcript: [],
+          },
+        },
+        {
+          id: "d-discharge-juan-draft", patientId: "p-juan", type: "discharge",
+          title: "Discharge Summary",
+          createdBy: "u-maria", createdAt: t(0, 9, 30),
+          status: "draft", signatures: [], amendments: [],
+          data: {
+            summary: "Completed 6-week course of care for right rotator cuff strain.",
+            outcome: "",
+            recommendations: "Continue home exercise program 3×/week; return if symptoms recur.",
+            rom: [], mmt: [], special: [], mapPoints: [], transcript: [],
+          },
+        },
       ],
       appointments: [
         { id: "ap-1", patientId: "p-juan", therapistId: "u-maria", start: t(0, 9, 0), minutes: 45, note: "Visit 5", status: "booked",
@@ -185,7 +271,35 @@
           createdBy: "u-ana", createdAt: t(-1, 9, 0), history: [{ action: "created", userId: "u-ana", time: t(-1, 9, 0) }],
           reminders: [] },
       ],
-      audit: [],
+      // A little activity history so the Privacy &amp; Security log reads like a
+      // living feed (varied actions/people) the moment the demo opens.
+      audit: [
+        { time: t(-14, 8, 30), userId: "u-ana", action: "patient-created", detail: "Juan Reyes" },
+        { time: t(-14, 9, 0), userId: "u-ana", action: "attachment-added", detail: "Referral - Dr. Cruz.txt · Juan Reyes" },
+        { time: t(-13, 10, 0), userId: "u-maria", action: "doc-created", detail: "Initial Evaluation for Juan Reyes" },
+        { time: t(-13, 11, 0), userId: "u-maria", action: "doc-signed", detail: "Initial Evaluation for Juan Reyes" },
+        { time: t(-12, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 1 for Juan Reyes" },
+        { time: t(-10, 10, 0), userId: "u-ana", action: "patient-created", detail: "Liza Mercado" },
+        { time: t(-9, 9, 20), userId: "u-maria", action: "transcript-refined", detail: "Initial Evaluation · Liza Mercado" },
+        { time: t(-7, 15, 0), userId: "u-maria", action: "ai-chart-review", detail: "Juan Reyes" },
+        { time: t(-5, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 4 for Juan Reyes" },
+        { time: t(-4, 11, 0), userId: "u-ana", action: "appointment-created", detail: "Juan Reyes · 9:00 AM" },
+        { time: t(-3, 16, 20), userId: "u-grace", action: "settings-updated", detail: "progress report every 5 visits" },
+        { time: t(-2, 7, 5), userId: null, action: "reminder-sent", detail: "Liza Mercado · SMS (simulated)" },
+        { time: t(-1, 8, 15), userId: null, action: "access-requested", detail: "google:ramil.torres@gmail.com" },
+        { time: t(0, 7, 50), userId: null, action: "access-requested", detail: "google:bea.n@bayanihanpt.ph" },
+      ],
+      // Pending sign-in requests awaiting an administrator's approval. Real
+      // requests are appended when a Google sign-in isn't yet allow-listed;
+      // these two seed the queue so the approval flow can be showcased.
+      accessRequests: [
+        { id: "ar-ramil", email: "ramil.torres@gmail.com", name: "Ramil Torres", source: "google",
+          googleSub: null, status: "pending", note: "New PT hire — starts Monday",
+          createdAt: t(-1, 8, 15), _mod: t(-1, 8, 15) },
+        { id: "ar-bea", email: "bea.n@bayanihanpt.ph", name: "Bea Navarro", source: "google",
+          googleSub: null, status: "pending", note: "Front-desk relief, weekends",
+          createdAt: t(0, 7, 50), _mod: t(0, 7, 50) },
+      ],
       sessionUserId: null,
     };
   }
@@ -210,6 +324,9 @@
     } catch (_) {
       state = seed();
     }
+    // Defensive defaults for keys added after a blob was first persisted
+    // (load()/importAll do no migration, so guard collections used elsewhere).
+    if (!Array.isArray(state.accessRequests)) state.accessRequests = [];
     save();
     return state;
   }
@@ -428,6 +545,105 @@
     return { ok: true };
   }
 
+  /* ---------------------------------------------------------------- *
+   *  Access requests — a pending-approval queue. A request is recorded
+   *  when someone tries to sign in with a Google account that isn't yet
+   *  authorized; an admin then approves it (which provisions an active
+   *  account so the next sign-in succeeds) or declines it. Kept in state
+   *  so it syncs to every device like any other collection.
+   * ---------------------------------------------------------------- */
+
+  function accessRequests() {
+    load();
+    if (!Array.isArray(state.accessRequests)) state.accessRequests = [];
+    return state.accessRequests;
+  }
+
+  /** Record (or refresh) a pending request. Deduped by email while still
+      pending, so repeated sign-in attempts don't pile up. */
+  function requestAccess(fields) {
+    load();
+    if (!Array.isArray(state.accessRequests)) state.accessRequests = [];
+    const email = normEmail(fields && fields.email);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "A valid email is required." };
+    const existing = getUserByEmail(email);
+    if (existing && existing.active) return { user: existing }; // already authorized
+    const name = String((fields && fields.name) || "").trim() || email.split("@")[0];
+    const sub = fields && fields.googleSub ? String(fields.googleSub) : null;
+    const source = (fields && fields.source) || "google";
+
+    let req = state.accessRequests.find((r) => normEmail(r.email) === email && r.status === "pending");
+    if (req) {
+      req.attempts = (req.attempts || 1) + 1;
+      req.name = req.name || name;
+      if (sub) req.googleSub = sub;
+      touch(req);
+    } else {
+      req = {
+        id: uid("ar"), email, name, source, googleSub: sub,
+        status: "pending", note: "", attempts: 1, createdAt: new Date().toISOString(),
+      };
+      touch(req);
+      state.accessRequests.push(req);
+    }
+    save();
+    audit(null, "access-requested", `${source}:${email}`);
+    return { request: req };
+  }
+
+  /** Approve a pending request: provision an active Google account with the
+      chosen role, then mark the request resolved (kept for the audit trail). */
+  function approveAccessRequest(id, opts, byUser) {
+    load();
+    const req = accessRequests().find((r) => r.id === id);
+    if (!req) return { error: "That request no longer exists." };
+    if (req.status !== "pending") return { error: "That request has already been handled." };
+    const role = ROLES.includes(opts && opts.role) ? opts.role : "therapist";
+    const email = normEmail(req.email);
+    let user = getUserByEmail(email);
+    if (user) {
+      user.active = true;
+      user.role = role;
+      if (role === "frontdesk") user.license = null;
+      user.authProvider = "google";
+      if (req.googleSub) user.googleSub = req.googleSub;
+      delete user.mustChangePassword;
+      touch(user);
+    } else {
+      user = {
+        id: uid("u"), name: req.name || email.split("@")[0], email, role,
+        active: true, license: null, authProvider: "google",
+      };
+      if (req.googleSub) user.googleSub = req.googleSub;
+      touch(user);
+      state.users.push(user);
+    }
+    req.status = "approved";
+    req.role = role;
+    req.resolvedBy = byUser ? byUser.id : null;
+    req.resolvedAt = new Date().toISOString();
+    touch(req);
+    save();
+    audit(byUser ? byUser.id : null, "user-created", `${user.name} (${role}, google)`);
+    audit(byUser ? byUser.id : null, "access-approved", `${email} (${role})`);
+    return { user, request: req };
+  }
+
+  /** Decline a pending request — kept (marked declined) for the audit trail. */
+  function declineAccessRequest(id, byUser) {
+    load();
+    const req = accessRequests().find((r) => r.id === id);
+    if (!req) return { error: "That request no longer exists." };
+    if (req.status !== "pending") return { error: "That request has already been handled." };
+    req.status = "declined";
+    req.resolvedBy = byUser ? byUser.id : null;
+    req.resolvedAt = new Date().toISOString();
+    touch(req);
+    save();
+    audit(byUser ? byUser.id : null, "access-declined", req.email);
+    return { ok: true, request: req };
+  }
+
   /** One-time: hash any legacy plaintext pins into passwordHash (server only). */
   function hashLegacyPins() {
     if (!authenticator) return 0;
@@ -622,6 +838,20 @@
     touch(doc);
     save();
     return { doc };
+  }
+
+  /** Delete an unsigned draft outright (never a signed record — those are
+      permanent and can only be amended). Used to discard drafts created by
+      accident and left empty. */
+  function deleteDoc(docId, byUser) {
+    load();
+    const doc = getDoc(docId);
+    if (!doc) return { error: "Document not found." };
+    if (doc.status === "signed") return { error: "Signed documents can't be deleted." };
+    state.documents = state.documents.filter((d) => d.id !== docId);
+    save();
+    if (byUser) audit(byUser.id, "doc-discarded", `${doc.title} (empty draft) for ${patientName(getPatient(doc.patientId))}`);
+    return { ok: true };
   }
 
   /** Lock + e-sign. typedName must match the signing user's name. */
@@ -863,6 +1093,16 @@
       [...merged.audit, ...local.audit],
       (e) => e.time + (e.userId || "") + e.action
     ).slice(-2000);
+    // access requests: union by id, newest _mod wins — so an approve/decline
+    // on one device isn't undone by a stale still-pending copy on another
+    {
+      const byId = new Map();
+      for (const r of [...(merged.accessRequests || []), ...(local.accessRequests || [])]) {
+        const prev = byId.get(r.id);
+        if (!prev || mtime(r) > mtime(prev)) byId.set(r.id, r);
+      }
+      merged.accessRequests = [...byId.values()];
+    }
     merged.sessionUserId = null;
     return { state: merged, conflicts };
   }
@@ -877,11 +1117,13 @@
     // patients
     patients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
     // documents
-    docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, signDoc, amendDoc,
+    docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     visitCount, progressDue,
     // calendar
     appointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
     // admin
     settings: () => load().settings, updateSettings, updateUser,
+    // access requests (pending-approval queue)
+    accessRequests, requestAccess, approveAccessRequest, declineAccessRequest,
   };
 });

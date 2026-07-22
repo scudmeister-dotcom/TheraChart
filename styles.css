@@ -129,11 +129,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* ---------------- layout ---------------- */
 
-.shell { display: flex; min-height: 100vh; }
+.shell { display: flex; min-height: 100vh; padding-left: 236px; }
 
+/* The rail is a fixed 100vh panel pinned to the viewport, so its gradient is
+   anchored to a constant-height box — it renders identically on every page
+   (content height no longer warps it) and never scrolls away on a long chart.
+   .shell's padding-left reserves the column so page content clears it. Fixed
+   positioning is immune to the ancestor `overflow-x: hidden` that would break
+   a sticky rail. */
 .sidebar {
+  position: fixed;
+  top: 0; left: 0;
   width: 236px;
-  flex: none;
+  height: 100vh;
+  z-index: 30;
   color: var(--sidebar-ink);
   background:
     radial-gradient(120% 60% at 15% 0%, rgba(58, 182, 192, 0.22), transparent 60%),
@@ -141,16 +150,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     linear-gradient(180deg, var(--sidebar), color-mix(in srgb, var(--sidebar) 82%, #000));
   border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
-/* The aside stretches to the full page height (so the dark panel never cuts
-   off on a long chart); this inner column sticks to the viewport so the nav
-   and user chip stay put as you scroll. */
+/* Fills the fixed rail as a flex column; the spacer pushes the user chip to
+   the very bottom of the panel. */
 .sidebar-inner {
   display: flex;
   flex-direction: column;
   padding: 20px 14px 14px;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
 }
 .sidebar .brand {
   display: flex; align-items: center; gap: 11px;
@@ -285,6 +291,117 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .cards-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 1100px) { .cards-2, .cards-3 { grid-template-columns: 1fr; } }
 
+/* ---------- Privacy: collapsible "how it works" accordion ---------- */
+.page-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.info-acc { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 18px; }
+@media (max-width: 760px) { .info-acc { grid-template-columns: 1fr; } }
+.info-acc-item { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+.info-acc-item > summary {
+  display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+  cursor: pointer; list-style: none; user-select: none;
+  font-weight: 600; font-size: 13.5px; color: var(--ink); border-radius: 12px;
+}
+.info-acc-item > summary::-webkit-details-marker { display: none; }
+.info-acc-item > summary::marker { content: ""; }
+.info-acc-item > summary:hover { background: var(--hover); }
+.info-acc-ico { font-size: 15px; line-height: 1; flex: none; }
+.info-acc-title { flex: 1; min-width: 0; }
+.info-acc-chev { color: var(--muted); font-size: 16px; transition: transform 0.18s ease; }
+.info-acc-item[open] > summary .info-acc-chev { transform: rotate(90deg); }
+.info-acc-item[open] > summary { border-bottom: 1px solid var(--border); border-radius: 12px 12px 0 0; }
+.info-acc-body { padding: 2px 14px 14px; font-size: 13px; color: var(--ink); }
+.info-acc-body p { margin: 9px 0; line-height: 1.5; }
+
+/* ---------- Privacy: activity feed (was a plain table) ---------- */
+.activity-card { padding: 0; overflow: hidden; }
+.activity-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 15px 18px 12px; border-bottom: 1px solid var(--border);
+}
+.activity-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.activity-tools { display: flex; align-items: center; gap: 10px; }
+.activity-tools input[type="search"] {
+  width: 230px; max-width: 46vw; padding: 7px 11px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink); font-size: 13px;
+}
+.activity-tools input[type="search"]:focus { outline: none; border-color: var(--accent); }
+.activity-catbar {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 18px; border-bottom: 1px solid var(--border);
+}
+.catchip {
+  padding: 5px 12px; border-radius: 20px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+  font-size: 12.5px; font-weight: 600; transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.catchip:hover { color: var(--ink); border-color: var(--sil-line); }
+.catchip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.activity-feed { max-height: 640px; overflow-y: auto; padding-bottom: 6px; }
+.feed-day-label {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 8px; padding: 10px 18px 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--muted); background: var(--panel);
+}
+.feed-day-label span {
+  font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted);
+  background: var(--hover); border-radius: 20px; padding: 1px 8px; font-size: 10.5px;
+}
+.feed-row { display: flex; align-items: flex-start; gap: 12px; padding: 8px 18px; }
+.feed-row:hover { background: var(--hover); }
+.feed-ico {
+  flex: none; width: 32px; height: 32px; border-radius: 10px;
+  display: grid; place-items: center; font-size: 15px;
+  background: color-mix(in srgb, var(--tone) 16%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 34%, transparent);
+}
+.feed-main { flex: 1; min-width: 0; padding-top: 2px; }
+.feed-line { font-size: 13.5px; color: var(--ink); }
+.feed-line b { font-weight: 650; }
+.feed-action { color: var(--muted); }
+.feed-detail {
+  font-size: 12px; color: var(--muted); margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.feed-time { flex: none; font-size: 11.5px; color: var(--muted); padding-top: 3px; white-space: nowrap; }
+/* category tones drive each badge's colour */
+.tone-auth { --tone: #3b82f6; }
+.tone-doc { --tone: var(--brand-1); }
+.tone-ai { --tone: var(--brand-3); }
+.tone-patient { --tone: var(--dt-discharge); }
+.tone-sched { --tone: #7c8cf8; }
+.tone-admin { --tone: #b06ae6; }
+.tone-security { --tone: var(--review); }
+.tone-danger { --tone: var(--danger); }
+.tone-default { --tone: var(--muted); }
+
+/* ---------- Facility: access-request approval queue ---------- */
+.access-card { margin-bottom: 14px; }
+.access-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.access-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.access-req {
+  display: flex; gap: 12px; align-items: flex-start;
+  border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+  background: color-mix(in srgb, var(--review) 7%, var(--panel));
+}
+.access-avatar {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #fff;
+  background: linear-gradient(145deg, #b06ae6, #7c4bd0);
+}
+.access-info { flex: 1; min-width: 0; }
+.access-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.access-email { font-size: 12.5px; color: var(--muted); }
+.access-note { font-size: 12.5px; color: var(--ink); margin-top: 4px; font-style: italic; }
+.access-meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.access-actions { flex: none; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.access-role { padding: 6px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--ink); font-size: 12.5px; }
+.access-msg { font-size: 11.5px; min-height: 14px; text-align: right; }
+@media (max-width: 620px) {
+  .access-req { flex-wrap: wrap; }
+  .access-actions { flex-direction: row; align-items: center; width: 100%; flex-wrap: wrap; }
+}
+
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 14px;
@@ -346,6 +463,10 @@ table.list tr:last-child td { border-bottom: none; }
 table.list tbody tr.rowlink { cursor: pointer; }
 table.list tbody tr.rowlink:hover { background: var(--hover); }
 table.list .num { font-variant-numeric: tabular-nums; }
+/* Zebra striping on the patients list so long lists stay easy to scan.
+   Hover still wins over the stripe for the row you're pointing at. */
+#patTable tbody tr:nth-child(even) { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+#patTable tbody tr.rowlink:hover { background: var(--hover); }
 .table-scroll { overflow-x: auto; }
 
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
@@ -721,12 +842,28 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   display: flex; align-items: center; gap: 11px;
   padding: 10px 12px; border-radius: 10px;
   background: var(--hover); border: 1px solid var(--border);
+  text-decoration: none; color: var(--ink);
+  transition: border-color 0.14s, background 0.14s, transform 0.12s;
 }
+.attn-item:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); transform: translateX(2px); }
 .attn-item .attn-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .attn-item.warn .attn-dot { background: var(--review); }
 .attn-item.info .attn-dot { background: var(--accent); }
 .attn-item .attn-text { flex: 1; font-size: 13.5px; }
-.attn-item .btn { flex: none; }
+.attn-item .attn-go { flex: none; font-size: 12.5px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+
+/* dashboard "unsigned drafts" jump-to-page button */
+.jumbo-link {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 18px; border-radius: 12px; text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--review) 40%, var(--border));
+  background: color-mix(in srgb, var(--review-soft) 55%, var(--panel));
+  color: var(--ink); transition: transform 0.12s, box-shadow 0.14s;
+}
+.jumbo-link:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+.jumbo-link b { display: block; font-size: 15px; }
+.jumbo-link small { color: var(--muted); font-size: 12.5px; }
+.jumbo-arrow { font-size: 22px; color: var(--review); font-weight: 700; }
 
 /* ---------------- new-doc picker (resume vs. start new) ---------------- */
 .newdoc { margin-bottom: 14px; }
@@ -745,24 +882,83 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 
 /* ---------------- document filters ---------------- */
 .doc-filters {
-  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
-  padding: 10px 0 12px; margin-bottom: 6px; border-bottom: 1px dashed var(--border);
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch;
+  padding: 4px 0 14px; margin-bottom: 6px;
 }
-.fgroup { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.fglabel { font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+/* each filter is its own bordered group so Type / Status / Date read as
+   distinct sets rather than one long blob of pills */
+.fgroup {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 2.5%, var(--panel));
+}
+.fchips { display: flex; gap: 5px; flex-wrap: wrap; }
+.fglabel { font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
 .fgsep { color: var(--muted); }
 .fchip {
-  appearance: none; cursor: pointer;
+  appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
   background: var(--panel); border: 1px solid var(--border); color: var(--muted);
   transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
-.fchip:hover { color: var(--ink); }
-.fchip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fchip:hover { color: var(--ink); border-color: var(--sil-line); }
+.fchip .fdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--chip, var(--muted)); }
+/* type chips carry the document-type colours */
+.fchip.ft-eval { --chip: var(--dt-eval); }
+.fchip.ft-daily { --chip: var(--dt-daily); }
+.fchip.ft-progress { --chip: var(--dt-progress); }
+.fchip.ft-discharge { --chip: var(--dt-discharge); }
+.fchip.ft-type.on { background: color-mix(in srgb, var(--chip, var(--accent)) 16%, var(--panel)); border-color: var(--chip, var(--accent)); color: var(--ink); }
+.fchip.ft-type.on .fdot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--chip) 25%, transparent); }
+/* status chips: draft = amber, signed = green */
+.fchip.fs-draft.on { background: color-mix(in srgb, var(--review) 16%, var(--panel)); border-color: var(--review); color: var(--ink); }
+.fchip.fs-signed.on { background: var(--good-soft); border-color: var(--good); color: var(--ink); }
+.fchip.fs-all.on, .fchip.ft-all.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .fdate {
   padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel); color: var(--ink); font-size: 12.5px;
 }
+
+/* ---------------- patient edit chooser + unsaved warning ---------------- */
+.edit-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+@media (max-width: 520px) { .edit-choice-grid { grid-template-columns: 1fr; } }
+.edit-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 14px; border-radius: 12px; cursor: pointer; text-align: left;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+  transition: border-color 0.14s, transform 0.12s, box-shadow 0.14s;
+}
+.edit-choice:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.07); }
+.edit-choice b { font-size: 14px; }
+.edit-choice small { color: var(--muted); font-size: 12px; }
+.edit-choice-ico {
+  width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+  font-size: 19px; margin-bottom: 6px;
+  background: color-mix(in srgb, var(--ec, var(--accent)) 15%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ec, var(--accent)) 30%, transparent);
+}
+.ec-personal { --ec: var(--dt-eval); }
+.ec-insurance { --ec: var(--dt-progress); }
+.unsaved-warn {
+  flex: 1 1 100%; font-size: 12.5px; color: var(--review);
+  background: var(--review-soft); border: 1px solid color-mix(in srgb, var(--review) 40%, var(--border));
+  border-radius: 8px; padding: 7px 10px; margin-bottom: 4px;
+}
+
+/* ---------------- scheduling cards (each visually distinct) ---------------- */
+.sched-card { border-top: 3px solid var(--sched-accent, var(--accent)); }
+.sched-card .sched-cardhead { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.sched-card .sched-cardhead h2 { margin: 0; }
+.sched-cardsub { font-size: 12.5px; color: var(--muted); margin: 3px 0 0; }
+.sched-ico {
+  flex: none; width: 40px; height: 40px; border-radius: 11px;
+  display: grid; place-items: center; font-size: 20px;
+  background: color-mix(in srgb, var(--sched-accent, var(--accent)) 15%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sched-accent, var(--accent)) 32%, transparent);
+}
+.sched-book { --sched-accent: var(--brand-1); }
+.sched-upcoming { --sched-accent: var(--dt-eval); }
+.sched-history { --sched-accent: var(--dt-discharge); }
 
 /* ---------------- bulk scheduling ---------------- */
 .bulk-form {
@@ -1052,7 +1248,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
    widths (≤720px) so the desktop left rail — with the account chip pinned at
    its bottom — stays in place on split-screen / smaller laptop windows. */
 @media (max-width: 720px) {
-  .shell { display: block; }
+  .shell { display: block; padding-left: 0; }
 
   /* --- top bar: live sync dot, sits left of the account avatar --- */
   .topbar-sync {

@@ -584,11 +584,21 @@ const server = http.createServer(async (req, res) => {
       try { claims = await verifyGoogleIdToken(credential); }
       catch (e) { return json(res, 401, { error: "Google sign-in couldn't be verified (" + e.message + ")." }); }
       const email = String(claims.email).trim().toLowerCase();
-      const role = googleAllowlist.get(email);
+      // The env allowlist is one source of truth; an admin approving an access
+      // request is the other — it provisions an active Google account, so that
+      // account may sign in from then on even without an allowlist entry.
+      let role = googleAllowlist.get(email);
       if (!role) {
-        store.audit(null, "login-denied", `google:${email} (not on allowlist)`);
+        const approved = store.getUserByEmail(email);
+        if (approved && approved.active && approved.authProvider === "google") role = approved.role;
+      }
+      if (!role) {
+        // Not authorized yet: queue a request for an admin to approve, instead
+        // of a dead end. (Deduped by email while pending.)
+        store.requestAccess({ email, name: claims.name, googleSub: claims.sub, source: "google" });
+        store.audit(null, "login-denied", `google:${email} (awaiting approval)`);
         bumpRev();
-        return json(res, 403, { error: "This Google account isn't authorized for TheraChart. Ask an administrator to add it." });
+        return json(res, 403, { error: "Your access request has been sent to an administrator for approval. You'll be able to sign in once it's approved." });
       }
       const r = store.upsertGoogleUser({ email, name: claims.name, role, googleSub: claims.sub });
       if (r.error) return json(res, 400, { error: r.error });

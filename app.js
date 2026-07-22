@@ -193,6 +193,10 @@
     { hash: "#/profile", label: "My Profile", short: "Profile", icon: ICON.user, emr: false },
   ];
 
+  // A freshly-created draft being watched for accidental back-out: { id, snapshot }.
+  // If the user leaves it untouched (see render()), it's auto-discarded.
+  let pristineDraft = null;
+
   function render() {
     if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; }
     currentDocState = null; // never carry one document's edit state into another
@@ -207,14 +211,28 @@
     // New hires and admin-reset accounts must set their own password before doing anything.
     if (user.mustChangePassword) return renderForcePassword(user);
 
+    // Auto-discard a just-created draft the user backed out of without touching
+    // it — i.e. the document was opened by accident. Only fires when navigating
+    // AWAY from that draft, and only if its content is byte-for-byte the pristine
+    // freshly-created state (any edit or dictation keeps it).
+    if (pristineDraft) {
+      const goingToDoc = location.hash.startsWith("#/doc/") ? location.hash.split("/")[2] : null;
+      if (goingToDoc !== pristineDraft.id) {
+        const d = S.getDoc(pristineDraft.id);
+        if (d && d.status === "draft" && JSON.stringify(d.data) === pristineDraft.snapshot) S.deleteDoc(pristineDraft.id, user);
+        pristineDraft = null;
+      }
+    }
+
     const hash = location.hash || "#/dashboard";
     const emrAllowed = S.canAccessEmr(user);
     const route = (hash.split("/")[1] || "dashboard").split("?")[0];
 
-    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "calendar", "facility"];
+    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "facility"];
     if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
 
     if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
+    if (route === "drafts") return renderShell(hash, draftsView(user), user, bindDashboard);
     if (route === "patients") return renderShell(hash, patientsView(user), user, bindPatients);
     if (route === "intake") return renderShell(hash, intakeView(user), user, bindIntake);
     if (route === "patient") return renderShell(hash, patientView(user), user, bindPatient);
@@ -286,7 +304,8 @@
       const editId = (hash.split("?edit=")[1] || "").trim();
       if (editId) { patientCrumb(editId); trail.push({ label: "Edit info", hash }); }
       else trail.push({ label: "New intake", hash });
-    } else if (route === "calendar") trail.push({ label: "Calendar", hash: "#/calendar" });
+    } else if (route === "drafts") trail.push({ label: "Unsigned drafts", hash: "#/drafts" });
+    else if (route === "calendar") trail.push({ label: "Calendar", hash: "#/calendar" });
     else if (route === "privacy") trail.push({ label: "Privacy & Security", hash: "#/privacy" });
     else if (route === "facility") trail.push({ label: "Facility Admin", hash: "#/facility" });
     else if (route === "profile") trail.push({ label: "My Profile", hash: "#/profile" });
@@ -727,7 +746,6 @@
     const todays = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
     const expSoon = S.users().filter((u) => u.active && S.licenseExpiresSoon(u));
     const upcoming = S.appointments().filter((a) => a.status === "booked" && a.start >= new Date().toISOString()).length;
-    const canIntake = S.canDocument(user) || user.role === "frontdesk";
 
     // A single "needs attention" list for the whole clinic — same organizing
     // idea as the patient chart's Overview, so the important things surface
@@ -735,7 +753,7 @@
     const attn = [];
     expSoon.forEach((u) => attn.push({ level: "warn", text: `${u.name} — license ${u.license.number} expires ${fmtDate(u.license.expires)}`, href: "#/facility", action: "Staff" }));
     due.forEach((p) => attn.push({ level: "warn", text: `${S.patientName(p)} — progress report due (${S.visitCount(p.id)} visits)`, href: `#/patient/${p.id}`, action: "Open chart" }));
-    if (drafts.length) attn.push({ level: "info", text: `${drafts.length} unsigned draft${drafts.length > 1 ? "s" : ""} across the clinic`, href: null, action: null });
+    if (drafts.length) attn.push({ level: "info", text: `${drafts.length} unsigned draft${drafts.length > 1 ? "s" : ""} across the clinic`, href: "#/drafts", action: "Review" });
 
     const tile = (num, label, href, accent) => {
       const inner = `<div class="stat-num">${num}</div><div class="stat-label">${label}</div>`;
@@ -747,26 +765,23 @@
 <div class="page-head">
   <div><h1>Good day, ${esc(user.name.split(",")[0].split(" ")[0])}</h1>
   <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.settings().facilityName)}</div></div>
-  <div class="page-actions">
-    ${canIntake ? `<a class="btn primary" href="#/intake">+ New patient intake</a>` : ""}
-  </div>
 </div>
 
 <div class="stat-tiles">
   ${tile(patients.length, "Patients on file", "#/patients", false)}
   ${tile(todays.length, "Visits today", "#/calendar", false)}
-  ${tile(drafts.length, "Unsigned drafts", null, true)}
+  ${tile(drafts.length, "Unsigned drafts", "#/drafts", true)}
   ${tile(due.length, "Progress reports due", null, true)}
 </div>
 
 <div class="card">
   <h2>Needs attention</h2>
   ${attn.length ? `<div class="attn-list">${attn.map((it) => `
-    <div class="attn-item ${it.level}">
+    <a class="attn-item ${it.level}" href="${it.href}">
       <span class="attn-dot"></span>
       <span class="attn-text">${esc(it.text)}</span>
-      ${it.href ? `<a class="btn small" href="${it.href}">${esc(it.action)}</a>` : ""}
-    </div>`).join("")}</div>`
+      <span class="attn-go">${esc(it.action)} →</span>
+    </a>`).join("")}</div>`
     : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — licenses current, progress reports up to date.</div>`}
 </div>
 
@@ -782,17 +797,43 @@
   </div>
   <div class="card">
     <h2>Unsigned drafts</h2>
-    ${drafts.length ? `<div class="table-scroll"><table class="list"><tbody>${drafts.map((d) => `
-      <tr class="rowlink" data-href="#/doc/${d.id}">
-        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>${esc(d.title)}<br><small style="color:var(--muted)">${esc(S.patientName(S.getPatient(d.patientId)))}</small></td>
-        <td><span class="chip warn">draft</span></td>
-        <td class="num">${fmtDate(d.createdAt)}</td></tr>`).join("")}</tbody></table></div>`
+    ${drafts.length
+      ? `<a class="jumbo-link" href="#/drafts">
+           <div><b>${drafts.length} draft${drafts.length > 1 ? "s" : ""} waiting</b><small>Review and sign across the clinic</small></div>
+           <span class="jumbo-arrow">→</span>
+         </a>`
       : `<div class="empty-state">Everything is signed. ✓</div>`}
   </div>
 </div>`;
   }
 
   function bindDashboard() { bindRowLinks(); }
+
+  /* ================= UNSIGNED DRAFTS (clinic-wide) ================= */
+
+  function draftsView(user) {
+    const drafts = S.load().documents
+      .filter((d) => d.status === "draft")
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)); // newest first
+    return `
+<div class="page-head">
+  <div><h1>Unsigned drafts</h1><div class="sub">${drafts.length} draft${drafts.length === 1 ? "" : "s"} across the clinic — resume, review, and sign</div></div>
+</div>
+<div class="card">
+  ${drafts.length ? `<div class="table-scroll"><table class="list">
+    <thead><tr><th>Document</th><th>Patient</th><th>Started by</th><th>Started</th><th></th></tr></thead>
+    <tbody>${drafts.map((d) => `
+      <tr class="rowlink" data-href="#/doc/${d.id}">
+        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
+        <td>${esc(S.patientName(S.getPatient(d.patientId)))}</td>
+        <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
+        <td class="num">${fmtDate(d.createdAt)}</td>
+        <td><span class="chip warn">draft</span></td>
+      </tr>`).join("")}</tbody>
+  </table></div>`
+    : `<div class="empty-state">Everything is signed. ✓ No unsigned drafts across the clinic.</div>`}
+</div>`;
+  }
 
   function bindRowLinks() {
     document.querySelectorAll("tr.rowlink").forEach((tr) =>
@@ -901,6 +942,107 @@
     });
   }
 
+  /* ---------- Patient edit: pick a section, edit it in a focused window ---------- */
+
+  // "Edit info" first asks WHICH set of details is changing, then opens just
+  // that window — so personal and insurance edits never blur together, and the
+  // user is warned before discarding anything unsaved.
+  function openEditChooser(p, user) {
+    const m = showModal(`
+      <h2>Edit patient details</h2>
+      <p style="font-size:13px; color:var(--muted); margin:0 0 14px">Choose what you're changing. Nothing saves until you press Save inside that window.</p>
+      <div class="edit-choice-grid">
+        <button class="edit-choice" data-sec="personal" type="button">
+          <span class="edit-choice-ico ec-personal">📇</span>
+          <b>Personal information</b>
+          <small>Name, birth date, contact, referring physician</small>
+        </button>
+        <button class="edit-choice" data-sec="insurance" type="button">
+          <span class="edit-choice-ico ec-insurance">💳</span>
+          <b>Insurance &amp; payment</b>
+          <small>Provider, member ID, payment notes</small>
+        </button>
+      </div>
+      <div class="modal-actions"><button class="btn" id="ecClose">Cancel</button></div>`);
+    m.querySelector("#ecClose").addEventListener("click", closeModal);
+    m.querySelectorAll("[data-sec]").forEach((b) =>
+      b.addEventListener("click", () => openPatientSectionEdit(p, user, b.dataset.sec)));
+  }
+
+  function openPatientSectionEdit(p, user, section) {
+    const isPersonal = section === "personal";
+    const insur = p.insurance || {};
+    const fieldsHtml = isPersonal ? `
+      <div class="field-row">
+        <div class="field"><label>First name *</label><input id="pe-first" value="${esc(p.firstName || "")}" /></div>
+        <div class="field"><label>Last name *</label><input id="pe-last" value="${esc(p.lastName || "")}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Date of birth *</label><input id="pe-dob" type="date" value="${esc(p.dob || "")}" /></div>
+        <div class="field"><label>Sex</label><select id="pe-sex">
+          <option value="">—</option><option ${p.sex === "F" ? "selected" : ""}>F</option><option ${p.sex === "M" ? "selected" : ""}>M</option></select></div>
+      </div>
+      <div class="field"><label>Address</label><input id="pe-address" value="${esc(p.address || "")}" /></div>
+      <div class="field-row">
+        <div class="field"><label>Phone number *</label><input id="pe-phone" value="${esc(p.phone || "")}" /></div>
+        <div class="field"><label>Email</label><input id="pe-email" type="email" value="${esc(p.email || "")}" /></div>
+      </div>
+      <div class="field"><label>Referring physician</label><input id="pe-ref" value="${esc(p.referringPhysician || "")}" /></div>`
+    : `
+      <div class="field-row">
+        <div class="field"><label>Provider</label><input id="pe-prov" value="${esc(insur.provider || "")}" placeholder="PhilHealth, HMO, self-pay…" /></div>
+        <div class="field"><label>Member / policy ID</label><input id="pe-member" value="${esc(insur.memberId || "")}" /></div>
+      </div>
+      <div class="field"><label>Payment notes</label><input id="pe-paynotes" value="${esc(insur.notes || "")}" placeholder="Co-pay, approvals, etc." /></div>`;
+
+    const m = showModal(`
+      <h2>${isPersonal ? "Edit personal information" : "Edit insurance & payment"}</h2>
+      ${fieldsHtml}
+      <div class="error" id="pe-err" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px"></div>
+      <div class="modal-actions" id="pe-actions"></div>`);
+
+    const ids = isPersonal ? ["pe-first", "pe-last", "pe-dob", "pe-sex", "pe-address", "pe-phone", "pe-email", "pe-ref"]
+                           : ["pe-prov", "pe-member", "pe-paynotes"];
+    const snap = () => ids.map((id) => m.querySelector("#" + id).value).join("");
+    const initial = snap();
+    const isDirty = () => snap() !== initial;
+    const actions = m.querySelector("#pe-actions");
+    const defaultActions = `<button class="btn" id="pe-cancel">Cancel</button><button class="btn primary" id="pe-save">${isPersonal ? "Save personal info" : "Save insurance"}</button>`;
+
+    const doSave = () => {
+      const g = (id) => (m.querySelector("#" + id).value || "").trim();
+      let fields;
+      if (isPersonal) {
+        if (!g("pe-first") || !g("pe-last") || !g("pe-dob") || !g("pe-phone")) {
+          m.querySelector("#pe-err").textContent = "First name, last name, date of birth, and phone are required.";
+          return;
+        }
+        fields = { firstName: g("pe-first"), lastName: g("pe-last"), dob: g("pe-dob"), sex: g("pe-sex"),
+                   address: g("pe-address"), phone: g("pe-phone"), email: g("pe-email"), referringPhysician: g("pe-ref") };
+      } else {
+        fields = { insurance: { provider: g("pe-prov"), memberId: g("pe-member"), notes: g("pe-paynotes") } };
+      }
+      S.updatePatient(p.id, fields, user.id);
+      closeModal();
+      alertBanner(`${isPersonal ? "Personal information" : "Insurance & payment"} saved.`);
+      renderShell(location.hash, patientView(user), user, bindPatient);
+    };
+    const onCancel = () => {
+      if (!isDirty()) return closeModal();
+      actions.innerHTML = `<div class="unsaved-warn">⚠ Unsaved changes to ${isPersonal ? "personal information" : "insurance & payment"} won't be saved if you leave.</div>
+        <button class="btn" id="pe-keep">Keep editing</button>
+        <button class="btn danger" id="pe-discard">Discard changes</button>`;
+      m.querySelector("#pe-discard").addEventListener("click", closeModal);
+      m.querySelector("#pe-keep").addEventListener("click", () => { actions.innerHTML = defaultActions; wire(); });
+    };
+    const wire = () => {
+      m.querySelector("#pe-cancel").addEventListener("click", onCancel);
+      m.querySelector("#pe-save").addEventListener("click", doSave);
+    };
+    actions.innerHTML = defaultActions;
+    wire();
+  }
+
   /* ================= PATIENT CENTER ================= */
 
   const currentPatientId = () => (location.hash.split("/")[2] || "").split("?")[0];
@@ -964,7 +1106,7 @@
   <div class="page-actions">
     <button class="btn only-mobile" id="assistantLaunchM" type="button">${ICON.spark} Ask about patient</button>
     <button class="btn" id="printChartBtn">Print / export chart (PDF)</button>
-    <a class="btn" href="#/intake?edit=${p.id}">Edit info</a>
+    <button class="btn" id="editInfoBtn" type="button">Edit info</button>
   </div>
 </div>
 ${tabStrip}
@@ -1147,15 +1289,17 @@ ${tabStrip}
   }
 
   function docFilterBar() {
-    const typeChip = (val, label) => `<button class="fchip ${docFilter.type === val ? "on" : ""}" data-ftype="${val}">${label}</button>`;
-    const statChip = (val, label) => `<button class="fchip ${docFilter.status === val ? "on" : ""}" data-fstatus="${val}">${label}</button>`;
+    // per-type / per-status classes let each chip carry its own accent colour
+    // so the groups read as colour-coded sets instead of one blob of pills.
+    const typeChip = (val, label) => `<button class="fchip ft-type ft-${val} ${docFilter.type === val ? "on" : ""}" data-ftype="${val}">${val === "all" ? "" : '<i class="fdot"></i>'}${label}</button>`;
+    const statChip = (val, label) => `<button class="fchip fs-${val} ${docFilter.status === val ? "on" : ""}" data-fstatus="${val}">${label}</button>`;
     return `
       <div class="doc-filters">
         <div class="fgroup"><span class="fglabel">Type</span>
-          ${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div>
+          <div class="fchips">${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div></div>
         <div class="fgroup"><span class="fglabel">Status</span>
-          ${statChip("all", "All")}${statChip("draft", "Draft")}${statChip("signed", "Signed")}</div>
-        <div class="fgroup"><span class="fglabel">Date</span>
+          <div class="fchips">${statChip("all", "All")}${statChip("draft", "Draft")}${statChip("signed", "Signed")}</div></div>
+        <div class="fgroup fgroup-date"><span class="fglabel">Date</span>
           <input type="date" class="fdate" id="fFrom" value="${docFilter.from}" aria-label="From date" />
           <span class="fgsep">–</span>
           <input type="date" class="fdate" id="fTo" value="${docFilter.to}" aria-label="To date" />
@@ -1311,20 +1455,26 @@ ${tabStrip}
       : `<div class="banner warn">No active licensed therapists to schedule — update staff licenses in Facility Admin.</div>`;
 
     return `
-      <div class="card">
-        <div class="ins-head"><h2>Book a course of visits</h2></div>
-        <p style="font-size:13px; color:var(--muted); margin:0 0 12px">Generate a recurring schedule in one step — you'll preview every visit (and any conflicts) before it's booked. Each visit gets the usual automatic reminders.</p>
+      <div class="card sched-card sched-book">
+        <div class="sched-cardhead"><span class="sched-ico">🗓️</span>
+          <div><h2>Schedule recurring visits</h2>
+          <p class="sched-cardsub">Generate a recurring schedule in one step — preview every visit (and any conflicts) before it's booked. Each visit gets the usual automatic reminders.</p></div>
+        </div>
         ${form}
       </div>
-      <div class="card">
-        <h2>Upcoming visits</h2>
+      <div class="card sched-card sched-upcoming">
+        <div class="sched-cardhead"><span class="sched-ico">📆</span>
+          <div><h2>Upcoming visits</h2><p class="sched-cardsub">Booked and on the calendar${upcoming.length ? ` · ${upcoming.length}` : ""}.</p></div>
+        </div>
         ${upcoming.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>When</th><th>Therapist</th><th>Note</th><th></th></tr></thead><tbody>
           ${upcoming.map((a) => `<tr><td class="num">${fmtDT(a.start)}</td><td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td><td>${esc(a.note || "")}</td>
             <td style="text-align:right"><button class="btn small" data-cancelappt="${a.id}">Cancel</button></td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty-state">No upcoming visits booked.</div>`}
       </div>
-      <div class="card">
-        <h2>Visit history</h2>
+      <div class="card sched-card sched-history">
+        <div class="sched-cardhead"><span class="sched-ico">🧾</span>
+          <div><h2>Visit history</h2><p class="sched-cardsub">What's been documented and booked so far.</p></div>
+        </div>
         <table class="list"><tbody>
           <tr><td>Daily visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
           <tr><td>Upcoming bookings</td><td class="num">${upcoming.length}</td></tr>
@@ -1399,6 +1549,9 @@ ${tabStrip}
     const pr = document.getElementById("printChartBtn");
     if (pr) pr.addEventListener("click", () => printPatientChart(p));
 
+    const ei = document.getElementById("editInfoBtn");
+    if (ei) ei.addEventListener("click", () => openEditChooser(p, user));
+
     if (patientTab === "overview") mountAiReview(p, user);
     if (patientTab === "documents") { bindNewDoc(p, user); bindDocFilters(p, user); }
     if (patientTab === "files") bindFiles(p, user);
@@ -1415,6 +1568,8 @@ ${tabStrip}
       if (start) start.addEventListener("click", () => {
         const res = S.createDoc(p.id, start.dataset.startdoc, user);
         if (res.error) return alertBanner(res.error);
+        // watch this fresh draft so it self-discards if backed out untouched
+        pristineDraft = { id: res.doc.id, snapshot: JSON.stringify(res.doc.data) };
         location.hash = `#/doc/${res.doc.id}`;
       });
       const close = picker.querySelector("[data-closepicker]");
@@ -3465,59 +3620,168 @@ ${ths.map((t) => {
 
   /* ================= PRIVACY ================= */
 
+  // Maps each audit action to a human phrase, a category tone (drives the badge
+  // colour) and a glyph, so the activity log reads like a feed instead of a
+  // spreadsheet of raw event codes.
+  const AUDIT_META = {
+    login: { emoji: "🔓", label: "signed in", tone: "tone-auth" },
+    "login-offline": { emoji: "📴", label: "signed in (offline)", tone: "tone-auth" },
+    "login-denied": { emoji: "⛔", label: "sign-in denied", tone: "tone-danger" },
+    logout: { emoji: "🔒", label: "signed out", tone: "tone-auth" },
+    "password-changed": { emoji: "🔑", label: "changed a password", tone: "tone-auth" },
+    "doc-created": { emoji: "📝", label: "started a document", tone: "tone-doc" },
+    "doc-signed": { emoji: "✒️", label: "signed a document", tone: "tone-doc" },
+    "doc-amended": { emoji: "✏️", label: "amended a document", tone: "tone-doc" },
+    "doc-imported": { emoji: "📥", label: "imported a document", tone: "tone-doc" },
+    "doc-discarded": { emoji: "🗑", label: "discarded an empty draft", tone: "tone-doc" },
+    "chart-printed": { emoji: "🖨", label: "printed a chart", tone: "tone-doc" },
+    "schedule-printed": { emoji: "🖨", label: "printed the schedule", tone: "tone-doc" },
+    "ai-chart-review": { emoji: "✦", label: "ran an AI chart review", tone: "tone-ai" },
+    "transcript-refined": { emoji: "✦", label: "cleaned up a transcript", tone: "tone-ai" },
+    "insights-generated": { emoji: "✦", label: "generated insights", tone: "tone-ai" },
+    "pdf-import-applied": { emoji: "📄", label: "applied a scanned import", tone: "tone-ai" },
+    "assistant-query": { emoji: "💬", label: "asked the assistant", tone: "tone-ai" },
+    "patient-created": { emoji: "🩺", label: "added a patient", tone: "tone-patient" },
+    "patient-updated": { emoji: "🩺", label: "updated a patient", tone: "tone-patient" },
+    "attachment-added": { emoji: "📎", label: "added an attachment", tone: "tone-patient" },
+    "file-uploaded": { emoji: "📎", label: "uploaded a file", tone: "tone-patient" },
+    "appointment-created": { emoji: "📅", label: "booked an appointment", tone: "tone-sched" },
+    "appointment-cancelled": { emoji: "🚫", label: "cancelled an appointment", tone: "tone-sched" },
+    "appointment-series": { emoji: "📅", label: "scheduled a series", tone: "tone-sched" },
+    "reminder-sent": { emoji: "🔔", label: "sent a reminder", tone: "tone-sched" },
+    "user-created": { emoji: "🪪", label: "created an account", tone: "tone-admin" },
+    "user-updated": { emoji: "🪪", label: "updated an account", tone: "tone-admin" },
+    "user-deleted": { emoji: "🪪", label: "removed an account", tone: "tone-admin" },
+    "settings-updated": { emoji: "⚙️", label: "updated facility settings", tone: "tone-admin" },
+    "access-requested": { emoji: "✋", label: "requested access", tone: "tone-admin" },
+    "access-approved": { emoji: "✅", label: "approved an access request", tone: "tone-admin" },
+    "access-declined": { emoji: "✖️", label: "declined an access request", tone: "tone-admin" },
+    "data-exported": { emoji: "⭳", label: "exported a backup", tone: "tone-security" },
+    "audio-purged": { emoji: "🎤", label: "purged session audio", tone: "tone-security" },
+    "audio-deleted": { emoji: "🎤", label: "deleted session audio", tone: "tone-security" },
+    "audio-consent-granted": { emoji: "🎤", label: "recorded audio consent", tone: "tone-security" },
+    "audio-consent-revoked": { emoji: "🎤", label: "revoked audio consent", tone: "tone-security" },
+    "sync-conflict": { emoji: "🔀", label: "resolved a sync conflict", tone: "tone-security" },
+  };
+  const auditMeta = (a) => AUDIT_META[a] || { emoji: "•", label: String(a || "activity").replace(/-/g, " "), tone: "tone-default" };
+
+  function auditDayLabel(key) {
+    if (!key || key === "unknown") return "Earlier";
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    if (key === todayIso()) return "Today";
+    if (key === localIso(y)) return "Yesterday";
+    return fmtDate(key);
+  }
+
+  // Each audit tone rolls up to a filterable category chip in the activity log.
+  const TONE_CAT = {
+    "tone-auth": "auth", "tone-doc": "doc", "tone-ai": "ai", "tone-patient": "patient",
+    "tone-sched": "sched", "tone-admin": "admin", "tone-security": "security", "tone-danger": "security",
+  };
+  const AUDIT_CAT_FILTERS = [
+    { key: "all", label: "All" },
+    { key: "auth", label: "Sign-ins" },
+    { key: "doc", label: "Documents" },
+    { key: "ai", label: "AI" },
+    { key: "patient", label: "Patients" },
+    { key: "sched", label: "Scheduling" },
+    { key: "admin", label: "Admin" },
+    { key: "security", label: "Security" },
+  ];
+
+  // The collapsed "how it works" accordion: each protection topic behind its own
+  // disclosure so the page leads with the activity log instead of a wall of text.
+  function privacyInfoAccordion(geminiOn) {
+    const items = [
+      { emoji: "🔐", title: "Where your data lives & your controls", body: `
+        <p>TheraChart runs as one secure service on <b>Google Cloud</b>, so your clinic can open it from anywhere — the office, a home visit, another city — with the same login. Records are kept in an <b>encrypted database</b>, and each clinic's data is walled off from every other clinic's.</p>
+        <p>Google Cloud holds that data under a signed <b>Business Associate Agreement (BAA)</b> — the healthcare contract that legally binds them to protect patient information. Nothing is stored on a service that isn't under that agreement.</p>
+        <p style="margin-bottom:0">You stay in control: use <b>Export backup</b> or <b>Erase all data</b> above at any time.</p>` },
+      { emoji: "🎤", title: "Voice dictation", body: `
+        <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b>, which turns it into text and sends it straight back — under the <b>same Google Cloud BAA</b>, never a free consumer speech service. <b>By default the audio itself is kept only in memory and discarded</b> the moment it's transcribed; only the transcript is saved.</p>
+        <p style="margin-bottom:0"><b>Optional session-audio review.</b> A clinic can turn on a feature — off by default — that keeps the dictation audio briefly <b>for patients who consent</b>, so a clinician can replay it to double-check the transcript. That kept audio is <b>automatically deleted the moment the note is signed</b>, or after the clinic's short retention window, whichever comes first. It's never kept long-term, and the patient's consent is recorded in the chart.</p>` },
+      { emoji: "✦", title: `AI cleanup & insights${geminiOn ? " (Gemini)" : ""}`, body: geminiOn
+        ? `<p>When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, under the same Google Cloud BAA. Under that agreement, <b>Google does not use your data to train its models</b>.</p>
+        <p><b>Importing a scanned PDF</b> of past visits sends that document the same way, to be read into chart entries.</p>
+        <p style="margin-bottom:0">The AI only ever suggests — every result is shown for your review, and <b>nothing is saved until a licensed clinician approves and signs it</b>.</p>`
+        : `<p>Cleanup and insights run on a built-in reviewer <b>right on this device</b> — nothing is sent anywhere.</p>
+        <p style="margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> (under the BAA) for smarter results and scanned-PDF import; this one hasn't. Either way, a licensed clinician reviews and signs everything.</p>` },
+      { emoji: "🛡", title: "Who can see what", body: `
+        <ul style="margin:0; padding-left:18px; line-height:1.9">
+          <li>Everyone signs in with their own account and sees only what their role needs (therapist / front desk / admin)</li>
+          <li>Expired licenses and voided accounts lose access automatically</li>
+          <li>Signed documents lock — later changes need a signed, authorized amendment</li>
+          <li>Every notable action is recorded in the activity log</li>
+        </ul>` },
+      { emoji: "🏛", title: "A note on real-world use", body: `
+        <p style="margin-bottom:0">This is a demonstration build. Before storing real patient data, deploy TheraChart's production configuration — sign the <b>Google Cloud BAA</b>, enable the encrypted database and the Vertex AI &amp; Speech-to-Text endpoints, and replace the demo logins with real per-user credentials — to meet <b>HIPAA</b> (US) or the <b>Data Privacy Act of 2012 / RA 10173</b> (Philippines).</p>` },
+    ];
+    return `<div class="info-acc">${items.map((it) => `
+      <details class="info-acc-item">
+        <summary><span class="info-acc-ico">${it.emoji}</span><span class="info-acc-title">${it.title}</span><span class="info-acc-chev">›</span></summary>
+        <div class="info-acc-body">${it.body}</div>
+      </details>`).join("")}</div>`;
+  }
+
   function privacyView(user) {
     const log = S.auditLog().slice().reverse().slice(0, 100);
     const geminiOn = window.TheraSync && window.TheraSync.refine === "gemini";
+
+    // group the feed by calendar day (already newest-first)
+    const groups = [];
+    const byDay = new Map();
+    for (const e of log) {
+      const key = e.time ? localIso(new Date(e.time)) : "unknown";
+      if (!byDay.has(key)) { const arr = []; byDay.set(key, arr); groups.push({ key, events: arr }); }
+      byDay.get(key).push(e);
+    }
+    const feedRow = (e, dayLabel) => {
+      const m = auditMeta(e.action);
+      const actor = (S.getUser(e.userId) || {}).name || e.userId || "System";
+      const cat = TONE_CAT[m.tone] || "other";
+      // day label + full date fold into the search text so typing "today" or a
+      // date filters just like the day-group headers read.
+      const search = `${actor} ${m.label} ${e.action} ${e.detail || ""} ${dayLabel} ${e.time ? fmtDT(e.time) : ""}`.toLowerCase();
+      return `<div class="feed-row" data-search="${esc(search)}" data-cat="${cat}">
+        <div class="feed-ico ${m.tone}" title="${esc(e.action)}">${m.emoji}</div>
+        <div class="feed-main">
+          <div class="feed-line"><b>${esc(actor)}</b> <span class="feed-action">${esc(m.label)}</span></div>
+          ${e.detail ? `<div class="feed-detail">${esc(e.detail)}</div>` : ""}
+        </div>
+        <div class="feed-time" title="${esc(fmtDT(e.time))}">${e.time ? esc(fmtTime(e.time)) : ""}</div>
+      </div>`;
+    };
+
     return `
 <div class="page-head">
-  <div><h1>Privacy &amp; Security</h1><div class="sub">Where your information lives and what the AI features do with it — in plain terms</div></div>
+  <div><h1>Privacy &amp; Security</h1><div class="sub">Your clinic's activity log, plus how TheraChart keeps information safe</div></div>
+  <div class="page-head-actions">
+    <button class="btn small" id="exportDataBtn">⭳ Export backup</button>
+    <button class="btn small danger" id="wipeBtn">Erase all data</button>
+  </div>
 </div>
-<div class="cards-3" style="align-items:stretch">
-  <div class="card">
-    <h2>🔐 Where your data lives</h2>
-    <p style="font-size:13px">TheraChart runs as one secure service on <b>Google Cloud</b>, so your clinic can open it from anywhere — the office, a home visit, another city — with the same login. Records are kept in an <b>encrypted database</b>, and each clinic's data is walled off from every other clinic's.</p>
-    <p style="font-size:13px">Google Cloud holds that data under a signed <b>Business Associate Agreement (BAA)</b> — the healthcare contract that legally binds them to protect patient information. Nothing is stored on a service that isn't under that agreement.</p>
-    <p style="font-size:13px">You stay in control: download a complete backup or erase everything, any time.</p>
-    <div style="display:flex; gap:8px; flex-wrap:wrap">
-      <button class="btn small" id="exportDataBtn">Export backup (JSON)</button>
-      <button class="btn small danger" id="wipeBtn">Erase all data</button>
+
+${privacyInfoAccordion(geminiOn)}
+
+<div class="card activity-card">
+  <div class="activity-head">
+    <div><h2 style="margin:0">Activity log</h2><div class="activity-sub">Every notable action, newest first</div></div>
+    <div class="activity-tools">
+      <input id="logSearch" type="search" placeholder="Filter by name, action or detail…" autocomplete="off" />
+      <span class="chip muted" id="logCount">${log.length} events</span>
     </div>
   </div>
-  <div class="card">
-    <h2>🎤 Voice dictation</h2>
-    <p style="font-size:13px">When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b>, which turns it into text and sends it straight back — under the <b>same Google Cloud BAA</b>, never a free consumer speech service. <b>By default the audio itself is kept only in memory and discarded</b> the moment it's transcribed; only the transcript is saved.</p>
-    <p style="font-size:13px"><b>Optional session-audio review.</b> A clinic can turn on a feature — off by default — that keeps the dictation audio briefly <b>for patients who consent</b>, so a clinician can replay it to double-check the transcript. That kept audio is <b>automatically deleted the moment the note is signed</b>, or after the clinic's short retention window, whichever comes first. It's never kept long-term, and the patient's consent is recorded in the chart.</p>
+  <div class="activity-catbar" id="activityCatbar">
+    ${AUDIT_CAT_FILTERS.map((c) => `<button class="catchip ${c.key === "all" ? "on" : ""}" data-cat="${c.key}">${c.label}</button>`).join("")}
   </div>
-  <div class="card">
-    <h2>✦ AI cleanup &amp; insights${geminiOn ? " (Gemini)" : ""}</h2>
-    ${geminiOn
-      ? `<p style="font-size:13px">When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, under the same Google Cloud BAA. Under that agreement, <b>Google does not use your data to train its models</b>.</p>
-    <p style="font-size:13px"><b>Importing a scanned PDF</b> of past visits sends that document the same way, to be read into chart entries.</p>
-    <p style="font-size:13px; margin-bottom:0">The AI only ever suggests — every result is shown for your review, and <b>nothing is saved until a licensed clinician approves and signs it</b>.</p>`
-      : `<p style="font-size:13px">Cleanup and insights run on a built-in reviewer <b>right on this device</b> — nothing is sent anywhere.</p>
-    <p style="font-size:13px; margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> (under the BAA) for smarter results and scanned-PDF import; this one hasn't. Either way, a licensed clinician reviews and signs everything.</p>`}
+  <div class="activity-feed" id="activityFeed">
+    ${groups.map((g) => `
+      <div class="feed-day">
+        <div class="feed-day-label">${esc(auditDayLabel(g.key))}<span>${g.events.length}</span></div>
+        <div class="feed-day-rows">${g.events.map((e) => feedRow(e, auditDayLabel(g.key))).join("")}</div>
+      </div>`).join("") || `<div class="empty-state">No events recorded yet.</div>`}
+    <div class="feed-empty" id="feedEmpty" hidden><div class="empty-state">No events match your filter.</div></div>
   </div>
-</div>
-<div class="cards-2">
-  <div class="card">
-    <h2>🛡 Who can see what</h2>
-    <ul style="font-size:13px; margin:0; padding-left:18px; line-height:1.8">
-      <li>Everyone signs in with their own PIN and sees only what their role needs (therapist / front desk / admin)</li>
-      <li>Expired licenses and voided accounts lose access automatically</li>
-      <li>Signed documents lock — later changes need a signed, authorized amendment</li>
-      <li>Notable actions are recorded in the activity log below</li>
-    </ul>
-  </div>
-  <div class="card">
-    <h2>A note on real-world use</h2>
-    <p style="font-size:13px; margin:0">This is a demonstration build. Before storing real patient data, deploy TheraChart's production configuration — sign the <b>Google Cloud BAA</b>, enable the encrypted database and the Vertex AI &amp; Speech-to-Text endpoints, and replace the demo PIN logins with real per-user credentials — to meet <b>HIPAA</b> (US) or the <b>Data Privacy Act of 2012 / RA 10173</b> (Philippines).</p>
-  </div>
-</div>
-<div class="card">
-  <h2>Activity log <span style="font-weight:400; color:var(--muted); font-size:12px">most recent 100 events</span></h2>
-  <div class="table-scroll"><table class="list"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead><tbody>
-    ${log.map((e) => `<tr><td class="num">${fmtDT(e.time)}</td><td>${esc((S.getUser(e.userId) || {}).name || e.userId || "—")}</td><td><span class="chip muted">${esc(e.action)}</span></td><td>${esc(e.detail)}</td></tr>`).join("") || `<tr><td colspan="4"><div class="empty-state">No events yet.</div></td></tr>`}
-  </tbody></table></div>
 </div>`;
   }
 
@@ -3544,15 +3808,87 @@ ${ths.map((t) => {
         render();
       });
     });
+
+    // live filter of the activity feed — combines the category chips with the
+    // search box (AND), hides any day group that empties out, and updates the
+    // count / "no matches" note.
+    const search = document.getElementById("logSearch");
+    const feed = document.getElementById("activityFeed");
+    if (feed) {
+      const emptyNote = document.getElementById("feedEmpty");
+      const countChip = document.getElementById("logCount");
+      const catbar = document.getElementById("activityCatbar");
+      const total = feed.querySelectorAll(".feed-row").length;
+      let activeCat = "all";
+      const apply = () => {
+        const q = (search ? search.value : "").trim().toLowerCase();
+        let shown = 0;
+        feed.querySelectorAll(".feed-row").forEach((row) => {
+          const catHit = activeCat === "all" || row.dataset.cat === activeCat;
+          const textHit = !q || (row.dataset.search || "").includes(q);
+          const hit = catHit && textHit;
+          row.hidden = !hit;
+          if (hit) shown++;
+        });
+        feed.querySelectorAll(".feed-day").forEach((day) => {
+          day.hidden = !day.querySelector(".feed-row:not([hidden])");
+        });
+        if (emptyNote) emptyNote.hidden = shown !== 0;
+        if (countChip) countChip.textContent = (q || activeCat !== "all") ? `${shown} of ${total}` : `${total} events`;
+      };
+      if (search) search.addEventListener("input", apply);
+      if (catbar) catbar.querySelectorAll(".catchip").forEach((chip) =>
+        chip.addEventListener("click", () => {
+          activeCat = chip.dataset.cat;
+          catbar.querySelectorAll(".catchip").forEach((c) => c.classList.toggle("on", c === chip));
+          apply();
+        }));
+    }
   }
 
   /* ================= FACILITY ADMIN ================= */
+
+  function accessRequestsCard(user) {
+    const pending = S.accessRequests().filter((r) => r.status === "pending")
+      .slice().sort((a, b) => ((a.createdAt || "") < (b.createdAt || "") ? 1 : -1));
+    return `
+<div class="card access-card">
+  <div class="access-head">
+    <div><h2 style="margin:0">Access requests${pending.length ? ` <span class="chip warn">${pending.length} waiting</span>` : ""}</h2>
+      <div class="access-sub">People who tried to sign in with an account that isn't authorized yet. Approve to grant access, or decline.</div></div>
+  </div>
+  ${pending.length ? `<div class="access-list">${pending.map((r) => `
+    <div class="access-req" data-ar="${esc(r.id)}">
+      <div class="access-avatar">${esc(initials(r.name || r.email))}</div>
+      <div class="access-info">
+        <div class="access-name">${esc(r.name || "—")} <span class="chip muted">${esc(r.source || "google")}</span></div>
+        <div class="access-email">${esc(r.email)}</div>
+        ${r.note ? `<div class="access-note">${esc(r.note)}</div>` : ""}
+        <div class="access-meta">Requested ${esc(fmtDT(r.createdAt))}${r.attempts > 1 ? ` · ${r.attempts} attempts` : ""}</div>
+      </div>
+      <div class="access-actions">
+        <select class="access-role" aria-label="Role for ${esc(r.email)}">
+          <option value="therapist">Therapist</option>
+          <option value="frontdesk">Front desk</option>
+          <option value="admin">Administrator</option>
+        </select>
+        <div style="display:flex; gap:6px">
+          <button class="btn small primary" data-approve="${esc(r.id)}">Approve</button>
+          <button class="btn small" data-decline="${esc(r.id)}">Decline</button>
+        </div>
+        <div class="access-msg" data-ar-msg="${esc(r.id)}"></div>
+      </div>
+    </div>`).join("")}</div>`
+    : `<div class="empty-state">No access requests waiting. New requests appear here when someone tries to sign in with an account that hasn't been authorized yet.</div>`}
+</div>`;
+  }
 
   function facilityView(user) {
     const st = S.settings();
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
-<div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Settings and staff licenses</div></div></div>
+<div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Approvals, settings and staff licenses</div></div></div>
+${accessRequestsCard(user)}
 <div class="cards-2">
   <div class="card">
     <h2>Facility settings</h2>
@@ -3721,6 +4057,30 @@ ${ths.map((t) => {
         render();
       })
     );
+
+    // access-request approvals: approving provisions an account (so the next
+    // sign-in works) and re-renders so the new staffer drops into the list.
+    const arMsg = (id, text) => { const el = document.querySelector(`[data-ar-msg="${id}"]`); if (el) { el.style.color = "var(--danger)"; el.textContent = text; } };
+    document.querySelectorAll("[data-approve]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.approve;
+        const card = b.closest(".access-req");
+        const role = card ? card.querySelector(".access-role").value : "therapist";
+        b.disabled = true;
+        const res = S.approveAccessRequest(id, { role }, user);
+        if (res.error) { b.disabled = false; return arMsg(id, res.error); }
+        render();
+      })
+    );
+    document.querySelectorAll("[data-decline]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.decline;
+        b.disabled = true;
+        const res = S.declineAccessRequest(id, user);
+        if (res.error) { b.disabled = false; return arMsg(id, res.error); }
+        render();
+      })
+    );
   }
 
   /* ================= PROFILE ================= */
@@ -3743,32 +4103,54 @@ ${ths.map((t) => {
     ${S.licenseExpired(user) ? `<div class="banner bad" style="margin-top:12px">Your license has expired — EMR access and document creation/editing are disabled until an administrator updates it.</div>` : ""}
   </div>
   <div class="card">
-    <h2>Change password</h2>
-    <div class="field"><label>Current password</label><input id="curPw" type="password" autocomplete="current-password" /></div>
-    <div class="field"><label>New password (at least 8 characters)</label><input id="newPw" type="password" autocomplete="new-password" /></div>
-    <div class="field"><label>Confirm new password</label><input id="confPw" type="password" autocomplete="new-password" /></div>
-    <button class="btn" id="pwSave">Update password</button>
-    <div id="pwMsg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
+    <h2>Sign-in &amp; security</h2>
+    <table class="list"><tbody>
+      <tr><td style="color:var(--muted)">Login email</td><td>${esc(user.email || "—")}</td></tr>
+      <tr><td style="color:var(--muted)">Sign-in method</td><td>${user.authProvider === "google" ? '<span class="chip muted">Google account</span>' : "Email &amp; password"}</td></tr>
+      ${user.authProvider === "google" ? "" : `<tr><td style="color:var(--muted)">Password</td><td>••••••••</td></tr>`}
+    </tbody></table>
+    ${user.authProvider === "google"
+      ? `<p style="font-size:12.5px; color:var(--muted); margin:12px 0 0">You sign in with your Google account, so there's no separate TheraChart password to manage here.</p>`
+      : `<button class="btn" id="openPwBtn" style="margin-top:12px">Change password</button>`}
   </div>
 </div>`;
   }
 
   function bindProfile(user) {
-    const btn = document.getElementById("pwSave");
-    btn.addEventListener("click", async () => {
-      const cur = document.getElementById("curPw").value;
-      const nw = document.getElementById("newPw").value;
-      const cf = document.getElementById("confPw").value;
-      const msg = document.getElementById("pwMsg");
-      const fail = (t) => { msg.style.color = "var(--danger)"; msg.textContent = t; };
-      if (nw.length < 8) return fail("New password must be at least 8 characters.");
-      if (nw !== cf) return fail("New passwords don't match.");
-      msg.style.color = "var(--muted)"; msg.textContent = "Updating…"; btn.disabled = true;
-      const err = await window.TheraSync.changePassword({ currentPassword: cur, newPassword: nw });
-      btn.disabled = false;
-      if (err) return fail(err);
-      msg.style.color = "var(--good)"; msg.textContent = "Password updated.";
-      ["curPw", "newPw", "confPw"].forEach((id) => (document.getElementById(id).value = ""));
+    const openBtn = document.getElementById("openPwBtn");
+    if (!openBtn) return; // Google accounts have no local password to change
+    openBtn.addEventListener("click", () => {
+      const m = showModal(`
+        <h2>Change password</h2>
+        <div class="field"><label>Current password</label><input id="curPw" type="password" autocomplete="current-password" /></div>
+        <div class="field"><label>New password (at least 8 characters)</label><input id="newPw" type="password" autocomplete="new-password" /></div>
+        <div class="field"><label>Confirm new password</label><input id="confPw" type="password" autocomplete="new-password" /></div>
+        <div id="pwMsg" style="font-size:12.5px; min-height:18px; margin:2px 0 4px"></div>
+        <div class="modal-actions">
+          <button class="btn" id="pwCancel">Cancel</button>
+          <button class="btn primary" id="pwSave">Update password</button>
+        </div>`);
+      m.querySelector("#pwCancel").addEventListener("click", closeModal);
+      const curEl = m.querySelector("#curPw");
+      curEl.focus();
+      const btn = m.querySelector("#pwSave");
+      const submit = async () => {
+        const cur = m.querySelector("#curPw").value;
+        const nw = m.querySelector("#newPw").value;
+        const cf = m.querySelector("#confPw").value;
+        const msg = m.querySelector("#pwMsg");
+        const fail = (t) => { msg.style.color = "var(--danger)"; msg.textContent = t; };
+        if (nw.length < 8) return fail("New password must be at least 8 characters.");
+        if (nw !== cf) return fail("New passwords don't match.");
+        msg.style.color = "var(--muted)"; msg.textContent = "Updating…"; btn.disabled = true;
+        const err = await window.TheraSync.changePassword({ currentPassword: cur, newPassword: nw });
+        btn.disabled = false;
+        if (err) return fail(err);
+        msg.style.color = "var(--good)"; msg.textContent = "Password updated.";
+        setTimeout(closeModal, 900);
+      };
+      btn.addEventListener("click", submit);
+      m.querySelector("#confPw").addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
     });
   }
 

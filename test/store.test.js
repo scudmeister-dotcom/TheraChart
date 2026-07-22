@@ -93,6 +93,26 @@ check("audit log captured sign/amend/booking",
     .every((a) => log.some((e) => e.action === a)),
   JSON.stringify([...new Set(log.map((e) => e.action))]));
 
+// --- access requests (approval queue) ------------------------------------
+const req = store.requestAccess({ email: "newhire@clinic.com", name: "New Hire", source: "google" });
+check("access request recorded as pending",
+  !!req.request && store.accessRequests().some((r) => r.email === "newhire@clinic.com" && r.status === "pending"));
+const dupe = store.requestAccess({ email: "newhire@clinic.com", name: "New Hire" });
+check("duplicate pending request deduped + counted",
+  store.accessRequests().filter((r) => r.email === "newhire@clinic.com").length === 1 && dupe.request.attempts === 2);
+const approved = store.approveAccessRequest(req.request.id, { role: "frontdesk" }, ana);
+check("approve provisions an active Google account with the chosen role",
+  !approved.error && approved.user.active === true && approved.user.role === "frontdesk" && approved.user.authProvider === "google");
+check("approved account is reachable by email (so sign-in can succeed)", !!store.getUserByEmail("newhire@clinic.com"));
+check("approved request marked resolved", store.accessRequests().find((r) => r.id === req.request.id).status === "approved");
+check("re-handling a resolved request is refused", !!store.approveAccessRequest(req.request.id, { role: "therapist" }, ana).error);
+const req2 = store.requestAccess({ email: "walkin@clinic.com", name: "Walk In" });
+const declined = store.declineAccessRequest(req2.request.id, ana);
+check("decline resolves the request without an account",
+  declined.ok && store.accessRequests().find((r) => r.id === req2.request.id).status === "declined" && !store.getUserByEmail("walkin@clinic.com"));
+check("access request/approve/decline are audited",
+  ["access-requested", "access-approved", "access-declined"].every((a) => store.auditLog().some((e) => e.action === a)));
+
 store.resetAll(); // leave a clean seed behind
 
 const total = passed + failures.length;
