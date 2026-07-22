@@ -99,33 +99,22 @@
 
 * { box-sizing: border-box; }
 
-/* ---- Sidebar palette: light clinical (default) / refined dark ----
-   Mirrors the brand handoff (1f light, 1g dark). Kept as its own token set so
-   the sidebar can be light while the rest of the app follows the theme. */
-:root, :root[data-theme="light"] {
-  --side-bg: #FAFCFB; --side-fg: #4E6663; --side-fg-strong: #122B29;
-  --side-border: #E4ECEA; --side-hover: #F1F6F5;
-  --side-active-bg: #ffffff; --side-active-fg: #0B4F4A; --side-active-border: transparent;
-  --side-rail: #0F8A80; --side-label: #8FA6A3;
-  --side-wordmark: #122B29; --side-sub: #8FA6A3;
-  --side-shadow: 0 1px 2px rgba(18,43,41,.06);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --side-bg: linear-gradient(180deg,#0E2523,#0A1C1B); --side-fg: #9DB8B4; --side-fg-strong: #F0FDFA;
-    --side-border: rgba(94,234,212,.08); --side-hover: rgba(255,255,255,.05);
-    --side-active-bg: rgba(94,234,212,.1); --side-active-fg: #5EEAD4; --side-active-border: rgba(94,234,212,.14);
-    --side-rail: #5EEAD4; --side-label: #5E7F7B;
-    --side-wordmark: #F0FDFA; --side-sub: #6E918D;
-    --side-shadow: none;
-  }
-}
-:root[data-theme="dark"] {
-  --side-bg: linear-gradient(180deg,#0E2523,#0A1C1B); --side-fg: #9DB8B4; --side-fg-strong: #F0FDFA;
-  --side-border: rgba(94,234,212,.08); --side-hover: rgba(255,255,255,.05);
-  --side-active-bg: rgba(94,234,212,.1); --side-active-fg: #5EEAD4; --side-active-border: rgba(94,234,212,.14);
-  --side-rail: #5EEAD4; --side-label: #5E7F7B;
-  --side-wordmark: #F0FDFA; --side-sub: #6E918D;
+/* ---- Sidebar palette: dark teal-gradient rail in EVERY theme ----
+   The rail is a fixed brand surface (the teal→ink gradient with soft teal/violet
+   glows) that anchors the lighter content beside it; the rest of the app still
+   follows light/dark. `var(--sidebar)` shifts the base a touch darker in dark
+   mode. New rail elements (logo, count pill, active state, user row) all read
+   against it via the tokens below. */
+:root {
+  --side-bg:
+    radial-gradient(120% 60% at 15% 0%, rgba(58, 182, 192, 0.22), transparent 60%),
+    radial-gradient(95% 55% at 100% 100%, rgba(109, 90, 224, 0.16), transparent 55%),
+    linear-gradient(180deg, var(--sidebar), color-mix(in srgb, var(--sidebar) 82%, #000));
+  --side-fg: #B4CBC7; --side-fg-strong: #F0FDFA;
+  --side-border: rgba(255, 255, 255, 0.08); --side-hover: rgba(255, 255, 255, 0.06);
+  --side-active-bg: rgba(94, 234, 212, 0.12); --side-active-fg: #7EF0DC;
+  --side-rail: #5EEAD4; --side-label: rgba(255, 255, 255, 0.42);
+  --side-wordmark: #F0FDFA; --side-sub: rgba(255, 255, 255, 0.5); --side-accent: #5EEAD4;
   --side-shadow: none;
 }
 
@@ -194,10 +183,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar .brand .logo {
   width: 38px; height: 38px; border-radius: 11px;
   display: grid; place-items: center; flex: none;
+  /* lift the deep-teal logo tile off the dark rail */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(94, 234, 212, 0.12);
 }
 .sidebar .brand .logo svg { width: 100%; height: 100%; display: block; }
 .sidebar .brand-text b { color: var(--side-wordmark); font-weight: 700; font-size: 17px; display: block; line-height: 1.15; }
-.sidebar .brand-text b em { color: var(--accent); font-style: normal; }
+.sidebar .brand-text b em { color: var(--side-accent); font-style: normal; }
 .sidebar .brand-text span { font-size: 9.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--side-sub); }
 
 .nav { display: flex; flex-direction: column; gap: 2px; padding: 0 14px; }
@@ -234,10 +225,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .nav-link.active .nav-ico { margin-left: 6px; }
 .nav-count {
   margin-left: auto; font-size: 11px; font-weight: 600;
-  background: var(--accent-soft); color: var(--accent);
+  background: rgba(94, 234, 212, 0.14); color: var(--side-accent);
   border-radius: 99px; padding: 2px 8px;
 }
-.nav-link.active .nav-count { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.nav-link.active .nav-count { background: rgba(94, 234, 212, 0.22); }
 .nav-link.disabled { opacity: 0.4; pointer-events: none; }
 
 .sidebar .spacer { flex: 1; }
@@ -263,7 +254,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: transparent; border: 1px solid var(--side-border);
   color: var(--side-fg); border-radius: 9px;
 }
-.userchip .signout:hover { background: var(--side-hover); border-color: var(--accent); color: var(--accent); }
+.userchip .signout:hover { background: var(--side-hover); border-color: var(--side-accent); color: var(--side-accent); }
 
 /* breadcrumb + back navigation */
 .crumbbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
