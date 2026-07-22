@@ -1323,13 +1323,15 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   .acct-item.danger { color: var(--danger); }
   .acct-item.danger .acct-ico { color: var(--danger); }
 
-  /* --- bottom pill tab bar: three workflow destinations + sliding pill --- */
+  /* --- bottom pill tab bar: three workflow destinations + sliding pill.
+     Shares the rail's --side-bg so the top bar and bottom bar read as the same
+     dark teal-gradient surface. --- */
   .tabbar {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
     align-items: stretch;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-    background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar) 92%, #000), var(--sidebar));
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--side-bg);
+    border-top: 1px solid var(--side-border);
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.28);
   }
   /* one moving element behind the tabs gives the segmented-slider feel */
@@ -1349,7 +1351,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
     flex: 1 1 0; min-width: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 3px; padding: 7px 2px; border-radius: 13px;
-    text-decoration: none; color: var(--sidebar-ink);
+    text-decoration: none; color: var(--side-fg);
     transition: color 0.2s ease;
   }
   .tab .tab-ico { width: 22px; height: 22px; display: grid; place-items: center; }
