@@ -511,6 +511,7 @@ const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".json": "application/json",
   ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2", ".woff": "font/woff", ".webmanifest": "application/manifest+json",
 };
 
 function json(res, code, obj) {

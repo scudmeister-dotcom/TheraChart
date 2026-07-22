@@ -1,0 +1,17 @@
+/* Self-hosted brand fonts — no external CDN, so nothing leaves the server and
+   the PWA keeps working offline. Variable woff2 (latin subset) covering the
+   weights the UI uses. Source: Google Fonts (Sora, Figtree; OFL). */
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("figtree-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Sora";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("sora-latin.woff2") format("woff2");
+}

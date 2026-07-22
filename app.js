@@ -16,24 +16,15 @@
   /* TheraChart logo — clipboard + rising bar chart + breakout arrow, with the
      spine motif. Recreated as clean SVG so it scales crisply and is truly
      transparent (no baked-in checkerboard). */
-  const LOGO_MARK = `<svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <defs>
-    <linearGradient id="tcBar1" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#4fc48c"/></linearGradient>
-    <linearGradient id="tcBar2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f9e6f"/><stop offset="1" stop-color="#57cf95"/></linearGradient>
-    <linearGradient id="tcBar3" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#33a77a"/><stop offset="1" stop-color="#63d59d"/></linearGradient>
-    <linearGradient id="tcSpine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b7bbd"/><stop offset="1" stop-color="#33b083"/></linearGradient>
-  </defs>
-  <path d="M15.5 11 C 10.5 17.5, 19 23, 13.5 29.5 C 9 35, 17 40, 12.5 46.5" stroke="url(#tcSpine)" stroke-width="2.2" stroke-linecap="round" fill="none" opacity="0.55"/>
-  <circle cx="15.4" cy="11.5" r="2.2" fill="#2b7bbd"/><circle cx="13.2" cy="18.6" r="2.2" fill="#2f8fb0"/>
-  <circle cx="16.4" cy="25.2" r="2.2" fill="#2fa2a0"/><circle cx="12.8" cy="32.2" r="2.2" fill="#31ab90"/>
-  <circle cx="15.2" cy="39.2" r="2.2" fill="#37b385"/><circle cx="12.6" cy="46" r="2.2" fill="#3fb87f"/>
-  <rect x="24" y="13" width="27" height="33" rx="4" fill="#ffffff" stroke="#2b8fb0" stroke-width="3"/>
-  <rect x="32.5" y="8.5" width="10" height="7.5" rx="2.4" fill="#2b7bbd"/>
-  <rect x="29.5" y="31" width="4.6" height="9" rx="1.2" fill="url(#tcBar1)"/>
-  <rect x="36" y="27" width="4.6" height="13" rx="1.2" fill="url(#tcBar2)"/>
-  <rect x="42.5" y="23" width="4.6" height="17" rx="1.2" fill="url(#tcBar3)"/>
-  <path d="M29 31 L35 25.5 L41 27.5 L52 15.5" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <path d="M46.5 14.6 L53 13.5 L52 20" stroke="#2b7bbd" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  // "Vertebrae" mark (brand handoff 1b): spine segments as a stacked data
+  // column — tapering, darkening teal bars on a deep-teal tile. The tile is
+  // part of the mark, so it needs no wrapper background.
+  const LOGO_MARK = `<svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect width="56" height="56" rx="14" fill="#0B4F4A"/>
+  <rect x="20" y="10" width="16" height="7" rx="3.5" fill="#5EEAD4"/>
+  <rect x="17" y="20" width="22" height="7" rx="3.5" fill="#2DD4BF"/>
+  <rect x="20" y="30" width="16" height="7" rx="3.5" fill="#14B8A6"/>
+  <rect x="23" y="40" width="10" height="7" rx="3.5" fill="#0D9488"/>
 </svg>`;
   const printArea = document.getElementById("printArea");
 
@@ -72,12 +63,13 @@
   };
 
   const ICON = {
-    dash: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.2"/></svg>',
-    people: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5.5" cy="5" r="2.4"/><path d="M1.5 13.5c0-2.2 1.8-4 4-4s4 1.8 4 4"/><circle cx="11.5" cy="5.5" r="1.9"/><path d="M10.5 9.7c2 .2 3.5 1.8 3.9 3.8"/></svg>',
-    cal: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.8" y="2.8" width="12.4" height="11.2" rx="1.5"/><path d="M1.8 6h12.4M5 1.2v3M11 1.2v3"/></svg>',
-    shield: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l5.5 2v4c0 3.5-2.4 6-5.5 7-3.1-1-5.5-3.5-5.5-7v-4z"/><path d="M5.6 8l1.7 1.7 3.1-3.4"/></svg>',
-    gear: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4"/></svg>',
-    user: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5.2" r="2.7"/><path d="M2.8 14c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3"/></svg>',
+    // Nav icon set from the brand handoff (24×24, currentColor stroke).
+    dash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18"/><path d="M7 14l2.5 2.5L12 13l2 2 3-4"/></svg>',
+    people: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    cal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    shield: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></svg>',
+    gear: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="13" rx="2"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><circle cx="12" cy="14" r="1.6"/><path d="M12 15.6V18"/></svg>',
+    user: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/></svg>',
     back: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5L5 8l4.5 4.5"/></svg>',
     signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
     logo: LOGO_MARK,
@@ -326,8 +318,10 @@
       const disabled = n.emr && !emrAllowed;
       const active = hash.startsWith(n.hash) ||
         (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
+      // live count pill (e.g. Patients "24"), per the brand handoff
+      const count = n.hash === "#/patients" ? S.patients().length : null;
       return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
-        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span></a>`;
+        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span>${count ? `<span class="nav-count">${count}</span>` : ""}</a>`;
     };
     const nav = groups.map((g) => {
       const items = g.items.map(linkHtml).filter(Boolean).join("");
@@ -383,7 +377,7 @@
     <div class="sidebar-inner">
       <div class="brand">
         <div class="logo">${ICON.logo}</div>
-        <div class="brand-text"><b>TheraChart</b><span>Clinic EMR</span></div>
+        <div class="brand-text"><b>Thera<em>Chart</em></b><span>Clinic EMR</span></div>
       </div>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
       <div class="nav">${nav}</div>
@@ -3656,7 +3650,7 @@ ${ths.map((t) => {
     "access-requested": { emoji: "✋", label: "requested access", tone: "tone-admin" },
     "access-approved": { emoji: "✅", label: "approved an access request", tone: "tone-admin" },
     "access-declined": { emoji: "✖️", label: "declined an access request", tone: "tone-admin" },
-    "data-exported": { emoji: "⭳", label: "exported a backup", tone: "tone-security" },
+    "data-exported": { emoji: "💾", label: "exported a backup", tone: "tone-security" },
     "audio-purged": { emoji: "🎤", label: "purged session audio", tone: "tone-security" },
     "audio-deleted": { emoji: "🎤", label: "deleted session audio", tone: "tone-security" },
     "audio-consent-granted": { emoji: "🎤", label: "recorded audio consent", tone: "tone-security" },
@@ -3756,7 +3750,7 @@ ${ths.map((t) => {
 <div class="page-head">
   <div><h1>Privacy &amp; Security</h1><div class="sub">Your clinic's activity log, plus how TheraChart keeps information safe</div></div>
   <div class="page-head-actions">
-    <button class="btn small" id="exportDataBtn">⭳ Export backup</button>
+    <button class="btn small" id="exportDataBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Export backup</button>
     <button class="btn small danger" id="wipeBtn">Erase all data</button>
   </div>
 </div>

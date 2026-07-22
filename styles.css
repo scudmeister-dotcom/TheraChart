@@ -7,9 +7,9 @@
   --panel: #ffffff;
   --ink: #1f2d3a;
   --muted: #64748b;
-  --accent: #0e7c86;
+  --accent: #0F8A80;
   --accent-ink: #ffffff;
-  --accent-soft: #d3ecee;
+  --accent-soft: #E6F5F2;
   --point: #e03e52;
   --border: #e2e8f0;
   --sil: #cfdce6;
@@ -70,7 +70,7 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #64748b;
-  --accent: #0e7c86; --accent-ink: #ffffff; --accent-soft: #d3ecee;
+  --accent: #0F8A80; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
   --hover: #f6f9fb; --flash: #fff3d6; --hl: #ffe9a8; --hl-strong: #ffd166;
   --review: #b9820a; --review-soft: #fdf3dd;
@@ -99,6 +99,36 @@
 
 * { box-sizing: border-box; }
 
+/* ---- Sidebar palette: light clinical (default) / refined dark ----
+   Mirrors the brand handoff (1f light, 1g dark). Kept as its own token set so
+   the sidebar can be light while the rest of the app follows the theme. */
+:root, :root[data-theme="light"] {
+  --side-bg: #FAFCFB; --side-fg: #4E6663; --side-fg-strong: #122B29;
+  --side-border: #E4ECEA; --side-hover: #F1F6F5;
+  --side-active-bg: #ffffff; --side-active-fg: #0B4F4A; --side-active-border: transparent;
+  --side-rail: #0F8A80; --side-label: #8FA6A3;
+  --side-wordmark: #122B29; --side-sub: #8FA6A3;
+  --side-shadow: 0 1px 2px rgba(18,43,41,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --side-bg: linear-gradient(180deg,#0E2523,#0A1C1B); --side-fg: #9DB8B4; --side-fg-strong: #F0FDFA;
+    --side-border: rgba(94,234,212,.08); --side-hover: rgba(255,255,255,.05);
+    --side-active-bg: rgba(94,234,212,.1); --side-active-fg: #5EEAD4; --side-active-border: rgba(94,234,212,.14);
+    --side-rail: #5EEAD4; --side-label: #5E7F7B;
+    --side-wordmark: #F0FDFA; --side-sub: #6E918D;
+    --side-shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --side-bg: linear-gradient(180deg,#0E2523,#0A1C1B); --side-fg: #9DB8B4; --side-fg-strong: #F0FDFA;
+  --side-border: rgba(94,234,212,.08); --side-hover: rgba(255,255,255,.05);
+  --side-active-bg: rgba(94,234,212,.1); --side-active-fg: #5EEAD4; --side-active-border: rgba(94,234,212,.14);
+  --side-rail: #5EEAD4; --side-label: #5E7F7B;
+  --side-wordmark: #F0FDFA; --side-sub: #6E918D;
+  --side-shadow: none;
+}
+
 /* Keep iOS Safari from silently rescaling: never auto-adjust text on rotate,
    and never let the layout grow wider than the device so the browser has to
    "zoom out" to fit. The page always renders at exact device width. */
@@ -110,11 +140,16 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--ink);
   font-size: 14.5px;
   line-height: 1.5;
+}
+/* Sora for the brand wordmark + top-level page titles (display) */
+.brand-text b, .splash-title, .login-box h1, .page-head h1 {
+  font-family: "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: -0.01em;
 }
 
 button { font: inherit; cursor: pointer; }
@@ -129,116 +164,106 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* ---------------- layout ---------------- */
 
-.shell { display: flex; min-height: 100vh; padding-left: 236px; }
+.shell { display: flex; min-height: 100vh; padding-left: 276px; }
 
-/* The rail is a fixed 100vh panel pinned to the viewport, so its gradient is
-   anchored to a constant-height box — it renders identically on every page
-   (content height no longer warps it) and never scrolls away on a long chart.
-   .shell's padding-left reserves the column so page content clears it. Fixed
-   positioning is immune to the ancestor `overflow-x: hidden` that would break
-   a sticky rail. */
+/* Light-clinical rail (brand handoff 1f) — a fixed 100vh panel pinned to the
+   viewport. Themed via the --side-* tokens: light surface in light mode, the
+   refined teal-gradient (1g) in dark mode. Fixed positioning is immune to the
+   ancestor `overflow-x: hidden` that would otherwise break a sticky rail. */
 .sidebar {
   position: fixed;
   top: 0; left: 0;
-  width: 236px;
+  width: 276px;
   height: 100vh;
   z-index: 30;
-  color: var(--sidebar-ink);
-  background:
-    radial-gradient(120% 60% at 15% 0%, rgba(58, 182, 192, 0.22), transparent 60%),
-    radial-gradient(90% 50% at 100% 100%, rgba(109, 90, 224, 0.16), transparent 55%),
-    linear-gradient(180deg, var(--sidebar), color-mix(in srgb, var(--sidebar) 82%, #000));
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--side-fg);
+  background: var(--side-bg);
+  border-right: 1px solid var(--side-border);
 }
-/* Fills the fixed rail as a flex column; the spacer pushes the user chip to
+/* Fills the fixed rail as a flex column; the spacer pushes the user row to
    the very bottom of the panel. */
 .sidebar-inner {
   display: flex;
   flex-direction: column;
-  padding: 20px 14px 14px;
   height: 100%;
 }
 .sidebar .brand {
   display: flex; align-items: center; gap: 11px;
-  padding: 2px 8px 20px;
+  padding: 20px 18px 16px;
 }
 .sidebar .brand .logo {
-  width: 42px; height: 42px; border-radius: 12px;
-  display: grid; place-items: center; padding: 4px;
-  background: #fff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  width: 38px; height: 38px; border-radius: 11px;
+  display: grid; place-items: center; flex: none;
 }
-.sidebar .brand .logo svg { width: 100%; height: 100%; }
-.sidebar .brand-text b { color: #fff; font-size: 16.5px; letter-spacing: 0.2px; display: block; line-height: 1.15; }
-.sidebar .brand-text span { font-size: 10px; letter-spacing: 2.4px; text-transform: uppercase; opacity: 0.6; }
+.sidebar .brand .logo svg { width: 100%; height: 100%; display: block; }
+.sidebar .brand-text b { color: var(--side-wordmark); font-weight: 700; font-size: 17px; display: block; line-height: 1.15; }
+.sidebar .brand-text b em { color: var(--accent); font-style: normal; }
+.sidebar .brand-text span { font-size: 9.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--side-sub); }
 
-.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav { display: flex; flex-direction: column; gap: 2px; padding: 0 14px; }
 .nav-group { margin-bottom: 12px; }
 .nav-group-label {
-  font-size: 9.5px; letter-spacing: 2px; text-transform: uppercase;
-  opacity: 0.45; padding: 4px 12px 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--side-label); padding: 8px 12px 6px;
 }
 .nav-link {
   position: relative;
-  display: flex; align-items: center; gap: 11px;
-  padding: 9px 12px; margin-bottom: 1px;
-  border-radius: 11px;
-  color: var(--sidebar-ink);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 1px;
+  border-radius: 9px;
+  color: var(--side-fg);
   text-decoration: none;
-  font-weight: 500; font-size: 13.5px;
-  transition: background 0.16s, color 0.16s, transform 0.12s;
+  font-weight: 500; font-size: 14px;
+  transition: background 0.15s, color 0.15s;
 }
-.nav-ico {
-  display: grid; place-items: center;
-  width: 30px; height: 30px; border-radius: 9px; flex: none;
-  background: rgba(255, 255, 255, 0.05);
-  transition: background 0.16s, box-shadow 0.16s;
-}
-.nav-ico svg { opacity: 0.9; }
+/* icons render inline (no chip) in the new rail */
+.nav-ico { display: inline-flex; flex: none; color: inherit; }
+.nav-ico svg { display: block; }
 /* compact label only used in the mobile bottom tab bar */
 .nav-label-short { display: none; }
-.nav-link:hover { background: rgba(255, 255, 255, 0.06); transform: translateX(2px); }
+.nav-link:hover { background: var(--side-hover); color: var(--side-fg-strong); }
 .nav-link.active {
-  color: #fff;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 42%, transparent), rgba(255, 255, 255, 0.02));
+  color: var(--side-active-fg); font-weight: 600;
+  background: var(--side-active-bg); box-shadow: var(--side-shadow);
 }
+/* left rail indicator; the icon nudges right to clear it */
 .nav-link.active::before {
-  content: ""; position: absolute; left: -14px; top: 50%; transform: translateY(-50%);
-  width: 4px; height: 22px; border-radius: 0 4px 4px 0;
-  background: linear-gradient(180deg, #56d3dc, var(--accent));
-  box-shadow: 0 0 10px rgba(58, 182, 192, 0.8);
+  content: ""; position: absolute; left: 0; top: 9px; bottom: 9px;
+  width: 3.5px; border-radius: 99px; background: var(--side-rail);
 }
-.nav-link.active .nav-ico {
-  background: linear-gradient(145deg, #3ec6d0, #0e7c86);
-  box-shadow: 0 3px 10px rgba(14, 124, 134, 0.5);
+.nav-link.active .nav-ico { margin-left: 6px; }
+.nav-count {
+  margin-left: auto; font-size: 11px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent);
+  border-radius: 99px; padding: 2px 8px;
 }
-.nav-link.active .nav-ico svg { opacity: 1; stroke: #fff; }
-.nav-link.disabled { opacity: 0.32; pointer-events: none; }
+.nav-link.active .nav-count { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.nav-link.disabled { opacity: 0.4; pointer-events: none; }
 
 .sidebar .spacer { flex: 1; }
 .userchip {
-  display: flex; align-items: center; gap: 10px;
-  padding: 11px 10px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex; align-items: center; gap: 11px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--side-border);
   margin-top: 6px;
 }
 .userchip .avatar {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: linear-gradient(145deg, #3ec6d0, #0e7c86);
+  width: 36px; height: 36px; border-radius: 99px;
+  background: linear-gradient(135deg, #14B8A6, #0E7490);
   color: #fff;
   display: grid; place-items: center; font-weight: 700; font-size: 13px;
-  flex: none; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+  flex: none;
 }
 .userchip button.avatar { border: none; padding: 0; }
 .userchip .who { min-width: 0; flex: 1; }
-.userchip .who b { display: block; color: #fff; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.userchip .who small { font-size: 10.5px; opacity: 0.7; }
+.userchip .who b { display: block; color: var(--side-fg-strong); font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.userchip .who small { font-size: 11.5px; color: var(--side-sub); }
 .userchip .signout {
-  display: grid; place-items: center; width: 30px; height: 30px;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--sidebar-ink); border-radius: 9px;
+  display: grid; place-items: center; width: 32px; height: 32px;
+  background: transparent; border: 1px solid var(--side-border);
+  color: var(--side-fg); border-radius: 9px;
 }
-.userchip .signout:hover { background: rgba(255, 90, 90, 0.18); border-color: rgba(255, 120, 120, 0.4); color: #fff; }
+.userchip .signout:hover { background: var(--side-hover); border-color: var(--accent); color: var(--accent); }
 
 /* breadcrumb + back navigation */
 .crumbbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -402,33 +427,45 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .access-actions { flex-direction: row; align-items: center; width: 100%; flex-wrap: wrap; }
 }
 
+/* Button system — brand handoff 1d. Colours flow through theme tokens so the
+   same variants read correctly in both the light and dark themes. */
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
-  padding: 8px 14px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  padding: 9px 15px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
   background: var(--panel);
   color: var(--ink);
   font-weight: 600; font-size: 13.5px;
   text-decoration: none;
+  transition: background .15s, border-color .15s, color .15s, box-shadow .15s, filter .15s;
 }
-.btn:hover { background: var(--hover); }
-/* Primary fill: deepen the left end (no bright cyan corner) so the button reads
-   as one solid teal instead of its top-left edge jumping out on light panels. */
-.btn.primary { background: linear-gradient(145deg, #23929c 0%, #0e7c86 55%, #0a5b63 100%); border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(14, 124, 134, 0.32); }
-.btn.primary:hover { filter: brightness(1.06); }
-/* AI actions carry a teal→indigo→violet sweep to signal "assisted". Both ends
-   are deepened (no neon cyan on the left, no bright violet on the right) so the
-   button blends against light panels instead of its edges jumping out. */
+/* secondary (outline) hover: border + text pick up the brand teal */
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary {
+  background: var(--accent); border-color: transparent; color: var(--accent-ink);
+  box-shadow: 0 1px 2px rgba(11, 79, 74, .25), inset 0 1px 0 rgba(255, 255, 255, .14);
+}
+.btn.primary:hover { color: var(--accent-ink); border-color: transparent; filter: brightness(0.93); }
+/* secondary soft */
+.btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.btn.soft:hover { color: var(--accent); filter: brightness(0.97); }
+/* AI action (primary): teal→cyan pill-gradient with a lift on hover */
 .btn.ai, #refineBtn {
-  background: linear-gradient(135deg, #2b8f99 0%, #3a6aa8 50%, #5647b8 100%);
-  border-color: transparent; color: #fff; box-shadow: 0 2px 9px rgba(70, 60, 150, 0.22);
+  background: linear-gradient(120deg, #0F8A80, #0E7490); border-color: transparent; color: #fff;
+  box-shadow: 0 2px 10px rgba(14, 116, 144, .28);
 }
-.btn.ai:hover, #refineBtn:hover { filter: brightness(1.05); }
-.btn.danger { color: var(--danger); }
-.btn.danger:hover { background: var(--danger-soft); border-color: var(--danger-border); }
-.btn.small { padding: 5px 10px; font-size: 12.5px; }
-.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btn.ai:hover, #refineBtn:hover { color: #fff; border-color: transparent; box-shadow: 0 3px 14px rgba(14, 116, 144, .4); }
+/* AI action (outline) */
+.btn.ai-outline { background: var(--panel); border: 1.5px solid #A5DCE4; color: #0E7490; }
+.btn.ai-outline:hover { color: #0E7490; border-color: #A5DCE4; background: color-mix(in srgb, #A5DCE4 16%, var(--panel)); }
+/* destructive soft (default) + solid modifier */
+.btn.danger { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+.btn.danger:hover { color: var(--danger); border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 14%, var(--panel)); }
+.btn.danger.solid { background: #C2453A; border-color: transparent; color: #fff; }
+.btn.danger.solid:hover { color: #fff; background: #A93A30; }
+.btn.small { padding: 6px 11px; font-size: 12.5px; border-radius: 8px; }
+.btn[disabled], .btn:disabled { color: #8FA6A3; background: var(--border); border-color: transparent; box-shadow: none; filter: none; cursor: not-allowed; }
 
 .chip {
   display: inline-block; padding: 2px 9px; border-radius: 999px;
@@ -499,9 +536,8 @@ table.list .num { font-variant-numeric: tabular-nums; }
 .login-box .brandline { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; }
 .login-box .brandline .logo {
   width: 52px; height: 52px; border-radius: 14px;
-  background: #fff; padding: 5px;
   display: grid; place-items: center;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .login-box .brandline .logo svg { width: 100%; height: 100%; }
 .login-box h1 { font-size: 21px; color: #fff; }
@@ -523,8 +559,8 @@ table.list .num { font-variant-numeric: tabular-nums; }
 .splash-inner { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 24px; }
 .splash-logo {
   width: 96px; height: 96px; border-radius: 24px;
-  background: #fff; padding: 12px; display: grid; place-items: center;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  display: grid; place-items: center;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   animation: splashPop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .splash-logo svg { width: 100%; height: 100%; }
@@ -1336,11 +1372,11 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   .sidebar {
     position: fixed; top: 0; left: 0; right: 0; z-index: 40;
     width: 100%; height: auto;
-    flex-direction: row; align-items: center; gap: 10px;
+    display: flex; flex-direction: row; align-items: center; gap: 10px;
     padding: 8px 14px;
     padding-top: calc(8px + env(safe-area-inset-top));
     border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--side-border);
   }
   /* dissolve the sticky column wrapper so brand/sync/account lay out directly
      as the horizontal top bar again */
