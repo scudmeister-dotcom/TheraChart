@@ -2153,12 +2153,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     </div>
     <div class="dict-bar">
       <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen</span></button>
-      <select id="langSel" title="Speech language">
+      <select id="langSel" title="Speech language" ${editable ? "" : "disabled"}>
         <option value="en-US">English</option>
         <option value="fil-PH">Tagalog / Filipino</option>
         <option value="ceb-PH">Cebuano</option>
       </select>
-      <select id="engineSel" title="Dictation engine">
+      <select id="engineSel" title="Dictation engine" ${editable ? "" : "disabled"}>
         <option value="browser">Dictation: Browser (current)</option>
         <option value="cloud:standard">Dictation: Google Cloud — Standard (BAA)</option>
         <option value="cloud:chirp">Dictation: Google Cloud — Chirp (BAA)</option>
