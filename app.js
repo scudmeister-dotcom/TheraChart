@@ -224,7 +224,7 @@
     if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
 
     if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
-    if (route === "drafts") return renderShell(hash, draftsView(user), user, bindDashboard);
+    if (route === "drafts") return renderShell(hash, draftsView(user), user, bindDrafts);
     if (route === "patients") return renderShell(hash, patientsView(user), user, bindPatients);
     if (route === "intake") return renderShell(hash, intakeView(user), user, bindIntake);
     if (route === "patient") return renderShell(hash, patientView(user), user, bindPatient);
@@ -253,7 +253,7 @@
       <div class="splash-inner">
         <div class="splash-logo">${LOGO_MARK}</div>
         <div class="splash-name">TheraChart EMR</div>
-        <div class="splash-sub">${esc(S.settings().facilityName)}</div>
+        <div class="splash-sub">${esc(S.currentClinicName())}</div>
         <div class="splash-bar"><span></span></div>
       </div>`;
     document.body.appendChild(el);
@@ -318,10 +318,8 @@
       const disabled = n.emr && !emrAllowed;
       const active = hash.startsWith(n.hash) ||
         (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
-      // live count pill (e.g. Patients "24"), per the brand handoff
-      const count = n.hash === "#/patients" ? S.patients().length : null;
       return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
-        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span>${count ? `<span class="nav-count">${count}</span>` : ""}</a>`;
+        <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span></a>`;
     };
     const nav = groups.map((g) => {
       const items = g.items.map(linkHtml).filter(Boolean).join("");
@@ -380,11 +378,10 @@
         <div class="brand-text"><b>Thera<em>Chart</em></b><span>Clinic EMR</span></div>
       </div>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
-      <div class="nav">${nav}</div>
-      ${drawerPid ? `<div class="nav-group sidebar-context">
+      <div class="nav">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
         <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
-      </div>` : ""}
+      </div>` : ""}</div>
       <div class="spacer"></div>
       <div class="userchip">
         <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
@@ -394,7 +391,7 @@
       ${acctMenuHtml}
     </div>
   </aside>
-  <main class="content" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
+  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
   ${drawerPid ? `
   <div class="assistant-backdrop" id="asstBackdrop"></div>
@@ -517,7 +514,7 @@
   <div class="login-box">
     <div class="brandline">
       <div class="logo">${LOGO_MARK}</div>
-      <div><h1>TheraChart EMR</h1><div class="sub">${esc(S.settings().facilityName)}</div></div>
+      <div><h1>TheraChart EMR</h1><div class="sub">${esc(S.currentClinicName())}</div></div>
     </div>
     <div class="card">
       <h2>Set your password</h2>
@@ -547,7 +544,7 @@
   }
 
   function renderLanding() {
-    const facility = esc(S.settings().facilityName);
+    const facility = esc(S.currentClinicName());
     const feature = (icon, title, body) => `
       <div class="lp-feature">
         <div class="lp-feature-ico">${icon}</div>
@@ -634,7 +631,7 @@
       <div class="logo">${LOGO_MARK}</div>
       <div>
         <h1>TheraChart EMR</h1>
-        <div class="sub">${esc(S.settings().facilityName)}</div>
+        <div class="sub">${esc(S.currentClinicName())}</div>
       </div>
     </div>
     <div class="card">
@@ -736,9 +733,9 @@
   function dashboardView(user) {
     const patients = S.patients();
     const due = patients.filter((p) => S.progressDue(p.id));
-    const drafts = S.load().documents.filter((d) => d.status === "draft");
+    const drafts = S.documents().filter((d) => d.status === "draft");
     const todays = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
-    const expSoon = S.users().filter((u) => u.active && S.licenseExpiresSoon(u));
+    const expSoon = S.staff().filter((u) => u.active && S.licenseExpiresSoon(u));
     const upcoming = S.appointments().filter((a) => a.status === "booked" && a.start >= new Date().toISOString()).length;
 
     // A single "needs attention" list for the whole clinic — same organizing
@@ -758,7 +755,7 @@
     return `
 <div class="page-head">
   <div><h1>Good day, ${esc(user.name.split(",")[0].split(" ")[0])}</h1>
-  <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.settings().facilityName)}</div></div>
+  <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.currentClinicName())}</div></div>
 </div>
 
 <div class="stat-tiles">
@@ -805,15 +802,51 @@
 
   /* ================= UNSIGNED DRAFTS (clinic-wide) ================= */
 
+  const draftFilter = { type: "all", therapist: "all", patient: "all", from: "", to: "" };
+
   function draftsView(user) {
-    const drafts = S.load().documents
+    const all = S.documents()
       .filter((d) => d.status === "draft")
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)); // newest first
+
+    // dropdown options built only from who/what actually has drafts
+    const therapistOpts = [...new Map(all.map((d) => [d.createdBy, (S.getUser(d.createdBy) || {}).name || d.createdBy])).entries()].sort((a, b) => (a[1] < b[1] ? -1 : 1));
+    const patientOpts = [...new Map(all.map((d) => [d.patientId, S.patientName(S.getPatient(d.patientId))])).entries()].sort((a, b) => (a[1] < b[1] ? -1 : 1));
+
+    const f = draftFilter;
+    const drafts = all.filter((d) =>
+      (f.type === "all" || d.type === f.type) &&
+      (f.therapist === "all" || d.createdBy === f.therapist) &&
+      (f.patient === "all" || d.patientId === f.patient) &&
+      (!f.from || d.createdAt.slice(0, 10) >= f.from) &&
+      (!f.to || d.createdAt.slice(0, 10) <= f.to));
+
+    const typeChip = (val, label) => `<button class="fchip ft-type ft-${val} ${f.type === val ? "on" : ""}" data-dtype="${val}">${val === "all" ? "" : '<i class="fdot"></i>'}${label}</button>`;
+    const filterBar = `
+      <div class="doc-filters">
+        <div class="fgroup"><span class="fglabel">Type</span>
+          <div class="fchips">${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div></div>
+        <div class="fgroup"><span class="fglabel">Started by</span>
+          <select class="fsel" id="dTherapist"><option value="all">All therapists</option>${therapistOpts.map(([id, name]) => `<option value="${esc(id)}"${f.therapist === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
+        <div class="fgroup"><span class="fglabel">Patient</span>
+          <select class="fsel" id="dPatient"><option value="all">All patients</option>${patientOpts.map(([id, name]) => `<option value="${esc(id)}"${f.patient === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
+        <div class="fgroup fgroup-date"><span class="fglabel">Date</span>
+          <input type="date" class="fdate" id="dFrom" value="${f.from}" aria-label="From date" />
+          <span class="fgsep">–</span>
+          <input type="date" class="fdate" id="dTo" value="${f.to}" aria-label="To date" />
+          <button class="btn small" id="dClear">Clear</button></div>
+      </div>`;
+
     return `
 <div class="page-head">
-  <div><h1>Unsigned drafts</h1><div class="sub">${drafts.length} draft${drafts.length === 1 ? "" : "s"} across the clinic — resume, review, and sign</div></div>
+  <div>
+    <a class="btn small back-inline" href="#/dashboard">${ICON.back} Dashboard</a>
+    <h1>Unsigned drafts</h1>
+    <div class="sub">${all.length} draft${all.length === 1 ? "" : "s"} across the clinic — resume, review, and sign</div>
+  </div>
 </div>
 <div class="card">
+  ${filterBar}
   ${drafts.length ? `<div class="table-scroll"><table class="list">
     <thead><tr><th>Document</th><th>Patient</th><th>Started by</th><th>Started</th><th></th></tr></thead>
     <tbody>${drafts.map((d) => `
@@ -825,8 +858,20 @@
         <td><span class="chip warn">draft</span></td>
       </tr>`).join("")}</tbody>
   </table></div>`
-    : `<div class="empty-state">Everything is signed. ✓ No unsigned drafts across the clinic.</div>`}
+    : `<div class="empty-state">${all.length ? "No drafts match these filters." : "Everything is signed. ✓ No unsigned drafts across the clinic."}</div>`}
 </div>`;
+  }
+
+  function bindDrafts(user) {
+    bindRowLinks();
+    const rerender = () => renderShell(location.hash, draftsView(user), user, bindDrafts);
+    document.querySelectorAll("[data-dtype]").forEach((b) => b.addEventListener("click", () => { draftFilter.type = b.dataset.dtype; rerender(); }));
+    const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+    on("dTherapist", "change", (e) => { draftFilter.therapist = e.target.value; rerender(); });
+    on("dPatient", "change", (e) => { draftFilter.patient = e.target.value; rerender(); });
+    on("dFrom", "change", (e) => { draftFilter.from = e.target.value; rerender(); });
+    on("dTo", "change", (e) => { draftFilter.to = e.target.value; rerender(); });
+    on("dClear", "click", () => { draftFilter.type = "all"; draftFilter.therapist = "all"; draftFilter.patient = "all"; draftFilter.from = ""; draftFilter.to = ""; rerender(); });
   }
 
   function bindRowLinks() {
@@ -1048,6 +1093,7 @@
   let patientTabFor = null; // the patient id the tab/filter state belongs to
   const docFilter = { type: "all", status: "all", from: "", to: "" };
   const aiReviewRuns = {}; // patientId -> true while an AI review request is in flight
+  let completingItemId = null; // action item currently showing its "done + note" form
 
   // Patient assistant drawer (left slide-in): open state + conversation survive
   // full re-renders (tab switches) so the chat isn't lost mid-conversation.
@@ -1085,19 +1131,26 @@
     if (patientTabFor !== p.id) {
       patientTab = "overview"; patientTabFor = p.id;
       docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = "";
+      completingItemId = null;
     }
     const tab = patientTab;
     const tabStrip = `<div class="ptabs" role="tablist">
       ${PATIENT_TABS.map((t) => `<button class="ptab ${tab === t.id ? "active" : ""}" data-ptab="${t.id}" role="tab" aria-selected="${tab === t.id}">${t.label}</button>`).join("")}
     </div>`;
 
+    const sexBits = p.sex ? ` · ${esc(p.sex)}` : "";
     return `
-<div class="page-head">
-  <div>
-    <h1>${esc(S.patientName(p))}</h1>
-    <div class="sub">${esc(p.dob)} (age ${age(p.dob)}) · ${esc(p.phone)} · Referred by ${esc(p.referringPhysician || "—")}</div>
+<div class="patient-banner">
+  <div class="pb-avatar" aria-hidden="true">${esc(initials(S.patientName(p)))}</div>
+  <div class="pb-id">
+    <h1 class="pb-name">${esc(S.patientName(p))}</h1>
+    <div class="pb-meta">
+      <span class="pb-chip"><span class="pb-k">Age</span>${age(p.dob)} · ${esc(p.dob)}${sexBits}</span>
+      <span class="pb-chip"><span class="pb-k">Phone</span>${esc(p.phone || "—")}</span>
+      <span class="pb-chip"><span class="pb-k">Referral</span>${esc(p.referringPhysician || "—")}</span>
+    </div>
   </div>
-  <div class="page-actions">
+  <div class="pb-actions">
     <button class="btn only-mobile" id="assistantLaunchM" type="button">${ICON.spark} Ask about patient</button>
     <button class="btn" id="printChartBtn">Print / export chart (PDF)</button>
     <button class="btn" id="editInfoBtn" type="button">Edit info</button>
@@ -1142,17 +1195,46 @@ ${tabStrip}
   }
 
   function overviewPanel(p, user) {
-    const items = needsAttention(p);
+    const gaps = needsAttention(p);        // deterministic documentation / workflow gaps
+    const tasks = S.actionItems(p.id);     // accepted AI recommendations + manual tasks
+
+    // An accepted recommendation: complete it (with an optional note) or drop it.
+    const taskRow = (it) => {
+      if (completingItemId === it.id) {
+        return `<div class="attn-item task completing" data-item="${it.id}">
+            <span class="attn-dot"></span>
+            <div class="task-body">
+              <span class="attn-text">${esc(it.text)}</span>
+              <div class="task-complete-form">
+                <input type="text" id="taskNote-${it.id}" class="task-note-input" placeholder="Note (optional): what was done…" />
+                <button class="btn small primary" data-complete-save="${it.id}">Save as done</button>
+                <button class="btn small" data-complete-cancel="${it.id}">Cancel</button>
+              </div>
+            </div>
+          </div>`;
+      }
+      return `<div class="attn-item task" data-item="${it.id}">
+          <span class="attn-dot"></span>
+          <span class="attn-text">${esc(it.text)}${it.source === "ai" ? ` <span class="task-tag">AI</span>` : ""}${it.rationale ? `<span class="task-why"> — ${esc(it.rationale)}</span>` : ""}</span>
+          <span class="task-actions">
+            <button class="btn small good" data-complete="${it.id}" title="Mark done">✓ Done</button>
+            <button class="btn small ghost" data-del-item="${it.id}" title="Remove — not needed">✕</button>
+          </span>
+        </div>`;
+    };
+    const gapRow = (it) => `<div class="attn-item ${it.level}">
+        <span class="attn-dot"></span>
+        <span class="attn-text">${esc(it.text)}</span>
+        <button class="btn small" data-goto-tab="${it.tab}"${it.status ? ` data-goto-status="${it.status}"` : ""}>${esc(it.action)}</button>
+      </div>`;
+
+    const attnBody = (tasks.length || gaps.length)
+      ? `<div class="attn-list">${tasks.map(taskRow).join("")}${gaps.map(gapRow).join("")}</div>`
+      : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — drafts are signed and documentation looks complete.</div>`;
     const attentionCard = `
       <div class="card">
         <div class="ins-head"><h2>Needs attention</h2></div>
-        ${items.length ? `<div class="attn-list">${items.map((it) => `
-          <div class="attn-item ${it.level}">
-            <span class="attn-dot"></span>
-            <span class="attn-text">${esc(it.text)}</span>
-            <button class="btn small" data-goto-tab="${it.tab}"${it.status ? ` data-goto-status="${it.status}"` : ""}>${esc(it.action)}</button>
-          </div>`).join("")}</div>`
-          : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — drafts are signed and documentation looks complete.</div>`}
+        ${attnBody}
       </div>`;
 
     // "At a glance" quick facts
@@ -1174,12 +1256,55 @@ ${tabStrip}
         </tbody></table>
       </div>`;
 
-    // AI chart review sits at the very bottom of the Overview, after the
-    // instant checklist and quick facts. (The Q&A assistant lives in the
-    // left-side drawer, launched from the sidebar / "Ask about patient".)
+    // Recommendation history: AI recommendations (or manual tasks) that were
+    // accepted and then carried out — a record of what was recommended and done.
+    const history = S.careHistory(p.id).slice().reverse();
+    const historyCard = history.length ? `
+      <div class="card">
+        <div class="ins-head"><h2>Recommendation history</h2><span class="chip muted">${history.length} completed</span></div>
+        <div class="care-log">${history.map((h) => `
+          <div class="care-entry">
+            <span class="care-check">✓</span>
+            <div class="care-main">
+              <div class="care-text">${esc(h.text)}${h.source === "ai" ? ` <span class="task-tag">AI</span>` : ""}</div>
+              ${h.note ? `<div class="care-note">“${esc(h.note)}”</div>` : ""}
+              <div class="care-meta">Done by ${esc((S.getUser(h.completedBy) || {}).name || h.completedBy || "—")} · ${fmtDate(h.completedAt)}</div>
+            </div>
+          </div>`).join("")}</div>
+      </div>` : "";
+
+    // AI chart review sits after the instant checklist and quick facts; the
+    // record of completed recommendations closes out the overview.
+    // (The Q&A assistant lives in the left-side drawer, "Ask about patient".)
     return `${attentionCard}
       ${glance}
-      <div class="card" id="patientAiReview"></div>`;
+      <div class="card" id="patientAiReview"></div>
+      ${historyCard}`;
+  }
+
+  // Complete / delete accepted action items in the Needs-attention card.
+  function bindOverviewActions(p, user) {
+    const refresh = () => render();
+    document.querySelectorAll("[data-complete]").forEach((b) => b.addEventListener("click", () => {
+      completingItemId = b.dataset.complete; refresh();
+    }));
+    document.querySelectorAll("[data-complete-cancel]").forEach((b) => b.addEventListener("click", () => {
+      completingItemId = null; refresh();
+    }));
+    document.querySelectorAll("[data-complete-save]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.completeSave;
+      const inp = document.getElementById("taskNote-" + id);
+      const res = S.completeActionItem(p.id, id, inp ? inp.value : "", user);
+      if (res && res.error) return alertBanner(res.error);
+      completingItemId = null; refresh();
+    }));
+    document.querySelectorAll("[data-del-item]").forEach((b) => b.addEventListener("click", () => {
+      S.deleteActionItem(p.id, b.dataset.delItem, user); refresh();
+    }));
+    if (completingItemId) {
+      const inp = document.getElementById("taskNote-" + completingItemId);
+      if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { const sv = document.querySelector(`[data-complete-save="${completingItemId}"]`); if (sv) sv.click(); } }); }
+    }
   }
 
   /* ---------- AI chart review (async, once per day) ---------- */
@@ -1212,8 +1337,6 @@ ${tabStrip}
 
   function renderAiReviewCard(el, p, user, state) {
     const review = p.aiReview || {};
-    const src = review.result && review.result.source;
-    const engineChip = src ? `<span class="chip ${src.startsWith("gemini") ? "info" : "muted"}">${src.startsWith("gemini") ? "Gemini" : "local AI"}</span>` : "";
     const note = `<p class="ins-disclaimer">Runs automatically the first time you open this chart each day${review.ranAt ? ` · last run ${fmtTime(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
     let body;
     if (state === "running") {
@@ -1223,17 +1346,29 @@ ${tabStrip}
     } else if (state === "error") {
       body = `<div class="banner bad">AI review couldn't finish: ${esc(review.error || "unknown error")}. Try again with Re-run.</div>`;
     } else {
-      body = review.result ? insightsHtml(review.result, { withAdd: false }) : `<div class="empty-state" style="padding:12px">No review yet.</div>`;
+      body = review.result ? insightsHtml(review.result, { recMode: "chart", filterKeys: S.resolvedRecKeys(p.id) }) : `<div class="empty-state" style="padding:12px">No review yet.</div>`;
     }
     el.innerHTML = `
       <div class="ins-head">
-        <h2>✦ AI chart review ${engineChip}<span class="chip muted">what needs attention</span></h2>
+        <h2>✦ AI chart review</h2>
         <button class="btn small ai" id="aiReviewBtn" ${state === "running" ? "disabled" : ""}>${state === "running" ? "Reviewing…" : "Re-run review"}</button>
       </div>
       ${note}
       <div id="aiReviewBody">${body}</div>`;
     const btn = el.querySelector("#aiReviewBtn");
     if (btn) btn.addEventListener("click", () => startAiReview(p, user));
+    const recAt = (b) => (review.result && review.result.recommendations || [])[Number(b.dataset.recidx)];
+    el.querySelectorAll(".rec-accept").forEach((b) => b.addEventListener("click", () => {
+      const rec = recAt(b); if (!rec) return;
+      const res = S.acceptRecommendation(p.id, rec, user);
+      if (res && res.error) return alertBanner(res.error);
+      render(); // refresh Needs attention + AI review together
+    }));
+    el.querySelectorAll(".rec-dismiss").forEach((b) => b.addEventListener("click", () => {
+      const rec = recAt(b); if (!rec) return;
+      S.dismissRecommendation(p.id, rec, user);
+      render();
+    }));
   }
 
   async function startAiReview(p, user) {
@@ -1546,7 +1681,7 @@ ${tabStrip}
     const ei = document.getElementById("editInfoBtn");
     if (ei) ei.addEventListener("click", () => openEditChooser(p, user));
 
-    if (patientTab === "overview") mountAiReview(p, user);
+    if (patientTab === "overview") { bindOverviewActions(p, user); mountAiReview(p, user); }
     if (patientTab === "documents") { bindNewDoc(p, user); bindDocFilters(p, user); }
     if (patientTab === "files") bindFiles(p, user);
     if (patientTab === "schedule") bindSchedule(p, user);
@@ -1922,7 +2057,7 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
   function printPatientChart(p) {
     const docs = S.docsFor(p.id);
     const html = `
-<h1>${esc(S.settings().facilityName)}</h1>
+<h1>${esc(S.currentClinicName())}</h1>
 <div class="print-muted">Patient chart — printed ${fmtDT(new Date().toISOString())}</div>
 <h2>Patient information</h2>
 <table>
@@ -2071,7 +2206,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
-      printHTML(`<h1>${esc(S.settings().facilityName)}</h1>
+      printHTML(`<h1>${esc(S.currentClinicName())}</h1>
         <div class="print-muted">${esc(S.patientName(p))} · DOB ${esc(p.dob)}</div>${docPrintHtml(doc)}`);
     });
 
@@ -3328,16 +3463,33 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>`).join("");
     const flags = (ins.redFlags || []).map((f) => `
       <div class="ins-flag"><b>⚠ ${esc(f.flag)}</b>${f.action ? `<div class="ins-detail">${esc(f.action)}</div>` : ""}</div>`).join("");
-    const recs = (ins.recommendations || []).map((r, i) => `
-      <div class="ins-item">
-        <div class="ins-item-head"><b>${esc(r.action)}</b>${prioChip(r.priority)}
-          ${opts.withAdd === false ? "" : `<button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button>`}</div>
+    // "chart" mode (the patient's AI chart review) lets the therapist accept a
+    // recommendation onto Needs attention or dismiss it; already-actioned recs
+    // are filtered out via opts.filterKeys so they don't reappear.
+    const chart = opts.recMode === "chart";
+    const resolved = new Set(opts.filterKeys || []);
+    const hadRecs = (ins.recommendations || []).length;
+    const recs = (ins.recommendations || []).map((r, i) => ({ r, i }))
+      .filter(({ r }) => !(chart && resolved.has((r.action || "").trim().toLowerCase())))
+      .map(({ r, i }) => {
+        const actions = chart
+          ? `<span class="rec-actions">
+              <button class="btn small good rec-accept" data-recidx="${i}" title="Add to Needs attention">✓ Accept</button>
+              <button class="btn small ghost rec-dismiss" data-recidx="${i}" title="Dismiss this suggestion">✕</button></span>`
+          : (opts.withAdd === false ? "" : `<button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button>`);
+        return `
+      <div class="ins-item rec-item">
+        <div class="ins-item-head"><b>${esc(r.action)}</b>${prioChip(r.priority)}${actions}</div>
         ${r.rationale ? `<div class="ins-detail">${esc(r.rationale)}</div>` : ""}
-      </div>`).join("");
+      </div>`;
+      }).join("");
+    const recsEmpty = (chart && hadRecs)
+      ? `<div class="empty-state" style="padding:8px">✓ Every recommendation has been accepted or dismissed — accepted items move to <b>Needs attention</b> above.</div>`
+      : `<div class="empty-state" style="padding:8px">No specific recommendations.</div>`;
     return `
       ${flags ? `<div class="ins-section"><h3 class="ins-h">Red flags</h3>${flags}</div>` : ""}
       <div class="ins-section"><h3 class="ins-h">Possible connections</h3>${conns || `<div class="empty-state" style="padding:8px">No cross-visit connections detected.</div>`}</div>
-      <div class="ins-section"><h3 class="ins-h">Recommendations — what to do now</h3>${recs || `<div class="empty-state" style="padding:8px">No specific recommendations.</div>`}</div>`;
+      <div class="ins-section"><h3 class="ins-h">Recommendations — what to do now</h3>${recs || recsEmpty}</div>`;
   }
 
   function bindInsightActions(doc, user, editable) {
@@ -3431,36 +3583,43 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
   /* ================= CALENDAR ================= */
 
   let calDate = todayIso();
-  let calTherapist = "all";
+  const calHidden = new Set(); // therapist ids whose column is hidden on the board
 
   function therapists() {
-    return S.users().filter((u) => u.active && (u.role === "therapist" || u.role === "admin") && u.license);
+    return S.staff().filter((u) => u.active && (u.role === "therapist" || u.role === "admin") && u.license);
   }
 
   function calendarView(user) {
     const ths = therapists();
-    // the selected therapist may have been voided/expired since — fall back
-    if (calTherapist !== "all" && !ths.some((t) => t.id === calTherapist)) calTherapist = "all";
+    // forget any hidden ids for providers that no longer exist
+    [...calHidden].forEach((id) => { if (!ths.some((t) => t.id === id)) calHidden.delete(id); });
     const slots = S.slotsForDay(calDate);
     const appts = S.apptsOn(calDate);
-    const cols = calTherapist === "all" ? ths : ths.filter((t) => t.id === calTherapist);
+    const cols = ths.filter((t) => !calHidden.has(t.id));
+    const minW = Math.max(480, 72 + cols.length * 168); // keep columns readable; scroll when many
 
-    const grid = !cols.length
-      ? `<div class="card"><div class="empty-state">No active licensed therapists to schedule — update staff licenses in Facility Admin.</div></div>`
-      : slots.length ? `
-<div class="cal-grid" style="grid-template-columns: 80px repeat(${cols.length}, 1fr)">
-  <div class="cal-cell cal-head">Time</div>
-  ${cols.map((t) => `<div class="cal-cell cal-head">${esc(t.name)}${S.licenseExpired(t) ? ' <span class="chip bad">expired</span>' : ""}</div>`).join("")}
-  ${slots.map((slot) => `
-    <div class="cal-cell cal-time">${fmtTime(slot)}</div>
-    ${cols.map((t) => {
-      const here = appts.filter((a) => a.therapistId === t.id && a.start === slot);
-      if (here.length) return `<div class="cal-cell">${here.map((a) => `
-        <div class="slot-appt" data-appt="${a.id}">${esc(S.patientName(S.getPatient(a.patientId)))}
-        <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
-      return `<div class="cal-cell"><span class="slot-free" data-slot="${slot}" data-ther="${t.id}">+ available</span></div>`;
-    }).join("")}`).join("")}
-</div>` : `<div class="card"><div class="empty-state">The facility is closed on this day.</div></div>`;
+    const grid = !ths.length
+      ? `<div class="empty-state" style="padding:22px">No PTs to schedule yet — use <b>+ Add PT</b> above to add a provider column.</div>`
+      : !cols.length
+      ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their column.</div>`
+      : !slots.length
+      ? `<div class="empty-state" style="padding:22px">The facility is closed on this day.</div>`
+      : `
+<div class="cal-scroll">
+  <div class="cal-grid" style="grid-template-columns: 72px repeat(${cols.length}, minmax(168px, 1fr)); min-width: ${minW}px">
+    <div class="cal-cell cal-head cal-corner">Time</div>
+    ${cols.map((t) => `<div class="cal-cell cal-head">${esc(t.name)}${S.licenseExpired(t) ? ' <span class="chip bad">expired</span>' : ""}</div>`).join("")}
+    ${slots.map((slot) => `
+      <div class="cal-cell cal-time">${fmtTime(slot)}</div>
+      ${cols.map((t) => {
+        const here = appts.filter((a) => a.therapistId === t.id && a.start === slot);
+        if (here.length) return `<div class="cal-cell">${here.map((a) => `
+          <div class="slot-appt" data-appt="${a.id}">${esc(S.patientName(S.getPatient(a.patientId)))}
+          <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
+        return `<div class="cal-cell"><span class="slot-free" data-slot="${slot}" data-ther="${t.id}">+ available</span></div>`;
+      }).join("")}`).join("")}
+  </div>
+</div>`;
 
     const upcomingReminders = S.appointments()
       .filter((a) => a.status === "booked")
@@ -3482,12 +3641,15 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     <input type="date" id="calDate" value="${calDate}" />
     <button class="btn small" id="calNext">→</button>
     <button class="btn small" id="calToday">Today</button>
-    <select id="calTher">
-      <option value="all">All therapists</option>
-      ${ths.map((t) => `<option value="${t.id}" ${calTherapist === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
-    </select>
     <span class="dict-status">${slots.length ? `${slots.length} slots · ${appts.length} booked` : "closed"}</span>
+    <span class="cal-toolbar-spacer"></span>
+    <button class="btn small soft" id="calAddPt">+ Add PT</button>
   </div>
+  ${ths.length ? `<div class="cal-ptbar">
+    <span class="cal-ptbar-label">Providers</span>
+    ${ths.map((t) => `<button class="calpt-chip ${calHidden.has(t.id) ? "off" : "on"}" data-toggle-pt="${t.id}" title="Show or hide ${esc(t.name)}"><span class="calpt-dot"></span>${esc(t.name)}</button>`).join("")}
+    ${calHidden.size ? `<button class="btn small" id="calShowAll">Show all</button>` : ""}
+  </div>` : ""}
   ${grid}
 </div>
 <div class="card">
@@ -3512,8 +3674,18 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     document.getElementById("calPrev").addEventListener("click", () => { calDate = shiftDay(calDate, -1); redraw(); });
     document.getElementById("calNext").addEventListener("click", () => { calDate = shiftDay(calDate, 1); redraw(); });
     document.getElementById("calToday").addEventListener("click", () => { calDate = todayIso(); redraw(); });
-    document.getElementById("calTher").addEventListener("change", (e) => { calTherapist = e.target.value; redraw(); });
     document.getElementById("printSchedBtn").addEventListener("click", () => printSchedule(user));
+
+    const addPt = document.getElementById("calAddPt");
+    if (addPt) addPt.addEventListener("click", () => addProviderModal(user, redraw));
+    const showAll = document.getElementById("calShowAll");
+    if (showAll) showAll.addEventListener("click", () => { calHidden.clear(); redraw(); });
+    document.querySelectorAll("[data-toggle-pt]").forEach((c) =>
+      c.addEventListener("click", () => {
+        const id = c.dataset.togglePt;
+        if (calHidden.has(id)) calHidden.delete(id); else calHidden.add(id);
+        redraw();
+      }));
 
     document.querySelectorAll(".slot-free").forEach((s) =>
       s.addEventListener("click", () => bookingModal(user, s.dataset.slot, s.dataset.ther))
@@ -3521,6 +3693,27 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     document.querySelectorAll(".slot-appt").forEach((s) =>
       s.addEventListener("click", () => apptModal(user, s.dataset.appt))
     );
+  }
+
+  // Add a schedule-only PT column straight from the calendar.
+  function addProviderModal(user, done) {
+    const m = showModal(`
+<h2>Add a PT</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:0">Adds a therapist column to the calendar so you can book against them. An admin can attach a login later in Facility Admin.</p>
+<div class="field"><label>Full name *</label><input id="ptName" placeholder="e.g. Alex Cruz, PT" autocomplete="off" /></div>
+<div class="field"><label>License number (optional)</label><input id="ptLic" placeholder="e.g. PT-0012345" autocomplete="off" /></div>
+<div class="error" id="ptErr"></div>
+<div class="modal-actions">
+  <button class="btn" id="ptCancel">Cancel</button>
+  <button class="btn primary" id="ptOk">Add PT</button>
+</div>`);
+    m.querySelector("#ptCancel").addEventListener("click", closeModal);
+    m.querySelector("#ptOk").addEventListener("click", () => {
+      const res = S.addProvider(m.querySelector("#ptName").value, m.querySelector("#ptLic").value, user);
+      if (res.error) { m.querySelector("#ptErr").textContent = res.error; return; }
+      closeModal();
+      if (done) done(); else render();
+    });
   }
 
   const shiftDay = (iso, n) => {
@@ -3597,7 +3790,7 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     const ths = calTherapist === "all" ? therapists() : therapists().filter((t) => t.id === calTherapist);
     const appts = S.apptsOn(calDate).sort((a, b) => (a.start < b.start ? -1 : 1));
     const html = `
-<h1>${esc(S.settings().facilityName)}</h1>
+<h1>${esc(S.currentClinicName())}</h1>
 <div class="print-muted">Schedule for ${fmtDate(calDate + "T00:00:00")}${calTherapist !== "all" ? " — " + esc(ths[0]?.name || "") : " — all therapists"} · printed ${fmtDT(new Date().toISOString())} by ${esc(user.name)}</div>
 ${ths.map((t) => {
       const mine = appts.filter((a) => a.therapistId === t.id);
@@ -3717,8 +3910,41 @@ ${ths.map((t) => {
       </details>`).join("")}</div>`;
   }
 
+  // Activity-log date window: defaults to today, pageable by day / week / month.
+  let auditRange = "day";
+  let auditDate = todayIso();      // anchor day (YYYY-MM-DD) inside the window
+
+  function auditWindow() {
+    const anchor = new Date(auditDate + "T00:00:00");
+    if (auditRange === "week") {
+      const dow = (anchor.getDay() + 6) % 7;               // Monday = 0
+      const s = new Date(anchor); s.setDate(s.getDate() - dow);
+      const e = new Date(s); e.setDate(e.getDate() + 6);
+      return { from: localIso(s), to: localIso(e), label: `Week of ${fmtDate(localIso(s) + "T12:00:00")}` };
+    }
+    if (auditRange === "month") {
+      const s = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      const e = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+      return { from: localIso(s), to: localIso(e), label: anchor.toLocaleDateString([], { month: "long", year: "numeric" }) };
+    }
+    return { from: auditDate, to: auditDate, label: auditDayLabel(auditDate) };
+  }
+
+  function shiftAudit(dir) {
+    const anchor = new Date(auditDate + "T00:00:00");
+    if (auditRange === "week") anchor.setDate(anchor.getDate() + dir * 7);
+    else if (auditRange === "month") anchor.setMonth(anchor.getMonth() + dir);
+    else anchor.setDate(anchor.getDate() + dir);
+    auditDate = localIso(anchor);
+  }
+
   function privacyView(user) {
-    const log = S.auditLog().slice().reverse().slice(0, 100);
+    const win = auditWindow();
+    const log = S.auditLog().slice().reverse().filter((e) => {
+      const d = e.time ? localIso(new Date(e.time)) : "unknown";
+      return d >= win.from && d <= win.to;
+    });
+    const atToday = win.to >= todayIso();
     const geminiOn = window.TheraSync && window.TheraSync.refine === "gemini";
 
     // group the feed by calendar day (already newest-first)
@@ -3759,10 +3985,21 @@ ${privacyInfoAccordion(geminiOn)}
 
 <div class="card activity-card">
   <div class="activity-head">
-    <div><h2 style="margin:0">Activity log</h2><div class="activity-sub">Every notable action, newest first</div></div>
+    <div><h2 style="margin:0">Activity log</h2><div class="activity-sub">Newest first · showing <b>${esc(win.label)}</b></div></div>
     <div class="activity-tools">
-      <input id="logSearch" type="search" placeholder="Filter by name, action or detail…" autocomplete="off" />
+      <input id="logSearch" type="search" placeholder="Filter within this range…" autocomplete="off" />
       <span class="chip muted" id="logCount">${log.length} events</span>
+    </div>
+  </div>
+  <div class="activity-datenav">
+    <div class="datenav-left">
+      <button class="btn small dn-arrow" id="auditPrev" title="Previous ${auditRange}" aria-label="Previous ${auditRange}">‹</button>
+      <button class="btn small dn-arrow" id="auditNext" title="Next ${auditRange}" aria-label="Next ${auditRange}" ${atToday ? "disabled" : ""}>›</button>
+      <button class="btn small" id="auditToday" ${auditRange === "day" && auditDate === todayIso() ? "disabled" : ""}>Today</button>
+      <span class="datenav-label">${esc(win.label)}</span>
+    </div>
+    <div class="rangeseg" id="auditRangeSeg">
+      ${["day", "week", "month"].map((r) => `<button class="segbtn ${auditRange === r ? "on" : ""}" data-range="${r}">${r[0].toUpperCase() + r.slice(1)}</button>`).join("")}
     </div>
   </div>
   <div class="activity-catbar" id="activityCatbar">
@@ -3802,6 +4039,19 @@ ${privacyInfoAccordion(geminiOn)}
         render();
       });
     });
+
+    // date-window navigation (day / week / month), defaulting to today
+    const rerenderPrivacy = () => renderShell(location.hash, privacyView(user), user, bindPrivacy);
+    const onId = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+    onId("auditPrev", "click", () => { shiftAudit(-1); rerenderPrivacy(); });
+    onId("auditNext", "click", () => { shiftAudit(1); rerenderPrivacy(); });
+    onId("auditToday", "click", () => { auditRange = "day"; auditDate = todayIso(); rerenderPrivacy(); });
+    const seg = document.getElementById("auditRangeSeg");
+    if (seg) seg.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
+      auditRange = b.dataset.range;
+      if (auditDate > todayIso()) auditDate = todayIso();
+      rerenderPrivacy();
+    }));
 
     // live filter of the activity feed — combines the category chips with the
     // search box (AND), hides any day group that empties out, and updates the
@@ -3886,7 +4136,7 @@ ${accessRequestsCard(user)}
 <div class="cards-2">
   <div class="card">
     <h2>Facility settings</h2>
-    <div class="field"><label>Facility name</label><input id="st-name" value="${esc(st.facilityName)}" /></div>
+    <div class="field"><label>Clinic name</label><input id="st-name" value="${esc(S.currentClinicName())}" /></div>
     <div class="field-row">
       <div class="field"><label>Progress report every N visits</label><input id="st-prog" type="number" min="1" max="30" value="${st.progressEvery}" /></div>
       <div class="field"><label>Slot length (minutes)</label><input id="st-slot" type="number" min="15" max="120" step="5" value="${st.slotMinutes}" /></div>
@@ -3933,7 +4183,7 @@ ${accessRequestsCard(user)}
         <div id="nu-msg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
       </div>
     </details>
-    ${S.users().map((u) => `
+    ${S.staff().map((u) => `
       <div style="border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px">
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
           <b>${esc(u.name)}</b> <span class="chip muted">${esc(roleLabel(u))}</span>
@@ -3959,8 +4209,8 @@ ${accessRequestsCard(user)}
 
   function bindFacility(user) {
     document.getElementById("stSave").addEventListener("click", () => {
+      S.renameClinic(document.getElementById("st-name").value.trim() || "TheraChart Clinic", user);
       S.updateSettings({
-        facilityName: document.getElementById("st-name").value.trim() || "TheraChart Clinic",
         progressEvery: Math.max(1, Number(document.getElementById("st-prog").value) || 5),
         slotMinutes: Math.max(15, Number(document.getElementById("st-slot").value) || 45),
         dayStartHour: Number(document.getElementById("st-start").value) || 8,

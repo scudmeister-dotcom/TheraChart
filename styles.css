@@ -291,6 +291,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-head .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* ---------------- patient chart: distinct, persistent context ---------------- */
+/* A tinted page background + a banner header stay on-screen across every tab,
+   so it always reads as "you are inside a patient chart". */
+.content.patient-bg {
+  background:
+    radial-gradient(120% 42% at 0% 0%, color-mix(in srgb, var(--brand-1) 13%, transparent), transparent 58%),
+    radial-gradient(90% 30% at 100% 0%, color-mix(in srgb, var(--brand-3) 9%, transparent), transparent 55%),
+    linear-gradient(180deg, color-mix(in srgb, var(--brand-1) 6%, var(--bg)), var(--bg) 260px);
+}
+.patient-banner {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 16px; padding: 15px 18px; border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-1) 12%, var(--panel)), var(--panel) 68%);
+  border: 1px solid color-mix(in srgb, var(--brand-1) 24%, var(--border));
+  box-shadow: var(--shadow);
+}
+.pb-avatar {
+  width: 54px; height: 54px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 18px; letter-spacing: .5px; color: #fff;
+  background: var(--brand-grad-tv);
+  box-shadow: 0 4px 13px rgba(11, 79, 74, .3), inset 0 1px 0 rgba(255,255,255,.18);
+}
+.pb-id { flex: 1; min-width: 220px; }
+.pb-name { font-size: 23px; line-height: 1.12; font-weight: 700; }
+.pb-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.pb-chip {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  padding: 4px 11px; border-radius: 999px; font-size: 12.5px; color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 78%, var(--bg));
+  border: 1px solid var(--border);
+}
+.pb-chip .pb-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.pb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 620px) {
+  .pb-actions { width: 100%; }
+  .pb-avatar { width: 46px; height: 46px; font-size: 16px; }
+  .pb-name { font-size: 20px; }
+}
+
 /* ---------------- components ---------------- */
 
 .card {
@@ -303,8 +343,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .card + .card { margin-top: 14px; }
 .card h2 { font-size: 15px; margin-bottom: 10px; }
 .card h3 { font-size: 13.5px; margin-bottom: 8px; }
-.cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
-.cards-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+.cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+.cards-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: stretch; }
 @media (max-width: 1100px) { .cards-2, .cards-3 { grid-template-columns: 1fr; } }
 
 /* ---------- Privacy: collapsible "how it works" accordion ---------- */
@@ -341,6 +381,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border: 1px solid var(--border); background: var(--bg); color: var(--ink); font-size: 13px;
 }
 .activity-tools input[type="search"]:focus { outline: none; border-color: var(--accent); }
+/* activity-log date-window navigation (day / week / month) */
+.activity-datenav {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 18px; border-bottom: 1px solid var(--border);
+}
+.datenav-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dn-arrow { font-size: 16px; line-height: 1; padding: 4px 10px; font-weight: 700; }
+.datenav-label { font-size: 13px; font-weight: 600; color: var(--ink); margin-left: 4px; }
+.rangeseg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); }
+.segbtn {
+  appearance: none; cursor: pointer; border: none; background: none; color: var(--muted);
+  padding: 5px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  transition: background .14s, color .14s;
+}
+.segbtn:hover { color: var(--ink); }
+.segbtn.on { background: var(--panel); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .activity-catbar {
   display: flex; flex-wrap: wrap; gap: 6px;
   padding: 10px 18px; border-bottom: 1px solid var(--border);
@@ -456,6 +512,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .btn.danger.solid { background: #C2453A; border-color: transparent; color: #fff; }
 .btn.danger.solid:hover { color: #fff; background: #A93A30; }
 .btn.small { padding: 6px 11px; font-size: 12.5px; border-radius: 8px; }
+/* positive (accept / done) soft green + low-emphasis ghost that reddens on hover */
+.btn.good { background: var(--good-soft); border-color: transparent; color: var(--good); }
+.btn.good:hover { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: color-mix(in srgb, var(--good) 14%, var(--panel)); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--danger); border-color: transparent; background: var(--danger-soft); }
 .btn[disabled], .btn:disabled { color: #8FA6A3; background: var(--border); border-color: transparent; box-shadow: none; filter: none; cursor: not-allowed; }
 
 .chip {
@@ -879,6 +940,40 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .attn-item .attn-text { flex: 1; font-size: 13.5px; }
 .attn-item .attn-go { flex: none; font-size: 12.5px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
+/* accepted action items (tasks promoted from AI recommendations) */
+.attn-item.task { align-items: flex-start; }
+.attn-item.task .attn-dot { margin-top: 6px; background: var(--accent); }
+.attn-item.task .attn-text { padding-top: 1px; }
+.task-why { color: var(--muted); font-weight: 400; }
+.task-tag {
+  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .3px; vertical-align: 1px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.task-actions { display: inline-flex; gap: 6px; flex: none; }
+.task-body { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.task-complete-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.task-note-input {
+  flex: 1; min-width: 180px; padding: 7px 10px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink);
+}
+.task-note-input:focus { outline: none; border-color: var(--accent); }
+
+/* recommendation history — recs that were accepted and carried out */
+.care-log { display: flex; flex-direction: column; gap: 8px; }
+.care-entry {
+  display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 22%, var(--border));
+}
+.care-check { color: var(--good); font-weight: 800; flex: none; line-height: 1.5; }
+.care-main { flex: 1; }
+.care-text { font-size: 13.5px; font-weight: 600; }
+.care-note { font-size: 13px; color: var(--ink); font-style: italic; margin-top: 2px; }
+.care-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+/* accept / dismiss controls on AI-review recommendations */
+.rec-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+
 /* dashboard "unsigned drafts" jump-to-page button */
 .jumbo-link {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -945,6 +1040,14 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel); color: var(--ink); font-size: 12.5px;
 }
+.fsel {
+  appearance: none; padding: 5px 26px 5px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 8px center;
+  color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: pointer; max-width: 220px;
+}
+.fsel:focus { outline: none; border-color: var(--accent); }
+/* inline "back to dashboard" affordance above a page title */
+.back-inline { margin-bottom: 10px; }
 
 /* ---------------- patient edit chooser + unsaved warning ---------------- */
 .edit-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
@@ -1043,6 +1146,24 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .slot-appt:hover { filter: brightness(0.97); }
 .slot-appt small { display: block; font-weight: 400; color: var(--muted); }
+/* resource day-view: fixed-width PT columns that scroll sideways when there are many */
+.cal-toolbar-spacer { flex: 1 1 auto; }
+.cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
+.cal-scroll .cal-grid { border-radius: 12px; }
+/* provider show/hide bar */
+.cal-ptbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.cal-ptbar-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; color: var(--muted); margin-right: 2px; }
+.calpt-chip {
+  appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+  transition: background .14s, color .14s, border-color .14s, opacity .14s;
+}
+.calpt-chip .calpt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.calpt-chip.on { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); }
+.calpt-chip.off { color: var(--muted); background: var(--bg); opacity: .75; }
+.calpt-chip.off .calpt-dot { background: var(--border); }
+.calpt-chip:hover { border-color: var(--accent); }
 
 /* ---------------- modal ---------------- */
 

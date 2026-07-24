@@ -52,7 +52,7 @@
       return d.toISOString();
     };
 
-    return {
+    const seedState = {
       settings: {
         facilityName: "Physical Therapy Center",
         progressEvery: 5, // progress report triggers on this visit number
@@ -301,7 +301,27 @@
           createdAt: t(0, 7, 50), _mod: t(0, 7, 50) },
       ],
       sessionUserId: null,
+      clinics: {
+        "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center" },
+        "clinic-fresh": { id: "clinic-fresh", name: "New Clinic" },
+      },
     };
+
+    // Everything seeded above belongs to the demo clinic; stamp it so a second
+    // clinic — and any brand-new account — starts empty instead of inheriting it.
+    ["patients", "documents", "appointments", "audit", "accessRequests", "users"].forEach((k) => {
+      (seedState[k] || []).forEach((rec) => { if (!rec.clinicId) rec.clinicId = "clinic-demo"; });
+    });
+
+    // A blank clinic with a single admin login, reachable from the demo login
+    // picker (fresh@therachart.demo / 1234) — opens to a completely empty EMR.
+    seedState.users.push({
+      id: "u-fresh", name: "Sam Rivera, PT (Admin)", email: "fresh@therachart.demo", role: "admin",
+      pin: "1234", active: true, clinicId: "clinic-fresh",
+      license: { number: "PT-0002026", expires: daysFromNow(700) },
+    });
+
+    return seedState;
   }
 
   function b64(s) {
@@ -380,7 +400,7 @@
 
   function audit(userId, action, detail) {
     load();
-    state.audit.push({ time: new Date().toISOString(), userId, action, detail: detail || "" });
+    state.audit.push({ time: new Date().toISOString(), userId, clinicId: (getUser(userId) || {}).clinicId || currentClinicId(), action, detail: detail || "" });
     if (state.audit.length > 2000) state.audit.splice(0, state.audit.length - 2000);
     save();
   }
@@ -399,7 +419,7 @@
   const findUserByLogin = (identifier) => getUserByEmail(identifier) || getUser(identifier);
 
   function licenseExpired(user) {
-    if (!user || !user.license) return false; // non-clinical roles have no license
+    if (!user || !user.license || !user.license.expires) return false; // no license / no expiry set
     return user.license.expires < iso(new Date());
   }
 
@@ -474,6 +494,7 @@
     if (password.length < 8) return { error: "Temporary password must be at least 8 characters." };
     const user = {
       id: uid("u"), name, email, role, active: true,
+      clinicId: (byUser && byUser.clinicId) || currentClinicId(),
       license: role === "frontdesk" ? null
         : { number: String((fields.license && fields.license.number) || "").trim(),
             expires: String((fields.license && fields.license.expires) || "").trim() },
@@ -485,6 +506,25 @@
     state.users.push(user);
     save();
     audit(byUser ? byUser.id : null, "user-created", `${name} (${role})`);
+    return { user };
+  }
+
+  /** Create a schedule-only provider (a PT column on the calendar) without a
+      login. Lets you flesh out the schedule board quickly; an admin can later
+      attach an email/password in Facility Admin to make it a full account. */
+  function addProvider(name, licenseNumber, byUser) {
+    load();
+    const nm = String(name || "").trim();
+    if (!nm) return { error: "Name is required." };
+    const user = {
+      id: uid("u"), name: nm, email: "", role: "therapist", active: true, provider: true,
+      clinicId: (byUser && byUser.clinicId) || currentClinicId(),
+      license: { number: String(licenseNumber || "").trim(), expires: daysFromNow(365 * 4) },
+    };
+    touch(user);
+    state.users.push(user);
+    save();
+    audit(byUser ? byUser.id : null, "provider-created", `${nm} (PT)`);
     return { user };
   }
 
@@ -556,7 +596,7 @@
   function accessRequests() {
     load();
     if (!Array.isArray(state.accessRequests)) state.accessRequests = [];
-    return state.accessRequests;
+    return state.accessRequests.filter(mine);
   }
 
   /** Record (or refresh) a pending request. Deduped by email while still
@@ -706,6 +746,31 @@
   const currentUser = () => getUser(load().sessionUserId);
 
   /* ---------------------------------------------------------------- *
+   *  Clinics (tenancy) — every clinical record carries a clinicId, and
+   *  reads are scoped to the signed-in user's clinic so separate accounts
+   *  don't share patients, documents, schedule, or the activity log.
+   *  (Scheduling hours in `settings` stay a shared facility default.)
+   * ---------------------------------------------------------------- */
+  const DEFAULT_CLINIC = "clinic-demo";
+  const currentClinicId = () => (currentUser() || {}).clinicId || DEFAULT_CLINIC;
+  const recClinic = (rec) => (rec && rec.clinicId) || DEFAULT_CLINIC; // legacy/un-stamped → demo clinic
+  const mine = (rec) => recClinic(rec) === currentClinicId();
+  const clinicsMap = () => load().clinics || {};
+  const clinicName = (id) => (clinicsMap()[id] && clinicsMap()[id].name) || load().settings.facilityName || "TheraChart Clinic";
+  const currentClinicName = () => clinicName(currentClinicId());
+  function renameClinic(name, byUser) {
+    load();
+    const nm = String(name || "").trim();
+    if (!nm) return { error: "Clinic name is required." };
+    const id = currentClinicId();
+    state.clinics = state.clinics || {};
+    state.clinics[id] = { ...(state.clinics[id] || { id }), id, name: nm };
+    save();
+    audit(byUser ? byUser.id : null, "settings-updated", `clinic renamed to ${nm}`);
+    return { name: nm };
+  }
+
+  /* ---------------------------------------------------------------- *
    *  Patients
    * ---------------------------------------------------------------- */
 
@@ -715,7 +780,7 @@
   function addPatient(fields, byUserId) {
     load();
     const patient = Object.assign(
-      { id: uid("p"), attachments: [], createdBy: byUserId, createdAt: new Date().toISOString() },
+      { id: uid("p"), clinicId: currentClinicId(), attachments: [], createdBy: byUserId, createdAt: new Date().toISOString() },
       fields
     );
     touch(patient);
@@ -785,7 +850,7 @@
       });
     }
     const doc = {
-      id: uid("d"), patientId, type,
+      id: uid("d"), patientId, clinicId: (getPatient(patientId) || {}).clinicId || currentClinicId(), type,
       title: type === "daily" ? `${DOC_TITLES.daily} — Visit ${visitCount(patientId) + 1}` : DOC_TITLES[type],
       createdBy: byUser.id, createdAt: new Date().toISOString(),
       status: "draft", signatures: [], amendments: [], data,
@@ -807,7 +872,7 @@
     const t = DOC_TITLES[type] ? type : "daily";
     const when = date ? new Date(date + "T12:00:00") : new Date();
     const doc = {
-      id: uid("d"), patientId, type: t,
+      id: uid("d"), patientId, clinicId: (getPatient(patientId) || {}).clinicId || currentClinicId(), type: t,
       title: title || `${DOC_TITLES[t]} — ${date || "undated"} (imported)`,
       createdBy: byUser.id,
       createdAt: (isNaN(when.getTime()) ? new Date() : when).toISOString(),
@@ -919,7 +984,7 @@
   }
 
   const apptsOn = (dateIso) =>
-    load().appointments.filter((a) => a.status !== "cancelled" && iso(new Date(a.start)) === dateIso);
+    load().appointments.filter((a) => a.status !== "cancelled" && mine(a) && iso(new Date(a.start)) === dateIso);
 
   function bookAppointment({ patientId, therapistId, start, note }, byUser) {
     load();
@@ -932,7 +997,7 @@
     const remind3d = new Date(startDate); remind3d.setDate(remind3d.getDate() - 3); remind3d.setHours(9, 0, 0, 0);
     const remindAm = new Date(startDate); remindAm.setHours(7, 0, 0, 0);
     const appt = {
-      id: uid("ap"), patientId, therapistId, start,
+      id: uid("ap"), patientId, therapistId, clinicId: (getPatient(patientId) || {}).clinicId || currentClinicId(), start,
       minutes: state.settings.slotMinutes, note: note || "", status: "booked",
       createdBy: byUser.id, createdAt: new Date().toISOString(),
       history: [{ action: "created", userId: byUser.id, time: new Date().toISOString() }],
@@ -974,6 +1039,110 @@
     touch(p);
     save();
     return p;
+  }
+
+  /* --------- Patient action items (accepted AI recs → needs attention) ------ *
+   *  Recommendations from the AI chart review can be accepted onto a patient's
+   *  "needs attention" list, completed (with an optional note) into their care
+   *  history as a recommendation that was performed, or dismissed/deleted.     */
+
+  // A stable key for an AI recommendation so it can be hidden once actioned.
+  const recKey = (rec) => (typeof rec === "string" ? rec : (rec && rec.action) || "").trim().toLowerCase();
+
+  /** Accept an AI recommendation: promote it to the patient's action items
+      ("needs attention") and record its key so the AI review hides it. */
+  function acceptRecommendation(patientId, rec, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    p.actionItems = p.actionItems || [];
+    const key = recKey(rec);
+    if (key && p.actionItems.some((it) => it.aiKey === key)) return { dup: true };
+    const item = {
+      id: uid("act"), text: rec.action || String(rec), rationale: rec.rationale || "",
+      priority: rec.priority || "routine", source: "ai", aiKey: key,
+      createdBy: byUser.id, createdAt: new Date().toISOString(),
+    };
+    p.actionItems.push(item);
+    touch(p); save();
+    audit(byUser.id, "recommendation-accepted", `${patientName(p)}: ${item.text}`);
+    return { item };
+  }
+
+  /** Dismiss an AI recommendation outright (never becomes an action item). */
+  function dismissRecommendation(patientId, rec, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    p.aiDismissed = p.aiDismissed || [];
+    const key = recKey(rec);
+    if (key && !p.aiDismissed.includes(key)) p.aiDismissed.push(key);
+    touch(p); save();
+    audit(byUser.id, "recommendation-dismissed", `${patientName(p)}: ${rec.action || rec}`);
+    return { ok: true };
+  }
+
+  /** Add a manual (non-AI) task to a patient's needs-attention list. */
+  function addActionItem(patientId, text, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    const t = (text || "").trim();
+    if (!t) return { error: "Enter a task." };
+    p.actionItems = p.actionItems || [];
+    const item = { id: uid("act"), text: t, rationale: "", priority: "routine", source: "manual", aiKey: null, createdBy: byUser.id, createdAt: new Date().toISOString() };
+    p.actionItems.push(item);
+    touch(p); save();
+    audit(byUser.id, "action-item-added", `${patientName(p)}: ${t}`);
+    return { item };
+  }
+
+  /** Complete an action item: move it into the patient's care history as a
+      recommendation that was carried out, with an optional note. */
+  function completeActionItem(patientId, itemId, note, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    p.actionItems = p.actionItems || [];
+    const idx = p.actionItems.findIndex((it) => it.id === itemId);
+    if (idx < 0) return { error: "Item not found." };
+    const item = p.actionItems.splice(idx, 1)[0];
+    p.careHistory = p.careHistory || [];
+    const entry = {
+      id: item.id, text: item.text, rationale: item.rationale || "", source: item.source || "ai", aiKey: item.aiKey || null,
+      recommendedAt: item.createdAt, recommendedBy: item.createdBy,
+      completedAt: new Date().toISOString(), completedBy: byUser.id, note: (note || "").trim(),
+    };
+    p.careHistory.push(entry);
+    touch(p); save();
+    audit(byUser.id, "recommendation-completed", `${patientName(p)}: ${entry.text}${entry.note ? ` — ${entry.note}` : ""}`);
+    return { entry };
+  }
+
+  /** Delete an action item without recording it as performed. */
+  function deleteActionItem(patientId, itemId, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    p.actionItems = p.actionItems || [];
+    const idx = p.actionItems.findIndex((it) => it.id === itemId);
+    if (idx < 0) return { error: "Item not found." };
+    const [item] = p.actionItems.splice(idx, 1);
+    // If it came from an AI rec, remember it so the review doesn't resurface it.
+    if (item.aiKey) { p.aiDismissed = p.aiDismissed || []; if (!p.aiDismissed.includes(item.aiKey)) p.aiDismissed.push(item.aiKey); }
+    touch(p); save();
+    audit(byUser.id, "action-item-deleted", `${patientName(p)}: ${item.text}`);
+    return { ok: true };
+  }
+
+  const actionItems = (patientId) => (getPatient(patientId) || {}).actionItems || [];
+  const careHistory = (patientId) => (getPatient(patientId) || {}).careHistory || [];
+
+  /** Keys of recs already accepted, completed, or dismissed — hidden from the
+      AI chart review so the same suggestion isn't offered twice. */
+  function resolvedRecKeys(patientId) {
+    const p = getPatient(patientId);
+    if (!p) return [];
+    const keys = new Set();
+    (p.actionItems || []).forEach((it) => it.aiKey && keys.add(it.aiKey));
+    (p.careHistory || []).forEach((it) => it.aiKey && keys.add(it.aiKey));
+    (p.aiDismissed || []).forEach((k) => keys.add(k));
+    return [...keys];
   }
 
   function cancelAppointment(apptId, byUser) {
@@ -1103,24 +1272,31 @@
       }
       merged.accessRequests = [...byId.values()];
     }
+    // clinic name map: keep server entries, fill in any the server hasn't seen
+    merged.clinics = { ...(local.clinics || {}), ...(merged.clinics || {}) };
     merged.sessionUserId = null;
     return { state: merged, conflicts };
   }
 
   return {
     load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
-    audit, auditLog: () => load().audit,
-    // users/auth
-    users: () => load().users, getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, upsertGoogleUser, deleteUser,
+    audit, auditLog: () => load().audit.filter(mine),
+    // clinics (tenancy)
+    clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic,
+    // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
+    users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, addProvider, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
-    // patients
-    patients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
-    // documents
-    docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
+    // patients — patients() is clinic-scoped; allPatients() is unscoped (server-side lookups)
+    patients: () => load().patients.filter(mine), allPatients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
+    // patient action items / care history (accepted AI recommendations)
+    acceptRecommendation, dismissRecommendation, addActionItem, completeActionItem, deleteActionItem,
+    actionItems, careHistory, resolvedRecKeys,
+    // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
+    documents: () => load().documents.filter(mine), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     visitCount, progressDue,
-    // calendar
-    appointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
+    // calendar — appointments() is clinic-scoped; allAppointments() is unscoped (server reminders)
+    appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
     // admin
     settings: () => load().settings, updateSettings, updateUser,
     // access requests (pending-approval queue)

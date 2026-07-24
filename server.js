@@ -251,7 +251,7 @@ function publicState() {
 // downloads and to recover the file's name/type for the response headers.
 function findAttachmentByKey(key) {
   if (!key) return null;
-  for (const p of store.patients()) {
+  for (const p of store.allPatients()) {
     for (const a of p.attachments || []) if (a.key === key) return a;
   }
   return null;
@@ -469,7 +469,7 @@ function readRawBody(req, limit = 25 * 1024 * 1024) {
 async function reminderTick() {
   const now = new Date().toISOString();
   let changed = 0;
-  for (const appt of store.appointments()) {
+  for (const appt of store.allAppointments()) {
     if (appt.status !== "booked") continue;
     for (const r of appt.reminders || []) {
       if (!r.status.startsWith("scheduled") || r.when > now) continue;
