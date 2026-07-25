@@ -116,6 +116,18 @@
   --side-rail: #5EEAD4; --side-label: rgba(255, 255, 255, 0.42);
   --side-wordmark: #F0FDFA; --side-sub: rgba(255, 255, 255, 0.5); --side-accent: #5EEAD4;
   --side-shadow: none;
+
+  /* Solid-fill brand gradient for primary buttons. Same teal ramp as the rail
+     and --brand-grad, but starting one step darker so white label text keeps
+     its contrast on a small surface. Theme-independent, like --brand-grad. */
+  --btn-grad: linear-gradient(145deg, #14939a, #0e7c86 46%, #0a5b63);
+  /* the pale end of the same ramp — headers and other large tinted surfaces.
+     Runs teal → violet like --brand-grad-tv, but at wash strength so dark body
+     text stays readable on top of it. */
+  --brand-wash: linear-gradient(115deg,
+    color-mix(in srgb, var(--brand-1) 30%, var(--panel)),
+    color-mix(in srgb, var(--brand-2) 15%, var(--panel)) 46%,
+    color-mix(in srgb, var(--brand-3) 9%, var(--panel)) 100%);
 }
 
 /* Keep iOS Safari from silently rescaling: never auto-adjust text on rotate,
@@ -292,19 +304,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------------- patient chart: distinct, persistent context ---------------- */
-/* A tinted page background + a banner header stay on-screen across every tab,
-   so it always reads as "you are inside a patient chart". */
-.content.patient-bg {
-  background:
-    radial-gradient(120% 42% at 0% 0%, color-mix(in srgb, var(--brand-1) 13%, transparent), transparent 58%),
-    radial-gradient(90% 30% at 100% 0%, color-mix(in srgb, var(--brand-3) 9%, transparent), transparent 55%),
-    linear-gradient(180deg, color-mix(in srgb, var(--brand-1) 6%, var(--bg)), var(--bg) 260px);
-}
+/* The banner header carries the brand gradient and stays on-screen across every
+   tab, so it always reads as "you are inside a patient chart". The page behind
+   it stays the plain app background — the tint belongs to the card only. */
+.content.patient-bg { background: var(--bg); }
 .patient-banner {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   margin-bottom: 16px; padding: 15px 18px; border-radius: 16px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-1) 12%, var(--panel)), var(--panel) 68%);
-  border: 1px solid color-mix(in srgb, var(--brand-1) 24%, var(--border));
+  background: var(--brand-wash);
+  border: 1px solid color-mix(in srgb, var(--brand-2) 30%, var(--border));
   box-shadow: var(--shadow);
 }
 .pb-avatar {
@@ -489,11 +497,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 /* secondary (outline) hover: border + text pick up the brand teal */
 .btn:hover { border-color: var(--accent); color: var(--accent); }
+/* primary: the brand teal gradient, so CTAs match the rail and the logo mark */
 .btn.primary {
-  background: var(--accent); border-color: transparent; color: var(--accent-ink);
+  background: var(--btn-grad); border-color: transparent; color: #fff;
   box-shadow: 0 1px 2px rgba(11, 79, 74, .25), inset 0 1px 0 rgba(255, 255, 255, .14);
 }
-.btn.primary:hover { color: var(--accent-ink); border-color: transparent; filter: brightness(0.93); }
+.btn.primary:hover {
+  color: #fff; border-color: transparent; filter: brightness(0.94);
+  box-shadow: 0 3px 12px rgba(14, 124, 134, .32), inset 0 1px 0 rgba(255, 255, 255, .16);
+}
 /* secondary soft */
 .btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .btn.soft:hover { color: var(--accent); filter: brightness(0.97); }
