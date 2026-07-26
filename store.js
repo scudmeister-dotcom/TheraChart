@@ -822,8 +822,7 @@
   /* ---------------------------------------------------------------- *
    *  Clinics (tenancy) — every clinical record carries a clinicId, and
    *  reads are scoped to the signed-in user's clinic so separate accounts
-   *  don't share patients, documents, schedule, or the activity log.
-   *  (Scheduling hours in `settings` stay a shared facility default.)
+   *  don't share patients, documents, schedule, activity log, or settings.
    * ---------------------------------------------------------------- */
   const DEFAULT_CLINIC = "clinic-demo";
   const currentClinicId = () => (currentUser() || {}).clinicId || DEFAULT_CLINIC;
@@ -832,6 +831,36 @@
   const clinicsMap = () => load().clinics || {};
   const clinicName = (id) => (clinicsMap()[id] && clinicsMap()[id].name) || load().settings.facilityName || "TheraChart Clinic";
   const currentClinicName = () => clinicName(currentClinicId());
+
+  /* Settings are PER CLINIC. They live in `clinics[id].settings`; the
+     top-level `settings` block is the pre-tenancy default, kept only so an
+     existing install keeps its configuration until that clinic saves its own.
+     This matters beyond scheduling preferences: `audioReview` is the opt-in
+     that governs whether a patient's dictation audio is retained at all, and
+     one clinic must not be able to switch that on for another. */
+  const SETTING_DEFAULTS = {
+    facilityName: "TheraChart Clinic",
+    progressEvery: 5,
+    slotMinutes: 45,
+    dayStartHour: 8,
+    dayEndHour: 17,
+    workDays: [1, 2, 3, 4, 5, 6],
+    audioReview: false,
+    audioReviewDays: 7,
+  };
+
+  /** Effective settings for one clinic: its own block over the legacy global
+      block over the defaults. The clinic's NAME is authoritative, so a rename
+      and `facilityName` can never drift apart. */
+  function settingsFor(clinicId) {
+    const id = clinicId || DEFAULT_CLINIC;
+    load();
+    const c = clinicsMap()[id];
+    const merged = { ...SETTING_DEFAULTS, ...(state.settings || {}), ...((c && c.settings) || {}) };
+    merged.facilityName = clinicName(id);
+    return merged;
+  }
+  const settings = () => settingsFor(currentClinicId());
   function renameClinic(name, byUser) {
     load();
     const nm = String(name || "").trim();
@@ -1004,7 +1033,7 @@
       Nth visit. */
   function progressDue(patientId) {
     load();
-    const every = state.settings.progressEvery || 5;
+    const every = settings().progressEvery || 5;
     const dailies = docsFor(patientId).filter((d) => d.type === "daily");
     if (dailies.length < every) return false;
     const milestones = Math.floor(dailies.length / every);
@@ -1152,7 +1181,7 @@
 
   function slotsForDay(dateIso) {
     load();
-    const { dayStartHour, dayEndHour, slotMinutes, workDays } = state.settings;
+    const { dayStartHour, dayEndHour, slotMinutes, workDays } = settings();
     const day = new Date(dateIso + "T00:00:00");
     if (!workDays.includes(day.getDay())) return [];
     const slots = [];
@@ -1176,7 +1205,7 @@
     if (isNaN(startDate.getTime())) return { error: "Invalid appointment time." };
     // Overlap, not an exact time match: two visits that merely start at
     // different minutes still put one therapist in two places at once.
-    const mins = state.settings.slotMinutes;
+    const mins = settings().slotMinutes;
     const from = startDate.getTime(), to = from + mins * 60000;
     const clash = state.appointments.some((a) => {
       if (a.status === "cancelled" || a.therapistId !== therapistId) return false;
@@ -1189,7 +1218,7 @@
     const remindAm = new Date(startDate); remindAm.setHours(7, 0, 0, 0);
     const appt = {
       id: uid("ap"), patientId, therapistId, clinicId: (getPatient(patientId) || {}).clinicId || currentClinicId(), start,
-      minutes: state.settings.slotMinutes, note: note || "", status: "booked",
+      minutes: settings().slotMinutes, note: note || "", status: "booked",
       createdBy: byUser.id, createdAt: new Date().toISOString(),
       history: [{ action: "created", userId: byUser.id, time: new Date().toISOString() }],
       reminders: [
@@ -1352,12 +1381,20 @@
    *  Settings & users (admin)
    * ---------------------------------------------------------------- */
 
+  /** Write settings for the signed-in user's clinic only. The full block is
+      materialised on first write, so a clinic's configuration can never be
+      moved afterwards by a change to the legacy global defaults. */
   function updateSettings(patch, byUser) {
     load();
-    Object.assign(state.settings, patch);
-    touch(state.settings);
+    const id = currentClinicId();
+    state.clinics = state.clinics || {};
+    const clinic = state.clinics[id] || { id, name: clinicName(id) };
+    const next = { ...settingsFor(id), ...patch };
+    delete next.facilityName; // the clinic's `name` is the single source of truth
+    state.clinics[id] = { ...clinic, id, settings: next };
+    touch(state.clinics[id]);
     save();
-    audit(byUser.id, "settings-updated", JSON.stringify(patch));
+    audit(byUser ? byUser.id : null, "settings-updated", JSON.stringify(patch));
   }
 
   function updateUser(userId, patch, byUser) {
@@ -1449,6 +1486,17 @@
     }
 
     if (mtime(local.settings) > mtime(merged.settings)) merged.settings = local.settings;
+    // clinics carry the per-clinic name AND settings, so an offline rename or
+    // settings change has to survive the merge like any other edit: newest
+    // _mod wins, per clinic, and a clinic present on only one side is kept.
+    {
+      const out = { ...(merged.clinics || {}) };
+      for (const [id, lc] of Object.entries(local.clinics || {})) {
+        const sc = out[id];
+        if (!sc || mtime(lc) > mtime(sc)) out[id] = lc;
+      }
+      merged.clinics = out;
+    }
     merged.audit = unionBy(
       [...merged.audit, ...local.audit],
       (e) => e.time + (e.userId || "") + e.action
@@ -1491,7 +1539,8 @@
     // calendar — appointments() is clinic-scoped; allAppointments() is unscoped (server reminders)
     appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
     // admin
-    settings: () => load().settings, updateSettings, updateUser,
+    // settings are per clinic; settingsFor(id) is for server-side lookups by record
+    settings, settingsFor, updateSettings, updateUser,
     // access requests (pending-approval queue)
     accessRequests, requestAccess, approveAccessRequest, declineAccessRequest,
   };

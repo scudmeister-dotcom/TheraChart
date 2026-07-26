@@ -272,7 +272,10 @@ function scopedState(user) {
     if (Array.isArray(s[k])) s[k] = s[k].filter((r) => clinicOf(r) === cid);
   }
   // a device has no business knowing which other clinics exist on this server
-  if (s.clinics) s.clinics = { [cid]: s.clinics[cid] || { id: cid, name: store.settings().facilityName } };
+  if (s.clinics) s.clinics = { [cid]: s.clinics[cid] || { id: cid, name: store.clinicName(cid) } };
+  // the device resolves settings from clinics[cid]; send the effective block
+  // too so it never falls back to another clinic's legacy defaults
+  s.settings = store.settingsFor(cid);
   return s;
 }
 
@@ -362,21 +365,25 @@ function graftPushedState(pushed, user) {
   // because it is what hashes a password and forces a change at first login
   out.users = (server.users || []).filter((u) => clinicOf(u) !== cid).concat(reconciled);
 
-  /* `settings` and `clinics` are not per-record, so they fall outside the
-     collection loop above and would otherwise be silently discarded — the
-     Facility Admin screen would appear to save and change nothing.
-     Settings are facility-wide by design (see store.js), so restrict the write
-     to an admin rather than letting any device push facility config. */
-  if (isAdmin && pushed.settings && typeof pushed.settings === "object") {
-    out.settings = { ...server.settings, ...pushed.settings };
-  } else {
-    out.settings = server.settings;
-  }
-  // A clinic may be renamed only by its own admin; every other clinic's entry
-  // is carried over from the server untouched.
+  /* The top-level `settings` block is the pre-tenancy default and is now
+     FROZEN: a device is sent its clinic's effective settings under this key
+     for convenience, so accepting it back would write one clinic's config
+     into the shared fallback and leak it to every other clinic. Real settings
+     changes arrive in clinics[cid].settings, handled just below. */
+  out.settings = server.settings;
+  // A clinic may be renamed — and its settings changed — only by its own
+  // admin; every other clinic's entry is carried over from the server
+  // untouched. This is where per-clinic settings actually arrive, since they
+  // live in clinics[id].settings.
   out.clinics = { ...(server.clinics || {}) };
   if (isAdmin && pushed.clinics && typeof pushed.clinics === "object" && pushed.clinics[cid]) {
     out.clinics[cid] = { ...pushed.clinics[cid], id: cid };
+  }
+
+  // Gemini is configured purely from host env vars — never let a device push
+  // introduce or persist a stored key, in the legacy block or a clinic's own.
+  for (const block of [out.settings, ...Object.values(out.clinics).map((c) => c && c.settings)]) {
+    if (block) { delete block.geminiKey; delete block.geminiKeySet; }
   }
   return { state: out };
 }
@@ -406,7 +413,7 @@ function bootstrapInfo() {
   // in by email, so an unauthenticated visitor can't enumerate staff/PII.
   return {
     rev,
-    facilityName: store.settings().facilityName,
+    facilityName: store.settingsFor(DEFAULT_CLINIC).facilityName, // pre-auth: no caller to scope to
     googleClientId: GOOGLE_CLIENT_ID, // "" when unconfigured → the button is hidden
     testAccounts: demoLogins(),       // seeded demo logins to surface on the sign-in screen
   };
@@ -537,12 +544,21 @@ async function transcribe(wavBuffer, lang, modelKey) {
    just long enough for a clinician to re-check the dictation, then it's deleted
    the moment the note is signed (or by the sweep after `audioReviewDays`). This
    is the one exception to "TheraChart never stores audio," and it's disclosed. */
-function audioReviewDays() { return Math.max(1, Number(store.settings().audioReviewDays) || 7); }
-function audioReviewOn() { return !!store.settings().audioReview; }
+/* Audio retention is decided per CLINIC — one clinic's admin must never be
+   able to switch on audio keeping for another clinic's patients — so every
+   lookup here is keyed off the record's own clinic, not a server-wide flag. */
+const clinicOfDoc = (doc) => {
+  if (!doc) return DEFAULT_CLINIC;
+  const p = store.getPatient(doc.patientId);
+  return clinicOf(p || doc);
+};
+function audioReviewDays(clinicId) { return Math.max(1, Number(store.settingsFor(clinicId).audioReviewDays) || 7); }
+function audioReviewOn(clinicId) { return !!store.settingsFor(clinicId).audioReview; }
 
 // server-side gate: may we keep audio for this document right now?
 function audioRetentionOK(doc) {
-  if (!audioReviewOn() || !doc || doc.status === "signed") return false;
+  if (!doc || doc.status === "signed") return false;
+  if (!audioReviewOn(clinicOfDoc(doc))) return false;
   const p = store.getPatient(doc.patientId);
   return !!(p && p.audioConsent && p.audioConsent.granted);
 }
@@ -580,13 +596,16 @@ async function audioSweep() {
     if (!byDoc.has(parts[1])) byDoc.set(parts[1], []);
     byDoc.get(parts[1]).push({ key: it.key, time: Number(name.split("-")[0]) || 0 });
   }
-  const maxAgeMs = audioReviewDays() * 24 * 3600 * 1000;
   let purged = false;
   for (const [docId, segs] of byDoc) {
     const doc = store.getDoc(docId);
+    // retention window and the review flag both come from the note's own
+    // clinic; orphaned audio falls back to the default clinic's window
+    const cid = doc ? clinicOfDoc(doc) : DEFAULT_CLINIC;
+    const maxAgeMs = audioReviewDays(cid) * 24 * 3600 * 1000;
     const newest = segs.reduce((m, s) => Math.max(m, s.time), 0);
     const stale = newest && Date.now() - newest > maxAgeMs;
-    if (!doc || doc.status === "signed" || !audioReviewOn() || stale) {
+    if (!doc || doc.status === "signed" || !audioReviewOn(cid) || stale) {
       for (const s of segs) await files.del(s.key);
       purged = true;
       store.audit(null, "audio-purged", `${docId}: ${segs.length} segment(s) deleted (${!doc ? "note gone" : doc.status === "signed" ? "signed" : stale ? "expired" : "review off"})`);
@@ -623,7 +642,7 @@ async function reminderTick() {
         to: patient ? { name: store.patientName(patient), phone: patient.phone, email: patient.email } : null,
         method: r.method,
         visit: appt.start,
-        message: `Reminder from ${store.settings().facilityName}: you have a physical therapy visit on ${new Date(appt.start).toLocaleString()}. Reply to reschedule.`,
+        message: `Reminder from ${store.settingsFor(clinicOf(patient || appt)).facilityName}: you have a physical therapy visit on ${new Date(appt.start).toLocaleString()}. Reply to reschedule.`,
       };
       let delivered = "sent (logged)";
       if (process.env.REMINDER_WEBHOOK) {
@@ -913,7 +932,7 @@ const server = http.createServer(async (req, res) => {
         if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
         if (req.method === "GET") {
           const seg = url.searchParams.get("seg");
-          if (!seg) return json(res, 200, { segments: await listAudioSegments(docId), reviewDays: audioReviewDays() });
+          if (!seg) return json(res, 200, { segments: await listAudioSegments(docId), reviewDays: audioReviewDays(clinicOfDoc(doc)) });
           // stream one segment (auth already checked above)
           const safe = seg.replace(/[^a-z0-9_.-]/gi, "");
           if (!safe.endsWith(".wav")) return json(res, 404, { error: "Segment not found." });
@@ -961,11 +980,8 @@ const server = http.createServer(async (req, res) => {
           if (h) u.passwordHash = h; else delete u.passwordHash;
           delete u.pin; // clients can never introduce a plaintext credential
         }
-        // Gemini is configured only via host env vars now — never let a client
-        // push introduce or persist a stored key/flag
-        const s = store.settings();
-        delete s.geminiKey;
-        delete s.geminiKeySet;
+        // (any pushed Gemini key was already stripped in graftPushedState,
+        // which is the copy that actually gets imported)
         store.save();
         bumpRev();
         audioSweep().catch((e) => console.error("[audio] sweep failed:", e.message)); // drop audio for notes just signed
@@ -1019,7 +1035,7 @@ async function start() {
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
     console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
-    console.log(`  audio review: ${audioReviewOn() ? `ON — consented segments kept up to ${audioReviewDays()} days in ${filesInfo.backend === "gcs" ? "Cloud Storage" : "local files"}, then auto-deleted` : "off (no audio stored)"}`);
+    console.log(`  audio review (default clinic): ${audioReviewOn(DEFAULT_CLINIC) ? `ON — consented segments kept up to ${audioReviewDays(DEFAULT_CLINIC)} days in ${filesInfo.backend === "gcs" ? "Cloud Storage" : "local files"}, then auto-deleted` : "off (no audio stored)"}`);
     audioSweep().catch((e) => console.error("[audio] initial sweep failed:", e.message));
   });
 }

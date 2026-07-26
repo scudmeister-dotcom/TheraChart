@@ -126,9 +126,11 @@ step-by-step (account, BAA, APIs, Cloud Run hosting): see **[GOOGLE_SETUP.md](GO
 
 ### Optional: temporary session-audio review
 
-Off by default. A facility can enable it in **Facility Admin**; then, **for
-patients who consent**, the Google Cloud dictation audio is kept briefly so a
-clinician can replay it to double-check the transcript. The audio is
+Off by default, and **decided per clinic** — an admin enables it in **Facility
+Admin** for their own clinic only, and no other clinic on the server is
+affected. Once on, **for patients who consent**, the Google Cloud dictation
+audio is kept briefly so a clinician can replay it to double-check the
+transcript. The audio is
 **auto-deleted the moment the note is signed**, or after the clinic's retention
 window (default 7 days) — whichever comes first — and consent is recorded in the
 chart. It never touches the browser engine (that audio goes straight to the
@@ -277,7 +279,7 @@ The parsing brain (`parser.js`) and data rules (`store.js`) are DOM-free and
 checked offline:
 
 ```bash
-node test/tenancy.test.js  # 37 checks: clinic isolation + authorization, over real HTTP
+node test/tenancy.test.js  # 48 checks: clinic isolation + authorization, over real HTTP
 node test/workflow.test.js # 20 checks: a clinical journey across two synced devices
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar

@@ -202,35 +202,65 @@ async function boot(dataDir, port) {
     const graceNow = (await stateOf(gToken, "grace after self-promote")).state.users.find((u) => u.id === "u-grace") || {};
     check("not even an admin may rewrite their own role", graceNow.role === "admin", `role=${graceNow.role}`);
 
-    /* ---- facility settings & clinic name still save (and only for admins) -- */
+    /* ---- settings are PER CLINIC ---------------------------------------- */
+    // They ride in clinics[id].settings, so one clinic's configuration can
+    // never be read or changed by another. `audioReview` is the sharp edge:
+    // it decides whether a patient's dictation audio is retained at all.
+    const setClinic = async (token, rev, state, clinicId, patch, name) => {
+      const next = JSON.parse(JSON.stringify(state));
+      const prior = (next.clinics && next.clinics[clinicId]) || { id: clinicId };
+      next.clinics = { ...(next.clinics || {}) };
+      next.clinics[clinicId] = {
+        ...prior, id: clinicId,
+        ...(name ? { name } : {}),
+        settings: { ...(prior.settings || {}), ...patch },
+      };
+      return call("/api/state", { method: "PUT", token, body: { baseRev: rev, state: next } });
+    };
+
     const sSet = await stateOf(gToken, "settings");
-    const settingsEdit = JSON.parse(JSON.stringify(sSet.state));
-    settingsEdit.settings.slotMinutes = 30;
-    settingsEdit.settings.progressEvery = 8;
-    settingsEdit.clinics = { ...(settingsEdit.clinics || {}), "clinic-demo": { id: "clinic-demo", name: "Renamed Clinic" } };
-    await call("/api/state", { method: "PUT", token: gToken, body: { baseRev: sSet.rev, state: settingsEdit } });
-    const savedSettings = (await stateOf(gToken, "settings after")).state.settings;
-    check("an admin can still change facility settings", savedSettings.slotMinutes === 30 && savedSettings.progressEvery === 8,
-      JSON.stringify({ slotMinutes: savedSettings.slotMinutes, progressEvery: savedSettings.progressEvery }));
-    const savedClinics = (await stateOf(gToken, "clinics after")).state.clinics || {};
-    check("an admin can still rename their own clinic", (savedClinics["clinic-demo"] || {}).name === "Renamed Clinic",
-      JSON.stringify(savedClinics));
+    const saved = await setClinic(gToken, sSet.rev, sSet.state, "clinic-demo",
+      { slotMinutes: 30, progressEvery: 8, audioReview: true }, "Renamed Clinic");
+    check("an admin can change their own clinic's settings", saved.status === 200, `-> ${saved.status}`);
 
+    const demoNow = (await stateOf(gToken, "settings after")).state.settings;
+    check("the change is reflected back to that clinic",
+      demoNow.slotMinutes === 30 && demoNow.progressEvery === 8 && demoNow.audioReview === true,
+      JSON.stringify({ slot: demoNow.slotMinutes, prog: demoNow.progressEvery, audio: demoNow.audioReview }));
+    check("an admin can still rename their own clinic", demoNow.facilityName === "Renamed Clinic", demoNow.facilityName);
+
+    // the whole point: the OTHER clinic is unaffected
+    const freshNow = (await stateOf(fToken, "other clinic settings")).state.settings;
+    check("another clinic's slot length is untouched", freshNow.slotMinutes === 45, String(freshNow.slotMinutes));
+    check("another clinic's progress threshold is untouched", freshNow.progressEvery === 5, String(freshNow.progressEvery));
+    check("one clinic cannot switch on audio retention for another", freshNow.audioReview !== true,
+      `clinic-fresh audioReview=${freshNow.audioReview}`);
+    check("another clinic keeps its own name", freshNow.facilityName !== "Renamed Clinic", freshNow.facilityName);
+    check("a device is not shown another clinic's settings block",
+      !JSON.stringify((await stateOf(fToken, "leak check")).state.clinics || {}).includes("clinic-demo"),
+      JSON.stringify((await stateOf(fToken, "leak check")).state.clinics));
+
+    // a non-admin cannot change settings at all
     const sNon = await stateOf(mToken, "non-admin settings");
-    const nonAdminEdit = JSON.parse(JSON.stringify(sNon.state));
-    nonAdminEdit.settings.audioReview = true; // opt-in audio retention — admin-only
-    await call("/api/state", { method: "PUT", token: mToken, body: { baseRev: sNon.rev, state: nonAdminEdit } });
+    await setClinic(mToken, sNon.rev, sNon.state, "clinic-demo", { audioReview: false, slotMinutes: 15 });
     const afterNonAdmin = (await stateOf(gToken, "settings after non-admin")).state.settings;
-    check("a non-admin push cannot change facility settings", afterNonAdmin.audioReview !== true,
-      `audioReview=${afterNonAdmin.audioReview}`);
+    check("a non-admin push cannot change clinic settings",
+      afterNonAdmin.slotMinutes === 30 && afterNonAdmin.audioReview === true,
+      JSON.stringify({ slot: afterNonAdmin.slotMinutes, audio: afterNonAdmin.audioReview }));
 
+    // one clinic's admin cannot reach into another's entry
     const sRen = await stateOf(fToken, "foreign rename");
-    const foreignRename = JSON.parse(JSON.stringify(sRen.state));
-    foreignRename.clinics = { "clinic-demo": { id: "clinic-demo", name: "Hijacked" }, "clinic-fresh": { id: "clinic-fresh", name: "New Clinic" } };
-    await call("/api/state", { method: "PUT", token: fToken, body: { baseRev: sRen.rev, state: foreignRename } });
-    const clinicsNow = (await stateOf(gToken, "clinics after foreign rename")).state.clinics || {};
-    check("one clinic's admin cannot rename another clinic", (clinicsNow["clinic-demo"] || {}).name !== "Hijacked",
-      JSON.stringify(clinicsNow));
+    const hijack = JSON.parse(JSON.stringify(sRen.state));
+    hijack.clinics = {
+      "clinic-demo": { id: "clinic-demo", name: "Hijacked", settings: { audioReview: false, slotMinutes: 5 } },
+      "clinic-fresh": { id: "clinic-fresh", name: "New Clinic" },
+    };
+    await call("/api/state", { method: "PUT", token: fToken, body: { baseRev: sRen.rev, state: hijack } });
+    const demoAfterHijack = (await stateOf(gToken, "after hijack")).state.settings;
+    check("one clinic's admin cannot rename another clinic", demoAfterHijack.facilityName === "Renamed Clinic", demoAfterHijack.facilityName);
+    check("one clinic's admin cannot rewrite another's settings",
+      demoAfterHijack.slotMinutes === 30 && demoAfterHijack.audioReview === true,
+      JSON.stringify({ slot: demoAfterHijack.slotMinutes, audio: demoAfterHijack.audioReview }));
 
     /* ---- AI endpoints ship PHI off-box: gate them like documentation ----- */
     const anaRefine = await call("/api/refine", { method: "POST", token: aToken, body: { transcript: ["left shoulder pain"] } });
