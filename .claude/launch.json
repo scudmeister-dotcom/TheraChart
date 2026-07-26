@@ -11,7 +11,7 @@
     {
       "name": "therachart-fresh",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["THERACHART_DATA=/private/tmp/claude-501/-Users-amadormoriles-Developer-TheraChart/806ee443-21e0-45d8-9126-dbf38497ee3a/scratchpad/preview-data", "node", "server.js"],
+      "runtimeArgs": ["THERACHART_DATA=/tmp/therachart-preview", "node", "server.js"],
       "port": 8090,
       "autoPort": true
     },

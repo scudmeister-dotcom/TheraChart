@@ -165,9 +165,17 @@
 
   const SEVERE_RE = /\b(really|very|extremely|severe(?:ly)?|terribl[ye]|excruciating|unbearable|awful|so much|super|badly|killing me|sobrang?|grabe(?:\s+kaayo)?|kaayo|napaka\w+)\b/i;
   const MILD_RE = /\b(slightly|a\s+(?:little|bit|touch)|mild(?:ly)?|minor|somewhat|kind of|sort of|medyo|gamay|konti|onti)\b/i;
-  // word numerals included: cloud STT (chirp) spells small numbers out
-  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\/|out of|sa)\s*(?:10|ten|sampu)\b/i;
-  const NUM_WORDS = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  // Word numerals included: cloud STT (chirp) spells small numbers out, and it
+  // transcribes Tagalog/Cebuano counting as words rather than digits — so
+  // "pito sa sampu" has to score the same as "seven out of ten".
+  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|sero|isa|dalawa|tatlo|apat|lima|anim|pito|walo|siyam|sampu|usa|duha|tulo|upat|unom|napulo)\s*(?:\/|out of|sa|sa\s+gawas\s+sa)\s*(?:10|ten|sampu|napulo)\b/i;
+  const NUM_WORDS = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    // Tagalog
+    sero: 0, isa: 1, dalawa: 2, tatlo: 3, apat: 4, lima: 5, anim: 6, pito: 7, walo: 8, siyam: 9, sampu: 10,
+    // Cebuano (lima/pito/walo/siyam are shared with Tagalog, above)
+    usa: 1, duha: 2, tulo: 3, upat: 4, unom: 6, napulo: 10,
+  };
   const DURATION_RE = /\b((?:for|since|over|mula|simula|sukad)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+|pa\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|kahapon|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood|surgery|accident|fall|injury)|\w+\s+(?:linggo|araw|buwan|taon|semana|adlaw|bulan|tuig)\s+na)\b/i;
   const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while|kapag|tuwing|kada|inig|pag)\s+(?:(?:i|he|she|they)\s+)?[a-z' ]{2,36})/i;
   // A symptom is treated as denied when a negation sits shortly before it.
@@ -292,7 +300,41 @@
   // an "X out of 5" only counts as MMT when the surrounding words are about
   // strength — "he has 5 out of 5 kids" is not a muscle grade
   const MMT_CONTEXT_RE = /\b(?:strength|mmt|grade[ds]?|quad|hamstring|bicep|tricep|delt|glute|grip|flexor|extensor|abductor|adductor|abduction|adduction|flexion|extension|rotation|rotator|trap|calf|gastroc|soleus|tibialis|serratus|lats?|pecs?|core|hip|knee|shoulder|elbow|wrist|ankle|neck|dorsiflex|plantarflex)\w*/i;
+  /* Special tests get dictated in two word orders: "positive Neer test" and
+     "Neer is positive" / "Hawkins test came back positive". Only the first was
+     recognised, so the reversed form was silently dropped — and because a
+     recognised test is what marks a line as the CLINICIAN speaking, a missed
+     test also let the therapist's read-out be scored as patient speech and
+     pinned to the body map. The reversed form needs either the literal word
+     test/sign or a known test name, so ordinary prose ("the news is positive")
+     doesn't register as a clinical finding. */
   const SPECIAL_RE = /\b(positive|negative)\s+((?:[A-Za-z'’-]+\s+){1,4}?)(?:test|sign)\b/gi;
+  const SPECIAL_NAMES = "neer|hawkins(?:[-\\s]kennedy)?|empty[-\\s]can|jobe|speed['’]?s?|yergason['’]?s?|apprehension|relocation|o['’]?brien['’]?s?|drop[-\\s]arm|lift[-\\s]?off|spurling['’]?s?|phalen['’]?s?|tinel['’]?s?|finkelstein['’]?s?|mcmurray['’]?s?|lachman['’]?s?|(?:anterior|posterior)[-\\s]drawer|thessaly|apley['’]?s?|ober['’]?s?|faber|patrick['’]?s?|fadir|straight[-\\s]leg[-\\s]raise|slr|slump|thompson['’]?s?|talar[-\\s]tilt|(?:valgus|varus)[-\\s]stress|impingement";
+  const SPECIAL_REV_RE = new RegExp(
+    `\\b((?:${SPECIAL_NAMES})(?:\\s+(?:test|sign))?|(?:[A-Za-z'’-]+\\s+){1,3}?(?:test|sign))` +
+    `\\s*(?:is|was|were|came\\s+back|came\\s+out|reads?)?\\s*:?\\s*(positive|negative)\\b`, "gi");
+
+  /** Every special test in `text`, both word orders, with its span so callers
+      can tell test vocabulary apart from a patient's own complaint. */
+  function specialTests(text) {
+    const out = [];
+    let m;
+    SPECIAL_RE.lastIndex = 0;
+    while ((m = SPECIAL_RE.exec(text)) !== null) {
+      out.push({ result: m[1].toLowerCase(), name: cap(m[2].trim()) + " test", start: m.index, end: m.index + m[0].length });
+    }
+    SPECIAL_REV_RE.lastIndex = 0;
+    while ((m = SPECIAL_REV_RE.exec(text)) !== null) {
+      const start = m.index, end = m.index + m[0].length;
+      if (out.some((s) => start < s.end && end > s.start)) continue; // already caught in the other order
+      const name = m[1].trim()
+        .replace(/^(?:the|a|an|this|that|his|her|their)\s+/i, "")
+        .replace(/\s+(?:test|sign)$/i, "");
+      if (!name) continue;
+      out.push({ result: m[2].toLowerCase(), name: cap(name) + " test", start, end });
+    }
+    return out.sort((a, b) => a.start - b.start);
+  }
 
   function extractMeasurements(text, mentions) {
     const rom = [];
@@ -322,10 +364,7 @@
       mmt.push({ context: context || null, grade: `${grade}/5` });
     }
 
-    SPECIAL_RE.lastIndex = 0;
-    while ((m = SPECIAL_RE.exec(text)) !== null) {
-      special.push({ result: m[1].toLowerCase(), name: cap(m[2].trim()) + " test" });
-    }
+    for (const s of specialTests(text)) special.push({ result: s.result, name: s.name });
 
     const rating = findRating(text);
     if (rating && !NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
@@ -522,10 +561,7 @@
 
     // A body part inside a special-test NAME ("drop arm test", "straight leg
     // raise test") is test vocabulary, not a patient complaint — unpin it.
-    SPECIAL_RE.lastIndex = 0;
-    let tm;
-    const testRanges = [];
-    while ((tm = SPECIAL_RE.exec(text)) !== null) testRanges.push([tm.index, tm.index + tm[0].length]);
+    const testRanges = specialTests(text).map((s) => [s.start, s.end]);
     if (testRanges.length) {
       for (let i = mentions.length - 1; i >= 0; i--) {
         const mn = mentions[i];
@@ -582,7 +618,7 @@
 
   // Marks a turn as the clinician speaking: a question, an instruction, or a
   // called-out objective measurement.
-  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i'?m going to|i will|i'?ll|push (?:against|into|up|down)|resist|relax|breathe|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ituro|itudlo|subukan|asa|kanus-?a|pila ka|unsa imong)\b/i;
+  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ituro|itudlo|subukan|asa|kanus-?a|pila ka|unsa imong)\b/i;
 
   function guessSpeaker(raw) {
     const t = String(raw || "").trim();

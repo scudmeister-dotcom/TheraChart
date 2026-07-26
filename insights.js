@@ -218,6 +218,40 @@
       redFlags.push({ flag: "Numbness/tingling with weakness reported", action: "Perform a neurological screen; escalate to the physician if progressive." });
     }
 
+    /* 4b) Constitutional / serious-pathology screen.
+       Night pain unrelieved by rest, unexplained weight loss, fever or night
+       sweats, a cancer history, and cauda-equina symptoms are the classic
+       musculoskeletal red flags — the cluster a PT is expected to catch and
+       refer on rather than treat. They were absent here, so a chart could show
+       "no red flags" while describing textbook ones in the subjective. Read
+       the narrative too, not just the pinned findings: this is usually
+       something the patient says rather than something pinned to a body part. */
+    const narrative = [ctx.current && ctx.current.subjective, cursum, ctx.pmh, ctx.referral]
+      .filter(Boolean).join(" ").toLowerCase();
+    const CONSTITUTIONAL = [
+      [/night pain|worse at night|pain at night|wakes? (?:me|him|her|them)?\s*(?:up\s*)?at night/, "Night pain"],
+      [/unrelieved by rest|not (?:relieved|eased|helped) by rest|unremitting|constant deep pain/, "Pain unrelieved by rest"],
+      [/(?:unintentional|unexplained|unintended)[^.]{0,20}weight loss|weight loss[^.]{0,20}(?:unintentional|unexplained)|lost \d+\s*(?:kg|kilo|pound|lb)/, "Unexplained weight loss"],
+      [/\bfevers?\b|night sweats|\bchills\b/, "Fever or night sweats"],
+      [/history of cancer|cancer history|previous malignan|malignancy|carcinoma/, "Cancer history on file"],
+      [/saddle (?:an[a]?esthesia|numbness)|bowel (?:or|and) bladder|incontinen|urinary retention/, "Possible cauda equina symptoms"],
+    ];
+    const constitutional = CONSTITUTIONAL.filter(([re]) => re.test(narrative)).map(([, label]) => label);
+    if (constitutional.length) {
+      const several = constitutional.length >= 2;
+      redFlags.push({
+        flag: `${constitutional.join("; ")} — screen for non-musculoskeletal causes`,
+        action: several
+          ? "Several constitutional red flags together: refer to the physician for medical work-up before continuing treatment, and document what was found."
+          : "Question further; consider medical referral if the presentation does not fit a mechanical pattern.",
+      });
+      recommendations.push({
+        action: several ? "Refer to the referring physician for medical work-up" : "Raise the red-flag finding with the referring physician",
+        rationale: `${constitutional.join("; ")} warrant medical screening, not treatment alone.`,
+        priority: "high",
+      });
+    }
+
     /* 5) PMH / referral links */
     const pmh = (ctx.pmh || "").toLowerCase();
     if (/diabet/.test(pmh)) {

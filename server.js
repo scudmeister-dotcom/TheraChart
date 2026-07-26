@@ -247,14 +247,159 @@ function publicState() {
   if (s.settings) delete s.settings.geminiKey;
   return s;
 }
-// Locate an attachment by its storage key across all patients — used to gate
-// downloads and to recover the file's name/type for the response headers.
-function findAttachmentByKey(key) {
+
+/* ---- clinic tenancy (enforced HERE, not in the browser) ----------------
+   store.js also filters reads by clinic, but that is a rendering
+   convenience: it runs on the device, after the bytes have already been
+   delivered. The server is the only place a tenant boundary can actually
+   be enforced, so every read is narrowed to the caller's clinic on the way
+   out and every write is confined to it on the way in.
+
+   Records predating tenancy carry no clinicId; they belong to the demo
+   clinic, matching store.js's own fallback. Keep the two in step. */
+const DEFAULT_CLINIC = "clinic-demo";
+const TENANT_COLLECTIONS = ["patients", "documents", "appointments", "audit", "accessRequests", "users"];
+const clinicOf = (rec) => (rec && rec.clinicId) || DEFAULT_CLINIC;
+const clinicOfUser = (user) => (user && user.clinicId) || DEFAULT_CLINIC;
+const sameClinic = (rec, user) => clinicOf(rec) === clinicOfUser(user);
+
+/** The state a given user is allowed to receive: their clinic's slice only.
+    `settings` stays shared (facility-wide scheduling defaults, per store.js). */
+function scopedState(user) {
+  const s = publicState();
+  const cid = clinicOfUser(user);
+  for (const k of TENANT_COLLECTIONS) {
+    if (Array.isArray(s[k])) s[k] = s[k].filter((r) => clinicOf(r) === cid);
+  }
+  // a device has no business knowing which other clinics exist on this server
+  if (s.clinics) s.clinics = { [cid]: s.clinics[cid] || { id: cid, name: store.settings().facilityName } };
+  return s;
+}
+
+/* Security-relevant user fields a device may never set by pushing state.
+   Roles, licences and account status are what the EMR gates on, so they
+   change only through the audited endpoints (/api/users, /api/delete-user,
+   /api/set-password) or an admin edit within their own clinic. */
+const USER_PRIVILEGE_FIELDS = ["role", "active", "license", "clinicId", "email", "authProvider", "googleSub", "mustChangePassword"];
+
+/** Fold a device's pushed state into the server's, confined to the pusher's
+    clinic. Other clinics are carried over from the server verbatim, so a
+    device physically cannot delete or alter a tenant it can't see. Returns
+    { state } on success or { error } if the push tried to cross a boundary. */
+function graftPushedState(pushed, user) {
+  const cid = clinicOfUser(user);
+  const server = JSON.parse(store.exportAll());
+  const isAdmin = user.role === "admin";
+  const out = { ...server };
+
+  let dropped = 0;
+  for (const k of TENANT_COLLECTIONS) {
+    const incoming = Array.isArray(pushed[k]) ? pushed[k] : [];
+    // Records stamped for another clinic are DROPPED, not rejected. Refusing the
+    // whole push looked tidier but bricks a real workflow: on a shared clinic
+    // device the previous user's records are still in localStorage when the next
+    // person signs in, so their first sync legitimately carries another clinic's
+    // rows. Dropping is equally safe — the device could never write them either
+    // way — and lets the device recover instead of retrying a 403 forever.
+    const foreign = incoming.filter((r) => r && r.clinicId && r.clinicId !== cid);
+    dropped += foreign.length;
+    const others = (server[k] || []).filter((r) => clinicOf(r) !== cid);
+    const mine = incoming
+      .filter((r) => !(r && r.clinicId && r.clinicId !== cid))
+      .map((r) => ({ ...r, clinicId: cid })); // stamp legacy/unstamped
+    out[k] = others.concat(mine);
+  }
+  if (dropped) console.warn(`[tenancy] dropped ${dropped} record(s) from another clinic in a push by ${user.id}`);
+
+  /* Signed notes are append-only records. store.js's offline merge already
+     says "a signed status always beats a draft" and unions signatures and
+     amendments — but that only governs the merge path, so a straight PUT could
+     quietly unsign a locked note and drop its signature. Re-assert the same
+     rules here, where they are actually enforceable: a corrected note goes
+     through the amendment flow, not through a state push. */
+  const serverDocs = new Map((server.documents || []).map((d) => [d.id, d]));
+  out.documents = (out.documents || []).map((doc) => {
+    const prior = serverDocs.get(doc.id);
+    if (!prior || prior.status !== "signed") return doc;
+    const union = (a, b, keyFn) => {
+      const seen = new Map();
+      for (const it of [...(a || []), ...(b || [])]) if (it && !seen.has(keyFn(it))) seen.set(keyFn(it), it);
+      return [...seen.values()];
+    };
+    return {
+      ...doc,
+      status: "signed",                                        // never downgraded
+      signatures: union(prior.signatures, doc.signatures, (s) => `${s.time || s.at || ""}|${s.userId || s.by || ""}`),
+      amendments: union(prior.amendments, doc.amendments, (x) => `${x.time || x.at || ""}|${x.userId || x.by || ""}`),
+      history: union(prior.history, doc.history, (h) => `${h.time || ""}|${h.action || ""}|${h.userId || ""}`),
+    };
+  });
+
+  // Users need field-level care: an admin may edit licences and account status
+  // inside their own clinic (the staff screen does this through a state push),
+  // but nobody may invent an account or edit their own privileges.
+  const serverUsers = new Map((server.users || []).map((u) => [u.id, u]));
+  const pushedById = new Map(out.users.filter((u) => u && u.id).map((u) => [u.id, u]));
+  const reconciled = [];
+  for (const existing of server.users || []) {
+    if (clinicOf(existing) !== cid) continue;      // other clinics are restored verbatim below
+    const pushedUser = pushedById.get(existing.id);
+    // A push that simply omits an account must not delete it: removal runs
+    // through /api/delete-user, which refuses to strand the last admin.
+    if (!pushedUser) { reconciled.push(existing); continue; }
+    const merged = { ...existing, ...pushedUser };
+    for (const f of USER_PRIVILEGE_FIELDS) {
+      // an admin may change another user's privileges; nobody may change their own
+      const mayEdit = isAdmin && pushedUser.id !== user.id;
+      if (mayEdit && Object.prototype.hasOwnProperty.call(pushedUser, f)) continue;
+      if (Object.prototype.hasOwnProperty.call(existing, f)) merged[f] = existing[f];
+      else delete merged[f];
+    }
+    merged.clinicId = cid; // never movable by a push, even by an admin
+    reconciled.push(merged);
+  }
+  // accounts the push invented are dropped — /api/users is the only way in,
+  // because it is what hashes a password and forces a change at first login
+  out.users = (server.users || []).filter((u) => clinicOf(u) !== cid).concat(reconciled);
+
+  /* `settings` and `clinics` are not per-record, so they fall outside the
+     collection loop above and would otherwise be silently discarded — the
+     Facility Admin screen would appear to save and change nothing.
+     Settings are facility-wide by design (see store.js), so restrict the write
+     to an admin rather than letting any device push facility config. */
+  if (isAdmin && pushed.settings && typeof pushed.settings === "object") {
+    out.settings = { ...server.settings, ...pushed.settings };
+  } else {
+    out.settings = server.settings;
+  }
+  // A clinic may be renamed only by its own admin; every other clinic's entry
+  // is carried over from the server untouched.
+  out.clinics = { ...(server.clinics || {}) };
+  if (isAdmin && pushed.clinics && typeof pushed.clinics === "object" && pushed.clinics[cid]) {
+    out.clinics[cid] = { ...pushed.clinics[cid], id: cid };
+  }
+  return { state: out };
+}
+
+// Locate an attachment by its storage key — scoped to the caller's clinic,
+// because this lookup IS the download authorization gate (as well as the
+// source of the file's name/type for the response headers).
+function findAttachmentByKey(key, user) {
   if (!key) return null;
   for (const p of store.allPatients()) {
+    if (!sameClinic(p, user)) continue;
     for (const a of p.attachments || []) if (a.key === key) return a;
   }
   return null;
+}
+
+/** Resolve a document id only if it belongs to the caller's clinic. */
+function docForUser(docId, user) {
+  const doc = docId ? store.getDoc(docId) : null;
+  if (!doc) return null;
+  // a document inherits its patient's clinic; fall back to its own stamp
+  const patient = store.getPatient(doc.patientId);
+  return sameClinic(patient || doc, user) ? doc : null;
 }
 function bootstrapInfo() {
   // NOTE: the employee roster is deliberately NOT exposed here — employees sign
@@ -568,14 +713,25 @@ const server = http.createServer(async (req, res) => {
       if (fail) {
         lf.n += 1;
         if (lf.n >= 5) { lf.n = 0; lf.lockUntil = Date.now() + 60 * 1000; }
-        if (loginFails.size > 1000) loginFails.clear(); // bound memory
+        if (loginFails.size > 1000) {
+          // Bound memory WITHOUT dropping live lockouts: clearing the whole map
+          // let an attacker flush a victim's hold by spraying junk identifiers,
+          // then resume guessing. Evict lapsed entries first, and only fall back
+          // to dropping the oldest if every entry is still holding a lock.
+          const now = Date.now();
+          for (const [k, v] of loginFails) if (v.lockUntil <= now) loginFails.delete(k);
+          for (const k of loginFails.keys()) {
+            if (loginFails.size <= 1000) break;
+            loginFails.delete(k);
+          }
+        }
         loginFails.set(rlKey, lf);
         return json(res, 401, { error: fail });
       }
       loginFails.delete(rlKey);
       const authed = store.findUserByLogin(identifier);
       bumpRev(); // audit entry was added
-      return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, state: publicState() });
+      return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, state: scopedState(authed) });
     }
 
     if (url.pathname === "/api/google-login" && req.method === "POST") {
@@ -606,7 +762,7 @@ const server = http.createServer(async (req, res) => {
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
       bumpRev(); // audit entries (login / user-created) were added
-      return json(res, 200, { token: tokenFor(r.user.id), userId: r.user.id, rev, state: publicState() });
+      return json(res, 200, { token: tokenFor(r.user.id), userId: r.user.id, rev, state: scopedState(r.user) });
     }
 
     const user = userForReq(req);
@@ -638,7 +794,7 @@ const server = http.createServer(async (req, res) => {
         // stream a stored file back — but only if it's referenced by a real
         // attachment (that check is also the authorization gate + metadata source).
         const key = url.searchParams.get("key");
-        const att = key && findAttachmentByKey(key);
+        const att = key && findAttachmentByKey(key, user);
         if (!att) return json(res, 404, { error: "File not found." });
         let f;
         try { f = await files.get(key); } catch (e) { return json(res, 502, { error: "Storage read failed: " + e.message }); }
@@ -658,6 +814,9 @@ const server = http.createServer(async (req, res) => {
         let mustChange = false;
         if (targetId !== user.id) {
           if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can change another user's password." });
+          // being an admin somewhere is not being an admin everywhere: without
+          // this check any clinic's admin could seize any account on the server
+          if (!sameClinic(store.getUser(targetId), user)) return json(res, 404, { error: "User not found." });
           mustChange = true; // an admin-set password is temporary — force a change at next login
         } else if (!store.verifyPassword(user.id, currentPassword)) {
           return json(res, 403, { error: "Current password is incorrect." });
@@ -677,12 +836,17 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/delete-user" && req.method === "POST") {
         if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can remove employees." });
         const { userId } = await readBody(req);
+        if (!sameClinic(store.getUser(userId), user)) return json(res, 404, { error: "User not found." });
         const result = store.deleteUser(userId, user);
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
         return json(res, 200, { ok: true, rev });
       }
       if (url.pathname === "/api/refine" && req.method === "POST") {
+        // Clinical documentation, so the gate is canDocument (as /api/extract-doc
+        // uses) — canAccessEmr would let front desk through, and this ships
+        // transcript PHI off-box to Gemini.
+        if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
         const { transcript } = await readBody(req);
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
         const clean = transcript.map((t) => String(t || "").slice(0, 2000)).slice(0, 500);
@@ -690,6 +854,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, result);
       }
       if (url.pathname === "/api/insights" && req.method === "POST") {
+        // decision support for a licensed clinician — same gate as /api/refine
+        if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
         const ctx = await readBody(req);
         const result = await clinicalInsights(ctx || {});
         return json(res, 200, result);
@@ -728,7 +894,7 @@ const server = http.createServer(async (req, res) => {
         // opt-in temporary retention: keep the raw segment for later review if
         // the facility enabled it and the patient consented (even if transcription
         // fails — the audio is exactly what you'd want to fall back on)
-        const doc = docId ? store.getDoc(docId) : null;
+        const doc = docForUser(docId, user);
         let retained = false;
         if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         try {
@@ -740,7 +906,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === "/api/audio") {
         const docId = url.searchParams.get("docId") || "";
-        const doc = docId ? store.getDoc(docId) : null;
+        // clinic-scoped: recorded patient audio (and the DELETE below, which
+        // destroys it) must never be reachable from another tenant
+        const doc = docForUser(docId, user);
         if (!doc) return json(res, 404, { error: "Document not found." });
         if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
         if (req.method === "GET") {
@@ -762,12 +930,12 @@ const server = http.createServer(async (req, res) => {
         return json(res, 405, { error: "Method not allowed." });
       }
       if (url.pathname === "/api/state" && req.method === "GET") {
-        return json(res, 200, { rev, state: publicState() });
+        return json(res, 200, { rev, state: scopedState(user) });
       }
       if (url.pathname === "/api/state" && req.method === "PUT") {
         const { baseRev, state } = await readBody(req);
         if (baseRev !== rev) {
-          return json(res, 409, { rev, state: publicState() });
+          return json(res, 409, { rev, state: scopedState(user) });
         }
         if (!state || !Array.isArray(state.patients) || !Array.isArray(state.users)) {
           return json(res, 400, { error: "Malformed state." });
@@ -779,10 +947,15 @@ const server = http.createServer(async (req, res) => {
           if (!Array.isArray(state[k]) || state[k].some(badId)) return json(res, 400, { error: "Malformed state." });
         }
         state.sessionUserId = null;
+        // Confine the push to the pusher's clinic and re-assert server-held
+        // privilege fields. The device only ever saw its own tenant, so this
+        // is also what stops its narrowed view from deleting everyone else.
+        const grafted = graftPushedState(state, user);
+        if (grafted.error) return json(res, 403, { error: grafted.error });
         // capture server-side password hashes so a device push (whose state has
         // them stripped) can't wipe or forge them
         const creds = new Map(store.users().map((u) => [u.id, u.passwordHash]));
-        store.importAll(state, { preserveSession: false });
+        store.importAll(grafted.state, { preserveSession: false });
         for (const u of store.users()) {
           const h = creds.get(u.id);
           if (h) u.passwordHash = h; else delete u.passwordHash;

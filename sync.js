@@ -97,6 +97,16 @@
     return { ok: res.ok, status: res.status, data };
   }
 
+  /* Which clinic a state blob belongs to — used to notice a device changing
+     hands between clinics (a shared clinic tablet, most often). */
+  function clinicOfState(state, userId) {
+    if (!state) return null;
+    const u = (state.users || []).find((x) => x.id === userId);
+    if (u && u.clinicId) return u.clinicId;
+    const rec = (state.patients || [])[0] || (state.documents || [])[0] || (state.appointments || [])[0];
+    return (rec && rec.clinicId) || null;
+  }
+
   /* ---- adopt / merge ---- */
   function adopt(payload) {
     sync.rev = payload.rev;
@@ -246,7 +256,17 @@
       sync.token = res.data.token;
       lsSet(LS_TOKEN, sync.token);
       const uid = res.data.userId; // server resolved email -> user id
-      if (sync.dirty) {
+      // If this device was last used by a DIFFERENT clinic, its cached state is
+      // not ours to merge: keeping it would carry the previous clinic's records
+      // into this session, and pushing them back just has the server drop them.
+      // Replace the cache outright instead.
+      const localState = S.load();
+      const switchedClinic = (() => {
+        const was = clinicOfState(localState, localState.sessionUserId);
+        const now = clinicOfState(res.data.state, uid);
+        return !!(was && now && was !== now);
+      })();
+      if (sync.dirty && !switchedClinic) {
         // offline work from before this login: merge it into the server copy
         mergeAndAdopt(res.data);
         const st = S.load();

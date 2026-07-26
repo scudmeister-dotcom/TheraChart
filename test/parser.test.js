@@ -5,7 +5,7 @@
 
 "use strict";
 
-const { parseUtterance, classifyUtterance } = require("../parser.js");
+const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -446,6 +446,54 @@ function mention(result, partName, side = undefined) {
   check("'zero out of ten' → pain 0/10", r.measurements.pain.length === 1 && r.measurements.pain[0].score === 0, JSON.stringify(r.measurements.pain));
   const m = mention(r, "Knee");
   check("'zero out of ten' rated in summary", m && /rated 0\/10/.test(m.summary), m && m.summary);
+}
+
+{
+  // Tagalog/Cebuano pain ratings. README advertises "pito sa sampu" alongside
+  // "7 out of 10", but only the English numerals were in the lexicon, so the
+  // Filipino form scored nothing at all.
+  const score = (s) => { const p = parseUtterance(s).measurements.pain; return p.length ? p[0].score : null; };
+  check("'pito sa sampu' → 7/10", score("mga pito sa sampu ang sakit") === 7, String(score("mga pito sa sampu ang sakit")));
+  check("'walo sa sampu' → 8/10", score("walo sa sampu") === 8, String(score("walo sa sampu")));
+  check("'tatlo sa sampu' → 3/10", score("tatlo sa sampu") === 3, String(score("tatlo sa sampu")));
+  check("Cebuano 'lima sa napulo' → 5/10", score("lima sa napulo") === 5, String(score("lima sa napulo")));
+  check("English ratings still work", score("seven out of ten") === 7 && score("6/10") === 6);
+}
+
+{
+  // Special tests are dictated in both word orders. Only "positive Neer test"
+  // parsed, so "Neer is positive" was missed — and a missed test meant the
+  // clinician's read-out was scored as PATIENT speech and pinned to the body map.
+  const r1 = parseUtterance("special test, Neer is positive on the right shoulder");
+  check("'Neer is positive' parses as a special test", r1.measurements.special.length === 1, JSON.stringify(r1.measurements.special));
+  check("'Neer is positive' captures the result", (r1.measurements.special[0] || {}).result === "positive", JSON.stringify(r1.measurements.special));
+  const r2 = parseUtterance("the Hawkins test was positive");
+  check("'Hawkins test was positive' parses", r2.measurements.special.length === 1, JSON.stringify(r2.measurements.special));
+  check("reversed order does not drop the article into the name",
+    !/^The\b/i.test(((r2.measurements.special[0] || {}).name) || ""), JSON.stringify(r2.measurements.special));
+  const r3 = parseUtterance("positive Neer test on the right");
+  check("original word order still parses", r3.measurements.special.length === 1, JSON.stringify(r3.measurements.special));
+  check("a test read-out is attributed to the clinician",
+    guessSpeaker("special test, Neer is positive on the right shoulder") === "clinician");
+  check("'I am going to…' is attributed to the clinician",
+    guessSpeaker("alright I am going to test your strength now") === "clinician");
+  // ordinary prose must not become a clinical finding
+  const r4 = parseUtterance("she said the news from the doctor is positive");
+  check("prose 'is positive' is not read as a special test", r4.measurements.special.length === 0, JSON.stringify(r4.measurements.special));
+}
+
+{
+  // The whole point of the two-pass design: a clinician-only stretch must not
+  // put pins on the body map.
+  const r = refineTranscript([
+    "alright I am going to test your strength now",
+    "quad strength is four out of five on the right",
+    "special test, Neer is positive on the right shoulder",
+  ]);
+  check("clinician-only dictation pins nothing", r.findings.length === 0,
+    JSON.stringify(r.findings.map((f) => `${f.part}|${f.side || ""}`)));
+  check("clinician-only dictation is all clinician turns",
+    r.dialogue.every((d) => d.speaker === "clinician"), JSON.stringify(r.dialogue.map((d) => d.speaker)));
 }
 
 /* ------------------------------------------------------------------ */

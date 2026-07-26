@@ -277,6 +277,8 @@ The parsing brain (`parser.js`) and data rules (`store.js`) are DOM-free and
 checked offline:
 
 ```bash
+node test/tenancy.test.js  # 37 checks: clinic isolation + authorization, over real HTTP
+node test/workflow.test.js # 20 checks: a clinical journey across two synced devices
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
 node test/merge.test.js    # 13 checks: offline merge never loses records
@@ -285,6 +287,25 @@ node test/insights.test.js # 15 checks: connections, red flags, recommendations
 node test/clinical.test.js # 84 checks: 8-minute rule, MCID trending, goal dates
 node test/import.test.js   # 38 checks: PDF-record extraction, history digest, imported docs
 ```
+
+### Scoring the AI passes
+
+Unit tests pin the local heuristic's exact behaviour. The **eval harness** grades
+whichever engine is configured — local or Gemini — on properties that must hold
+regardless of model or prompt wording (speaker attribution, findings grounded in
+the transcript, nothing invented, red flags caught):
+
+```bash
+npm run eval                                  # local engine — free and deterministic
+GEMINI_API_KEY=... npm run eval               # score the real model
+node test/eval/run.js --runs 3                # repeat, to see model variance
+node test/eval/run.js --save-baseline         # record the current score as the bar
+```
+
+Each run is scored against `test/eval/baseline.<engine>.json` and names any
+assertion that flipped, exiting non-zero on a regression — so **edit a prompt,
+re-run, and see a number** instead of guessing. Safety-critical assertions
+(attribution, hallucination, red flags) carry extra weight.
 
 ## Files
 

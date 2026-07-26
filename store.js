@@ -627,6 +627,11 @@
     user = {
       id: uid("u"), name, email, role, active: true,
       license: null, authProvider: "google",
+      // Allowlisted Google sign-ins carry no clinic of their own, so they join
+      // the default clinic. Stamp it explicitly rather than leaning on the
+      // recClinic() fallback — an unstamped user is indistinguishable from a
+      // legacy record, and the server's tenancy checks read this field.
+      clinicId: DEFAULT_CLINIC,
     };
     if (sub) user.googleSub = sub;
     touch(user);
@@ -719,6 +724,9 @@
       user = {
         id: uid("u"), name: req.name || email.split("@")[0], email, role,
         active: true, license: null, authProvider: "google",
+        // an approved person joins the clinic of the admin who approved them —
+        // without this they fall back to the demo clinic and see its charts
+        clinicId: (byUser && byUser.clinicId) || currentClinicId(),
       };
       if (req.googleSub) user.googleSub = req.googleSub;
       touch(user);

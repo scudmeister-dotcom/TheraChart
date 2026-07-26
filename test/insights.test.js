@@ -9,6 +9,7 @@ let passed = 0;
 const failures = [];
 const check = (n, c, d) => { if (c) passed += 1; else failures.push(`✗ ${n}${d ? `\n    ${d}` : ""}`); };
 const titles = (r) => r.connections.map((c) => c.title).join(" | ");
+const flagsOf = (r) => r.redFlags.map((f) => f.flag).join(" | ");
 
 /* recurrence + declining ROM + recommendation */
 {
@@ -130,6 +131,43 @@ const titles = (r) => r.connections.map((c) => c.title).join(" | ");
   check("denied neck: no cervical radicular pattern", !/cervical/i.test(titles(r)), titles(r));
   check("denied neck: no recurrence connection", !/recurrent neck/i.test(titles(r)), titles(r));
   check("denied numbness: no neuro red flag", !r.redFlags.some((f) => /numbness/i.test(f.flag)), JSON.stringify(r.redFlags));
+}
+
+/* constitutional red flags — the serious-pathology screen */
+{
+  const r = I.buildInsights({
+    referral: "thoracic pain", pmh: "Former smoker",
+    current: {
+      subjective: "Constant deep pain, worse at night, unrelieved by rest. Unintentional 6 kg weight loss over 2 months.",
+      findings: [{ part: "Upper back", side: null, summary: "constant deep pain 8/10" }],
+      measurements: {},
+    },
+    history: [],
+  });
+  check("night pain raises a red flag", /night/i.test(flagsOf(r)), flagsOf(r));
+  check("unexplained weight loss raises a red flag", /weight loss/i.test(flagsOf(r)), flagsOf(r));
+  check("several red flags together prompt medical referral",
+    r.recommendations.some((x) => /refer/i.test(x.action) && /physician/i.test(x.action)), JSON.stringify(r.recommendations.map((x) => x.action)));
+  check("the referral recommendation is high priority",
+    r.recommendations.some((x) => /refer/i.test(x.action) && x.priority === "high"), JSON.stringify(r.recommendations));
+  check("no diagnosis is asserted as fact", !/\b(is|has) (cancer|a tumou?r|malignancy)/i.test(JSON.stringify(r)));
+}
+{
+  // a plain mechanical presentation must NOT trip the constitutional screen
+  const r = I.buildInsights({
+    current: { subjective: "Knee hurts when I climb stairs, better with rest.", findings: [{ part: "Knee", side: "left", summary: "pain 4/10 on stairs" }], measurements: {} },
+    history: [],
+  });
+  check("a mechanical presentation raises no constitutional flag",
+    !/night|weight loss|fever|cauda/i.test(flagsOf(r)), flagsOf(r));
+}
+{
+  // cauda equina is the emergency case
+  const r = I.buildInsights({
+    current: { subjective: "Saddle numbness and new bowel and bladder incontinence since yesterday.", findings: [{ part: "Lower back", side: null, summary: "back pain" }], measurements: {} },
+    history: [],
+  });
+  check("cauda equina symptoms are flagged", /cauda equina/i.test(flagsOf(r)), flagsOf(r));
 }
 
 const total = passed + failures.length;
