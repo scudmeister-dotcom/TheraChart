@@ -1,9 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- data-theme pins the app to the light palette. Without it the tokens fall
+     through to the @media (prefers-color-scheme: dark) block in styles.css and
+     the whole content area follows the OS into dark; the sidebar rail stays a
+     dark teal gradient either way, by design. -->
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#0F8A80" />
+<!-- declared before the stylesheet so the first paint is light, not a dark flash -->
+<meta name="color-scheme" content="light" />
 <title>TheraChart EMR</title>
 <!-- Brand type: Sora (wordmark/display) + Figtree (UI), self-hosted so nothing
      is fetched from a third-party CDN and the PWA works fully offline. -->

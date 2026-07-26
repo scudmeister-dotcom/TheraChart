@@ -83,6 +83,13 @@ check("booking works and records creator", !booked.error && booked.appt.createdB
 check("booking schedules two reminders", booked.appt.reminders.length === 2);
 const clash = store.bookAppointment({ patientId: "p-juan", therapistId: "u-maria", start: free, note: "" }, ana);
 check("double-booking a therapist is refused", !!clash.error);
+// a visit starting mid-slot still puts one therapist in two places at once
+const overlapStart = new Date(new Date(free).getTime() + 5 * 60000).toISOString();
+const overlap = store.bookAppointment({ patientId: "p-juan", therapistId: "u-maria", start: overlapStart, note: "" }, ana);
+check("an overlapping (not identical) booking is refused too", !!overlap.error);
+const otherPt = store.bookAppointment({ patientId: "p-juan", therapistId: "u-grace", start: overlapStart, note: "" }, ana);
+check("the same time is still bookable for a different therapist", !otherPt.error);
+store.cancelAppointment(otherPt.appt.id, maria);
 const cancelled = store.cancelAppointment(booked.appt.id, maria);
 check("cancellation recorded in history", cancelled.appt.history.some((h) => h.action === "cancelled" && h.userId === "u-maria"));
 

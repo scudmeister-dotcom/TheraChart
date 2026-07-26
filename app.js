@@ -928,7 +928,7 @@
     return `
 <div class="page-head">
   <div><h1>${p ? "Edit patient information" : "New patient intake"}</h1>
-  <div class="sub">Completed by front desk staff — all fields stay on this device</div></div>
+  <div class="sub">Completed by front desk staff — stored on the clinic's own server, never a third-party cloud</div></div>
 </div>
 <div class="card" style="max-width:760px">
   <h2>Personal information</h2>
@@ -2036,6 +2036,7 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     } else if (doc.type === "daily") {
       put("Subjective", d.subjective); put("Treatment summary", d.summary);
       secs.push(measurementTables(d));
+      put("Assessment", d.assessment); put("Plan", d.plan);
     } else if (doc.type === "progress") {
       put("Baseline subjective (from evaluation)", d.baselineSubjective);
       put("Current status", d.currentStatus); put("Updated findings", d.updatedFindings);
@@ -2103,7 +2104,9 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     } else if (doc.type === "daily") {
       sections = ta("subjective", "Subjective", "Patient-reported status today") +
         ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
-        measurementEditor(doc, editable);
+        measurementEditor(doc, editable) +
+        ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2) +
+        ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2);
     } else if (doc.type === "progress") {
       sections = `<div class="field"><label>Baseline subjective — carried over from the evaluation</label>
           <textarea rows="2" disabled>${esc(doc.data.baselineSubjective || "(no signed evaluation found)")}</textarea></div>` +
@@ -2925,6 +2928,38 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (t) t.value = doc.data[field];
   }
 
+  /* One spoken breath usually carries several documentation sentences. Split
+     on sentence enders so each lands in its own section; a paragraph with no
+     punctuation at all stays whole rather than being chopped arbitrarily. */
+  function splitSentences(text) {
+    const out = String(text || "").match(/[^.!?;]+[.!?;]*/g) || [];
+    const parts = out.map((s) => s.trim()).filter(Boolean);
+    return parts.length ? parts : [text];
+  }
+
+  /** Which field of `type` one sentence belongs in — null means "table only". */
+  function fieldForSentence(type, sentence) {
+    if (type === "discharge") return "summary";
+    const meas = PR.extractMeasurements(sentence);
+    if (type === "daily") {
+      // ROM/MMT/special tests live in the measurement table only; pain ratings
+      // are patient-reported, so those sentences still belong in Subjective
+      const objMeas = meas.rom.length + meas.mmt.length + meas.special.length;
+      if (objMeas) return null;
+      if (/\bplan\b|\bnext (?:visit|session)\b|\bcontinue\b|\bfollow[- ]up\b|\btimes? a week\b|\bx\/week\b/i.test(sentence)) return "plan";
+      if (/\b(assessment|impression|consistent with|tolerated|progressing|responding)\b/i.test(sentence)) return "assessment";
+      return TREAT_RE.test(sentence) ? "summary" : "subjective";
+    }
+    const section = PR.classifyUtterance(sentence, PR.parseUtterance(sentence), meas);
+    if (type === "eval") {
+      return { reason: "reason", precautions: "precautions", pmh: "pmh", assessment: "assessment", objective: "objectiveText", subjective: "subjective" }[section];
+    }
+    if (type === "progress") {
+      return { reason: "currentStatus", precautions: "currentStatus", pmh: "currentStatus", assessment: "assessment", objective: "updatedFindings", subjective: "currentStatus" }[section];
+    }
+    return null;
+  }
+
   function routeUtterance(doc, user, raw, dstate, silent) {
     const parsed = PR.parseUtterance(raw);
     if (!parsed.text) return;
@@ -2953,25 +2988,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       routed.push(`${pinnable.length} body area${pinnable.length > 1 ? "s" : ""} → map`);
     }
 
-    // text routing
-    const section = PR.classifyUtterance(parsed.text, parsed, parsed.measurements);
-    let field = null;
-    if (doc.type === "eval") {
-      field = { reason: "reason", precautions: "precautions", pmh: "pmh", assessment: "assessment", objective: "objectiveText", subjective: "subjective" }[section];
-    } else if (doc.type === "progress") {
-      field = { reason: "currentStatus", precautions: "currentStatus", pmh: "currentStatus", assessment: "assessment", objective: "updatedFindings", subjective: "currentStatus" }[section];
-    } else if (doc.type === "daily") {
-      // objective measurements (ROM/MMT/tests) live in the table only;
-      // pain ratings are patient-reported and also belong in Subjective
-      const objMeas = parsed.measurements.rom.length + parsed.measurements.mmt.length + parsed.measurements.special.length;
-      field = objMeas ? null : TREAT_RE.test(parsed.text) ? "summary" : "subjective";
-    } else if (doc.type === "discharge") {
-      field = "summary";
+    // text routing — sentence by sentence. Therapists talk in paragraphs
+    // ("shoulder still hurts, flexion is 140, we did scaption"), and routing
+    // the whole utterance to one field meant everything but the first match
+    // was dropped: a daily note that mentioned any measurement lost its
+    // subjective and treatment text entirely.
+    const filedTo = [];
+    for (const sentence of splitSentences(parsed.text)) {
+      const field = fieldForSentence(doc.type, sentence);
+      if (!field) continue;
+      appendField(doc, field, cap(sentence), silent);
+      if (!filedTo.includes(field)) filedTo.push(field);
     }
-    if (field) {
-      appendField(doc, field, cap(parsed.text), silent);
-      routed.push(`text → ${fieldLabel(doc.type, field)}`);
-    }
+    for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
 
     S.updateDocData(doc.id, doc.data, user);
     if (silent) return;
@@ -2986,7 +3015,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   function fieldLabel(type, field) {
     return ({
       reason: "Reason for referral", precautions: "Precautions", pmh: "Past medical history",
-      subjective: "Subjective", objectiveText: "Objective", assessment: "Assessment",
+      subjective: "Subjective", objectiveText: "Objective", assessment: "Assessment", plan: "Plan",
       summary: type === "discharge" ? "Summary of care" : "Treatment summary",
       currentStatus: "Current status", updatedFindings: "Updated findings",
     })[field] || field;
@@ -3429,7 +3458,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   const planFieldFor = (type) =>
-    ({ eval: "plan", daily: "summary", progress: "assessment", discharge: "recommendations" })[type];
+    ({ eval: "plan", daily: "plan", progress: "assessment", discharge: "recommendations" })[type];
 
   function renderInsightsCard(doc, user) {
     const card = document.getElementById("insightsCard");
@@ -3530,11 +3559,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   /* ---- sign & amend ---- */
 
+  /* The sections a reviewer or payer expects to find filled in. Signing locks
+     the note, so a blank one can only be corrected by amendment — worth a look
+     before committing, though it stays the clinician's call. */
+  const REQUIRED_SECTIONS = {
+    eval: [["subjective", "Subjective"], ["objectiveText", "Objective findings"], ["assessment", "Assessment"], ["plan", "Plan"]],
+    daily: [["subjective", "Subjective"], ["summary", "Treatment summary"], ["assessment", "Assessment"], ["plan", "Plan"]],
+    progress: [["currentStatus", "Current status"], ["goalsProgress", "Progress toward goals"], ["assessment", "Assessment"]],
+    discharge: [["summary", "Summary of care"], ["outcome", "Outcome"], ["recommendations", "Recommendations"]],
+  };
+
+  const emptySections = (doc) =>
+    (REQUIRED_SECTIONS[doc.type] || [])
+      .filter(([field]) => !String(doc.data[field] || "").trim())
+      .map(([, label]) => label);
+
   function signModal(doc, user) {
     const pending = window.__theraDict && window.__theraDict.pending ? window.__theraDict.pending() : 0;
+    const blanks = emptySections(doc);
     const m = showModal(`
 <h2>E-sign &amp; lock — ${esc(doc.title)}</h2>
 ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending > 1 ? "s are" : " is"} still being transcribed — wait for them to land before signing, or they will need an amendment.</div>` : ""}
+${blanks.length ? `<div class="banner warn">△ Still empty: <b>${blanks.map(esc).join(", ")}</b>. You can sign anyway, but filling these in now avoids an amendment later.</div>` : ""}
 <p style="font-size:13px; color:var(--muted)">Signing certifies this documentation is accurate and complete. The document will lock; later changes require a signed amendment with an authorization reason.</p>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="sigName" autocomplete="off" /></div>
 <div class="field"><label>Password</label><input id="sigPin" type="password" autocomplete="current-password" /></div>
@@ -3589,16 +3635,46 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     return S.staff().filter((u) => u.active && (u.role === "therapist" || u.role === "admin") && u.license);
   }
 
+  /* Bookings don't always sit exactly on the generated grid: the facility can
+     change slot length or opening hours after visits were booked, and a visit
+     agreed over the phone rarely lands on a round slot. Matching slot times
+     exactly made those bookings invisible — the toolbar said "2 booked" over a
+     board of empty slots. Drop each appointment into the slot whose window
+     contains it, and hand back anything outside the day's hours so it can be
+     listed rather than lost. */
+  function bucketAppointments(appts, slots, slotMinutes) {
+    const byKey = new Map(); // `${therapistId}|${slotIso}` → [appt]
+    const outside = [];
+    const starts = slots.map((s) => new Date(s).getTime());
+    const span = (slotMinutes || 45) * 60000;
+    for (const a of appts) {
+      const t = new Date(a.start).getTime();
+      const i = starts.findIndex((s) => t >= s && t < s + span);
+      if (i === -1) { outside.push(a); continue; }
+      const key = `${a.therapistId}|${slots[i]}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(a);
+    }
+    return { byKey, outside };
+  }
+
   function calendarView(user) {
     const ths = therapists();
     // forget any hidden ids for providers that no longer exist
     [...calHidden].forEach((id) => { if (!ths.some((t) => t.id === id)) calHidden.delete(id); });
     const slots = S.slotsForDay(calDate);
     const appts = S.apptsOn(calDate);
+    const { byKey: apptsBySlot, outside: offHours } = bucketAppointments(appts, slots, S.settings().slotMinutes);
     const cols = ths.filter((t) => !calHidden.has(t.id));
     const minW = Math.max(480, 72 + cols.length * 168); // keep columns readable; scroll when many
 
-    const grid = !ths.length
+    // hidden providers keep their bookings off the board on purpose; a hidden
+    // column is the user's own doing, so those don't belong in the overflow list
+    const stranded = offHours.concat(
+      slots.length ? appts.filter((a) => calHidden.has(a.therapistId)) : []
+    );
+
+    const board = !ths.length
       ? `<div class="empty-state" style="padding:22px">No PTs to schedule yet — use <b>+ Add PT</b> above to add a provider column.</div>`
       : !cols.length
       ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their column.</div>`
@@ -3612,14 +3688,24 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
     ${slots.map((slot) => `
       <div class="cal-cell cal-time">${fmtTime(slot)}</div>
       ${cols.map((t) => {
-        const here = appts.filter((a) => a.therapistId === t.id && a.start === slot);
+        const here = apptsBySlot.get(`${t.id}|${slot}`) || [];
         if (here.length) return `<div class="cal-cell">${here.map((a) => `
-          <div class="slot-appt" data-appt="${a.id}">${esc(S.patientName(S.getPatient(a.patientId)))}
+          <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientName(S.getPatient(a.patientId)))}
           <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
         return `<div class="cal-cell"><span class="slot-free" data-slot="${slot}" data-ther="${t.id}">+ available</span></div>`;
       }).join("")}`).join("")}
   </div>
 </div>`;
+
+    // Anything the board can't show still has to be visible somewhere, or the
+    // toolbar's "N booked" count contradicts an apparently empty day.
+    const grid = board + (stranded.length ? `<div class="cal-offhours">
+  <p><b>Booked, but not on this board</b> — outside the day's opening hours, or a provider without a column.</p>
+  <div class="cal-offhours-list">
+    ${stranded.map((a) => `<div class="slot-appt" data-appt="${a.id}">${fmtTime(a.start)} · ${esc(S.patientName(S.getPatient(a.patientId)))}
+      <small>${esc((S.getUser(a.therapistId) || {}).name || "")}${a.note ? ` — ${esc(a.note)}` : ""}</small></div>`).join("")}
+  </div>
+</div>` : "");
 
     const upcomingReminders = S.appointments()
       .filter((a) => a.status === "booked")

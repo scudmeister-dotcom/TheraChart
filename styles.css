@@ -1190,6 +1190,17 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .slot-appt:hover { filter: brightness(0.97); }
 .slot-appt small { display: block; font-weight: 400; color: var(--muted); }
+/* bookings that fall outside the facility's opening hours have no column on
+   the board, so they get listed under it rather than disappearing */
+.cal-offhours {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: var(--warn-soft, var(--card-2, #fff8e6)); border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.cal-offhours p { margin: 0 0 8px; color: var(--muted); }
+.cal-offhours p b { color: var(--text); }
+.cal-offhours-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal-offhours .slot-appt { margin-bottom: 0; }
 /* resource day-view: fixed-width PT columns that scroll sideways when there are many */
 .cal-toolbar-spacer { flex: 1 1 auto; }
 .cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }

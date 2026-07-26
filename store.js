@@ -839,7 +839,10 @@
     load();
     const data = { mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [] };
     if (type === "eval") Object.assign(data, { reason: "", precautions: "", pmh: "", subjective: "", objectiveText: "", assessment: "", plan: "" });
-    if (type === "daily") Object.assign(data, { summary: "", subjective: "" });
+    // a daily treatment note is a SOAP note: subjective, objective (the
+    // measurement tables + body map), assessment, plan — the last two are what
+    // make the visit defensible to a payer or a reviewing clinician
+    if (type === "daily") Object.assign(data, { summary: "", subjective: "", assessment: "", plan: "" });
     if (type === "discharge") Object.assign(data, { summary: "", outcome: "", recommendations: "" });
     if (type === "progress") {
       // carry over subjective baseline from the signed evaluation
@@ -988,12 +991,19 @@
 
   function bookAppointment({ patientId, therapistId, start, note }, byUser) {
     load();
-    const clash = state.appointments.some(
-      (a) => a.status !== "cancelled" && a.therapistId === therapistId && a.start === start
-    );
-    if (clash) return { error: "That therapist already has a booking in this slot." };
     const startDate = new Date(start);
     if (isNaN(startDate.getTime())) return { error: "Invalid appointment time." };
+    // Overlap, not an exact time match: two visits that merely start at
+    // different minutes still put one therapist in two places at once.
+    const mins = state.settings.slotMinutes;
+    const from = startDate.getTime(), to = from + mins * 60000;
+    const clash = state.appointments.some((a) => {
+      if (a.status === "cancelled" || a.therapistId !== therapistId) return false;
+      const aFrom = new Date(a.start).getTime();
+      if (isNaN(aFrom)) return false;
+      return aFrom < to && aFrom + (a.minutes || mins) * 60000 > from;
+    });
+    if (clash) return { error: "That therapist already has a booking overlapping this time." };
     const remind3d = new Date(startDate); remind3d.setDate(remind3d.getDate() - 3); remind3d.setHours(9, 0, 0, 0);
     const remindAm = new Date(startDate); remindAm.setHours(7, 0, 0, 0);
     const appt = {

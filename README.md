@@ -75,9 +75,11 @@ works; the body-part lexicon understands all three at once):
 - **Patient center** — demographics, insurance, uploaded referrals/X-rays,
   and every therapy document (daily notes, evaluations, progress reports,
   discharges). **Print or export the whole chart as a PDF.**
-- **Daily treatment notes** — treatment summary, subjective, objective
-  measurements (voice-filled), therapist name + time, **e-sign & lock**.
-  Later edits require a signed amendment with an authorization reason.
+- **Daily treatment notes** — a full SOAP note: subjective, treatment summary,
+  objective measurements (voice-filled), assessment and plan, therapist name +
+  time, **e-sign & lock**. Dictation is routed **sentence by sentence**, so one
+  spoken paragraph fills every section it touches at once. Later edits require
+  a signed amendment with an authorization reason.
 - **Evaluations** — full section set with voice auto-filing; e-sign & lock.
 - **Progress reports** — flagged automatically after the Nth visit
   (facility-configurable, default 5); carries the evaluation's subjective
