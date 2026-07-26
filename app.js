@@ -8,6 +8,7 @@
 
   const S = window.TheraStore;
   const PR = window.TheraParser;
+  const CL = window.TheraClinical; // billing rules, outcome measures, goals
   S.load();
 
   const app = document.getElementById("app");
@@ -925,6 +926,8 @@
     const p = editId ? S.getPatient(editId) : null;
     const v = (k) => esc(p ? p[k] || "" : "");
     const ins = (k) => esc(p && p.insurance ? p.insurance[k] || "" : "");
+    const ec = (k) => esc(p && p.emergencyContact ? p.emergencyContact[k] || "" : "");
+    const au = (k) => esc(p && p.authorization ? (p.authorization[k] === 0 ? "" : p.authorization[k] || "") : "");
     return `
 <div class="page-head">
   <div><h1>${p ? "Edit patient information" : "New patient intake"}</h1>
@@ -948,12 +951,26 @@
     <div class="field"><label>Email</label><input id="in-email" type="email" value="${v("email")}" /></div>
   </div>
   <div class="field"><label>Referring physician</label><input id="in-ref" value="${v("referringPhysician")}" placeholder="Name and specialty" /></div>
+
+  <h2 style="margin-top:16px">Safety &amp; emergency contact</h2>
+  <div class="field"><label>Allergies</label><input id="in-allergies" value="${v("allergies")}" placeholder="Drug, latex, adhesive… or leave blank if none known" /></div>
+  <div class="field-row">
+    <div class="field"><label>Emergency contact</label><input id="in-ecname" value="${ec("name")}" placeholder="Full name" /></div>
+    <div class="field"><label>Relationship</label><input id="in-ecrel" value="${ec("relationship")}" placeholder="Spouse, son, friend…" /></div>
+  </div>
+  <div class="field"><label>Emergency contact phone</label><input id="in-ecphone" value="${ec("phone")}" placeholder="+63 …" /></div>
+
   <h2 style="margin-top:16px">Insurance / payment</h2>
   <div class="field-row">
     <div class="field"><label>Provider</label><input id="in-prov" value="${ins("provider")}" placeholder="PhilHealth, HMO, self-pay…" /></div>
     <div class="field"><label>Member / policy ID</label><input id="in-member" value="${ins("memberId")}" /></div>
   </div>
   <div class="field"><label>Payment notes</label><input id="in-paynotes" value="${ins("notes")}" placeholder="Co-pay, approvals, etc." /></div>
+  <div class="field-row">
+    <div class="field"><label>Visits authorised</label><input id="in-authvisits" type="number" min="0" value="${au("visitsAuthorized")}" placeholder="e.g. 12" /></div>
+    <div class="field"><label>Authorisation expires</label><input id="in-authexp" type="date" value="${au("expiresOn")}" /></div>
+  </div>
+  <div class="field"><label>Authorisation reference</label><input id="in-authref" value="${au("reference")}" placeholder="Approval / reference number" /></div>
   <div style="display:flex; gap:8px; margin-top:6px">
     <button class="btn primary" id="intakeSave">${p ? "Save changes" : "Register patient"}</button>
     <a class="btn" href="${p ? `#/patient/${p.id}` : "#/patients"}">Cancel</a>
@@ -969,7 +986,13 @@
         firstName: g("in-first"), lastName: g("in-last"), dob: g("in-dob"),
         sex: g("in-sex"), address: g("in-address"), phone: g("in-phone"),
         email: g("in-email"), referringPhysician: g("in-ref"),
+        allergies: g("in-allergies"),
+        emergencyContact: { name: g("in-ecname"), relationship: g("in-ecrel"), phone: g("in-ecphone") },
         insurance: { provider: g("in-prov"), memberId: g("in-member"), notes: g("in-paynotes") },
+        authorization: {
+          visitsAuthorized: Number(g("in-authvisits")) || 0,
+          expiresOn: g("in-authexp"), reference: g("in-authref"),
+        },
       };
       if (!fields.firstName || !fields.lastName || !fields.dob || !fields.phone) {
         document.getElementById("intakeErr").textContent = "First name, last name, date of birth, and phone are required.";
@@ -996,10 +1019,15 @@
           <b>Personal information</b>
           <small>Name, birth date, contact, referring physician</small>
         </button>
+        <button class="edit-choice" data-sec="safety" type="button">
+          <span class="edit-choice-ico ec-safety">⚠️</span>
+          <b>Allergies &amp; emergency contact</b>
+          <small>Shown on the patient banner before anyone treats them</small>
+        </button>
         <button class="edit-choice" data-sec="insurance" type="button">
           <span class="edit-choice-ico ec-insurance">💳</span>
-          <b>Insurance &amp; payment</b>
-          <small>Provider, member ID, payment notes</small>
+          <b>Insurance &amp; authorisation</b>
+          <small>Provider, member ID, authorised visits, expiry</small>
         </button>
       </div>
       <div class="modal-actions"><button class="btn" id="ecClose">Cancel</button></div>`);
@@ -1010,7 +1038,13 @@
 
   function openPatientSectionEdit(p, user, section) {
     const isPersonal = section === "personal";
+    const isSafety = section === "safety";
     const insur = p.insurance || {};
+    const ec = p.emergencyContact || {};
+    const au = p.authorization || {};
+    const TITLES = { personal: "Edit personal information", safety: "Edit allergies & emergency contact", insurance: "Edit insurance & authorisation" };
+    const SAVE_LABELS = { personal: "Save personal info", safety: "Save safety details", insurance: "Save insurance" };
+    const SECTION_NAMES = { personal: "personal information", safety: "allergies & emergency contact", insurance: "insurance & authorisation" };
     const fieldsHtml = isPersonal ? `
       <div class="field-row">
         <div class="field"><label>First name *</label><input id="pe-first" value="${esc(p.firstName || "")}" /></div>
@@ -1027,26 +1061,41 @@
         <div class="field"><label>Email</label><input id="pe-email" type="email" value="${esc(p.email || "")}" /></div>
       </div>
       <div class="field"><label>Referring physician</label><input id="pe-ref" value="${esc(p.referringPhysician || "")}" /></div>`
+    : isSafety ? `
+      <div class="field"><label>Allergies</label>
+        <input id="pe-allergies" value="${esc(p.allergies || "")}" placeholder="Drug, latex, adhesive… leave blank if none known" /></div>
+      <p style="font-size:12.5px; color:var(--muted); margin:-4px 0 10px">Anything entered here shows on the patient banner, on every screen in the chart.</p>
+      <div class="field-row">
+        <div class="field"><label>Emergency contact</label><input id="pe-ecname" value="${esc(ec.name || "")}" placeholder="Full name" /></div>
+        <div class="field"><label>Relationship</label><input id="pe-ecrel" value="${esc(ec.relationship || "")}" placeholder="Spouse, son, friend…" /></div>
+      </div>
+      <div class="field"><label>Emergency contact phone</label><input id="pe-ecphone" value="${esc(ec.phone || "")}" placeholder="+63 …" /></div>`
     : `
       <div class="field-row">
         <div class="field"><label>Provider</label><input id="pe-prov" value="${esc(insur.provider || "")}" placeholder="PhilHealth, HMO, self-pay…" /></div>
         <div class="field"><label>Member / policy ID</label><input id="pe-member" value="${esc(insur.memberId || "")}" /></div>
       </div>
-      <div class="field"><label>Payment notes</label><input id="pe-paynotes" value="${esc(insur.notes || "")}" placeholder="Co-pay, approvals, etc." /></div>`;
+      <div class="field"><label>Payment notes</label><input id="pe-paynotes" value="${esc(insur.notes || "")}" placeholder="Co-pay, approvals, etc." /></div>
+      <div class="field-row">
+        <div class="field"><label>Visits authorised</label><input id="pe-authvisits" type="number" min="0" value="${au.visitsAuthorized || ""}" placeholder="e.g. 12" /></div>
+        <div class="field"><label>Authorisation expires</label><input id="pe-authexp" type="date" value="${esc(au.expiresOn || "")}" /></div>
+      </div>
+      <div class="field"><label>Authorisation reference</label><input id="pe-authref" value="${esc(au.reference || "")}" placeholder="Approval / reference number" /></div>`;
 
     const m = showModal(`
-      <h2>${isPersonal ? "Edit personal information" : "Edit insurance & payment"}</h2>
+      <h2>${TITLES[section] || TITLES.insurance}</h2>
       ${fieldsHtml}
       <div class="error" id="pe-err" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px"></div>
       <div class="modal-actions" id="pe-actions"></div>`);
 
     const ids = isPersonal ? ["pe-first", "pe-last", "pe-dob", "pe-sex", "pe-address", "pe-phone", "pe-email", "pe-ref"]
-                           : ["pe-prov", "pe-member", "pe-paynotes"];
+              : isSafety ? ["pe-allergies", "pe-ecname", "pe-ecrel", "pe-ecphone"]
+                         : ["pe-prov", "pe-member", "pe-paynotes", "pe-authvisits", "pe-authexp", "pe-authref"];
     const snap = () => ids.map((id) => m.querySelector("#" + id).value).join("");
     const initial = snap();
     const isDirty = () => snap() !== initial;
     const actions = m.querySelector("#pe-actions");
-    const defaultActions = `<button class="btn" id="pe-cancel">Cancel</button><button class="btn primary" id="pe-save">${isPersonal ? "Save personal info" : "Save insurance"}</button>`;
+    const defaultActions = `<button class="btn" id="pe-cancel">Cancel</button><button class="btn primary" id="pe-save">${SAVE_LABELS[section] || SAVE_LABELS.insurance}</button>`;
 
     const doSave = () => {
       const g = (id) => (m.querySelector("#" + id).value || "").trim();
@@ -1058,17 +1107,28 @@
         }
         fields = { firstName: g("pe-first"), lastName: g("pe-last"), dob: g("pe-dob"), sex: g("pe-sex"),
                    address: g("pe-address"), phone: g("pe-phone"), email: g("pe-email"), referringPhysician: g("pe-ref") };
+      } else if (isSafety) {
+        fields = {
+          allergies: g("pe-allergies"),
+          emergencyContact: { name: g("pe-ecname"), relationship: g("pe-ecrel"), phone: g("pe-ecphone") },
+        };
       } else {
-        fields = { insurance: { provider: g("pe-prov"), memberId: g("pe-member"), notes: g("pe-paynotes") } };
+        fields = {
+          insurance: { provider: g("pe-prov"), memberId: g("pe-member"), notes: g("pe-paynotes") },
+          authorization: {
+            visitsAuthorized: Number(g("pe-authvisits")) || 0,
+            expiresOn: g("pe-authexp"), reference: g("pe-authref"),
+          },
+        };
       }
       S.updatePatient(p.id, fields, user.id);
       closeModal();
-      alertBanner(`${isPersonal ? "Personal information" : "Insurance & payment"} saved.`);
+      alertBanner(`${cap(SECTION_NAMES[section] || SECTION_NAMES.insurance)} saved.`);
       renderShell(location.hash, patientView(user), user, bindPatient);
     };
     const onCancel = () => {
       if (!isDirty()) return closeModal();
-      actions.innerHTML = `<div class="unsaved-warn">⚠ Unsaved changes to ${isPersonal ? "personal information" : "insurance & payment"} won't be saved if you leave.</div>
+      actions.innerHTML = `<div class="unsaved-warn">⚠ Unsaved changes to ${SECTION_NAMES[section] || SECTION_NAMES.insurance} won't be saved if you leave.</div>
         <button class="btn" id="pe-keep">Keep editing</button>
         <button class="btn danger" id="pe-discard">Discard changes</button>`;
       m.querySelector("#pe-discard").addEventListener("click", closeModal);
@@ -1139,6 +1199,11 @@
     </div>`;
 
     const sexBits = p.sex ? ` · ${esc(p.sex)}` : "";
+    // Allergies belong on the banner, not three clicks into a tab — they're
+    // the one thing that has to be seen before anyone touches the patient.
+    const allergyChip = (p.allergies || "").trim()
+      ? `<span class="pb-chip allergy" title="${esc(p.allergies)}"><span class="pb-k">⚠ Allergies</span>${esc(p.allergies)}</span>`
+      : `<span class="pb-chip"><span class="pb-k">Allergies</span>None recorded</span>`;
     return `
 <div class="patient-banner">
   <div class="pb-avatar" aria-hidden="true">${esc(initials(S.patientName(p)))}</div>
@@ -1148,6 +1213,7 @@
       <span class="pb-chip"><span class="pb-k">Age</span>${age(p.dob)} · ${esc(p.dob)}${sexBits}</span>
       <span class="pb-chip"><span class="pb-k">Phone</span>${esc(p.phone || "—")}</span>
       <span class="pb-chip"><span class="pb-k">Referral</span>${esc(p.referringPhysician || "—")}</span>
+      ${allergyChip}
     </div>
   </div>
   <div class="pb-actions">
@@ -1185,6 +1251,22 @@ ${tabStrip}
     const visitToday = S.apptsOn(today).some((a) => a.patientId === p.id && a.status !== "cancelled");
     const noteToday = docs.some((d) => d.type === "daily" && d.createdAt.slice(0, 10) === today);
     if (visitToday && !noteToday) items.push({ level: "info", text: "Visit booked today — no note started yet", tab: "documents", action: "Start a note" });
+
+    // Insurance authorisation — the clinic stops getting paid the moment this
+    // runs out, and nobody notices until the claim is denied.
+    const auth = S.authStatus(p);
+    if (auth.expired) items.push({ level: "warn", text: `Authorisation expired ${auth.expiresOn} — ${auth.used} visits delivered`, tab: "info", action: "Open info" });
+    else if (auth.exhausted) items.push({ level: "warn", text: `All ${auth.authorized} authorised visits used`, tab: "info", action: "Open info" });
+    else if (auth.low) items.push({ level: "warn", text: `${auth.remaining} authorised visit${auth.remaining === 1 ? "" : "s"} left — request more`, tab: "info", action: "Open info" });
+
+    // Goals past their target date still sitting open
+    const goals = CL.goalSummary(S.goalsFor(p.id), today);
+    if (goals.overdue) items.push({ level: "warn", text: `${goals.overdue} goal${goals.overdue > 1 ? "s" : ""} past the target date`, tab: "documents", action: "Open documents" });
+    if (!goals.total && hasEval) items.push({ level: "info", text: "No plan-of-care goals set", tab: "documents", action: "Open documents" });
+
+    // A signed visit with no charges never becomes a claim
+    const unbilled = docs.filter((d) => d.status === "signed" && d.type !== "discharge" && !((d.data.charges || []).length));
+    if (unbilled.length) items.push({ level: "warn", text: `${unbilled.length} signed note${unbilled.length > 1 ? "s have" : " has"} no billing codes`, tab: "documents", status: "signed", action: "Open documents" });
 
     if (!(p.attachments || []).length) items.push({ level: "info", text: "No referral or imaging files uploaded", tab: "files", action: "Add files" });
 
@@ -1245,6 +1327,16 @@ ${tabStrip}
       .sort((a, b) => (a.start < b.start ? -1 : 1))[0];
     const every = S.settings().progressEvery || 5;
     const toward = S.visitCount(p.id) % every;
+    const auth = S.authStatus(p);
+    const authRow = auth.hasAuth
+      ? `<tr><td style="color:var(--muted)">Visits authorised</td><td>
+          <span class="num">${auth.used}/${auth.authorized || "—"}</span>
+          ${auth.exhausted ? '<span class="chip bad">exhausted</span>'
+            : auth.low ? `<span class="chip warn">${auth.remaining} left</span>` : ""}
+          ${auth.expired ? `<span class="chip bad">expired ${esc(auth.expiresOn)}</span>`
+            : auth.expiresOn ? `<span style="color:var(--muted)"> · to ${esc(auth.expiresOn)}</span>` : ""}
+        </td></tr>`
+      : "";
     const glance = `
       <div class="card">
         <h2>At a glance</h2>
@@ -1252,9 +1344,13 @@ ${tabStrip}
           <tr><td style="color:var(--muted)">Last document</td><td>${last ? `<span class="doc-tag ${docMeta(last.type).cls}">${docMeta(last.type).short}</span> ${fmtDate(last.createdAt)}` : "—"}</td></tr>
           <tr><td style="color:var(--muted)">Next visit</td><td>${nextAppt ? fmtDT(nextAppt.start) : "None booked"}</td></tr>
           <tr><td style="color:var(--muted)">Visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
+          ${authRow}
           <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${toward}/${every}</td></tr>
         </tbody></table>
       </div>`;
+
+    const goalsCard = goalsOverviewCard(p);
+    const outcomesCard = outcomesOverviewCard(p);
 
     // Recommendation history: AI recommendations (or manual tasks) that were
     // accepted and then carried out — a record of what was recommended and done.
@@ -1278,8 +1374,83 @@ ${tabStrip}
     // (The Q&A assistant lives in the left-side drawer, "Ask about patient".)
     return `${attentionCard}
       ${glance}
+      ${goalsCard}
+      ${outcomesCard}
       <div class="card" id="patientAiReview"></div>
       ${historyCard}`;
+  }
+
+  /* ---------- Overview cards: goals and outcome-measure trends ---------- */
+
+  function goalsOverviewCard(p) {
+    const sum = CL.goalSummary(S.goalsFor(p.id), todayIso());
+    if (!sum.total) return "";
+    // met goals sink to the bottom; what's overdue floats up
+    const order = { overdue: 0, "due-soon": 1, "on-track": 2, "no-date": 3, met: 4, closed: 5 };
+    const items = sum.items.slice().sort((a, b) => (order[a.status.state] ?? 9) - (order[b.status.state] ?? 9));
+    return `
+      <div class="card">
+        <div class="ins-head"><h2>Plan-of-care goals</h2>
+          <span class="chip ${sum.overdue ? "bad" : "muted"}">${sum.met}/${sum.total} met${sum.overdue ? ` · ${sum.overdue} overdue` : ""}</span>
+        </div>
+        <div class="goal-list">
+          ${items.map(({ goal, status }) => `
+            <div class="goal-row">
+              <span class="goal-state ${status.state}">${esc(status.label)}</span>
+              <div class="goal-main">
+                <div class="goal-text">${esc(goal.text)}<span class="goal-term">${goal.term === "long" ? "long-term" : "short-term"}</span></div>
+                ${goal.baseline || goal.target ? `<div class="goal-bt">${goal.baseline ? `from <b>${esc(goal.baseline)}</b>` : ""}${goal.baseline && goal.target ? " → " : ""}${goal.target ? `to <b>${esc(goal.target)}</b>` : ""}</div>` : ""}
+              </div>
+            </div>`).join("")}
+        </div>
+      </div>`;
+  }
+
+  /* A sparkline plus the one number a payer asks for: did the change clear
+     the tool's minimal clinically important difference? */
+  function outcomesOverviewCard(p) {
+    const trends = CL.outcomeTrends(S.outcomeSeries(p.id));
+    if (!trends.length) return "";
+    const spark = (t) => {
+      if (t.n < 2) return "";
+      const vals = t.points.map((x) => x.score);
+      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const span = hi - lo || 1;
+      const w = 84, h = 24;
+      const pts = vals.map((v, i) => {
+        const x = (i / (vals.length - 1)) * w;
+        // always draw "up" as improvement, whichever way the scale runs
+        const norm = t.mcid && CL.findTool(t.toolId).better === "down" ? (hi - v) / span : (v - lo) / span;
+        return `${x.toFixed(1)},${(h - norm * h).toFixed(1)}`;
+      });
+      const [lastX, lastY] = pts[pts.length - 1].split(",");
+      return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
+        <polyline points="${pts.join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
+        <circle cx="${lastX}" cy="${lastY}" r="2.5" fill="currentColor" />
+      </svg>`;
+    };
+    return `
+      <div class="card">
+        <div class="ins-head"><h2>Outcome measures</h2><span class="chip muted">${trends.length} tracked</span></div>
+        <div class="outcome-trends">
+          ${trends.map((t) => `
+            <div class="otrend ${t.direction}">
+              <div class="otrend-head">
+                <b title="${esc(t.full)}">${esc(t.name)}</b>
+                ${t.meaningful ? `<span class="chip ${t.direction === "better" ? "good" : "bad"}">${t.direction === "better" ? "clinically meaningful" : "meaningful decline"}</span>` : ""}
+              </div>
+              <div class="otrend-nums">
+                <span class="otrend-from">${t.first}${esc(t.unit)}</span>
+                <span class="otrend-arrow">→</span>
+                <span class="otrend-to">${t.latest}${esc(t.unit)}</span>
+                ${spark(t)}
+              </div>
+              <div class="otrend-foot">${t.n < 2
+                ? "Baseline only — repeat it to show change."
+                : `${t.improvement > 0 ? "+" : ""}${Math.round(t.improvement * 10) / 10} toward better · MCID ${t.mcid}`}</div>
+            </div>`).join("")}
+        </div>
+      </div>`;
   }
 
   // Complete / delete accepted action items in the Needs-attention card.
@@ -1520,9 +1691,42 @@ ${tabStrip}
             <tr><td style="color:var(--muted)">Provider</td><td>${esc((p.insurance || {}).provider || "—")}</td></tr>
             <tr><td style="color:var(--muted)">Member ID</td><td class="num">${esc((p.insurance || {}).memberId || "—")}</td></tr>
             <tr><td style="color:var(--muted)">Notes</td><td>${esc((p.insurance || {}).notes || "—")}</td></tr>
+            ${authInfoRows(p)}
           </tbody></table>
         </div>
+        <div class="card">
+          <h2>Allergies</h2>
+          ${(p.allergies || "").trim()
+            ? `<div class="allergy-box">⚠ ${esc(p.allergies)}</div>`
+            : `<div class="empty-state" style="padding:12px">None recorded. If the patient has none, that's worth writing down explicitly.</div>`}
+        </div>
+        <div class="card">
+          <h2>Emergency contact</h2>
+          ${(p.emergencyContact || {}).name
+            ? `<table class="list"><tbody>
+                <tr><td style="color:var(--muted)">Name</td><td>${esc(p.emergencyContact.name)}</td></tr>
+                <tr><td style="color:var(--muted)">Relationship</td><td>${esc(p.emergencyContact.relationship || "—")}</td></tr>
+                <tr><td style="color:var(--muted)">Phone</td><td class="num">${esc(p.emergencyContact.phone || "—")}</td></tr>
+              </tbody></table>`
+            : `<div class="empty-state" style="padding:12px">No emergency contact on file.</div>`}
+        </div>
       </div>`;
+  }
+
+  /* Authorisation is only meaningful next to what's been used, so the two are
+     always shown together rather than as a static number on a form. */
+  function authInfoRows(p) {
+    const a = S.authStatus(p);
+    if (!a.hasAuth) return `<tr><td style="color:var(--muted)">Visit authorisation</td><td>None recorded</td></tr>`;
+    return `
+      <tr><td style="color:var(--muted)">Visits authorised</td><td>
+        <span class="num">${a.used} of ${a.authorized || "—"} used</span>
+        ${a.exhausted ? '<span class="chip bad">exhausted</span>' : a.low ? `<span class="chip warn">${a.remaining} left</span>` : ""}
+      </td></tr>
+      <tr><td style="color:var(--muted)">Authorisation expires</td><td>
+        ${a.expiresOn ? esc(a.expiresOn) : "—"} ${a.expired ? '<span class="chip bad">expired</span>' : ""}
+      </td></tr>
+      ${a.reference ? `<tr><td style="color:var(--muted)">Reference</td><td class="num">${esc(a.reference)}</td></tr>` : ""}`;
   }
 
   /* ---------- Schedule tab: bulk booking + upcoming visits ---------- */
@@ -2045,6 +2249,26 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     } else if (doc.type === "discharge") {
       put("Summary of care", d.summary); put("Outcome", d.outcome); put("Recommendations", d.recommendations);
     }
+    // Outcome scores and the charge sheet are what a payer or referring
+    // physician reads for proof and for the claim, so both print.
+    if ((d.outcomes || []).length) {
+      secs.push(`<h3>Outcome measures</h3><table><tr><th>Measure</th><th>Score</th></tr>
+        ${d.outcomes.map((o) => {
+          const tool = CL.findTool(o.toolId);
+          return tool ? `<tr><td>${esc(tool.name)} — ${esc(tool.full)}</td><td>${o.score}${esc(tool.unit)}</td></tr>` : "";
+        }).join("")}</table>`);
+    }
+    if ((d.charges || []).length) {
+      const sum = CL.billingSummary(d.charges);
+      secs.push(`<h3>Billing</h3><table><tr><th>CPT</th><th>Description</th><th>Minutes</th><th>Units</th></tr>
+        ${d.charges.map((c) => {
+          const known = CL.findCode(c.code);
+          return `<tr><td>${esc(c.code)}</td><td>${esc(c.desc || (known || {}).desc || "")}</td>
+            <td>${known && !known.timed ? "—" : Number(c.minutes) || 0}</td><td>${Number(c.units) || 0}</td></tr>`;
+        }).join("")}
+        <tr><th colspan="2">Total</th><th>${sum.timedMinutes} timed min</th><th>${sum.totalUnits} units</th></tr></table>`);
+    }
+
     const maps = (d.mapPoints || []).length
       ? `<h3>Body chart findings</h3><ul>${d.mapPoints.map((pt) => `<li><b>${esc(pt.side ? pt.side + " " : "")}${esc(pt.part)}</b> (${pt.view} view): ${pt.notes.map((n) => esc(n.summary)).join("; ")}</li>`).join("")}</ul>` : "";
     const sigs = doc.signatures.map((s) =>
@@ -2067,7 +2291,40 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
   <tr><th>Address</th><td colspan="3">${esc(p.address || "—")}</td></tr>
   <tr><th>Referring physician</th><td>${esc(p.referringPhysician || "—")}</td>
       <th>Insurance</th><td>${esc((p.insurance || {}).provider || "—")} ${esc((p.insurance || {}).memberId || "")}</td></tr>
+  <tr><th>Allergies</th><td>${esc(p.allergies || "None recorded")}</td>
+      <th>Emergency contact</th><td>${esc((p.emergencyContact || {}).name || "—")}${(p.emergencyContact || {}).phone ? ` · ${esc(p.emergencyContact.phone)}` : ""}</td></tr>
+  ${(() => {
+    const a = S.authStatus(p);
+    return a.hasAuth
+      ? `<tr><th>Visits authorised</th><td>${a.used} of ${a.authorized || "—"} used</td>
+             <th>Authorisation expires</th><td>${esc(a.expiresOn || "—")}${a.expired ? " (expired)" : ""}</td></tr>`
+      : "";
+  })()}
 </table>
+${(() => {
+  const goals = S.goalsFor(p.id);
+  if (!goals.length) return "";
+  const sum = CL.goalSummary(goals, todayIso());
+  return `<h2>Plan of care — goals (${sum.met}/${sum.total} met)</h2>
+    <table><tr><th>Goal</th><th>Baseline</th><th>Target</th><th>Target date</th><th>Status</th></tr>
+    ${sum.items.map(({ goal, status }) => `<tr>
+      <td>${esc(goal.text)} <span class="print-muted">(${goal.term === "long" ? "long" : "short"}-term)</span></td>
+      <td>${esc(goal.baseline || "—")}</td><td>${esc(goal.target || "—")}</td>
+      <td>${esc(goal.targetDate || "—")}</td><td>${esc(status.label)}</td></tr>`).join("")}</table>`;
+})()}
+${(() => {
+  const trends = CL.outcomeTrends(S.outcomeSeries(p.id));
+  if (!trends.length) return "";
+  return `<h2>Outcome measures — change over the episode</h2>
+    <table><tr><th>Measure</th><th>Baseline</th><th>Latest</th><th>Change</th><th>MCID</th><th>Clinically meaningful?</th></tr>
+    ${trends.map((t) => `<tr>
+      <td>${esc(t.name)} — ${esc(t.full)}</td>
+      <td>${t.first}${esc(t.unit)} <span class="print-muted">${esc(t.firstDate)}</span></td>
+      <td>${t.latest}${esc(t.unit)} <span class="print-muted">${esc(t.latestDate)}</span></td>
+      <td>${t.improvement > 0 ? "+" : ""}${Math.round(t.improvement * 10) / 10} toward better</td>
+      <td>${t.mcid}</td>
+      <td>${t.n < 2 ? "baseline only" : t.meaningful ? "Yes" : "No"}</td></tr>`).join("")}</table>`;
+})()}
 ${p.attachments.length ? `<h2>Files on record</h2><ul>${p.attachments.map((a) => `<li>${esc(a.name)} (added ${fmtDate(a.uploadedAt)})</li>`).join("")}</ul>` : ""}
 ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)}</div>`).join("")}`;
     S.audit(S.currentUser().id, "chart-printed", S.patientName(p));
@@ -2099,25 +2356,36 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         ta("subjective", "Subjective", "What the patient reports — dictation files here automatically") +
         ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
         measurementEditor(doc, editable) +
+        outcomeEditor(doc, editable) +
         ta("assessment", "Assessment", "Clinical impression") +
-        ta("plan", "Plan", "Frequency, duration, interventions");
+        ta("plan", "Plan", "Frequency, duration, interventions") +
+        goalsEditor(doc, editable) +
+        billingEditor(doc, editable);
     } else if (doc.type === "daily") {
       sections = ta("subjective", "Subjective", "Patient-reported status today") +
         ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
         measurementEditor(doc, editable) +
         ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2) +
-        ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2);
+        ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2) +
+        billingEditor(doc, editable);
     } else if (doc.type === "progress") {
       sections = `<div class="field"><label>Baseline subjective — carried over from the evaluation</label>
           <textarea rows="2" disabled>${esc(doc.data.baselineSubjective || "(no signed evaluation found)")}</textarea></div>` +
         ta("currentStatus", "Current status", "How the patient presents now") +
         ta("updatedFindings", "Updated findings", "New objective findings — measured values go to the tables below") +
         measurementEditor(doc, editable) +
-        ta("goalsProgress", "Progress toward goals", "") +
-        ta("assessment", "Assessment", "");
+        outcomeEditor(doc, editable) +
+        goalsEditor(doc, editable) +
+        ta("goalsProgress", "Progress toward goals — narrative", "") +
+        ta("assessment", "Assessment", "") +
+        billingEditor(doc, editable);
     } else if (doc.type === "discharge") {
-      sections = ta("summary", "Summary of care", "") + ta("outcome", "Outcome", "") +
-        ta("recommendations", "Recommendations", "");
+      sections = ta("summary", "Summary of care", "") +
+        outcomeEditor(doc, editable) +
+        goalsEditor(doc, editable) +
+        ta("outcome", "Outcome", "") +
+        ta("recommendations", "Recommendations", "") +
+        billingEditor(doc, editable);
     }
 
     const sigBlock = `
@@ -2221,7 +2489,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         });
       });
       bindMeasurementEditor(doc, user);
+      bindBillingEditor(doc, user);
+      bindOutcomeEditor(doc, user);
     }
+    // goal status is part of the plan of care, not the note body: a locked
+    // note still shows the goals, but only an editable one can change them
+    if (editable) bindGoalsEditor(doc, user);
 
     // sign / amend
     const signBtn = document.getElementById("signBtn");
@@ -2273,6 +2546,258 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 </div>`;
   }
 
+  /* ---------- Billing: CPT codes, minutes, units ---------- */
+
+  /* A visit only becomes a claim once the interventions carry codes. The
+     8-minute rule is computed live from the minutes so the therapist can see
+     the claim balance before signing, rather than hearing about it from
+     billing a week later. */
+  function billingEditor(doc, editable) {
+    const charges = doc.data.charges || [];
+    const sum = CL.billingSummary(charges);
+    const codeOptions = (sel) => CL.CPT_CODES.map((c) =>
+      `<option value="${c.code}" ${c.code === sel ? "selected" : ""}>${c.code} — ${esc(c.desc)}${c.timed ? "" : " (untimed)"}</option>`).join("");
+
+    const rows = charges.map((c, i) => {
+      const known = CL.findCode(c.code);
+      const timed = known ? known.timed : false;
+      return `<tr>
+        <td>${editable
+          ? `<select data-charge="${i}" data-k="code" class="charge-code">${codeOptions(c.code)}</select>`
+          : `<b>${esc(c.code)}</b> ${esc(c.desc || (known || {}).desc || "")}`}</td>
+        <td class="num">${timed
+          ? (editable ? `<input type="number" min="0" max="240" data-charge="${i}" data-k="minutes" value="${Number(c.minutes) || 0}" class="charge-num" />` : `${Number(c.minutes) || 0}`)
+          : `<span class="charge-na" title="Untimed code — minutes don't affect the units">—</span>`}</td>
+        <td class="num">${editable
+          ? `<input type="number" min="0" max="20" data-charge="${i}" data-k="units" value="${Number(c.units) || 0}" class="charge-num" />`
+          : `${Number(c.units) || 0}`}</td>
+        <td>${editable ? `<button class="btn small" data-delcharge="${i}" title="Remove">✕</button>` : ""}</td>
+      </tr>`;
+    }).join("");
+
+    const issues = sum.issues.map((i) =>
+      `<div class="bill-issue ${i.level}">${i.level === "bad" ? "✕" : i.level === "warn" ? "△" : "ⓘ"} ${esc(i.text)}</div>`).join("");
+
+    return `
+<div class="field billing-field">
+  <label>Billing — CPT codes, treatment minutes and units</label>
+  <div class="table-scroll"><table class="list bill-table">
+    <colgroup><col /><col class="c-min" /><col class="c-unit" /><col class="c-del" /></colgroup>
+    <thead><tr><th>Code</th><th class="num">Min</th><th class="num">Units</th><th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">No charges yet.${editable ? " Add the interventions performed, or pull them from the treatment text." : ""}</div></td></tr>`}</tbody>
+  </table></div>
+  ${editable ? `<div class="bill-actions">
+    <button class="btn small" id="addChargeBtn" type="button">＋ Add charge</button>
+    <button class="btn small" id="suggestChargeBtn" type="button" title="Read the treatment summary and add the codes it describes">✦ Suggest from treatment</button>
+  </div>` : ""}
+  <div class="bill-totals">
+    <span><b>${sum.timedMinutes}</b> timed min</span>
+    <span><b>${sum.timedUnitsClaimed}</b>/${sum.timedUnitsAllowed} timed units</span>
+    <span><b>${sum.untimedUnits}</b> untimed</span>
+    <span class="bill-total-units ${sum.balanced ? "ok" : "off"}"><b>${sum.totalUnits}</b> total units</span>
+  </div>
+  ${issues ? `<div class="bill-issues">${issues}</div>` : ""}
+</div>`;
+  }
+
+  function bindBillingEditor(doc, user) {
+    const persist = () => { S.updateDocData(doc.id, doc.data, user); render(); };
+
+    document.querySelectorAll("[data-delcharge]").forEach((b) =>
+      b.addEventListener("click", () => {
+        doc.data.charges.splice(Number(b.dataset.delcharge), 1);
+        persist();
+      }));
+
+    document.querySelectorAll("[data-charge]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const c = doc.data.charges[Number(el.dataset.charge)];
+        if (!c) return;
+        const k = el.dataset.k;
+        if (k === "code") {
+          const known = CL.findCode(el.value);
+          c.code = el.value;
+          c.desc = known ? known.desc : "";
+          if (known && !known.timed) c.minutes = 0;
+        } else {
+          c[k] = Math.max(0, Number(el.value) || 0);
+        }
+        persist();
+      }));
+
+    const add = document.getElementById("addChargeBtn");
+    if (add) add.addEventListener("click", () => {
+      if (!doc.data.charges) doc.data.charges = [];
+      const first = CL.CPT_CODES.find((c) => c.code === "97110") || CL.CPT_CODES[0];
+      doc.data.charges.push({ code: first.code, desc: first.desc, minutes: first.timed ? 15 : 0, units: 1 });
+      persist();
+    });
+
+    const sug = document.getElementById("suggestChargeBtn");
+    if (sug) sug.addEventListener("click", () => {
+      // every field a treatment sentence could have landed in, per note type
+      const text = [doc.data.summary, doc.data.plan, doc.data.currentStatus,
+                    doc.data.updatedFindings, doc.data.objectiveText, doc.data.recommendations]
+        .filter(Boolean).join(". ");
+      const found = CL.suggestCodes(text);
+      if (!found.length) return alertBanner("Nothing in the treatment text matched a billable code — add them by hand.");
+      if (!doc.data.charges) doc.data.charges = [];
+      let added = 0;
+      found.forEach((f) => {
+        if (doc.data.charges.some((c) => c.code === f.code)) return;
+        // minutes and units stay at zero: only the clinician knows how long
+        // each intervention actually took, and guessing would be a false claim
+        doc.data.charges.push({ code: f.code, desc: f.desc, minutes: 0, units: 0 });
+        added++;
+      });
+      if (!added) return alertBanner("Those codes are already on the charge sheet.");
+      persist();
+      alertBanner(`${added} code${added > 1 ? "s" : ""} added — set the minutes and units for each.`);
+    });
+  }
+
+  /* ---------- Outcome measures ---------- */
+
+  /* Standardised scores are what a payer or referrer actually reads as proof
+     of progress. Recorded here per visit; trended across the episode on the
+     patient's Overview. */
+  function outcomeEditor(doc, editable) {
+    const list = doc.data.outcomes || [];
+    const rows = list.map((o, i) => {
+      const tool = CL.findTool(o.toolId);
+      if (!tool) return "";
+      return `<tr>
+        <td><b>${esc(tool.name)}</b> <span style="color:var(--muted)">${esc(tool.full)}</span></td>
+        <td class="num"><span class="score-cell">${editable
+          ? `<input type="number" step="0.5" min="${tool.min}" max="${tool.max}" data-outcome="${i}" value="${o.score}" class="charge-num" />`
+          : `${o.score}`}<span class="score-unit">${esc(tool.unit)}</span></span></td>
+        <td>${editable ? `<button class="btn small" data-deloutcome="${i}" title="Remove">✕</button>` : ""}</td>
+      </tr>`;
+    }).join("");
+
+    return `
+<div class="field">
+  <label>Outcome measures</label>
+  <div class="table-scroll"><table class="list">
+    <thead><tr><th>Measure</th><th class="num">Score</th><th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="3"><div class="empty-state" style="padding:10px">None recorded${editable ? " — add one below, or dictate e.g. “LEFS 52 out of 80”." : "."}</div></td></tr>`}</tbody>
+  </table></div>
+  ${editable ? `<div class="outcome-add">
+    <select id="outcomeTool">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
+    <input type="number" step="0.5" id="outcomeScore" placeholder="Score" class="charge-num" />
+    <button class="btn small" id="addOutcomeBtn" type="button">＋ Record</button>
+    <span class="outcome-err" id="outcomeErr"></span>
+  </div>` : ""}
+</div>`;
+  }
+
+  function bindOutcomeEditor(doc, user) {
+    const persist = () => { S.updateDocData(doc.id, doc.data, user); render(); };
+
+    document.querySelectorAll("[data-deloutcome]").forEach((b) =>
+      b.addEventListener("click", () => {
+        doc.data.outcomes.splice(Number(b.dataset.deloutcome), 1);
+        persist();
+      }));
+
+    document.querySelectorAll("[data-outcome]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const o = doc.data.outcomes[Number(el.dataset.outcome)];
+        if (!o) return;
+        const v = CL.validateScore(o.toolId, el.value);
+        if (!v.ok) return alertBanner(v.error);
+        o.score = v.value;
+        persist();
+      }));
+
+    const add = document.getElementById("addOutcomeBtn");
+    if (add) add.addEventListener("click", () => {
+      const toolId = document.getElementById("outcomeTool").value;
+      const raw = document.getElementById("outcomeScore").value;
+      const err = document.getElementById("outcomeErr");
+      const v = CL.validateScore(toolId, raw);
+      if (!v.ok) { err.textContent = v.error; return; }
+      if (!doc.data.outcomes) doc.data.outcomes = [];
+      const existing = doc.data.outcomes.find((o) => o.toolId === toolId);
+      // one score per tool per visit — re-recording replaces rather than stacks
+      if (existing) existing.score = v.value;
+      else doc.data.outcomes.push({ toolId, score: v.value });
+      persist();
+    });
+  }
+
+  /* ---------- Plan-of-care goals (patient-level, edited from a note) ---------- */
+
+  function goalsEditor(doc, editable) {
+    const p = S.getPatient(doc.patientId);
+    const goals = S.goalsFor(doc.patientId);
+    const sum = CL.goalSummary(goals, todayIso());
+    const canEdit = editable && !!p;
+
+    /* Stacked rows, not a table: this sits in the note's narrow right-hand
+       column, where four columns squeeze goal text down to one word a line. */
+    const rows = sum.items.map(({ goal, status }) => `
+      <div class="goal-edit-row">
+        <div class="goal-edit-main">
+          <div class="goal-text">${esc(goal.text)}<span class="goal-term">${goal.term === "long" ? "long-term" : "short-term"}</span></div>
+          ${goal.baseline || goal.target ? `<div class="goal-bt">${goal.baseline ? `from <b>${esc(goal.baseline)}</b>` : ""}${goal.baseline && goal.target ? " → " : ""}${goal.target ? `to <b>${esc(goal.target)}</b>` : ""}</div>` : ""}
+        </div>
+        <div class="goal-edit-controls">
+          <span class="goal-state ${status.state}">${esc(status.label)}</span>
+          ${canEdit
+            ? `<select data-goal="${goal.id}" class="goal-status-sel">${CL.GOAL_STATUS.map((s) => `<option value="${s.id}" ${(goal.status || "active") === s.id ? "selected" : ""}>${s.label}</option>`).join("")}</select>
+               <button class="btn small" data-delgoal="${goal.id}" title="Remove goal">✕</button>`
+            : `<span class="goal-state closed">${esc((CL.GOAL_STATUS.find((s) => s.id === (goal.status || "active")) || {}).label || "")}</span>`}
+        </div>
+      </div>`).join("");
+
+    return `
+<div class="field">
+  <label>Plan-of-care goals${sum.total ? ` — ${sum.met}/${sum.total} met` : ""}</label>
+  <div class="goal-edit-list">${rows || `<div class="empty-state" style="padding:10px">No goals set${canEdit ? " — add the first one below." : "."}</div>`}</div>
+  ${canEdit ? `<div class="goal-add">
+    <input id="goalText" placeholder="Goal — e.g. “Climb a flight of stairs without the rail”" />
+    <div class="goal-add-row">
+      <input id="goalBaseline" placeholder="Baseline now" />
+      <input id="goalTarget" placeholder="Target" />
+      <input id="goalDate" type="date" title="Target date" />
+      <select id="goalTerm"><option value="short">Short-term</option><option value="long">Long-term</option></select>
+      <button class="btn small" id="addGoalBtn" type="button">＋ Add goal</button>
+    </div>
+    <span class="outcome-err" id="goalErr"></span>
+  </div>` : ""}
+</div>`;
+  }
+
+  function bindGoalsEditor(doc, user) {
+    const redraw = () => render();
+
+    document.querySelectorAll("[data-goal]").forEach((sel) =>
+      sel.addEventListener("change", () => {
+        const res = S.updateGoal(doc.patientId, sel.dataset.goal, { status: sel.value }, user);
+        if (res.error) return alertBanner(res.error);
+        redraw();
+      }));
+
+    document.querySelectorAll("[data-delgoal]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const res = S.deleteGoal(doc.patientId, b.dataset.delgoal, user);
+        if (res.error) return alertBanner(res.error);
+        redraw();
+      }));
+
+    const add = document.getElementById("addGoalBtn");
+    if (add) add.addEventListener("click", () => {
+      const g = (id) => (document.getElementById(id).value || "").trim();
+      const res = S.addGoal(doc.patientId, {
+        text: g("goalText"), baseline: g("goalBaseline"), target: g("goalTarget"),
+        targetDate: g("goalDate"), term: g("goalTerm"),
+      }, user);
+      if (res.error) { document.getElementById("goalErr").textContent = res.error; return; }
+      redraw();
+    });
+  }
+
   function bindMeasurementEditor(doc, user) {
     document.querySelectorAll("[data-delmeas]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -2293,6 +2818,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         inp.select();
       }
     });
+  }
+
+  /* One score per tool per note: saying a number twice in a session is a
+     correction, not a second data point. */
+  function mergeOutcomes(doc, found) {
+    if (!found || !found.length) return 0;
+    if (!doc.data.outcomes) doc.data.outcomes = [];
+    let n = 0;
+    for (const o of found) {
+      const existing = doc.data.outcomes.find((x) => x.toolId === o.toolId);
+      if (existing) { if (existing.score !== o.score) { existing.score = o.score; n++; } }
+      else { doc.data.outcomes.push({ toolId: o.toolId, score: o.score }); n++; }
+    }
+    return n;
   }
 
   function mergeMeasurements(doc, meas) {
@@ -2939,6 +3478,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   /** Which field of `type` one sentence belongs in — null means "table only". */
   function fieldForSentence(type, sentence) {
+    // A standardised score is data, not narrative: "LEFS is now 58 out of 80"
+    // belongs in the outcome table the same way a ROM reading does, and
+    // repeating it in Subjective just pads the note.
+    if (CL.extractOutcomes(sentence).length) return null;
     if (type === "discharge") return "summary";
     const meas = PR.extractMeasurements(sentence);
     if (type === "daily") {
@@ -2971,6 +3514,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const routed = [];
     const nMeas = mergeMeasurements(doc, parsed.measurements);
     if (nMeas) routed.push(`${nMeas} measurement${nMeas > 1 ? "s" : ""} → Objective`);
+
+    // standardised scores ("LEFS 52 out of 80") file into the outcome table
+    const nOut = mergeOutcomes(doc, CL.extractOutcomes(parsed.text));
+    if (nOut) routed.push(`${nOut} outcome measure${nOut > 1 ? "s" : ""} → Outcomes`);
 
     // map points — skip mentions that are only part of a measurement
     // ("shoulder flexion 130 degrees" is data, not a complaint) or of a

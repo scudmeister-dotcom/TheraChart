@@ -93,6 +93,67 @@ store.cancelAppointment(otherPt.appt.id, maria);
 const cancelled = store.cancelAppointment(booked.appt.id, maria);
 check("cancellation recorded in history", cancelled.appt.history.some((h) => h.action === "cancelled" && h.userId === "u-maria"));
 
+// --- plan-of-care goals -----------------------------------------------------
+{
+  const before = store.goalsFor("p-liza").length;
+  const added = store.addGoal("p-liza", { text: "Walk 500 m unaided", target: "no rest stops", targetDate: "2026-12-01" }, maria);
+  check("a therapist can add a goal", !added.error && !!added.goal.id);
+  check("a new goal starts active", added.goal.status === "active");
+  check("the goal lands on the patient", store.goalsFor("p-liza").length === before + 1);
+
+  check("front desk cannot add goals", !!store.addGoal("p-liza", { text: "x" }, ana).error);
+  check("an expired licence cannot add goals", !!store.addGoal("p-liza", { text: "x" }, jose).error);
+  check("a goal needs text", !!store.addGoal("p-liza", { text: "   " }, maria).error);
+
+  const upd = store.updateGoal("p-liza", added.goal.id, { status: "met" }, maria);
+  check("a goal can be marked met", !upd.error && upd.goal.status === "met");
+  check("the status change is recorded on the goal",
+    upd.goal.history.some((h) => h.status === "met" && h.from === "active" && h.userId === "u-maria"),
+    JSON.stringify(upd.goal.history));
+
+  check("editing an unknown goal is refused", !!store.updateGoal("p-liza", "nope", { status: "met" }, maria).error);
+  const del = store.deleteGoal("p-liza", added.goal.id, maria);
+  check("a goal can be removed", !del.error && store.goalsFor("p-liza").length === before);
+  check("front desk cannot remove goals", !!store.deleteGoal("p-juan", "g-juan-1", ana).error);
+  check("goals for an unknown patient come back empty", store.goalsFor("nope").length === 0);
+}
+
+// --- outcome measures -------------------------------------------------------
+{
+  const series = store.outcomeSeries("p-juan");
+  check("outcome scores are gathered across the whole chart", series.length >= 3, String(series.length));
+  check("every score carries the date of its note",
+    series.every((s) => /^\d{4}-\d{2}-\d{2}$/.test(s.date)), JSON.stringify(series.slice(0, 2)));
+  check("the series comes back in date order",
+    series.every((s, i) => i === 0 || series[i - 1].date <= s.date));
+  check("a chart with no scores yields an empty series", store.outcomeSeries("nope").length === 0);
+}
+
+// --- insurance authorisation ------------------------------------------------
+{
+  const a = store.authStatus(store.getPatient("p-juan"));
+  check("authorisation reports the authorised count", a.authorized === 18, String(a.authorized));
+  check("visits used is counted from the chart, not stored",
+    a.used === store.visitCount("p-juan"), `${a.used} vs ${store.visitCount("p-juan")}`);
+  check("remaining is authorised minus used", a.remaining === 18 - a.used);
+  check("a live authorisation is neither expired nor exhausted", !a.expired && !a.exhausted);
+
+  // p-juan has documented visits, so "used" is non-zero and can overrun
+  const juan = store.getPatient("p-juan");
+  juan.authorization = { visitsAuthorized: 1, expiresOn: "2020-01-01", reference: "OLD" };
+  const stale = store.authStatus(juan);
+  check("a past expiry date reports expired", stale.expired === true);
+  check("used beyond the authorised count reports exhausted", stale.exhausted === true, `${stale.used}/${stale.authorized}`);
+  check("an exhausted authorisation reports nothing remaining", stale.remaining === 0, String(stale.remaining));
+
+  juan.authorization = { visitsAuthorized: store.visitCount("p-juan") + 2, expiresOn: "2030-01-01" };
+  check("two visits left is flagged as low", store.authStatus(juan).low === true);
+  juan.authorization = { visitsAuthorized: store.visitCount("p-juan") + 9, expiresOn: "2030-01-01" };
+  check("plenty of visits left is not flagged as low", store.authStatus(juan).low === false);
+
+  check("a patient with no authorisation says so", store.authStatus({ id: "nope" }).hasAuth === false);
+}
+
 // --- audit ------------------------------------------------------------------
 const log = store.auditLog();
 check("audit log captured sign/amend/booking",

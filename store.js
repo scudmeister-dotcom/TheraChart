@@ -97,7 +97,25 @@
           address: "12 Mabini St, Cebu City",
           phone: "+63 917 555 0101", email: "juan.reyes@example.com",
           referringPhysician: "Dr. R. Cruz (Ortho)",
+          allergies: "Penicillin — rash. Latex sensitivity (use nitrile gloves).",
+          emergencyContact: { name: "Marites Reyes", relationship: "Spouse", phone: "+63 917 555 0111" },
           insurance: { provider: "PhilHealth", memberId: "PH-4451-2231", notes: "Co-pay ₱150/visit" },
+          authorization: { visitsAuthorized: 18, expiresOn: t(46, 12, 0).slice(0, 10), reference: "AUTH-88213" },
+          goals: [
+            { id: "g-juan-1", term: "short", text: "Reach the top shelf without sharp pain",
+              baseline: "Unable — 7/10 pain at 105° flexion", target: "Pain ≤3/10 through full reach",
+              targetDate: t(-2, 12, 0).slice(0, 10), status: "met",
+              createdBy: "u-maria", createdAt: t(-14, 9, 0),
+              history: [{ status: "met", from: "active", userId: "u-maria", time: t(-2, 14, 0) }] },
+            { id: "g-juan-2", term: "short", text: "Right shoulder flexion to 160°",
+              baseline: "105° at evaluation", target: "160° active",
+              targetDate: t(9, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-14, 9, 0), history: [] },
+            { id: "g-juan-3", term: "long", text: "Return to full duties at work, including overhead lifting",
+              baseline: "On light duty, no lifting above shoulder", target: "Lift 10 kg overhead ×10 reps",
+              targetDate: t(-3, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-14, 9, 0), history: [] },
+          ],
           attachments: [
             { id: "a-1", name: "Referral - Dr. Cruz.txt", type: "text/plain",
               dataUrl: "data:text/plain;base64," + b64("Referral: Juan Reyes\nDx: Right rotator cuff strain\nPT eval and treat 2-3x/week for 6 weeks.\n- Dr. R. Cruz"),
@@ -112,7 +130,21 @@
           address: "88 Osmeña Blvd, Cebu City",
           phone: "+63 917 555 0202", email: "liza.mercado@example.com",
           referringPhysician: "Dr. A. Tan (Family Med)",
+          allergies: "",
+          emergencyContact: { name: "Ramon Mercado", relationship: "Son", phone: "+63 917 555 0222" },
           insurance: { provider: "Maxicare", memberId: "MX-99-887766", notes: "" },
+          // deliberately near the end of the authorisation, so the warning shows
+          authorization: { visitsAuthorized: 8, expiresOn: t(12, 12, 0).slice(0, 10), reference: "MX-AUTH-5512" },
+          goals: [
+            { id: "g-liza-1", term: "short", text: "Climb one flight of stairs reciprocally without a rail",
+              baseline: "Step-to pattern, holds rail both sides", target: "Reciprocal, one hand on rail",
+              targetDate: t(16, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-10, 10, 0), history: [] },
+            { id: "g-liza-2", term: "long", text: "Walk to the market and back (about 800 m) without resting",
+              baseline: "Rests twice, knee pain 5/10", target: "No rest stops, pain ≤2/10",
+              targetDate: t(40, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-10, 10, 0), history: [] },
+          ],
           attachments: [],
           createdBy: "u-ana", createdAt: t(-10, 10, 0),
         },
@@ -123,7 +155,20 @@
           address: "5 Lapu-Lapu Ave, Mandaue City",
           phone: "+63 917 555 0303", email: "mateo.villanueva@example.com",
           referringPhysician: "Dr. L. Gomez (Ortho)",
+          allergies: "NSAIDs — gastric upset.",
+          emergencyContact: { name: "Elena Villanueva", relationship: "Wife", phone: "+63 917 555 0333" },
           insurance: { provider: "PhilHealth", memberId: "PH-7781-4420", notes: "" },
+          authorization: { visitsAuthorized: 12, expiresOn: t(30, 12, 0).slice(0, 10), reference: "PH-AUTH-2091" },
+          goals: [
+            { id: "g-mateo-1", term: "short", text: "Left knee flexion to 130°",
+              baseline: "110° at evaluation", target: "130° active",
+              targetDate: t(6, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-8, 9, 0), history: [] },
+            { id: "g-mateo-2", term: "short", text: "Sit to stand from a standard chair without using hands",
+              baseline: "Pushes off both armrests", target: "Hands free, ×5 repetitions",
+              targetDate: t(20, 12, 0).slice(0, 10), status: "active",
+              createdBy: "u-maria", createdAt: t(-8, 9, 0), history: [] },
+          ],
           attachments: [],
           createdBy: "u-ana", createdAt: t(-8, 9, 0),
         },
@@ -147,6 +192,8 @@
             special: [{ result: "positive", name: "Neer test" }, { result: "positive", name: "Hawkins Kennedy test" }],
             assessment: "Findings consistent with right rotator cuff strain / subacromial impingement. Good rehab potential.",
             plan: "PT 2-3x/week × 6 weeks: therex, manual therapy, modalities as needed.",
+            outcomes: [{ toolId: "dash", score: 58 }, { toolId: "nprs", score: 7 }],
+            charges: [{ code: "97162", desc: "PT evaluation — moderate complexity", minutes: 45, units: 1 }],
             mapPoints: [{
               key: "Shoulder|right", part: "Shoulder", side: "right", view: "front", x: 60, y: 86,
               notes: [{ time: "", summary: "Sharp pain · rated 7/10 · worse reaching overhead", quote: "", uttId: null, marks: [] }],
@@ -167,6 +214,14 @@
             rom: i >= 2 ? [{ side: "right", joint: "shoulder", motion: "flexion", degrees: 120 + i * 5 }] : [],
             mmt: [], special: [],
             pain: [{ score: i < 2 ? 6 : 4, location: "right shoulder" }],
+            // 38 timed minutes → exactly the 3 units claimed under the 8-minute rule
+            charges: [
+              { code: "97110", desc: "Therapeutic exercise", minutes: 23, units: 2 },
+              { code: "97140", desc: "Manual therapy", minutes: 15, units: 1 },
+              { code: "97010", desc: "Hot or cold packs", minutes: 0, units: 1 },
+            ],
+            // DASH re-measured at the midpoint and again near the end
+            outcomes: i === 1 ? [{ toolId: "dash", score: 44 }] : i === 3 ? [{ toolId: "dash", score: 30 }, { toolId: "nprs", score: 4 }] : [],
             mapPoints: [], transcript: [],
           },
         })),
@@ -203,6 +258,8 @@
             mmt: [{ context: "left knee extension", grade: "4/5" }],
             special: [], assessment: "Left knee OA flare; good rehab potential.",
             plan: "PT 2x/week × 6 weeks: quad strengthening, gait training.",
+            outcomes: [{ toolId: "lefs", score: 34 }, { toolId: "nprs", score: 5 }],
+            charges: [{ code: "97161", desc: "PT evaluation — low complexity", minutes: 40, units: 1 }],
             mapPoints: [], transcript: [],
           },
         },
@@ -216,7 +273,12 @@
           data: {
             summary: `Visit ${i + 1}: quad sets, terminal knee extension, gait training. Tolerated well.`,
             subjective: "Knee less stiff.", rom: [], mmt: [], special: [],
-            pain: [{ score: 4, location: "left knee" }], mapPoints: [], transcript: [],
+            pain: [{ score: 4, location: "left knee" }],
+            charges: [
+              { code: "97110", desc: "Therapeutic exercise", minutes: 22, units: 1 },
+              { code: "97116", desc: "Gait training", minutes: 16, units: 1 },
+            ],
+            outcomes: [], mapPoints: [], transcript: [],
           },
         })),
         // --- Unsigned drafts: one of every document type, for the showcase ---
@@ -230,6 +292,10 @@
             subjective: "Stairs easier this week, 3/10.",
             rom: [{ side: "left", joint: "knee", motion: "flexion", degrees: 125 }],
             mmt: [], special: [], pain: [{ score: 3, location: "left knee" }],
+            // left deliberately unbalanced: 30 timed minutes support 2 units,
+            // only 1 is claimed — the billing check should say so
+            charges: [{ code: "97110", desc: "Therapeutic exercise", minutes: 30, units: 1 }],
+            outcomes: [],
             mapPoints: [], transcript: [],
           },
         },
@@ -801,6 +867,110 @@
   }
 
   /* ---------------------------------------------------------------- *
+   *  Plan-of-care goals
+   *
+   *  Goals belong to the patient, not to one note: they're written at the
+   *  evaluation, reviewed in every progress report, and closed out at
+   *  discharge. Keeping them on the patient means "progress toward goals"
+   *  refers to the same objects each time instead of prose retyped per visit.
+   * ---------------------------------------------------------------- */
+
+  const goalsFor = (patientId) => (getPatient(patientId) || {}).goals || [];
+
+  function addGoal(patientId, fields, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t edit the plan of care." };
+    const text = String((fields || {}).text || "").trim();
+    if (!text) return { error: "Describe the goal." };
+    if (!p.goals) p.goals = [];
+    const goal = {
+      id: uid("g"), text,
+      baseline: String(fields.baseline || "").trim(),
+      target: String(fields.target || "").trim(),
+      targetDate: fields.targetDate || "",
+      term: fields.term === "long" ? "long" : "short",
+      status: "active",
+      createdBy: byUser.id, createdAt: new Date().toISOString(),
+      history: [],
+    };
+    p.goals.push(goal);
+    touch(p);
+    save();
+    audit(byUser.id, "goal-added", `${patientName(p)} — ${text}`);
+    return { goal };
+  }
+
+  /** Status changes are appended to the goal's own history, so a progress
+      report can show when a goal was met rather than only that it is. */
+  function updateGoal(patientId, goalId, fields, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t edit the plan of care." };
+    const goal = (p.goals || []).find((g) => g.id === goalId);
+    if (!goal) return { error: "Goal not found." };
+    const before = goal.status;
+    Object.assign(goal, fields);
+    if (fields.status && fields.status !== before) {
+      goal.history = goal.history || [];
+      goal.history.push({ status: fields.status, from: before, userId: byUser.id, time: new Date().toISOString() });
+      audit(byUser.id, "goal-status-changed", `${patientName(p)} — ${goal.text}: ${before} → ${fields.status}`);
+    }
+    touch(p);
+    save();
+    return { goal };
+  }
+
+  function deleteGoal(patientId, goalId, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t edit the plan of care." };
+    const i = (p.goals || []).findIndex((g) => g.id === goalId);
+    if (i === -1) return { error: "Goal not found." };
+    const [gone] = p.goals.splice(i, 1);
+    touch(p);
+    save();
+    audit(byUser.id, "goal-removed", `${patientName(p)} — ${gone.text}`);
+    return { ok: true };
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Outcome measures & authorisation — both derived, never stored twice
+   * ---------------------------------------------------------------- */
+
+  /** Every outcome score recorded anywhere in the chart, stamped with the
+      date of the note that carries it, ready for trending. */
+  function outcomeSeries(patientId) {
+    const out = [];
+    docsFor(patientId).forEach((d) => {
+      (d.data.outcomes || []).forEach((o) => {
+        if (!o || !o.toolId) return;
+        out.push({ toolId: o.toolId, score: o.score, date: (d.createdAt || "").slice(0, 10), docId: d.id });
+      });
+    });
+    return out.sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+
+  /** Where the patient stands against their authorised visit count. Visits
+      used are counted from documented visits rather than stored, so the
+      number can't drift away from the chart. */
+  function authStatus(patient) {
+    const a = (patient || {}).authorization || {};
+    const authorized = Number(a.visitsAuthorized) || 0;
+    const used = visitCount((patient || {}).id);
+    const remaining = authorized ? Math.max(0, authorized - used) : null;
+    const expires = a.expiresOn || "";
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      authorized, used, remaining, expiresOn: expires, reference: a.reference || "",
+      hasAuth: !!(authorized || expires),
+      expired: !!expires && expires < today,
+      exhausted: authorized > 0 && used >= authorized,
+      low: remaining !== null && remaining > 0 && remaining <= 2,
+    };
+  }
+
+  /* ---------------------------------------------------------------- *
    *  Documents: create, sign/lock, amend
    * ---------------------------------------------------------------- */
 
@@ -837,7 +1007,10 @@
   function createDoc(patientId, type, byUser) {
     if (!canDocument(byUser)) return { error: "Your account can’t create clinical documents." };
     load();
-    const data = { mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [] };
+    // charges (CPT/minutes/units) and outcome scores belong to every visit
+    // type — an evaluation bills too, and a re-assessment is where outcome
+    // measures are usually repeated
+    const data = { mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [], charges: [], outcomes: [] };
     if (type === "eval") Object.assign(data, { reason: "", precautions: "", pmh: "", subjective: "", objectiveText: "", assessment: "", plan: "" });
     // a daily treatment note is a SOAP note: subjective, objective (the
     // measurement tables + body map), assessment, plan — the last two are what
@@ -1302,6 +1475,8 @@
     // patient action items / care history (accepted AI recommendations)
     acceptRecommendation, dismissRecommendation, addActionItem, completeActionItem, deleteActionItem,
     actionItems, careHistory, resolvedRecKeys,
+    // plan-of-care goals, outcome-measure history, insurance authorisation
+    goalsFor, addGoal, updateGoal, deleteGoal, outcomeSeries, authStatus,
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
     documents: () => load().documents.filter(mine), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     visitCount, progressDue,

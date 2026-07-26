@@ -1190,6 +1190,101 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .slot-appt:hover { filter: brightness(0.97); }
 .slot-appt small { display: block; font-weight: 400; color: var(--muted); }
+/* ---- allergies: the one thing that must be seen before treating ---- */
+.pb-chip.allergy {
+  background: var(--danger-soft, #fdecec); color: var(--danger);
+  font-weight: 600; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pb-chip.allergy .pb-k { color: inherit; opacity: .85; }
+.allergy-box {
+  background: var(--danger-soft, #fdecec); color: var(--danger);
+  border-radius: 8px; padding: 10px 14px; font-weight: 600;
+}
+
+/* ---- goals on the chart overview ---- */
+.goal-list { display: grid; gap: 8px; }
+.goal-row { display: flex; gap: 10px; align-items: flex-start; }
+.goal-row .goal-state { flex: none; margin-top: 1px; }
+.goal-main { min-width: 0; }
+.goal-text { font-weight: 550; }
+
+/* ---- outcome-measure trends ---- */
+/* capped rather than 1fr: stretched to half a wide card, the sparkline drifts
+   so far from its numbers that they stop reading as one figure */
+.outcome-trends { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(230px, 320px)); justify-content: start; }
+.otrend { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.otrend-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.otrend-nums { display: flex; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.otrend-from { color: var(--muted); }
+.otrend-to { font-size: 20px; font-weight: 650; }
+.otrend-arrow { color: var(--muted); }
+.otrend .spark { margin-left: auto; color: var(--muted); }
+.otrend.better .spark, .otrend.better .otrend-to { color: var(--accent); }
+.otrend.worse .spark, .otrend.worse .otrend-to { color: var(--danger); }
+.otrend-foot { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* ---- billing: CPT charge sheet + 8-minute-rule readout ----
+   The charge sheet lives in the note's narrow right-hand column, so the table
+   is fixed-layout: the code cell absorbs the slack and the number cells keep a
+   predictable width instead of a long CPT description forcing a scrollbar. */
+.bill-table { table-layout: fixed; width: 100%; }
+.bill-table td, .bill-table th { padding-left: 6px; padding-right: 6px; }
+.bill-table .c-min, .bill-table .c-unit { width: 56px; }
+.bill-table .c-del { width: 34px; }
+.bill-table td { vertical-align: middle; overflow: hidden; }
+.charge-num, .charge-code { box-sizing: border-box; }
+.charge-num { width: 100%; text-align: right; padding: 4px 5px; font-variant-numeric: tabular-nums; }
+/* the spin buttons eat half a narrow cell and nobody nudges minutes one at a time */
+.charge-num::-webkit-outer-spin-button, .charge-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.charge-num[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.charge-code { width: 100%; min-width: 0; }
+.charge-na { color: var(--muted); }
+.bill-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.bill-totals {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px;
+  font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.bill-totals b { color: var(--text); font-size: 14px; }
+.bill-total-units { margin-left: auto; padding: 2px 10px; border-radius: 999px; }
+.bill-total-units.ok { background: var(--good-soft, var(--accent-soft)); color: var(--accent); }
+.bill-total-units.off { background: var(--warn-soft, var(--accent-soft)); }
+.bill-issues { display: grid; gap: 4px; margin-top: 8px; }
+.bill-issue { font-size: 12.5px; padding: 5px 9px; border-radius: 6px; background: var(--accent-soft); }
+.bill-issue.warn { background: var(--warn-soft, var(--accent-soft)); }
+.bill-issue.bad { background: var(--danger-soft, var(--accent-soft)); color: var(--danger); font-weight: 600; }
+
+/* ---- outcome measures ---- */
+.outcome-add { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.outcome-add select { max-width: 300px; }
+.outcome-err { font-size: 12px; color: var(--danger); }
+
+/* ---- plan-of-care goals ---- */
+/* stacked rows rather than a table — this lives in the note's narrow column */
+.goal-edit-list { display: grid; gap: 8px; }
+.goal-edit-row {
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  display: grid; gap: 6px;
+}
+.goal-edit-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.goal-edit-controls .goal-status-sel { flex: 1 1 130px; }
+/* the score and its scale are one figure and must not break across lines */
+.score-cell { display: inline-flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.score-unit { color: var(--muted); font-size: 12px; }
+.goal-term {
+  font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); margin-left: 6px; white-space: nowrap;
+}
+.goal-bt { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.goal-state { font-size: 12px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.goal-state.met { background: var(--good-soft, var(--accent-soft)); color: var(--accent); font-weight: 600; }
+.goal-state.overdue { background: var(--danger-soft, var(--warn-soft)); color: var(--danger); font-weight: 600; }
+.goal-state.due-soon { background: var(--warn-soft, var(--accent-soft)); }
+.goal-state.on-track, .goal-state.no-date, .goal-state.closed { background: var(--chip, var(--accent-soft)); color: var(--muted); }
+.goal-add { margin-top: 10px; display: grid; gap: 6px; }
+.goal-add-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.goal-add-row input, .goal-add-row select { flex: 1 1 130px; min-width: 110px; }
+.goal-status-sel { max-width: 150px; }
+
 /* bookings that fall outside the facility's opening hours have no column on
    the board, so they get listed under it rather than disappearing */
 .cal-offhours {

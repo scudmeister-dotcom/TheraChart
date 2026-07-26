@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node test/db.test.js && node test/files.test.js && node test/auth.test.js && node test/store.test.js && node test/merge.test.js && node test/import.test.js && node test/refine.test.js && node test/insights.test.js && node test/parser.test.js"
+    "test": "node test/db.test.js && node test/files.test.js && node test/auth.test.js && node test/store.test.js && node test/merge.test.js && node test/import.test.js && node test/refine.test.js && node test/insights.test.js && node test/clinical.test.js && node test/parser.test.js"
   },
   "dependencies": {
     "pg": "^8.13.1"

@@ -71,7 +71,20 @@ works; the body-part lexicon understands all three at once):
   An expired license or voided access automatically blocks the EMR and all
   document creation/editing/signing.
 - **Patient intake** (front desk) — personal info, referring physician,
-  insurance/payment details.
+  **allergies**, **emergency contact**, insurance/payment, and the
+  **visit authorisation** (visits approved, expiry, reference). Allergies show
+  on the patient banner from every screen; visits used are counted from the
+  chart, and the app warns before an authorisation runs out or expires.
+- **Plan-of-care goals** — short- and long-term goals with a baseline, a
+  target and a **target date**, set at the evaluation and reviewed in every
+  progress report. Overdue goals surface on the chart's Needs-attention list.
+- **Outcome measures** — LEFS, DASH/QuickDASH, NDI, ODI, NPRS, PSFS, ABC and
+  TUG, recorded per visit and **trended across the episode against each tool's
+  MCID**, so a change is reported as clinically meaningful or not.
+- **Billing** — a CPT charge sheet on every visit with treatment minutes and
+  units. Units are checked live against Medicare's **8-minute rule**: the app
+  says when a claim is over-billed, under-billed, or a couple of minutes short
+  of another unit, and can pre-fill the codes from the treatment text.
 - **Patient center** — demographics, insurance, uploaded referrals/X-rays,
   and every therapy document (daily notes, evaluations, progress reports,
   discharges). **Print or export the whole chart as a PDF.**
@@ -269,6 +282,7 @@ node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, ca
 node test/merge.test.js    # 13 checks: offline merge never loses records
 node test/refine.test.js   # 30 checks: speaker split, sections, measurements
 node test/insights.test.js # 15 checks: connections, red flags, recommendations
+node test/clinical.test.js # 84 checks: 8-minute rule, MCID trending, goal dates
 node test/import.test.js   # 38 checks: PDF-record extraction, history digest, imported docs
 ```
 
@@ -282,6 +296,9 @@ node test/import.test.js   # 38 checks: PDF-record extraction, history digest, i
 - `parser.js` — multilingual body-part lexicon, symptom summarizer,
   measurement extraction, section classifier, speaker split + local refiner,
   coordinate-by-name (saved findings re-pin to the current mannequin)
+- `clinical.js` — billing rules (CPT catalogue, 8-minute rule), outcome-measure
+  catalogue and MCID trending, plan-of-care goal dates — DOM-free and checked
+  offline
 - `store.js` — on-device data layer: users, patients, documents, calendar,
   audit log, license gating
 - `app.js` — application: routing, views, dictation, body maps, printing
