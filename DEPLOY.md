@@ -1,5 +1,25 @@
 # Deploying TheraChart
 
+> ## ⚠️ Cost hold: Cloud SQL is intentionally STOPPED
+>
+> **As of 2026-07-26 the `therachart-db` Cloud SQL instance is stopped**
+> (`activation-policy NEVER`) to stop the ~US$8–10/mo compute charge during
+> development. It is the only resource in the project that billed around the
+> clock — Cloud Run scales to zero, and Gemini/STT/GCS are per-use.
+>
+> **Consequence:** the deployed Cloud Run service
+> (https://therachart-cmcoe52aaa-uc.a.run.app) returns 503 while the database is
+> down. This is expected, not an outage to debug.
+>
+> **Development continues on local Postgres 15** — see
+> [Local Postgres for development](#local-postgres-for-development) below. Every
+> feature works locally, including Vertex Gemini and Cloud Speech-to-Text.
+>
+> **Before go-live, this must be turned back on** — see the
+> [Go-live checklist](#go-live-checklist) at the bottom of this file. A safety
+> export of the database was taken first:
+> `gs://therachart-prod-files/backups/therachart-20260726.sql`
+
 TheraChart runs three ways. Pick the one that matches how you want to use it.
 
 ## 1. Vercel (easiest — great for a demo or single-device use)
@@ -98,3 +118,115 @@ the APIs, deploy, and flip on Google Cloud STT + Vertex Gemini — is in
 
 The app auto-detects which is available (`GET /api/ai-status`) and shows the
 active engine (Gemini vs local) on each result.
+
+---
+
+## Local Postgres for development
+
+Cloud SQL is stopped (see the note at the top). To develop against the **same
+durable code path** production uses, without paying for Cloud SQL, run Postgres
+locally. Match the production major version — Cloud SQL is **POSTGRES_15**:
+
+```bash
+brew install postgresql@15 && brew services start postgresql@15
+```
+
+Create the role and database using the same names production uses:
+
+```bash
+psql postgres -c "CREATE ROLE therachart LOGIN PASSWORD 'localdev';" -c "CREATE DATABASE therachart OWNER therachart;"
+```
+
+Run the server against it:
+
+```bash
+DATABASE_URL=postgresql://therachart:localdev@localhost:5432/therachart node server.js
+```
+
+The boot banner should read `data: Postgres (durable) — keys: store, rev, sessions`.
+
+**How faithful is this?** The app's entire SQL surface is four plain statements
+against a two-column `kv` table ([db.js](db.js)) — no extensions, no
+version-specific syntax — so local Postgres 15 and Cloud SQL behave identically
+at the database layer. What differs is the *connection*, not the code:
+
+| | Cloud Run | Local |
+|---|---|---|
+| Transport | Unix socket via Cloud SQL proxy | TCP |
+| `DATABASE_URL` | `postgresql://therachart:PASS@/therachart?host=/cloudsql/therachart-prod:us-central1:therachart-db` | `postgresql://therachart:localdev@localhost:5432/therachart` |
+| Source of the URL | Secret Manager (`--set-secrets`) | plaintext env var |
+
+Leave the pool at `max: 4` ([db.js](db.js)) — it is sized for `db-f1-micro`'s low
+connection ceiling, which a local box will not reveal.
+
+### Simulating Cloud Run's ephemeral disk
+
+The reason Postgres exists in this app is that Cloud Run's disk resets on every
+deploy, restart, and scale event. Locally your disk persists, which hides bugs
+where something durable is written to disk instead of the database. Reproduce
+production by wiping the data directory between runs:
+
+```bash
+rm -rf /tmp/tc-eph && DATABASE_URL=postgresql://therachart:localdev@localhost:5432/therachart THERACHART_DATA=/tmp/tc-eph node server.js
+```
+
+If patients, notes, and logins all survive the wipe, records really do live in
+the database. If **attachments** vanish, that is correct — it is exactly what
+production does when `GCS_BUCKET` is unset, which is why production sets it.
+
+### What local Postgres still does *not* exercise
+
+These are Cloud Run differences, not database differences. They can only be
+proven by an actual deploy:
+
+- **Cloud Storage file backend** — production sets `GCS_BUCKET`, so
+  [files.js](files.js) takes the GCS branch; locally it takes the local-disk
+  branch. Attachments and session audio run through genuinely different code.
+- **Metadata-server credentials** — production resolves Google credentials via
+  `K_SERVICE`/the metadata server; locally you use `GCP_ACCESS_TOKEN`.
+- **Secret Manager + IAM** — the `roles/secretmanager.secretAccessor` and
+  `roles/cloudsql.client` bindings from [deploy-gcp.sh](deploy-gcp.sh).
+- **Cold start under a live request** — `start()` awaits `db.init()` before it
+  listens.
+
+---
+
+## Go-live checklist
+
+Work through this when moving off the cost hold and back to production.
+
+1. **Start Cloud SQL** and wait for `RUNNABLE` (~1–3 min):
+
+   ```bash
+   gcloud sql instances patch therachart-db --activation-policy ALWAYS
+   ```
+
+2. **Restart Cloud Run.** If the service tried to boot while the database was
+   down it crash-loops (`exit(1)`, Postgres "Connection terminated unexpectedly")
+   and keeps serving 503s. Force a fresh revision with no rebuild:
+
+   ```bash
+   gcloud run services update therachart --region us-central1 --update-env-vars RESTART_TS=$(date +%s)
+   ```
+
+3. **Verify** the app root returns 200 and `/api/ai-status` returns JSON at
+   https://therachart-cmcoe52aaa-uc.a.run.app
+
+4. **Confirm `GCS_BUCKET` is set** on the service — without it, attachments and
+   session audio land on Cloud Run's ephemeral disk and are lost on every
+   restart. Exercise an attachment upload and download once against the real
+   bucket, since local development never runs that code path.
+
+5. **Keep `--max-instances 1`.** The whole store is a single `kv` row, so the
+   design assumes ONE writer ([db.js](db.js)). Raising this will corrupt data
+   until the schema is normalized.
+
+6. **Re-check the AI credentials.** The consumer `GEMINI_API_KEY` path is
+   separate from Vertex; production uses `GEMINI_VERTEX=1` + the metadata-server
+   credential, which needs no key.
+
+7. **Take a fresh backup** before any risky change:
+
+   ```bash
+   gcloud sql export sql therachart-db gs://therachart-prod-files/backups/therachart-$(date +%Y%m%d).sql --database=therachart
+   ```
