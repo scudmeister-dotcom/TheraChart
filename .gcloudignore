@@ -1,0 +1,43 @@
+# What NOT to upload to Cloud Build on `gcloud run deploy --source .`
+#
+# This is the file that actually governs the deploy in deploy-gcp.sh. Creating
+# it REPLACES gcloud's default behaviour of deriving excludes from .gitignore,
+# so everything that must stay out has to be listed here explicitly — including
+# the local data and secrets that .gitignore already covers.
+#
+# Keep in mind the server serves static files straight out of the app root, so
+# anything the browser fetches has to stay: index.html, the root *.js files,
+# styles.css, sw.js, manifest.webmanifest, icons/, assets/fonts/, and
+# marketing-screenshots/ (the landing page embeds those — see app.js).
+
+# Local runtime data, credentials and backups — must never reach a build
+data/
+.secrets/
+.audit/
+live-data2/
+
+# Version control history: ~12 MB and of no use to the running service
+.git/
+.gitignore
+.gcloudignore
+
+# Installed by the buildpack from package.json + package-lock.json
+node_modules/
+
+# Tests and their fixtures don't run in the deployed image
+test/
+
+# Local tooling and design source material
+.claude/
+design_handoff_therachart_branding/
+_testsheet-preview.html
+
+# Junk
+*.log
+.DS_Store
+**/.DS_Store
+
+# Playwright run artifacts
+test-results/
+playwright-report/
+blob-report/

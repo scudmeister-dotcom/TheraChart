@@ -9,3 +9,9 @@ node_modules/
 
 # Local Claude Code machine settings (keep launch config, ignore local perms)
 .claude/settings.local.json
+
+# Playwright: browser binaries live in a shared user cache, but run artifacts
+# (traces, screenshots, HTML report) land here and should not be committed
+/test-results/
+/playwright-report/
+/blob-report/

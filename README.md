@@ -290,6 +290,29 @@ node test/clinical.test.js # 84 checks: 8-minute rule, MCID trending, goal dates
 node test/import.test.js   # 38 checks: PDF-record extraction, history digest, imported docs
 ```
 
+### Browser tests
+
+The suites above are DOM-free — fast, and they never flake. What they can't see
+is the screen. Five Playwright tests cover the paths where a silent break would
+be worst and which no server-side check can catch:
+
+```bash
+npm run e2e            # headless
+npm run e2e:headed     # watch it drive the app
+npx playwright show-trace test-results/<test>/trace.zip   # replay a failure
+```
+
+They cover: a therapist's chart rendering, **clinic isolation on screen and in
+`localStorage`**, dictation pinning the body map and filing a measurement,
+signing locking a note, and settings staying inside one clinic. The server is
+started fresh against a throwaway data directory each run, so they never touch
+`data/`.
+
+Playwright is a **dev dependency** — it never ships. Browser binaries live in a
+shared user cache outside the repo, and `.gcloudignore` keeps `node_modules/`
+and `test/` out of the deploy entirely. First run needs `npx playwright install
+chromium`.
+
 ### Scoring the AI passes
 
 Unit tests pin the local heuristic's exact behaviour. The **eval harness** grades

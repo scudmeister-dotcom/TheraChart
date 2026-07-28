@@ -1,0 +1,37 @@
+# Build-context excludes for a Docker build.
+#
+# NOTE: the current deploy (deploy-gcp.sh) uses `gcloud run deploy --source .`
+# with buildpacks, which reads .gcloudignore, NOT this file. This exists so the
+# same exclusions apply if a Dockerfile is ever added — keep the two in step.
+#
+# The server serves static files from the app root, so everything the browser
+# fetches must stay: index.html, root *.js, styles.css, sw.js,
+# manifest.webmanifest, icons/, assets/fonts/, marketing-screenshots/.
+
+# Local runtime data, credentials and backups — must never reach an image
+data/
+.secrets/
+.audit/
+live-data2/
+
+.git/
+.gitignore
+
+# Reinstalled inside the image from package.json + package-lock.json
+node_modules/
+
+# Tests don't run in the deployed image
+test/
+
+.claude/
+design_handoff_therachart_branding/
+_testsheet-preview.html
+
+*.log
+.DS_Store
+**/.DS_Store
+
+# Playwright run artifacts
+test-results/
+playwright-report/
+blob-report/
