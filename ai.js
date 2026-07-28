@@ -11,15 +11,36 @@
 })(typeof self !== "undefined" ? self : this, function (parser, insights) {
   "use strict";
 
-  // Two tiers. Flash is fast + cheap and handles the high-volume, schema-bound
-  // extraction work (transcript cleanup, document reading). Pro is the stronger
-  // reasoner reserved for Clinical Insights, where reading between the lines
-  // across a patient's history matters more than speed or cost.
-  //   NOTE: as of writing there is no "gemini-3.5-pro" — the newest Pro is
-  //   gemini-3.1-pro-preview. Bump DEFAULT_PRO_MODEL (or set GEMINI_INSIGHTS_MODEL)
-  //   to "gemini-3.5-pro" the moment it ships.
-  const DEFAULT_MODEL = "gemini-3.5-flash";
-  const DEFAULT_PRO_MODEL = "gemini-3.1-pro-preview";
+  // One model everywhere: 3.6 Flash with thinking on. Flash is fast + cheap and
+  // handles the high-volume, schema-bound work (transcript cleanup, document
+  // reading); thinking is what buys back the depth the old Pro tier gave the
+  // reasoning-heavy paths, so the tiering now lives in the thinking level
+  // rather than in two different models.
+  //
+  // Levels are measured, not guessed (verified live against Vertex):
+  //   "low"/"minimal" spend ZERO thinking tokens — thinking is effectively off.
+  //   "medium" is the floor at which thinking actually engages (~2.3k thinking
+  //   tokens on a 73-line transcript); "high" roughly doubles tokens and latency
+  //   again (up to ~7k / ~36s), so it is not free on the high-volume path.
+  // Thinking is on everywhere; only the depth varies.
+  //   refine sees ONE session's transcript and nothing else — no chart, no
+  //     prior visits (see refinePrompt) — so it does not need DEEP. It does
+  //     need thinking though: on test/eval's refine cases over 3 runs, STANDARD
+  //     scores 95.5% vs 92.5% with thinking off, and the whole gap is the
+  //     safety-critical "every finding is traceable to the transcript" check on
+  //     code-switched Taglish dictation, which is flaky-to-failing without it.
+  //     Hallucinated findings in a clinical note are the thing we least tolerate,
+  //     so this path pays the ~2.3k thinking tokens.
+  //   insights + the assistant reason ACROSS visits (history + historyDigest),
+  //     and extraction reasons across a whole document, so they get DEEP.
+  //     Insights especially — it replaced the Pro tier and its output (red
+  //     flags, referrals) is clinically consequential.
+  //   Levels below STANDARD ("low"/"minimal") spend ZERO thinking tokens, i.e.
+  //     thinking off. Don't set them here without re-running the eval.
+  const DEFAULT_MODEL = "gemini-3.6-flash";
+  const DEFAULT_INSIGHTS_MODEL = "gemini-3.6-flash";
+  const THINKING_STANDARD = "medium";
+  const THINKING_DEEP = "high";
   const DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
   /* ---------------- transcript refinement ---------------- */
@@ -140,6 +161,9 @@
 
   // prompt: a string (single text part) or a parts array — e.g. an inline PDF
   // part plus an instruction part for document extraction.
+  // Thinking is always on (thinkingConfig.thinkingLevel); callers raise it to
+  // THINKING_DEEP for the reasoning-heavy paths. includeThoughts stays off —
+  // we only want the JSON answer, not the model's scratchpad.
   async function geminiJson(prompt, schema, opts) {
     const model = opts.model || DEFAULT_MODEL;
     const parts = typeof prompt === "string" ? [{ text: prompt }] : prompt;
@@ -149,13 +173,20 @@
       headers,
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: opts.temperature ?? 0.2 },
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          temperature: opts.temperature ?? 0.2,
+          thinkingConfig: { thinkingLevel: opts.thinkingLevel || THINKING_STANDARD },
+        },
       }),
       signal: AbortSignal.timeout(opts.timeout || 40000),
     });
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "{}";
+    // Skip any thought parts — only the answer parts are the JSON payload.
+    const text = (data?.candidates?.[0]?.content?.parts || [])
+      .filter((p) => !p.thought).map((p) => p.text || "").join("") || "{}";
     return JSON.parse(text);
   }
 
@@ -308,7 +339,7 @@
       { inline_data: { mime_type: mime || "application/pdf", data: fileBase64 } },
       { text: extractSystem() },
     ];
-    const parsed = await geminiJson(parts, EXTRACT_SCHEMA, { ...opts, timeout: opts.timeout || 120000 });
+    const parsed = await geminiJson(parts, EXTRACT_SCHEMA, { ...opts, thinkingLevel: opts.thinkingLevel || THINKING_DEEP, timeout: opts.timeout || 120000 });
     return { ...normalizeExtraction(parsed), source: "gemini" };
   }
 
@@ -418,7 +449,7 @@
       e.code = 501;
       throw e;
     }
-    const parsed = await geminiJson(assistantPrompt(chart, question, history), ASSISTANT_SCHEMA, { ...opts, temperature: 0.1 });
+    const parsed = await geminiJson(assistantPrompt(chart, question, history), ASSISTANT_SCHEMA, { ...opts, thinkingLevel: opts.thinkingLevel || THINKING_DEEP, temperature: 0.1 });
     return {
       answer: String(parsed.answer || "").trim(),
       answered: parsed.answered !== false,
@@ -433,7 +464,11 @@
     opts = opts || {};
     if (aiReady(opts)) {
       try {
-        const parsed = await geminiJson(refinePrompt(utterances), REFINE_SCHEMA, opts);
+        // Thinking costs wall-clock (~19s for a 73-line transcript, and it grows
+        // with session length), so this path gets more than the 40s default —
+        // a timeout here silently demotes the note to the local heuristic.
+        const parsed = await geminiJson(refinePrompt(utterances), REFINE_SCHEMA,
+          { ...opts, timeout: opts.timeout || 90000 });
         return normalizeRefinement(parsed, utterances, "gemini");
       } catch (e) { if (opts.onError) opts.onError("refine", e); }
     }
@@ -445,9 +480,10 @@
     opts = opts || {};
     if (aiReady(opts)) {
       try {
-        // Insights runs on the Pro tier — the reasoning-heavy path.
-        const proModel = opts.insightsModel || DEFAULT_PRO_MODEL;
-        const parsed = await geminiJson(insights.insightsPrompt(ctx), insights.INSIGHTS_SCHEMA, { ...opts, model: proModel, temperature: 0.3 });
+        // Insights is the reasoning-heavy path: same Flash model, thinking high.
+        const model = opts.insightsModel || DEFAULT_INSIGHTS_MODEL;
+        const parsed = await geminiJson(insights.insightsPrompt(ctx), insights.INSIGHTS_SCHEMA,
+          { ...opts, model, thinkingLevel: opts.thinkingLevel || THINKING_DEEP, temperature: 0.3 });
         return { connections: parsed.connections || [], redFlags: parsed.redFlags || [], recommendations: parsed.recommendations || [], source: "gemini" };
       } catch (e) { if (opts.onError) opts.onError("insights", e); }
     }
@@ -457,5 +493,6 @@
 
   return { refine, insightsRun, extractRecords, patientAssistant, refineSystem, refinePrompt, extractSystem,
     assistantSystem, assistantPrompt, assistantChartText, ASSISTANT_SCHEMA,
-    REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, geminiTarget, aiReady, DEFAULT_MODEL, DEFAULT_PRO_MODEL, DEFAULT_BASE };
+    REFINE_SCHEMA, EXTRACT_SCHEMA, normalizeRefinement, normalizeExtraction, geminiJson, geminiTarget, aiReady,
+    DEFAULT_MODEL, DEFAULT_INSIGHTS_MODEL, THINKING_STANDARD, THINKING_DEEP, DEFAULT_BASE };
 });

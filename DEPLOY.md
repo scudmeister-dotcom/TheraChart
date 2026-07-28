@@ -39,8 +39,8 @@ key from an **environment variable**. There is no shared database in this mode
    | Name | Value |
    |---|---|
    | `GEMINI_API_KEY` | your Google Gemini API key |
-   | `GEMINI_MODEL` *(optional)* | `gemini-3.5-flash` (default) — Flash tier: transcript cleanup + document reading |
-   | `GEMINI_INSIGHTS_MODEL` *(optional)* | `gemini-3.1-pro-preview` (default) — Pro tier: Clinical Insights. Bump to `gemini-3.5-pro` once it ships |
+   | `GEMINI_MODEL` *(optional)* | `gemini-3.6-flash` (default) — transcript cleanup (thinking `medium`) + document reading (thinking `high`) |
+   | `GEMINI_INSIGHTS_MODEL` *(optional)* | `gemini-3.6-flash` (default) — Clinical Insights, thinking level `high` |
    | `GEMINI_BASE_URL` *(optional)* | a Vertex AI endpoint if using a BAA |
 
    Set these **once** in the platform's env settings and every future deploy

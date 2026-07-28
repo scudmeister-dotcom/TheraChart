@@ -168,7 +168,7 @@ async function verifyGoogleIdToken(idToken) {
    with no key and no network. Mode is computed per-request (key may also come
    from facility settings). */
 const GEMINI_MODEL = process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
-const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL;
+const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL;
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "");
 // Gemini 3.x publisher models are served from the "global" Vertex location —
