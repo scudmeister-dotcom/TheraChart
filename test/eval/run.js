@@ -41,14 +41,20 @@ const VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "") && !!p
 const engineName = VERTEX ? "vertex" : GEMINI_KEY ? "gemini" : "local";
 const opts = VERTEX
   ? { vertex: true, project: process.env.GCP_PROJECT, location: process.env.GEMINI_LOCATION || "global",
-      model: process.env.GEMINI_MODEL || ai.DEFAULT_MODEL, insightsModel: process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL,
+      model: process.env.GEMINI_MODEL || ai.DEFAULT_MODEL, insightsModel: process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL,
       getToken: null, onError: (w, e) => console.error(`  ! ${w}: ${e.message}`) }
   : GEMINI_KEY
     ? { key: GEMINI_KEY, model: process.env.GEMINI_MODEL || ai.DEFAULT_MODEL,
-        insightsModel: process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL,
+        insightsModel: process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL,
         base: process.env.GEMINI_BASE_URL || ai.DEFAULT_BASE,
         onError: (w, e) => console.error(`  ! ${w}: ${e.message}`) }
     : {};
+
+// Optional override so thinking levels can be A/B'd against the scored cases:
+//   GEMINI_THINKING_LEVEL=low|medium|high npm run eval
+// It overrides every path (refine AND the deep ones), so low = thinking off.
+// Unset = the shipped defaults (medium for refine, high for the rest).
+if (process.env.GEMINI_THINKING_LEVEL) opts.thinkingLevel = process.env.GEMINI_THINKING_LEVEL.trim();
 
 if (VERTEX) {
   // Vertex needs an OAuth token; reuse gcloud's if one is available, else bail

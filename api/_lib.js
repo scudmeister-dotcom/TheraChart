@@ -6,9 +6,10 @@
 const ai = require("../ai.js");
 
 const key = () => process.env.GEMINI_API_KEY || null;
-// Flash for refine/extract; Pro for the reasoning-heavy Insights path.
+// One Flash model for every path; ai.js raises the thinking level for the
+// reasoning-heavy ones (Insights, assistant, document extraction).
 const model = () => process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
-const insightsModel = () => process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_PRO_MODEL;
+const insightsModel = () => process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL;
 const base = () => process.env.GEMINI_BASE_URL || ai.DEFAULT_BASE;
 const opts = () => ({ key: key(), model: model(), insightsModel: insightsModel(), base: base(), onError: (w, e) => console.error(`[${w}]`, e.message) });
 

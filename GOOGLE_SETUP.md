@@ -275,10 +275,16 @@ Two separate things share your Google Cloud project:
   Vertex location that serves the Gemini 3.x models (regional endpoints like
   `us-central1` return 404 for them). Only set `GEMINI_LOCATION` if data
   residency forces a region AND you've confirmed the models exist there.
-  Confirm at `/api/ai-status` → `"provider":"vertex"`. The models used are
-  `gemini-3.5-flash` (cleanup/import) and `gemini-3.1-pro-preview` (insights);
-  override per env with `GEMINI_MODEL` / `GEMINI_INSIGHTS_MODEL` if a model name
-  differs on Vertex or once `gemini-3.5-pro` ships.
+  Confirm at `/api/ai-status` → `"provider":"vertex"`. Every path uses
+  `gemini-3.6-flash` with thinking on everywhere; only the depth varies.
+  Transcript cleanup runs at **`medium`** — dropping it lower measurably breaks
+  the "every finding is traceable to the transcript" check on code-switched
+  Taglish dictation (95.5% → 92.5% over 3 eval runs). Document import, Clinical
+  Insights, and the patient assistant run at **`high`**, since each reasons
+  across a whole chart or document. Note `low`/`minimal` spend zero thinking
+  tokens. Override the model per env with `GEMINI_MODEL` /
+  `GEMINI_INSIGHTS_MODEL` if a name differs on Vertex, and the level with
+  `GEMINI_THINKING_LEVEL` when running the eval.
 
 ## Serving closer to your clinics (multi-region)
 
