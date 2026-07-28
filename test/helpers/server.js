@@ -23,13 +23,18 @@ function freePort() {
   });
 }
 
-/** Boot a server and return { base, call, login, stop, dataDir, log }. */
-async function startServer(env = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-test-"));
+/** Boot a server and return { base, call, login, stop, dataDir, log }.
+    opts.dataDir points the server at an existing directory (for migration
+    tests that need to seed a specific database); omit it for a fresh one,
+    which is what almost every test wants. */
+async function startServer(env = {}, opts = {}) {
+  const ownsDir = !opts.dataDir;
+  const dataDir = opts.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), "therachart-test-"));
   const port = await freePort();
   const child = spawn(process.execPath, [path.join(__dirname, "..", "..", "server.js")], {
     // blank the AI/cloud vars so a developer's real credentials never leak into
-    // a test run (and tests never make a billable call)
+    // a test run (and tests never make a billable call). THERACHART_DATA and
+    // PORT are set last so a caller can't accidentally point a test at ./data.
     env: { ...process.env, GEMINI_API_KEY: "", GEMINI_VERTEX: "", GCP_PROJECT: "", GCS_BUCKET: "", REMINDER_WEBHOOK: "", ...env, THERACHART_DATA: dataDir, PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -65,7 +70,8 @@ async function startServer(env = {}) {
     login: (email, password) => call("/api/login", { method: "POST", body: { email, password } }),
     stop() {
       child.kill("SIGKILL");
-      try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      // only clean up a directory we created — never one handed to us
+      if (ownsDir) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ } }
     },
   };
 }

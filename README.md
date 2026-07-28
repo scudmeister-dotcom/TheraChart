@@ -281,6 +281,7 @@ checked offline:
 ```bash
 node test/tenancy.test.js  # 48 checks: clinic isolation + authorization, over real HTTP
 node test/workflow.test.js # 20 checks: a clinical journey across two synced devices
+node test/migration.test.js # 18 checks: today's code reading a pre-tenancy database
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
 node test/merge.test.js    # 13 checks: offline merge never loses records
