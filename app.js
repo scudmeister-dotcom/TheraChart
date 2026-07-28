@@ -1478,14 +1478,52 @@ ${tabStrip}
     }
   }
 
-  /* ---------- AI chart review (async, once per day) ---------- */
+  /* ---------- AI chart review (async, re-runs when the chart changes) ---------- */
 
   function aiReviewAvailable() {
     return !!((window.TheraSync && window.TheraSync.getInsights) ||
       (window.TheraInsights && window.TheraInsights.buildInsights));
   }
 
-  // Decide what to show and, on the first open of the day, kick off the review.
+  /* Bump when the prompt or the shape of the review context changes, so every
+     chart re-reviews once instead of showing a result the current prompt would
+     no longer produce. */
+  const AI_REVIEW_VERSION = 1;
+
+  /** 32-bit FNV-1a — a short, stable digest of the review context. A collision
+   *  would only cost one skipped re-review, and the input is a few KB of chart. */
+  function hashStr(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16);
+  }
+
+  /**
+   * What the AI would be asked about this chart right now, plus a digest of it.
+   *
+   * The digest is the staleness test: the review is a pure function of this
+   * context (insightsPrompt builds the whole prompt from it, and nothing in
+   * insights.js reads the clock), so an unchanged context can only produce the
+   * review we already have. That makes "has the chart changed?" a complete and
+   * exact trigger — strictly better than the calendar-day check it replaces,
+   * which re-ran the Pro-tier model every day on charts nobody had touched.
+   *
+   * It also decides what "substantial" means without a judgement call: only what
+   * gatherInsightContext collects can move the digest, so a new note, an edited
+   * assessment or a fresh ROM/pain measurement re-reviews, while a name or
+   * insurance edit — absent from the context — does not.
+   *
+   * Null when the chart has no documents (nothing to review).
+   */
+  function aiReviewSnapshot(p) {
+    const latest = S.docsFor(p.id).slice().sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))[0];
+    if (!latest) return null;
+    const ctx = gatherInsightContext(latest);
+    return { ctx, hash: `${AI_REVIEW_VERSION}:${hashStr(JSON.stringify(ctx))}` };
+  }
+
+  // Decide what to show and, when the chart has changed since its last review,
+  // kick off a new one.
   function mountAiReview(p, user) {
     const el = document.getElementById("patientAiReview");
     if (!el) return;
@@ -1500,15 +1538,29 @@ ${tabStrip}
       return;
     }
     if (aiReviewRuns[p.id]) return renderAiReviewCard(el, p, user, "running");
-    if (p.aiReview && p.aiReview.ranOn === todayIso()) {
-      return renderAiReviewCard(el, p, user, p.aiReview.error ? "error" : "done");
+    const prev = p.aiReview;
+    if (prev) {
+      if (prev.error) {
+        // A FAILED run keeps the old once-a-day throttle. It has no context stamp
+        // to compare, and retrying on every chart open would hammer the model
+        // (and the user) for as long as the outage lasts.
+        if (prev.ranOn === todayIso()) return renderAiReviewCard(el, p, user, "error");
+      } else {
+        // A SUCCESSFUL run stands until the chart it reviewed actually changes.
+        // A legacy review saved before ctxHash existed has no stamp, so it can't
+        // be vouched for and re-reviews once — the same self-heal a changed chart gets.
+        const snap = aiReviewSnapshot(p);
+        if (snap && prev.ctxHash === snap.hash) return renderAiReviewCard(el, p, user, "done");
+      }
     }
-    startAiReview(p, user); // first open today → auto-run
+    startAiReview(p, user); // never reviewed, chart changed, or a failed run is due a retry
   }
 
   function renderAiReviewCard(el, p, user, state) {
     const review = p.aiReview || {};
-    const note = `<p class="ins-disclaimer">Runs automatically the first time you open this chart each day${review.ranAt ? ` · last run ${fmtTime(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
+    // Date AND time on the stamp: a review now stands until the chart changes, so
+    // "last run 3:42 PM" with no day is ambiguous once it's a week old.
+    const note = `<p class="ins-disclaimer">Runs automatically when this chart changes${review.ranAt ? ` · last run ${fmtDT(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
     let body;
     if (state === "running") {
       body = `<div class="empty-state" style="padding:16px">
@@ -1549,16 +1601,22 @@ ${tabStrip}
     if (el0) renderAiReviewCard(el0, p, user, "running");
 
     let result = null, error = null;
+    // Snapshot ONCE, up front, and review exactly what we stamp — taking the
+    // context again after the await could stamp an edit the model never saw.
+    const snap = aiReviewSnapshot(p);
     try {
-      const latest = S.docsFor(p.id).slice().sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1))[0];
-      const ctx = gatherInsightContext(latest);
+      if (!snap) throw new Error("no documents to review");
       const sync = window.TheraSync || {};
-      result = sync.getInsights ? await sync.getInsights(ctx) : window.TheraInsights.buildInsights(ctx);
+      result = sync.getInsights ? await sync.getInsights(snap.ctx) : window.TheraInsights.buildInsights(snap.ctx);
     } catch (e) { error = e.message || "review failed"; }
 
     delete aiReviewRuns[p.id];
     const review = { ranOn: todayIso(), ranAt: new Date().toISOString() };
-    if (error) review.error = error; else review.result = result;
+    // Only a SUCCESSFUL review stamps what it reviewed. Stamping a failure would
+    // make the error look current until the chart next changed, stranding the
+    // card on a stale message; without a stamp it falls back to the daily retry.
+    if (error) review.error = error;
+    else { review.result = result; review.ctxHash = snap.hash; }
     S.saveAiReview(p.id, review);
     if (!error) S.audit(user.id, "ai-chart-review", `${S.patientName(p)}: ${(result.connections || []).length} connections, ${(result.recommendations || []).length} recs`);
 
