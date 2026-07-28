@@ -27,6 +27,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execFile } = require("child_process"); // local-dev gcloud credential only
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOT = __dirname;
@@ -453,6 +454,13 @@ function demoLogins() {
      GCP_ACCESS_TOKEN                a short-lived OAuth token (quick tests: `gcloud auth print-access-token`)
      GOOGLE_APPLICATION_CREDENTIALS  path to a service-account key JSON (local dev)
      GCP_SA_KEY                      the service-account key JSON inline (one env var)
+     GCP_USE_GCLOUD=1                local dev: ask the developer's own gcloud for a
+                                     token whenever the cache lapses. Unlike a pasted
+                                     GCP_ACCESS_TOKEN this never goes stale mid-session,
+                                     and unlike a key file it writes no long-lived
+                                     credential to disk (key creation is disabled by
+                                     org policy anyway). Ignored where gcloud is absent,
+                                     so it can never affect Cloud Run.
      (on Cloud Run / GCE nothing is needed — the attached service account is used automatically) */
 
 const GCP_PROJECT = process.env.GCP_PROJECT || "";
@@ -463,8 +471,24 @@ function sttCredentialSource() {
   if (process.env.GCP_ACCESS_TOKEN) return "token";
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) return "key-file";
   if (process.env.GCP_SA_KEY) return "key-inline";
+  if (/^(1|true|yes|on)$/i.test(process.env.GCP_USE_GCLOUD || "") && gcloudPath()) return "gcloud";
   if (process.env.K_SERVICE || process.env.GCE_METADATA_HOST) return "metadata"; // Cloud Run / GCE
   return null;
+}
+
+// Where the developer's gcloud lives, resolved once. Null when it isn't
+// installed, which is what keeps the "gcloud" source out of the chain on
+// Cloud Run. Set GCLOUD_PATH to override.
+let _gcloudBin;
+function gcloudPath() {
+  if (_gcloudBin !== undefined) return _gcloudBin;
+  _gcloudBin = [
+    process.env.GCLOUD_PATH,
+    path.join(process.env.HOME || "", "google-cloud-sdk/bin/gcloud"),
+    "/opt/homebrew/bin/gcloud",
+    "/usr/local/bin/gcloud",
+  ].find((p) => p && fs.existsSync(p)) || null;
+  return _gcloudBin;
 }
 function sttConfigured() { return !!(GCP_PROJECT && sttCredentialSource()); }
 function sttStatus() { return { available: sttConfigured(), models: Object.keys(STT_MODELS), location: STT_LOCATION }; }
@@ -482,6 +506,18 @@ async function gcpAccessToken() {
       : fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
     const t = await jwtBearerToken(keyJson);
     _tok = { value: t.access_token, exp: now + (t.expires_in - 30) * 1000 };
+    return _tok.value;
+  }
+  if (src === "gcloud") {
+    const out = await new Promise((resolve, reject) => {
+      execFile(gcloudPath(), ["auth", "print-access-token"], { timeout: 20000 }, (err, stdout, stderr) =>
+        err ? reject(new Error(`gcloud auth print-access-token failed: ${(stderr || err.message).trim().slice(0, 200)}`))
+            : resolve(stdout));
+    });
+    const value = out.trim();
+    if (!value) throw new Error("gcloud returned an empty access token — run `gcloud auth login`.");
+    // gcloud tokens last an hour; refresh a little early, same as the others.
+    _tok = { value, exp: now + 50 * 60 * 1000 };
     return _tok.value;
   }
   // metadata server (Cloud Run / GCE) — no key file needed
