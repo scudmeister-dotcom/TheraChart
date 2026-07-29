@@ -54,6 +54,27 @@ const titles = (r) => (r.connections || []).map((c) => c.title).join(" | ");
 const recActions = (r) => (r.recommendations || []).map((x) => x.action).join(" | ");
 const flagText = (r) => (r.redFlags || []).map((f) => f.flag).join(" | ");
 
+/** Did the model actually REPORT `theme` about `subject`?
+    Three things matter here, and they pull in opposite directions:
+      - Vocabulary is wide. A model that writes "progressive loss of flexion"
+        has done the job as well as one that writes "declining"; scoring only a
+        handful of stems fails correct work.
+      - It only counts where findings are REPORTED — a connection (title or
+        detail) or a red flag. Recommendations are excluded on purpose: advice
+        reuses this vocabulary without observing anything. "Reduce overhead
+        lifting" would otherwise satisfy a decline check, and "Continue the HEP"
+        a persistence check, while the model noticed neither.
+      - Theme and subject must land in the SAME entry, so something said about
+        one topic can't vouch for another.
+    Still keyword matching, not comprehension — it can be fooled by a sentence
+    that names both and means neither. It is a floor, not a proof. */
+const DOWNWARD = /declin|decreas|down|worsen|reduc|loss|lost|deteriorat|regress|diminish/i;
+const RECURRING = /recurr|repeat|persist|ongoing|chronic|continu|unresolved|still/i;
+const reportedAbout = (r, theme, subject) =>
+  [...(r.connections || []).map((c) => `${c.title || ""} ${c.detail || ""}`),
+   ...(r.redFlags || []).map((f) => f.flag || "")]
+    .some((entry) => theme.test(entry) && subject.test(entry));
+
 /* ---------- refine cases ---------- */
 
 const REFINE_CASES = [
@@ -187,9 +208,9 @@ const INSIGHTS_CASES = [
     },
     assertions: [
       { name: "the recurring right shoulder is connected across visits", weight: 2,
-        test: (r) => /recurr|repeat|persist/i.test(titles(r)) && /shoulder/i.test(titles(r)) },
+        test: (r) => reportedAbout(r, RECURRING, /shoulder/i) },
       { name: "the downward ROM trend is surfaced", weight: 3,
-        test: (r) => /declin|decreas|down|worsen|reduc/i.test(titles(r) + " " + flagText(r) + " " + recActions(r)) },
+        test: (r) => reportedAbout(r, DOWNWARD, /shoulder|flexion|\brom\b|range of motion/i) },
       { name: "a concrete next step is recommended", weight: 2,
         test: (r) => (r.recommendations || []).length > 0 },
       { name: "every recommendation carries a rationale", weight: 2,
