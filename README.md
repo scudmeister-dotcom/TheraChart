@@ -349,6 +349,22 @@ kept only as a control. `test/eval/fixtures/make-scan.py` regenerates the
 bitmaps deterministically (needs Pillow; they are gitignored). Document reading
 has no local fallback, so this eval needs a real engine and exits 2 without one.
 
+**Simulated degradation is a stand-in.** To score a genuine capture, print the
+clean pages and photograph or scan them — a phone is fine, and is closer to how
+records actually arrive than a flatbed is:
+
+```bash
+python3 test/eval/fixtures/make-scan.py --print   # print_*.pdf, clean and printable
+```
+
+Save the capture as `real_<name>.pdf` (or `.jpg`/`.png`) in
+`test/eval/fixtures/`, using the same name as the page you printed —
+`print_4visit.pdf` → `real_4visit.jpg`. The eval scores it automatically and
+skips it until the file exists. Capture twice if you can: once with a scanner
+app's auto-enhance, once as a plain photo. The enhanced version is what users
+will send; the plain photo keeps the shadow and keystone that actually break
+OCR. Handwritten fixtures are **advisory** — reported, never gating.
+
 ## Files
 
 - `index.html` / `styles.css` — shell and design system (light + dark)

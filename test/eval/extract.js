@@ -119,23 +119,49 @@ const TEXT_PDF_LINES = [
   "    mobilization grade III, HEP reviewed. Tolerated well.",
 ];
 
+// The clinical story is the same across every document, so one set of
+// expectations covers all of them.
+const TWO = { visits: 2, dates: ["2023-05-02", "2023-05-09"], types: ["eval", "daily"], name: /reyes/i };
+const FOUR = { visits: 4, dates: ["2023-05-02", "2023-05-09", "2023-05-23", "2023-06-13"],
+  types: ["eval", "daily", "progress", "discharge"], name: /reyes/i };
+
 const FIXTURES = [
-  { id: "text_2visit", label: "text-layer PDF, 2 visits (control — no OCR needed)",
-    buf: () => makeTextPdf(TEXT_PDF_LINES), visits: 2,
-    dates: ["2023-05-02", "2023-05-09"], types: ["eval", "daily"], name: /reyes/i },
-  { id: "scan_2visit", label: "1-page image-only scan, 2 visits",
-    file: "scan_2visit.pdf", visits: 2,
-    dates: ["2023-05-02", "2023-05-09"], types: ["eval", "daily"], name: /reyes/i },
-  { id: "scan_4visit", label: "2-page image-only scan, 4 visits",
-    file: "scan_4visit.pdf", visits: 4,
-    dates: ["2023-05-02", "2023-05-09", "2023-05-23", "2023-06-13"],
-    types: ["eval", "daily", "progress", "discharge"], name: /reyes/i },
+  { id: "text_2visit", label: "text-layer PDF (control — no OCR needed)",
+    buf: () => makeTextPdf(TEXT_PDF_LINES), ...TWO },
+  { id: "scan_2visit", label: "1-page image-only scan", base: "scan_2visit", ...TWO },
+  { id: "scan_4visit", label: "2-page image-only scan", base: "scan_4visit", ...FOUR },
+
+  // Handwriting is genuinely harder than typed text and the model is allowed
+  // to be imperfect at it, so this reports but does not gate.
+  { id: "scan_handwritten", label: "printed form with handwritten fills",
+    base: "scan_handwritten", advisory: true, ...TWO },
+
+  // Real captures. Print fixtures/print_*.pdf, scan or photograph them, and
+  // save the result as real_<name>.<pdf|jpg|png> next to make-scan.py — these
+  // start scoring the moment the file exists and are skipped until then.
+  // A real sensor's noise is the one thing the simulated pages cannot fake.
+  { id: "real_2visit", label: "REAL capture of print_2visit", base: "real_2visit", optional: true, ...TWO },
+  { id: "real_4visit", label: "REAL capture of print_4visit", base: "real_4visit", optional: true, ...FOUR },
+  { id: "real_handwritten", label: "REAL capture of print_handwritten",
+    base: "real_handwritten", optional: true, advisory: true, ...TWO },
 ];
+
+const MIMES = { ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png" };
+
+// A capture may arrive as a PDF from a scanner app or as a plain photo.
+function resolve(fx) {
+  if (!fx.base) return null;
+  for (const ext of Object.keys(MIMES)) {
+    const p = path.join(FIXTURE_DIR, fx.base + ext);
+    if (fs.existsSync(p)) return { path: p, mime: MIMES[ext] };
+  }
+  return null;
+}
 
 // Regenerate the image-only fixtures when missing. They are gitignored: a
 // bitmap is bulky, and make-scan.py is deterministic so rebuilding is exact.
 function ensureScans() {
-  const needed = FIXTURES.filter((f) => f.file && !fs.existsSync(path.join(FIXTURE_DIR, f.file)));
+  const needed = FIXTURES.filter((f) => f.base && !f.optional && !resolve(f));
   if (!needed.length) return;
   const py = fs.existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3";
   console.error(`building ${needed.length} scan fixture(s) with ${py}…`);
@@ -183,14 +209,21 @@ function assess(fx, r) {
   const report = { engine: engineName, model: opts.model || ai.DEFAULT_MODEL, runs: RUNS, fixtures: {} };
 
   for (const fx of chosen) {
-    const buf = fx.file ? fs.readFileSync(path.join(FIXTURE_DIR, fx.file)) : fx.buf();
+    const found = resolve(fx);
+    if (fx.optional && !found) {
+      if (!JSON_OUT) console.log(`\n── ${fx.id} — skipped (no ${fx.base}.pdf/.jpg/.png yet)`);
+      report.fixtures[fx.id] = { skipped: true };
+      continue;
+    }
+    const buf = found ? fs.readFileSync(found.path) : fx.buf();
+    const mime = found ? found.mime : "application/pdf";
     const b64 = buf.toString("base64");
-    if (!JSON_OUT) console.log(`\n── ${fx.id} — ${fx.label}`);
+    if (!JSON_OUT) console.log(`\n── ${fx.id} — ${fx.label}${fx.advisory ? "  (advisory)" : ""}`);
     const runs = [];
     for (let i = 0; i < RUNS; i++) {
       const t0 = Date.now();
       try {
-        const r = await ai.extractRecords(b64, "application/pdf", opts);
+        const r = await ai.extractRecords(b64, mime, opts);
         const a = assess(fx, r);
         runs.push({ ok: true, ms: Date.now() - t0, ...a });
         if (!JSON_OUT) {
@@ -205,18 +238,21 @@ function assess(fx, r) {
       }
     }
     const clean = runs.filter((r) => r.ok && r.passed === r.total).length;
-    report.fixtures[fx.id] = { rate: clean / RUNS, clean, runs: RUNS, detail: runs };
+    report.fixtures[fx.id] = { rate: clean / RUNS, clean, runs: RUNS, advisory: !!fx.advisory, detail: runs };
   }
 
   if (JSON_OUT) { console.log(JSON.stringify(report, null, 2)); }
   else {
     console.log("\n── SUMMARY ──");
     for (const [id, f] of Object.entries(report.fixtures)) {
-      console.log(`${id.padEnd(14)} fully correct ${f.clean}/${f.runs}  (${(f.rate * 100).toFixed(0)}%)` +
-        `${f.rate < MIN ? `  ← below --min ${MIN}` : ""}`);
+      if (f.skipped) { console.log(`${id.padEnd(18)} skipped`); continue; }
+      const low = !f.advisory && f.rate < MIN;
+      console.log(`${id.padEnd(18)} fully correct ${f.clean}/${f.runs}  (${(f.rate * 100).toFixed(0)}%)` +
+        `${f.advisory ? "  advisory" : ""}${low ? `  ← below --min ${MIN}` : ""}`);
     }
   }
 
-  const worst = Math.min(...Object.values(report.fixtures).map((f) => f.rate));
-  process.exit(worst < MIN ? 1 : 0);
+  // Advisory and skipped fixtures report but never gate.
+  const gating = Object.values(report.fixtures).filter((f) => !f.skipped && !f.advisory);
+  process.exit(gating.some((f) => f.rate < MIN) ? 1 : 0);
 })().catch((e) => { console.error("fatal:", e); process.exit(1); });
