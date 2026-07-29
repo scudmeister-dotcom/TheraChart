@@ -201,16 +201,36 @@ Work through this when moving off the cost hold and back to production.
    gcloud sql instances patch therachart-db --activation-policy ALWAYS
    ```
 
-2. **Restart Cloud Run.** If the service tried to boot while the database was
-   down it crash-loops (`exit(1)`, Postgres "Connection terminated unexpectedly")
-   and keeps serving 503s. Force a fresh revision with no rebuild:
+2. **Deploy the current code.** The server connects to Postgres *before* it
+   listens ([db.js](db.js)), so a deploy attempted while the database is
+   stopped fails its health check and traffic stays on the old revision —
+   Cloud SQL has to be running first. Deploy with:
+
+   ```bash
+   ./deploy-gcp.sh
+   ```
+
+   Or, if the image is already current and you only need a restart (the service
+   crash-loops with `exit(1)` and serves 503s if it booted while the database
+   was down), force a fresh revision with no rebuild:
 
    ```bash
    gcloud run services update therachart --region us-central1 --update-env-vars RESTART_TS=$(date +%s)
    ```
 
-3. **Verify** the app root returns 200 and `/api/ai-status` returns JSON at
-   https://therachart-cmcoe52aaa-uc.a.run.app
+3. **Verify.** Run the read-only checker against the live service — it confirms
+   the app is up, that every API endpoint refuses unauthenticated access, that
+   private paths and server-side source are not served, and that AI is on the
+   Vertex/BAA path rather than a consumer key:
+
+   ```bash
+   ./verify-prod.sh
+   ```
+
+   It changes nothing. Do **not** point the development probe at production —
+   that one resets passwords and deletes records to prove the tenancy boundary.
+
+   Then sign in once and confirm a chart loads.
 
 4. **Confirm `GCS_BUCKET` is set** on the service — without it, attachments and
    session audio land on Cloud Run's ephemeral disk and are lost on every

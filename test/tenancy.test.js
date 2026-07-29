@@ -300,6 +300,28 @@ async function boot(dataDir, port) {
       check("another clinic cannot download it", theirs.status === 404, `-> ${theirs.status}`);
     }
 
+    /* ---- the static handler serves the app, not the server -------------- */
+    // ROOT holds the server and its tooling as well as the web app, so a
+    // serve-anything handler published server.js, db.js, ai.js and the deploy
+    // script (which names the GCP project and buckets). Allowlisted now, so
+    // anything added server-side later is private by default.
+    for (const p of ["/server.js", "/db.js", "/ai.js", "/files.js", "/package.json",
+                     "/deploy-gcp.sh", "/test/tenancy.test.js", "/README.md", "/vercel.json"]) {
+      const r = await call(p, { raw: true });
+      check(`server-side file ${p} is not served`, r.status === 404, `-> ${r.status}`);
+    }
+    for (const p of ["/", "/index.html", "/app.js", "/store.js", "/sync.js", "/parser.js",
+                     "/insights.js", "/clinical.js", "/styles.css", "/sw.js",
+                     "/manifest.webmanifest", "/icons/icon-192.png", "/assets/fonts/fonts.css"]) {
+      const r = await call(p, { raw: true });
+      check(`the app still serves ${p}`, r.status === 200, `-> ${r.status}`);
+    }
+    // path traversal must not climb out of the app root
+    for (const p of ["/../server.js", "/../../etc/passwd", "/./server.js"]) {
+      const r = await call(p, { raw: true });
+      check(`traversal ${p} is refused`, r.status === 404, `-> ${r.status}`);
+    }
+
     /* ---- login lockout cannot be flushed -------------------------------- */
     // Trip the lock on one account, then spray >1000 distinct identifiers. The
     // old code called loginFails.clear() to bound memory, which released every

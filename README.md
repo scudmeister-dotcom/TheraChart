@@ -279,7 +279,7 @@ The parsing brain (`parser.js`) and data rules (`store.js`) are DOM-free and
 checked offline:
 
 ```bash
-node test/tenancy.test.js  # 48 checks: clinic isolation + authorization, over real HTTP
+node test/tenancy.test.js  # 73 checks: clinic isolation, authorization, asset exposure
 node test/workflow.test.js # 20 checks: a clinical journey across two synced devices
 node test/migration.test.js # 18 checks: today's code reading a pre-tenancy database
 node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier

@@ -714,6 +714,22 @@ const MIME = {
   ".woff2": "font/woff2", ".woff": "font/woff", ".webmanifest": "application/manifest+json",
 };
 
+/* Which files are actually the web app.
+   The server shares a directory with the code that runs it — server.js, db.js,
+   ai.js, files.js, the deploy script, the tests — and a plain "serve anything
+   under ROOT" handler published all of it. None of it is secret (the repo is
+   public and credentials come from env vars), but deploy-gcp.sh names the
+   project and buckets, and an allowlist means anything added server-side later
+   is private by default rather than public by accident. */
+const CLIENT_FILES = new Set([
+  "/index.html", "/styles.css", "/sw.js", "/manifest.webmanifest",
+  // the scripts index.html loads, in order
+  "/parser.js", "/insights.js", "/clinical.js", "/store.js", "/app.js", "/sync.js",
+]);
+const CLIENT_DIRS = ["/icons/", "/assets/", "/marketing-screenshots/"];
+const isClientAsset = (webPath) =>
+  CLIENT_FILES.has(webPath) || CLIENT_DIRS.some((d) => webPath.startsWith(d));
+
 function json(res, code, obj) {
   if (res.headersSent) { try { res.end(); } catch { } return; } // never re-write headers mid-response
   const body = JSON.stringify(obj);
@@ -1035,7 +1051,8 @@ const server = http.createServer(async (req, res) => {
     // key) or any hidden path over HTTP
     const inDataDir = !path.relative(path.resolve(DATA_DIR), full).startsWith("..");
     if (rel.startsWith("..") || inDataDir || rel.split(path.sep).some((s) => s.startsWith(".")) ||
-        !fs.existsSync(full) || fs.statSync(full).isDirectory()) {
+        !fs.existsSync(full) || fs.statSync(full).isDirectory() ||
+        !isClientAsset(file.split(path.sep).join("/"))) {
       res.writeHead(404); return res.end("Not found");
     }
     res.writeHead(200, { "content-type": MIME[path.extname(full)] || "application/octet-stream" });
