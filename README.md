@@ -333,6 +333,22 @@ assertion that flipped, exiting non-zero on a regression — so **edit a prompt,
 re-run, and see a number** instead of guessing. Safety-critical assertions
 (attribution, hallucination, red flags) carry extra weight.
 
+The **scanned-record import** is scored separately, because its fixtures are
+documents rather than transcripts:
+
+```bash
+GEMINI_VERTEX=1 GCP_PROJECT=... npm run eval:extract
+node test/eval/extract.js --runs 3            # repeat, to see model variance
+node test/eval/extract.js --fixture scan_4visit
+```
+
+The scan fixtures are **image-only PDFs** — no text layer, so the model has to
+OCR them the way it OCRs a real chart scan. A PDF built from text operators is
+far easier and hides exactly the failures this eval exists to catch, so it is
+kept only as a control. `test/eval/fixtures/make-scan.py` regenerates the
+bitmaps deterministically (needs Pillow; they are gitignored). Document reading
+has no local fallback, so this eval needs a real engine and exits 2 without one.
+
 ## Files
 
 - `index.html` / `styles.css` — shell and design system (light + dark)
