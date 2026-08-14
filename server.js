@@ -737,6 +737,19 @@ function json(res, code, obj) {
   res.end(body);
 }
 
+/* Errors that reach a client must not carry internals. Node's messages
+   routinely embed absolute filesystem paths, database hosts and storage bucket
+   keys, and the top-level catch at the bottom of the request handler sits
+   OUTSIDE the auth check — so an unauthenticated caller could read them by
+   provoking an exception. Log the real error against a short reference and
+   return only the reference, so a user's report can still be tied to a log
+   line without publishing the internals. */
+function fail(res, code, message, e, req) {
+  const ref = crypto.randomBytes(4).toString("hex");
+  console.error(`[error ${ref}] ${req ? `${req.method} ${req.url}` : ""} —`, e);
+  return json(res, code, { error: message, ref });
+}
+
 function readBody(req, limit = 15 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -857,7 +870,7 @@ const server = http.createServer(async (req, res) => {
         if (buffer.length > MAX_FILE_BYTES) return json(res, 413, { error: `File too large (limit ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB).` });
         const key = `att/${store.uid("f")}`;
         try { await files.put(key, buffer, type || "application/octet-stream"); }
-        catch (e) { return json(res, 502, { error: "Storage upload failed: " + e.message }); }
+        catch (e) { return fail(res, 502, "Storage upload failed.", e, req); }
         store.audit(user.id, "file-uploaded", `${name || key} (${buffer.length} bytes)`);
         return json(res, 200, { key, size: buffer.length });
       }
@@ -868,7 +881,7 @@ const server = http.createServer(async (req, res) => {
         const att = key && findAttachmentByKey(key, user);
         if (!att) return json(res, 404, { error: "File not found." });
         let f;
-        try { f = await files.get(key); } catch (e) { return json(res, 502, { error: "Storage read failed: " + e.message }); }
+        try { f = await files.get(key); } catch (e) { return fail(res, 502, "Storage read failed.", e, req); }
         if (!f) return json(res, 404, { error: "File not found." });
         res.writeHead(200, {
           "content-type": att.type || f.contentType || "application/octet-stream",
@@ -941,7 +954,10 @@ const server = http.createServer(async (req, res) => {
           const result = await patientAssistant(chart || {}, q, turns);
           return json(res, 200, result);
         } catch (e) {
-          return json(res, e.code === 501 ? 501 : 500, { error: e.message });
+          // a 501 carries our own "not set up on this server yet" text, which is
+          // actionable; anything else may be a raw provider error
+          if (e.code === 501) return json(res, 501, { error: e.message });
+          return fail(res, 500, "The AI service could not complete that request.", e, req);
         }
       }
       if (url.pathname === "/api/extract-doc" && req.method === "POST") {
@@ -953,7 +969,10 @@ const server = http.createServer(async (req, res) => {
           const result = await ai.extractRecords(pdf, mime, GEMINI_OPTS());
           return json(res, 200, result);
         } catch (e) {
-          return json(res, e.code === 501 ? 501 : 500, { error: e.message });
+          // a 501 carries our own "not set up on this server yet" text, which is
+          // actionable; anything else may be a raw provider error
+          if (e.code === 501) return json(res, 501, { error: e.message });
+          return fail(res, 500, "The AI service could not complete that request.", e, req);
         }
       }
       if (url.pathname === "/api/stt" && req.method === "POST") {
@@ -972,7 +991,12 @@ const server = http.createServer(async (req, res) => {
           const text = await transcribe(wav, lang, model);
           return json(res, 200, { text, retained });
         } catch (e) {
-          return json(res, e.code === 501 ? 501 : 500, { error: e.message, retained });
+          // 501 is our own "Speech-to-Text isn't set up yet" guidance; anything
+          // else is a raw Google error and stays in the log
+          if (e.code === 501) return json(res, 501, { error: e.message, retained });
+          const ref = crypto.randomBytes(4).toString("hex");
+          console.error(`[error ${ref}] POST /api/stt —`, e);
+          return json(res, 500, { error: "Transcription failed.", ref, retained });
         }
       }
       if (url.pathname === "/api/audio") {
@@ -1060,7 +1084,7 @@ const server = http.createServer(async (req, res) => {
     stream.on("error", () => { try { res.destroy(); } catch { } });
     stream.pipe(res);
   } catch (e) {
-    json(res, 500, { error: e.message });
+    fail(res, 500, "Something went wrong on the server.", e, req);
   }
 });
 
