@@ -194,6 +194,18 @@ async function boot(dataDir, port) {
       okPush.status === 200 && mariaNow.license && mariaNow.license.number === "PT-RENEWED-01",
       `status=${okPush.status} license=${JSON.stringify(mariaNow.license)}`);
 
+    // A sole admin must be able to record their OWN licence, or canDocument()
+    // never passes and they can never write a note — a one-person clinic, or a
+    // freshly created one, would be permanently stuck.
+    const sLic = await stateOf(fToken, "sole admin licence");
+    const licEdit = JSON.parse(JSON.stringify(sLic.state));
+    const soleAdmin = licEdit.users.find((u) => u.id === fresh.data.userId);
+    if (soleAdmin) soleAdmin.license = { number: "PT-SELF-001", expires: "2099-01-01" };
+    await call("/api/state", { method: "PUT", token: fToken, body: { baseRev: sLic.rev, state: licEdit } });
+    const licNow = (await stateOf(fToken, "licence after")).state.users.find((u) => u.id === fresh.data.userId) || {};
+    check("a sole admin can record their own licence",
+      licNow.license && licNow.license.number === "PT-SELF-001", JSON.stringify(licNow.license));
+
     const s6 = await stateOf(gToken);
     const selfPromote = JSON.parse(JSON.stringify(s6.state));
     const graceRec = selfPromote.users.find((u) => u.id === "u-grace");

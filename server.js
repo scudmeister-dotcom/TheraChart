@@ -291,7 +291,18 @@ function scopedState(user) {
    Roles, licences and account status are what the EMR gates on, so they
    change only through the audited endpoints (/api/users, /api/delete-user,
    /api/set-password) or an admin edit within their own clinic. */
-const USER_PRIVILEGE_FIELDS = ["role", "active", "license", "clinicId", "email", "authProvider", "googleSub", "mustChangePassword"];
+/* Fields a device may never set for ITSELF by pushing state. An admin can
+   still change every one of them for a COLLEAGUE. These are the actual
+   escalation vectors — the front-desk account that promoted itself to admin
+   went through `role`. */
+const SELF_LOCKED_FIELDS = ["role", "active", "clinicId", "email", "authProvider", "googleSub", "mustChangePassword"];
+/* `license` is deliberately NOT self-locked. A sole admin — a one-person
+   clinic, or the owner's freshly created clinic — has to be able to record
+   their own licence number, or canDocument() never passes and they can never
+   write a note at all. Locking it bought no real security either: an admin who
+   wanted to fake a licence could create a second admin and have them enter it.
+   The change is audited like any other. */
+const USER_PRIVILEGE_FIELDS = [...SELF_LOCKED_FIELDS, "license"];
 
 /** Fold a device's pushed state into the server's, confined to the pusher's
     clinic. Other clinics are carried over from the server verbatim, so a
@@ -360,8 +371,10 @@ function graftPushedState(pushed, user) {
     if (!pushedUser) { reconciled.push(existing); continue; }
     const merged = { ...existing, ...pushedUser };
     for (const f of USER_PRIVILEGE_FIELDS) {
-      // an admin may change another user's privileges; nobody may change their own
-      const mayEdit = isAdmin && pushedUser.id !== user.id;
+      // an admin may change a colleague's privileges, and their own licence,
+      // but never their own role, account status or clinic
+      const isSelf = pushedUser.id === user.id;
+      const mayEdit = isAdmin && (!isSelf || !SELF_LOCKED_FIELDS.includes(f));
       if (mayEdit && Object.prototype.hasOwnProperty.call(pushedUser, f)) continue;
       if (Object.prototype.hasOwnProperty.call(existing, f)) merged[f] = existing[f];
       else delete merged[f];
