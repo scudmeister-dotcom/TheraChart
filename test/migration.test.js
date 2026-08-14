@@ -91,6 +91,35 @@ const LEGACY_STATE = {
     R.check("the audio retention window is preserved", s.audioReviewDays === 14, String(s.audioReviewDays));
     R.check("the facility name carries over", s.facilityName === "Bayanihan Physical Therapy", s.facilityName);
 
+    /* ---- a Google account must not inherit the demo clinic ---- */
+    // The seeded demo logins and their password are published on the sign-in
+    // screen. A pre-tenancy Google account falls back to the demo clinic, which
+    // would leave real patient records under a publicly known admin login.
+    // upsertGoogleUser re-stamps un-stamped accounts on next sign-in.
+    const store = require("../store.js");
+    store.importAll(JSON.parse(JSON.stringify(LEGACY_STATE)), { preserveSession: false });
+    const legacyGoogle = store.getUserByEmail("owner@old.demo");
+    R.check("the legacy Google account starts with no clinic", !legacyGoogle.clinicId,
+      `clinicId=${legacyGoogle.clinicId}`);
+
+    const up = store.upsertGoogleUser({ email: "owner@old.demo", name: "Owner", role: "admin", clinicId: "clinic-owner" });
+    R.check("signing in moves it off the demo-clinic fallback", up.user.clinicId === "clinic-owner", up.user.clinicId);
+
+    // an account that already belongs somewhere is never yanked out of it
+    const settled = store.upsertGoogleUser({ email: "owner@old.demo", name: "Owner", role: "admin", clinicId: "clinic-somewhere-else" });
+    R.check("an already-placed account is not moved on later sign-ins",
+      settled.user.clinicId === "clinic-owner", settled.user.clinicId);
+
+    // brand-new Google accounts land in the configured clinic, not the demo one
+    const fresh = store.upsertGoogleUser({ email: "newstaff@old.demo", name: "New Staff", role: "therapist", clinicId: "clinic-owner" });
+    R.check("a new Google account joins the configured clinic", fresh.user.clinicId === "clinic-owner", fresh.user.clinicId);
+    R.check("and not the demo clinic", fresh.user.clinicId !== "clinic-demo");
+
+    store.ensureClinic("clinic-owner", "My Clinic");
+    R.check("the clinic gets a readable name", store.clinicName("clinic-owner") === "My Clinic", store.clinicName("clinic-owner"));
+    store.ensureClinic("clinic-owner", "Something Else");
+    R.check("ensureClinic never renames an existing clinic", store.clinicName("clinic-owner") === "My Clinic", store.clinicName("clinic-owner"));
+
     /* ---- and the migrated database is still writable ---- */
     const cur = await pull();
     const next = JSON.parse(JSON.stringify(cur.state));

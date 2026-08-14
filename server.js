@@ -95,6 +95,13 @@ store.setAuthenticator(AUTH);
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_OWNER_EMAIL = (process.env.GOOGLE_OWNER_EMAIL || "amador.moriles@gmail.com").trim().toLowerCase();
 const GOOGLE_ROLES = new Set(["therapist", "admin", "frontdesk"]);
+/* The clinic that Google sign-ins join — the operator and anyone they
+   allowlist. It must NOT be the seeded demo clinic: the demo logins and their
+   password are printed on the sign-in screen, so sharing a clinic with them
+   would leave real patient records under a publicly known admin account.
+   Override with GOOGLE_CLINIC_ID to point staff at an existing clinic. */
+const GOOGLE_CLINIC_ID = (process.env.GOOGLE_CLINIC_ID || "clinic-owner").trim();
+const GOOGLE_CLINIC_NAME = (process.env.GOOGLE_CLINIC_NAME || "My Clinic").trim();
 
 // email -> role, parsed once from GOOGLE_ALLOWLIST. The owner is always admin,
 // so a minimal install (client id only, no allowlist) still lets the owner in.
@@ -841,8 +848,11 @@ const server = http.createServer(async (req, res) => {
         bumpRev();
         return json(res, 403, { error: "Your access request has been sent to an administrator for approval. You'll be able to sign in once it's approved." });
       }
-      const r = store.upsertGoogleUser({ email, name: claims.name, role, googleSub: claims.sub });
+      const r = store.upsertGoogleUser({ email, name: claims.name, role, googleSub: claims.sub, clinicId: GOOGLE_CLINIC_ID });
       if (r.error) return json(res, 400, { error: r.error });
+      // give the clinic a readable name the first time someone lands in it,
+      // so Facility Admin doesn't show a bare id
+      store.ensureClinic(r.user.clinicId, GOOGLE_CLINIC_NAME);
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
       bumpRev(); // audit entries (login / user-created) were added

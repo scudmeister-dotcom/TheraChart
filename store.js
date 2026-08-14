@@ -610,6 +610,14 @@
     const name = String((fields && fields.name) || "").trim() || email.split("@")[0];
     const sub = fields && fields.googleSub ? String(fields.googleSub) : null;
 
+    /* Which clinic a Google sign-in belongs to. The caller (server.js) decides,
+       because the answer comes from host configuration: the operator and the
+       people they allowlist are running a real clinic, and must NOT land in the
+       seeded demo clinic — the demo logins and their password are published on
+       the sign-in screen, so sharing a clinic with them would put real patient
+       records under a publicly known admin account. */
+    const clinicId = (fields && fields.clinicId) || DEFAULT_CLINIC;
+
     let user = getUserByEmail(email);
     if (user) {
       user.active = true;
@@ -618,6 +626,11 @@
       user.authProvider = "google";
       if (sub) user.googleSub = sub;
       delete user.mustChangePassword; // Google users have no password to set
+      // Migrate accounts created before tenancy: an un-stamped user falls back
+      // to the demo clinic, which is precisely what we're moving them out of.
+      // An account that already has a clinic is never moved — that would yank
+      // a working user out of their colleagues' data on a routine sign-in.
+      if (!user.clinicId) user.clinicId = clinicId;
       touch(user);
       save();
       audit(user.id, "login", "google");
@@ -626,12 +639,7 @@
 
     user = {
       id: uid("u"), name, email, role, active: true,
-      license: null, authProvider: "google",
-      // Allowlisted Google sign-ins carry no clinic of their own, so they join
-      // the default clinic. Stamp it explicitly rather than leaning on the
-      // recClinic() fallback — an unstamped user is indistinguishable from a
-      // legacy record, and the server's tenancy checks read this field.
-      clinicId: DEFAULT_CLINIC,
+      license: null, authProvider: "google", clinicId,
     };
     if (sub) user.googleSub = sub;
     touch(user);
@@ -861,6 +869,20 @@
     return merged;
   }
   const settings = () => settingsFor(currentClinicId());
+  /** Make sure a clinic exists with a readable name. Never renames one that is
+      already named — an operator's own label must survive a restart. */
+  function ensureClinic(id, name) {
+    load();
+    if (!id) return null;
+    state.clinics = state.clinics || {};
+    if (!state.clinics[id]) {
+      state.clinics[id] = { id, name: String(name || "").trim() || "TheraChart Clinic" };
+      touch(state.clinics[id]);
+      save();
+    }
+    return state.clinics[id];
+  }
+
   function renameClinic(name, byUser) {
     load();
     const nm = String(name || "").trim();
@@ -1521,7 +1543,7 @@
     load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
     audit, auditLog: () => load().audit.filter(mine),
     // clinics (tenancy)
-    clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic,
+    clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, addProvider, upsertGoogleUser, deleteUser,
