@@ -105,6 +105,19 @@ const LEGACY_STATE = {
     const up = store.upsertGoogleUser({ email: "owner@old.demo", name: "Owner", role: "admin", clinicId: "clinic-owner" });
     R.check("signing in moves it off the demo-clinic fallback", up.user.clinicId === "clinic-owner", up.user.clinicId);
 
+    /* The production sequence that defeated the first attempt at this:
+       a device push stamps every previously-unstamped record with the pusher's
+       clinic, so one demo session wrote clinic-demo onto the owner's account
+       BEFORE it ever signed in. Checking only for "unstamped" then declined to
+       migrate, and the account stayed in the clinic whose admin password is
+       published on the sign-in screen. */
+    store.importAll(JSON.parse(JSON.stringify(LEGACY_STATE)), { preserveSession: false });
+    const stamped = store.getUserByEmail("owner@old.demo");
+    stamped.clinicId = "clinic-demo";   // what a demo session's push does
+    const moved = store.upsertGoogleUser({ email: "owner@old.demo", name: "Owner", role: "admin", clinicId: "clinic-owner" });
+    R.check("an account already stamped into the demo clinic is still moved out",
+      moved.user.clinicId === "clinic-owner", moved.user.clinicId);
+
     // an account that already belongs somewhere is never yanked out of it
     const settled = store.upsertGoogleUser({ email: "owner@old.demo", name: "Owner", role: "admin", clinicId: "clinic-somewhere-else" });
     R.check("an already-placed account is not moved on later sign-ins",

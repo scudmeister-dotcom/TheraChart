@@ -107,6 +107,32 @@
     return (rec && rec.clinicId) || null;
   }
 
+  /* Take up the server's copy after a successful sign-in, merging this device's
+     offline work only when it belongs to the SAME clinic. A device that changes
+     hands between clinics must not carry the previous clinic's records into the
+     new session — that leaks the last user's PHI and the server drops the rows
+     on push anyway.
+
+     Both sign-in paths go through here on purpose. They had drifted: the
+     password path checked the clinic and the Google path did not, so a Google
+     sign-in on a device holding demo-clinic state merged it straight in. */
+  async function adoptAfterLogin(payload, uid) {
+    const localState = S.load();
+    const was = clinicOfState(localState, localState.sessionUserId);
+    const now = clinicOfState(payload.state, uid);
+    const switchedClinic = !!(was && now && was !== now);
+
+    if (sync.dirty && !switchedClinic) {
+      mergeAndAdopt(payload);                 // offline work from before this login
+      const st = S.load(); st.sessionUserId = uid; S.save();
+      await push();
+      return;
+    }
+    adopt(payload);
+    const st = S.load(); st.sessionUserId = uid; S.save();
+    setDirty(0);
+  }
+
   /* ---- adopt / merge ---- */
   function adopt(payload) {
     sync.rev = payload.rev;
@@ -255,31 +281,7 @@
       if (!res.ok) return res.data.error || "Login failed.";
       sync.token = res.data.token;
       lsSet(LS_TOKEN, sync.token);
-      const uid = res.data.userId; // server resolved email -> user id
-      // If this device was last used by a DIFFERENT clinic, its cached state is
-      // not ours to merge: keeping it would carry the previous clinic's records
-      // into this session, and pushing them back just has the server drop them.
-      // Replace the cache outright instead.
-      const localState = S.load();
-      const switchedClinic = (() => {
-        const was = clinicOfState(localState, localState.sessionUserId);
-        const now = clinicOfState(res.data.state, uid);
-        return !!(was && now && was !== now);
-      })();
-      if (sync.dirty && !switchedClinic) {
-        // offline work from before this login: merge it into the server copy
-        mergeAndAdopt(res.data);
-        const st = S.load();
-        st.sessionUserId = uid;
-        S.save();
-        await push();
-      } else {
-        adopt(res.data);
-        const st = S.load();
-        st.sessionUserId = uid;
-        S.save();
-        setDirty(0);
-      }
+      await adoptAfterLogin(res.data, res.data.userId);
       return null;
     } catch (e) {
       goOffline("server unreachable during login");
@@ -298,16 +300,7 @@
       if (!res.ok) return (res.data && res.data.error) || "Google sign-in failed.";
       sync.token = res.data.token;
       lsSet(LS_TOKEN, sync.token);
-      const uid = res.data.userId; // server resolved the Google email -> user id
-      if (sync.dirty) {
-        mergeAndAdopt(res.data);
-        const st = S.load(); st.sessionUserId = uid; S.save();
-        await push();
-      } else {
-        adopt(res.data);
-        const st = S.load(); st.sessionUserId = uid; S.save();
-        setDirty(0);
-      }
+      await adoptAfterLogin(res.data, res.data.userId);
       return null;
     } catch (_) {
       return "Couldn't reach the clinic server for Google sign-in.";

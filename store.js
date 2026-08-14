@@ -626,11 +626,21 @@
       user.authProvider = "google";
       if (sub) user.googleSub = sub;
       delete user.mustChangePassword; // Google users have no password to set
-      // Migrate accounts created before tenancy: an un-stamped user falls back
-      // to the demo clinic, which is precisely what we're moving them out of.
-      // An account that already has a clinic is never moved — that would yank
-      // a working user out of their colleagues' data on a routine sign-in.
-      if (!user.clinicId) user.clinicId = clinicId;
+      /* A Google sign-in must never sit in the seeded demo clinic: those logins
+         and their password are printed on the sign-in screen, so real records
+         there would be under a publicly known admin account.
+
+         Checking only for an UNSTAMPED user was not enough. Any device push
+         stamps previously-unstamped records with the pusher's clinic, so a
+         single demo session was enough to write clinic-demo onto every legacy
+         account — including this one — before it ever signed in, after which
+         the migration silently declined to run. Treat "in the demo clinic" and
+         "unstamped" as the same case.
+
+         Any OTHER clinic is still left alone: a routine sign-in must not yank
+         someone out of their colleagues' data. Set GOOGLE_CLINIC_ID=clinic-demo
+         to opt out of the move entirely. */
+      if (!user.clinicId || user.clinicId === DEFAULT_CLINIC) user.clinicId = clinicId;
       touch(user);
       save();
       audit(user.id, "login", "google");
