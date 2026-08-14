@@ -309,6 +309,21 @@
 
   /* Re-authenticate the current user (for e-signing / amending). Server-side
      when online (passwords are hashed there); local check in demo mode. */
+  /* Re-authenticate a Google account for e-signing, using a fresh ID token.
+     Returns { ok } or { ok:false, error }. There is no offline fallback: a
+     Google token can only be checked against Google's keys, so a device that
+     can't reach the server can't complete a signature this way. */
+  sync.verifyGoogle = async (credential) => {
+    if (sync.mode !== "server") return { ok: false, error: "Signing with Google needs the clinic server." };
+    try {
+      const res = await api("/api/verify-google", { method: "POST", body: { credential } });
+      if (!res.ok) return { ok: false, error: (res.data && res.data.error) || "Couldn't verify that Google account." };
+      return res.data && res.data.ok ? { ok: true } : { ok: false, error: (res.data && res.data.error) || "Google verification failed." };
+    } catch (_) {
+      return { ok: false, error: "Couldn't reach the clinic server to verify." };
+    }
+  };
+
   sync.verifyPassword = async (pw) => {
     const u = S.currentUser();
     if (!u) return false;

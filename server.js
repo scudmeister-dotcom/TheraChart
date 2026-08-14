@@ -913,6 +913,29 @@ const server = http.createServer(async (req, res) => {
         });
         return res.end(f.buffer);
       }
+      if (url.pathname === "/api/verify-google" && req.method === "POST") {
+        /* Re-authenticate the SIGNED-IN user with a fresh Google ID token, for
+           e-signing and amending. A Google account has no password, so the
+           usual /api/verify-password can never pass for one — re-confirming
+           with the same provider they signed in with is the equivalent act.
+
+           The token must belong to THIS user: a valid Google token proves only
+           that somebody has a Google account, so the verified email has to
+           match the session's, or anyone could sign another clinician's note
+           from their own Google login. */
+        if (!GOOGLE_CLIENT_ID) return json(res, 503, { error: "Google sign-in isn't configured on this server." });
+        const { credential } = await readBody(req);
+        let claims;
+        try { claims = await verifyGoogleIdToken(credential); }
+        catch (e) { return json(res, 200, { ok: false, error: "Google couldn't verify that (" + e.message + ")." }); }
+        const same = String(claims.email || "").trim().toLowerCase() === String(user.email || "").trim().toLowerCase();
+        if (!same) {
+          store.audit(user.id, "esign-verify-failed", `google account ${claims.email} does not match ${user.email}`);
+          bumpRev();
+          return json(res, 200, { ok: false, error: "That Google account isn't the one signed in here." });
+        }
+        return json(res, 200, { ok: true });
+      }
       if (url.pathname === "/api/set-password" && req.method === "POST") {
         // self-service change (needs current password), or an admin setting
         // another user's password (needs the admin role, no current password).

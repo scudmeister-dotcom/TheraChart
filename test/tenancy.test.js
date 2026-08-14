@@ -37,7 +37,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function boot(dataDir, port) {
   const child = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
-    env: { ...process.env, THERACHART_DATA: dataDir, PORT: String(port), GEMINI_API_KEY: "", GCP_PROJECT: "" },
+    env: { ...process.env, THERACHART_DATA: dataDir, PORT: String(port), GEMINI_API_KEY: "", GCP_PROJECT: "",
+      // a client id so /api/verify-google validates rather than short-circuiting
+      // with "Google sign-in isn't configured"
+      GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
@@ -311,6 +314,26 @@ async function boot(dataDir, port) {
       const theirs = await call(`/api/files?key=${encodeURIComponent(up.data.key)}`, { token: fToken, raw: true });
       check("another clinic cannot download it", theirs.status === 404, `-> ${theirs.status}`);
     }
+
+    /* ---- e-sign re-auth for Google accounts ------------------------------ */
+    // A Google account has no password, so /api/verify-password can never pass
+    // for one; /api/verify-google re-confirms with the same provider instead.
+    // The happy path needs a real Google token and can't be tested here — but
+    // every way it must REFUSE can be.
+    const vg = (token, body) => call("/api/verify-google", { method: "POST", token, body });
+    check("verify-google refuses an unauthenticated caller",
+      (await call("/api/verify-google", { method: "POST", body: { credential: "x" } })).status === 401);
+    for (const [label, cred] of [["a missing credential", undefined], ["an empty credential", ""],
+                                 ["a junk credential", "not-a-jwt"], ["a malformed JWT", "aaa.bbb.ccc"]]) {
+      const r = await vg(mToken, { credential: cred });
+      check(`verify-google rejects ${label}`, r.status === 200 && r.data && r.data.ok === false,
+        `${r.status} ${JSON.stringify(r.data)}`);
+    }
+    // and a password account is unaffected — it still verifies by password
+    const okPw = await call("/api/verify-password", { method: "POST", token: mToken, body: { password: "1234" } });
+    check("a password account still verifies by password", okPw.status === 200 && okPw.data.ok === true, JSON.stringify(okPw.data));
+    const badPw = await call("/api/verify-password", { method: "POST", token: mToken, body: { password: "wrong" } });
+    check("a wrong password is still refused", badPw.data.ok === false);
 
     /* ---- the static handler serves the app, not the server -------------- */
     // ROOT holds the server and its tooling as well as the web app, so a

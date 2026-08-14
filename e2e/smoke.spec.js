@@ -205,6 +205,46 @@ test.describe("TheraChart", () => {
     expect(canDoc, "a licensed admin should be able to create clinical documents").toBe(true);
   });
 
+  test("a Google account is asked to confirm with Google, not for a password", async ({ page }) => {
+    // A Google account has no password at all, so the e-sign dialog's password
+    // field could never be satisfied — the account could write a note and then
+    // never sign it. The dialog must offer Google re-confirmation instead.
+    await signIn(page, "maria@therachart.demo");
+
+    const docId = await store(page, () => {
+      const S = window.TheraStore;
+      const p = S.patients()[0];
+      const r = S.createDoc(p.id, "daily", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+
+    // turn this account into exactly the shape a Google sign-in produces
+    await store(page, () => {
+      const S = window.TheraStore;
+      const raw = S.getUser(S.currentUser().id);
+      raw.authProvider = "google";
+      delete raw.passwordHash;
+      delete raw.pin;
+      S.save();
+    });
+
+    await page.goto(`/#/doc/${docId}`);
+    await page.locator("#typedDictation").fill("left knee is sore after walking");
+    await page.locator("#typedDictationAdd").click();
+    await page.locator("#signBtn").click();
+
+    // no password box, a Google confirmation area instead, and signing is
+    // disabled until that confirmation succeeds
+    await expect(page.locator("#sigPin")).toHaveCount(0);
+    await expect(page.locator("#sigGoogle")).toBeVisible();
+    await expect(page.locator("#sigOk")).toBeDisabled();
+    await expect(page.locator(".modal, [class*=modal]").first()).toContainText(/confirm with google/i);
+
+    // and the note is still a draft — nothing was signed without confirmation
+    const status = await store(page, (id) => (window.TheraStore.getDoc(id) || {}).status, docId);
+    expect(status).toBe("draft");
+  });
+
   test("facility settings belong to one clinic only", async ({ page, request }) => {
     await signIn(page, "grace@therachart.demo"); // clinic-demo admin
     await page.goto("/#/facility");

@@ -699,6 +699,57 @@
      its callback. On success the server verifies the returned ID token, maps the
      email to a role (allowlist), and hands back a session — then we splash into
      the app, exactly like a password sign-in. The GIS library is loaded once. */
+  /* Make sure the GIS library is loaded and initialized, wherever we are in the
+     app — mountGoogleButton only runs on the login card, so by the time someone
+     signs a note the library may never have been initialized at all.
+     Calls back with true once google.accounts.id is ready to render a button. */
+  function ensureGis(clientId, cb) {
+    const ready = () => !!(window.google && google.accounts && google.accounts.id);
+    if (!clientId) return cb(false);
+    if (ready()) return cb(true);
+    if (!document.getElementById("gsiScript")) {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true; s.defer = true; s.id = "gsiScript";
+      s.onload = () => cb(ready());
+      s.onerror = () => cb(false);
+      document.head.appendChild(s);
+      return;
+    }
+    // script tag present but the library is still initialising
+    const t = setInterval(() => { if (ready()) { clearInterval(t); cb(true); } }, 150);
+    setTimeout(() => { clearInterval(t); if (!ready()) cb(false); }, 5000);
+  }
+
+  /** Does this account sign in with Google (and so have no password to re-enter)? */
+  const isGoogleAccount = (u) => !!u && u.authProvider === "google" && !u.passwordHash && !u.pin;
+
+  /* Render a Google button inside a modal that yields a FRESH id token and
+     verifies it against the signed-in account server-side. This is how a
+     Google user re-authenticates to e-sign: they have no password, so
+     /api/verify-password can never pass for them.
+     onResult receives { ok } or { ok:false, error }. */
+  function mountGoogleReauth(el, onResult) {
+    const clientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
+    el.textContent = "Loading Google…";
+    ensureGis(clientId, (ok) => {
+      if (!ok) {
+        el.innerHTML = '<div class="banner warn" style="margin:0">Couldn\'t load Google sign-in, so this signature can\'t be confirmed right now. Check your connection and reopen this dialog.</div>';
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (resp) => {
+          el.textContent = "Confirming with Google…";
+          const r = await window.TheraSync.verifyGoogle(resp.credential);
+          onResult(r);
+        },
+      });
+      el.innerHTML = "";
+      google.accounts.id.renderButton(el, { theme: "outline", size: "large", text: "continue_with", width: 280 });
+    });
+  }
+
   function mountGoogleButton(clientId) {
     const onCredential = async (resp) => {
       const err = document.getElementById("loginErr");
@@ -4130,16 +4181,38 @@ ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending >
 ${blanks.length ? `<div class="banner warn">△ Still empty: <b>${blanks.map(esc).join(", ")}</b>. You can sign anyway, but filling these in now avoids an amendment later.</div>` : ""}
 <p style="font-size:13px; color:var(--muted)">Signing certifies this documentation is accurate and complete. The document will lock; later changes require a signed amendment with an authorization reason.</p>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="sigName" autocomplete="off" /></div>
-<div class="field"><label>Password</label><input id="sigPin" type="password" autocomplete="current-password" /></div>
+${isGoogleAccount(user)
+  ? `<div class="field"><label>Confirm it's you</label>
+       <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
+       <div id="sigGoogle"></div></div>`
+  : `<div class="field"><label>Password</label><input id="sigPin" type="password" autocomplete="current-password" /></div>`}
 <div class="error" id="sigErr"></div>
 <div class="modal-actions">
   <button class="btn" id="sigCancel">Cancel</button>
-  <button class="btn primary" id="sigOk">✒ Sign &amp; lock</button>
+  <button class="btn primary" id="sigOk"${isGoogleAccount(user) ? " disabled" : ""}>✒ Sign &amp; lock</button>
 </div>`);
+    // A Google account has no password, so /api/verify-password can never pass
+    // for one. Re-confirm with the same provider they signed in with, then
+    // enable the sign button.
+    let googleConfirmed = false;
+    if (isGoogleAccount(user)) {
+      mountGoogleReauth(m.querySelector("#sigGoogle"), (r) => {
+        const err = m.querySelector("#sigErr");
+        if (!r.ok) { err.textContent = r.error || "Google verification failed."; return; }
+        googleConfirmed = true;
+        err.style.color = "var(--ok, green)";
+        err.textContent = "✓ Confirmed with Google — you can sign now.";
+        m.querySelector("#sigGoogle").innerHTML = '<div class="chip good">Confirmed</div>';
+        m.querySelector("#sigOk").disabled = false;
+      });
+    }
     m.querySelector("#sigCancel").addEventListener("click", closeModal);
     m.querySelector("#sigOk").addEventListener("click", async () => {
       const err = m.querySelector("#sigErr");
-      if (!(await window.TheraSync.verifyPassword(m.querySelector("#sigPin").value))) { err.textContent = "Incorrect password."; return; }
+      err.style.color = "";
+      if (isGoogleAccount(user)) {
+        if (!googleConfirmed) { err.textContent = "Confirm with Google first."; return; }
+      } else if (!(await window.TheraSync.verifyPassword(m.querySelector("#sigPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.signDoc(doc.id, user, m.querySelector("#sigName").value, "");
       if (res.error) { err.textContent = res.error; return; }
       deleteSessionAudio(doc.id); // signing locks the note — the review audio is no longer needed
@@ -4155,16 +4228,36 @@ ${blanks.length ? `<div class="banner warn">△ Still empty: <b>${blanks.map(esc
 <div class="field"><label>Amendment text *</label><textarea id="amText" rows="3"></textarea></div>
 <div class="field"><label>Authorization reason *</label><input id="amReason" placeholder="e.g. Documentation error, late entry…" /></div>
 <div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="amName" autocomplete="off" /></div>
-<div class="field"><label>Password</label><input id="amPin" type="password" autocomplete="current-password" /></div>
+${isGoogleAccount(user)
+  ? `<div class="field"><label>Confirm it's you</label>
+       <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
+       <div id="amGoogle"></div></div>`
+  : `<div class="field"><label>Password</label><input id="amPin" type="password" autocomplete="current-password" /></div>`}
 <div class="error" id="amErr"></div>
 <div class="modal-actions">
   <button class="btn" id="amCancel">Cancel</button>
-  <button class="btn primary" id="amOk">✒ Sign amendment</button>
+  <button class="btn primary" id="amOk"${isGoogleAccount(user) ? " disabled" : ""}>✒ Sign amendment</button>
 </div>`);
+    // same reasoning as signModal: a Google account has no password to re-enter
+    let amGoogleConfirmed = false;
+    if (isGoogleAccount(user)) {
+      mountGoogleReauth(m.querySelector("#amGoogle"), (r) => {
+        const err = m.querySelector("#amErr");
+        if (!r.ok) { err.textContent = r.error || "Google verification failed."; return; }
+        amGoogleConfirmed = true;
+        err.style.color = "var(--ok, green)";
+        err.textContent = "✓ Confirmed with Google — you can sign the amendment now.";
+        m.querySelector("#amGoogle").innerHTML = '<div class="chip good">Confirmed</div>';
+        m.querySelector("#amOk").disabled = false;
+      });
+    }
     m.querySelector("#amCancel").addEventListener("click", closeModal);
     m.querySelector("#amOk").addEventListener("click", async () => {
       const err = m.querySelector("#amErr");
-      if (!(await window.TheraSync.verifyPassword(m.querySelector("#amPin").value))) { err.textContent = "Incorrect password."; return; }
+      err.style.color = "";
+      if (isGoogleAccount(user)) {
+        if (!amGoogleConfirmed) { err.textContent = "Confirm with Google first."; return; }
+      } else if (!(await window.TheraSync.verifyPassword(m.querySelector("#amPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.amendDoc(doc.id, user, m.querySelector("#amName").value,
         m.querySelector("#amText").value, m.querySelector("#amReason").value);
       if (res.error) { err.textContent = res.error; return; }
