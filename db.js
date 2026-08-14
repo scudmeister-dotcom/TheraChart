@@ -71,20 +71,54 @@ function createDb() {
     while (dirty.size || deleted.size) {
       const writes = [...dirty]; dirty.clear();
       const dels = [...deleted]; deleted.clear();
-      for (const name of writes) {
-        // a delete queued after this write wins — skip the stale upsert
-        if (deleted.has(name)) continue;
-        await client.query(
-          "INSERT INTO kv (name, value, updated_at) VALUES ($1, $2, now()) " +
-          "ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
-          [name, cache.get(name)]
-        );
-      }
-      for (const name of dels) {
-        if (dirty.has(name)) continue; // a re-write queued after the delete wins
-        await client.query("DELETE FROM kv WHERE name = $1", [name]);
+      try {
+        for (const name of writes) {
+          // a delete queued after this write wins — skip the stale upsert
+          if (deleted.has(name)) continue;
+          await client.query(
+            "INSERT INTO kv (name, value, updated_at) VALUES ($1, $2, now()) " +
+            "ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+            [name, cache.get(name)]
+          );
+        }
+        for (const name of dels) {
+          if (dirty.has(name)) continue; // a re-write queued after the delete wins
+          await client.query("DELETE FROM kv WHERE name = $1", [name]);
+        }
+      } catch (e) {
+        /* Re-queue whatever this pass was carrying. The names are drained from
+           `dirty` BEFORE the query runs, so without this a single failed flush
+           discards them permanently: the value sits in memory looking saved and
+           never reaches the database even once it is reachable again. Re-adding
+           an entry that did land is harmless — the upsert is idempotent. */
+        for (const n of writes) if (!deleted.has(n)) dirty.add(n);
+        for (const n of dels) if (!dirty.has(n)) deleted.add(n);
+        throw e;
       }
     }
+  }
+
+  /* Force everything pending to the database NOW and REPORT whether it landed.
+
+     The debounced write-behind path above is right for throughput but wrong as
+     an acknowledgement. set() returns the moment memory is updated, so a caller
+     can answer "saved" while the row is still queued — and if the database is
+     unreachable the change is dropped with nothing but a log line. That is not
+     hypothetical: with Cloud SQL stopped and the instance still warm, the app
+     accepted logins and state pushes and returned 200 for every one of them,
+     while `[db] flush failed: ECONNREFUSED` scrolled past in the logs. The data
+     would have died with the container.
+
+     Any request that is about to tell a clinician their record is saved must
+     await this and surface a failure instead. Unlike flush(), this REJECTS. */
+  async function flushNow() {
+    if (backend !== "postgres") return;      // the file backend writes synchronously
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    // Chain onto any in-flight flush so ordering holds. The second handler
+    // retries after an earlier failure rather than inheriting its rejection.
+    const run = flushChain.then(doFlush, doFlush);
+    flushChain = run.catch(() => { });        // keep the background chain usable
+    await run;
   }
 
   const pgGet = (name) => (cache.has(name) ? cache.get(name) : null);
@@ -136,7 +170,7 @@ function createDb() {
     if (client && client.end) { try { await client.end(); } catch { } }
   }
 
-  return { init, get, set, del, flush, close, info, KEYS, FILE_NAMES };
+  return { init, get, set, del, flush, flushNow, close, info, KEYS, FILE_NAMES };
 }
 
 module.exports = createDb();

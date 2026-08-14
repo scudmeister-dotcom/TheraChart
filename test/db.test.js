@@ -100,6 +100,66 @@ function mockClient(seed = {}) {
   check("close() flushes pending writes", closing.table.get("store") === "final");
   check("close() ends the pool", closing.ended === true);
 
+  /* ---- flushNow(): a write must not be acknowledged before it lands -------
+     The background flush swallows errors by design, so with the database down
+     the app kept answering 200 while `[db] flush failed: ECONNREFUSED` scrolled
+     past — the data died with the container. flushNow() is what the request
+     handlers await before telling a clinician their note is saved, so unlike
+     flush() it has to REJECT. */
+  {
+    // a client that accepts the initial CREATE/SELECT then refuses writes,
+    // exactly like Cloud SQL being stopped under a still-warm instance
+    let live = true;
+    const flaky = {
+      table: new Map(),
+      async query(sql, params) {
+        if (/CREATE TABLE/i.test(sql)) return { rows: [] };
+        if (/^\s*SELECT/i.test(sql)) return { rows: [] };
+        if (!live) throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+        if (/^\s*INSERT/i.test(sql)) { this.table.set(params[0], params[1]); return { rows: [] }; }
+        if (/^\s*DELETE/i.test(sql)) { this.table.delete(params[0]); return { rows: [] }; }
+        return { rows: [] };
+      },
+      async end() { },
+    };
+    const fdb = createDb();
+    await fdb.init({ dataDir: dir, client: flaky, onError: () => { } });
+
+    fdb.set("store", "healthy");
+    let ok = true;
+    try { await fdb.flushNow(); } catch { ok = false; }
+    check("flushNow resolves when the write lands", ok && flaky.table.get("store") === "healthy");
+
+    live = false;
+    fdb.set("store", "written-while-db-is-down");
+    let threw = false;
+    try { await fdb.flushNow(); } catch { threw = true; }
+    check("flushNow REJECTS when the database is unreachable", threw);
+    check("the failed write is not in the database", flaky.table.get("store") === "healthy");
+    check("but memory still holds it, so a retry can succeed", fdb.get("store") === "written-while-db-is-down");
+
+    live = true;
+    let recovered = true;
+    try { await fdb.flushNow(); } catch { recovered = false; }
+    check("a later flushNow retries the write that failed", recovered);
+    check("and the value finally lands", flaky.table.get("store") === "written-while-db-is-down");
+
+    // the background path must stay usable after a rejection
+    fdb.set("rev", "9");
+    await fdb.flush();
+    check("the background flush still works after a failure", flaky.table.get("rev") === "9");
+  }
+
+  // the file backend writes synchronously, so flushNow is a no-op that resolves
+  {
+    const fdb2 = createDb();
+    await fdb2.init({ dataDir: dir });
+    fdb2.set("rev", "3");
+    let ok = true;
+    try { await fdb2.flushNow(); } catch { ok = false; }
+    check("flushNow is a resolved no-op on the file backend", ok);
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
 
   console.log(`TheraChart db checker: ${passed}/${passed + failures.length} checks passed`);

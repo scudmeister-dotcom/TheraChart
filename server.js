@@ -770,6 +770,31 @@ function fail(res, code, message, e, req) {
   return json(res, code, { error: message, ref });
 }
 
+/* Confirm a change is durably stored BEFORE telling the client it saved.
+
+   db.js keeps a write-behind cache, so store.save() returns as soon as memory
+   is updated and the row is written in the background. When the database is
+   unreachable that write is discarded with only a log line — which means a
+   clinician can sign a note, see the green "Synced with clinic server" badge,
+   and lose the record when the container restarts.
+
+   Applied to the endpoints that carry clinical data or credentials. Login is
+   deliberately NOT gated: its only write is an audit row, and being able to
+   READ charts through a brief database blip is worth more clinically than
+   refusing to open the app. The first write after that will still fail loudly.
+
+   Returns true when the change is safely stored; when false, a response has
+   already been sent and the caller must return. */
+async function persisted(res, req) {
+  try { await db.flushNow(); return true; }
+  catch (e) {
+    fail(res, 503,
+      "Your change was NOT saved to the clinic server — its database is unreachable. Do not rely on this record; try again once the server is back.",
+      e, req);
+    return false;
+  }
+}
+
 function readBody(req, limit = 15 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -954,6 +979,7 @@ const server = http.createServer(async (req, res) => {
         const result = store.setPassword(targetId, newPassword, user, { mustChange }); // hashes + audits
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
+        if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev });
       }
       if (url.pathname === "/api/users" && req.method === "POST") {
@@ -961,6 +987,7 @@ const server = http.createServer(async (req, res) => {
         const result = store.addUser(await readBody(req), user); // password hashed server-side
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
+        if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev, userId: result.user.id });
       }
       if (url.pathname === "/api/delete-user" && req.method === "POST") {
@@ -970,6 +997,7 @@ const server = http.createServer(async (req, res) => {
         const result = store.deleteUser(userId, user);
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
+        if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev });
       }
       if (url.pathname === "/api/refine" && req.method === "POST") {
@@ -1106,6 +1134,7 @@ const server = http.createServer(async (req, res) => {
         // which is the copy that actually gets imported)
         store.save();
         bumpRev();
+        if (!(await persisted(res, req))) return;   // never acknowledge an unsaved chart
         audioSweep().catch((e) => console.error("[audio] sweep failed:", e.message)); // drop audio for notes just signed
         return json(res, 200, { rev });
       }
