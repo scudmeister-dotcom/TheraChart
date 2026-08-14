@@ -164,6 +164,47 @@ test.describe("TheraChart", () => {
     await expect(page.locator("#typedDictation")).toHaveCount(0);
   });
 
+  test("an account with no license on file can still be given one", async ({ page }) => {
+    // Google accounts are created with license: null. The staff row used to
+    // render the license inputs only `if (u.license)`, so those accounts had
+    // no way to add one — and canDocument() then blocks every clinical note.
+    // A sole admin hit this as a hard deadlock: no fields, nobody else to ask.
+    await signIn(page, "grace@therachart.demo");
+
+    await store(page, () => {
+      const S = window.TheraStore;
+      const me = S.currentUser();
+      const raw = S.getUser(me.id);
+      raw.license = null;          // exactly the shape a Google sign-in produces
+      S.save();
+    });
+
+    await page.goto("/#/facility");
+    const uid = await store(page, () => window.TheraStore.currentUser().id);
+
+    // the fields must be there even with nothing on file
+    const num = page.locator(`[data-lic-num="${uid}"]`);
+    const exp = page.locator(`[data-lic-exp="${uid}"]`);
+    await expect(num).toBeVisible();
+    await expect(exp).toBeVisible();
+    await expect(num).toHaveValue("");
+
+    await num.fill("PT-0012345");
+    await exp.fill("2099-01-01");
+    await page.locator(`[data-save-user="${uid}"]`).click();
+
+    await expect
+      .poll(async () => store(page, (id) => {
+        const l = (window.TheraStore.getUser(id) || {}).license;
+        return l && l.number;
+      }, uid), { message: "the license should save", timeout: 10_000 })
+      .toBe("PT-0012345");
+
+    // and the account can document again
+    const canDoc = await store(page, () => window.TheraStore.canDocument(window.TheraStore.currentUser()));
+    expect(canDoc, "a licensed admin should be able to create clinical documents").toBe(true);
+  });
+
   test("facility settings belong to one clinic only", async ({ page, request }) => {
     await signIn(page, "grace@therachart.demo"); // clinic-demo admin
     await page.goto("/#/facility");

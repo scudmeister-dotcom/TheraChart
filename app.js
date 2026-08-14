@@ -4824,10 +4824,11 @@ ${accessRequestsCard(user)}
           ${u.mustChangePassword ? '<span class="chip warn">must set password</span>' : ""}
         </div>
         <div style="margin-top:6px"><div class="field" style="margin-bottom:4px"><label>Login email</label><input data-email="${u.id}" type="email" autocapitalize="off" spellcheck="false" value="${esc(u.email || "")}" /></div></div>
-        ${u.license ? `<div class="field-row" style="margin-top:8px">
-          <div class="field" style="margin-bottom:4px"><label>License number</label><input data-lic-num="${u.id}" value="${esc(u.license.number)}" /></div>
-          <div class="field" style="margin-bottom:4px"><label>Expires</label><input data-lic-exp="${u.id}" type="date" value="${esc(u.license.expires)}" /></div>
-        </div>` : ""}
+        ${u.role !== "frontdesk" ? `<div class="field-row" style="margin-top:8px">
+          <div class="field" style="margin-bottom:4px"><label>License number</label><input data-lic-num="${u.id}" value="${esc((u.license && u.license.number) || "")}" placeholder="e.g. PT-0012345" /></div>
+          <div class="field" style="margin-bottom:4px"><label>Expires</label><input data-lic-exp="${u.id}" type="date" value="${esc((u.license && u.license.expires) || "")}" /></div>
+        </div>
+        ${!u.license ? '<div class="banner warn" style="margin-top:6px">No license on file — this account can open charts but cannot create or sign clinical documents until one is added.</div>' : ""}` : ""}
         <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap">
           <button class="btn small" data-save-user="${u.id}">Save</button>
           <button class="btn small ${u.active ? "danger" : ""}" data-toggle-user="${u.id}">${u.active ? "Void access" : "Restore access"}</button>
