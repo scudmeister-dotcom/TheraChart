@@ -129,6 +129,50 @@ test.describe("TheraChart", () => {
     await expect(page.locator("body")).toContainText("reach overhead");
   });
 
+  /* A therapist reads measurements out in a run — the joint once, then the
+     motions, with the unit dropped after the first. This filed only the first
+     number and lost the side off the muscle grade entirely, which a live
+     dictation against Vertex surfaced: three measurements spoken, one stored,
+     and no error to say the rest had gone. */
+  test("a run of dictated measurements is filed in full, with sides", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+
+    const docId = await store(page, () => {
+      const S = window.TheraStore;
+      const p = S.patients()[0];
+      const r = S.createDoc(p.id, "daily", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.goto(`/#/doc/${docId}`);
+
+    await page.locator("#typedDictation").fill(
+      "right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5"
+    );
+    await page.locator("#typedDictationAdd").click();
+
+    const meas = page.locator("#measTable");
+    // both angles, not just the first
+    await expect(meas).toContainText("90°");
+    await expect(meas).toContainText("45°");
+    await expect(meas).toContainText("abduction");
+    await expect(meas).toContainText("external rotation");
+    // the muscle grade, carrying the side it was measured on
+    await expect(meas).toContainText("4/5");
+    await expect(meas).toContainText("deltoid");
+
+    const filed = await store(page, (id) => {
+      const d = window.TheraStore.getDoc(id).data || {};
+      return {
+        rom: (d.rom || []).map((r) => `${r.side}|${r.joint}|${r.motion}|${r.degrees}`),
+        mmt: (d.mmt || []).map((r) => `${r.side}|${r.context}|${r.grade}`),
+      };
+    }, docId);
+
+    expect(filed.rom).toContain("right|shoulder|abduction|90");
+    expect(filed.rom).toContain("right|shoulder|external rotation|45");
+    expect(filed.mmt.join(",")).toContain("right|deltoid|4/5");
+  });
+
   test("signing a note locks it", async ({ page, request }) => {
     await signIn(page, "maria@therachart.demo");
 

@@ -289,14 +289,76 @@
    *  Clinical measurements (ROM, MMT, pain rating, special tests)
    * ---------------------------------------------------------------- */
 
-  const ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS})\\s+)?` +
-      `(shoulder|knee|hip|elbow|ankle|wrist|neck|cervical|lumbar|trunk|balikat|abaga|tuhod|siko|leeg|liog)\\s+` +
-      `(flexion|extension|abduction|adduction|internal rotation|external rotation|rotation|dorsiflexion|plantar\\s?flexion|supination|pronation|lateral flexion)` +
-      `(?:\\s+(?:is|was|to|at|measured|limited|now|about|around|approximately))*\\s+(\\d{1,3})\\s*degrees?\\b`,
-    "gi"
-  );
-  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*((?:[0-5]|zero|one|two|three|four|five)(?:\s*(?:plus|minus)|[+-])?)\s*(?:out of|\/)\s*(?:5|five)\b/gi;
+  /* ROM is dictated with the joint stated ONCE and then a run of motions:
+
+       "right shoulder abduction is 90 degrees, external rotation 45,
+        flexion 120"
+
+     The original pattern required a joint immediately before every motion, so
+     only the first measurement in a run was ever captured and everything after
+     it was silently dropped — the therapist watched three numbers go in and one
+     come out. Worse, pure shorthand ("abduction 90 degrees, ER 45") captured
+     nothing at all, which is how the measurement tables came back empty on a
+     real dictation.
+
+     So there are two passes. JOINT_ROM_RE is the explicit form and still wins.
+     BARE_ROM_RE catches a motion with no joint of its own and inherits the
+     nearest joint (and side) stated EARLIER in the same utterance — never a
+     later one, and never across an utterance boundary, because inventing a
+     joint is worse than dropping the number. */
+  const ROM_JOINTS = "shoulder|knee|hip|elbow|ankle|wrist|neck|cervical|lumbar|trunk|balikat|abaga|tuhod|siko|leeg|liog";
+  const ROM_MOTIONS =
+    "flexion|extension|abduction|adduction|internal rotation|external rotation|rotation|" +
+    "dorsiflexion|plantar\\s?flexion|supination|pronation|lateral flexion|" +
+    // the abbreviations therapists actually say out loud
+    "int(?:ernal)?\\.?\\s?rot(?:ation)?|ext(?:ernal)?\\.?\\s?rot(?:ation)?|ir|er|abd|add|flex|ext|df|pf";
+  const ROM_FILLER = "(?:\\s+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
+  const ROM_DEGREES = "\\s*(?:=|:)?\\s*(\\d{1,3})\\s*(?:degrees?|deg\\b|°)";
+  /* The same number with the unit left off. A therapist says the unit once and
+     then reels off the rest — "abduction 90 degrees, external rotation 45,
+     flexion 120" — so requiring "degrees" every time dropped all but the first.
+     Guarded by a lookahead so a muscle grade ("flexion 4 out of 5"), a
+     percentage or a date can't be read as an angle, and only ever used in a
+     text that already carries one explicit degrees reading (see pass 2b). */
+  const ROM_BARE_NUM = "\\s*(?:=|:)?\\s*(\\d{1,3})\\b(?!\\s*(?:out\\s+of|/|%|:|degrees?\\w))";
+  // joints are dictated singular or plural ("both shoulders flexion 150")
+  const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
+
+  const JOINT_ROM_RE = new RegExp(
+    `\\b(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+  const BARE_ROM_RE = new RegExp(
+    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+  const BARE_ROM_NOUNIT_RE = new RegExp(
+    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_BARE_NUM}`, "gi");
+  // where a joint (with any side stated on it) is named, so a bare motion can
+  // look backwards and inherit it
+  const JOINT_ANCHOR_RE = new RegExp(`\\b(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})\\b`, "gi");
+
+  /* Abbreviations normalise to the full motion name so "ER 45" and "external
+     rotation 45" aggregate as the same measurement rather than two. */
+  const MOTION_ALIASES = {
+    ir: "internal rotation", er: "external rotation", abd: "abduction", add: "adduction",
+    flex: "flexion", ext: "extension", df: "dorsiflexion", pf: "plantarflexion",
+    "int rot": "internal rotation", "int rotation": "internal rotation", "internal rot": "internal rotation",
+    "ext rot": "external rotation", "ext rotation": "external rotation", "external rot": "external rotation",
+  };
+  const normMotion = (raw) => {
+    const k = String(raw).toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+    return MOTION_ALIASES[k] || k;
+  };
+  /* "out of 5", "/5" and the spoken "over 5" are the same grade. "over" was
+     missing, so "strength 4 over 5" — a normal way to say it out loud, and what
+     Cloud dictation transcribes — produced no measurement at all. */
+  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt|lakas)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*((?:[0-5]|zero|one|two|three|four|five)(?:\s*(?:plus|minus)|[+-])?)\s*(?:out\s+of|over|\/)\s*(?:5|five)\b/gi;
+  /* The muscle is often named AFTER the grade, especially in Taglish word order
+     — "strength 4 over 5 sa deltoid". Without this the grade was filed with no
+     muscle attached, which makes it useless for tracking a specific weakness. */
+  /* Both groups are optional and the side is not required to have a word after
+     it — "…4 out of 5 on the right" ends there, and demanding a trailing muscle
+     made the side unreadable at the end of a sentence. */
+  const MMT_TRAIL_RE = new RegExp(
+    `^[\\s,]*(?:on|of|for|in|sa|ang|ng)?\\s*(?:the|his|her|their)?\\s*` +
+    `(?:(${SIDE_WORDS})\\b\\s*)?((?:[A-Za-z][\\w-]*)(?:\\s+[A-Za-z][\\w-]*){0,2})?`, "i");
   // an "X out of 5" only counts as MMT when the surrounding words are about
   // strength — "he has 5 out of 5 kids" is not a muscle grade
   const MMT_CONTEXT_RE = /\b(?:strength|mmt|grade[ds]?|quad|hamstring|bicep|tricep|delt|glute|grip|flexor|extensor|abductor|adductor|abduction|adduction|flexion|extension|rotation|rotator|trap|calf|gastroc|soleus|tibialis|serratus|lats?|pecs?|core|hip|knee|shoulder|elbow|wrist|ankle|neck|dorsiflex|plantarflex)\w*/i;
@@ -342,16 +404,61 @@
     const special = [];
     const pain = [];
 
-    ROM_RE.lastIndex = 0;
-    let m;
-    while ((m = ROM_RE.exec(text)) !== null) {
-      const degrees = Number(m[4]);
-      if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
-      const side = sideWord(m[1]);
-      const entry = { joint: m[2].toLowerCase(), motion: m[3].toLowerCase().replace(/\s+/g, " "), degrees };
+    /* Every joint named in this text, with the side attached to it, so a bare
+       motion can inherit from the nearest one BEFORE it. */
+    const anchors = [];
+    JOINT_ANCHOR_RE.lastIndex = 0;
+    let a;
+    while ((a = JOINT_ANCHOR_RE.exec(text)) !== null) {
+      anchors.push({ at: a.index, side: sideWord(a[1]), joint: a[2].toLowerCase().replace(/s$/, "") });
+    }
+    const anchorBefore = (idx) => {
+      let found = null;
+      for (const an of anchors) { if (an.at <= idx) found = an; else break; }
+      return found;
+    };
+
+    const pushRom = (side, joint, motion, degrees) => {
+      const entry = { joint, motion, degrees };
       if (side === "both") rom.push({ side: "left", ...entry }, { side: "right", ...entry });
       else rom.push({ side, ...entry });
+    };
+
+    // Pass 1 — the explicit form wins, and its span is recorded so pass 2 can't
+    // re-read the same motion as a bare one.
+    const claimed = [];
+    let m;
+    JOINT_ROM_RE.lastIndex = 0;
+    while ((m = JOINT_ROM_RE.exec(text)) !== null) {
+      const degrees = Number(m[4]);
+      claimed.push([m.index, m.index + m[0].length]);
+      if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
+      pushRom(sideWord(m[1]), m[2].toLowerCase().replace(/s$/, ""), normMotion(m[3]), degrees);
     }
+
+    // Pass 2 — a motion with no joint of its own, inheriting the joint stated
+    // before it. With no earlier joint the number is dropped, not guessed.
+    const bareRun = (re, numGroup) => {
+      re.lastIndex = 0;
+      let b;
+      while ((b = re.exec(text)) !== null) {
+        const start = b.index, end = start + b[0].length;
+        if (claimed.some(([s, e]) => start < e && end > s)) continue;
+        const degrees = Number(b[numGroup]);
+        if (degrees > 180) continue;
+        const anchor = anchorBefore(start);
+        if (!anchor) continue;
+        claimed.push([start, end]);
+        pushRom(sideWord(b[1]) || anchor.side, anchor.joint, normMotion(b[2]), degrees);
+      }
+    };
+
+    // 2a — the unit is present ("external rotation is 45 degrees")
+    bareRun(BARE_ROM_RE, 3);
+    /* 2b — the unit was stated once and dropped ("…90 degrees, ER 45, flexion
+       120"). Only run when this text already produced a degrees-marked reading,
+       so a stray "flexion 3" in prose can't invent an angle out of nothing. */
+    if (rom.length) bareRun(BARE_ROM_NOUNIT_RE, 3);
 
     MMT_RE.lastIndex = 0;
     while ((m = MMT_RE.exec(text)) !== null) {
@@ -360,8 +467,32 @@
       const grade = m[2]
         .replace(/\s*plus/i, "+").replace(/\s*minus/i, "-").trim()
         .replace(/^(zero|one|two|three|four|five)/i, (w) => NUM_WORDS[w.toLowerCase()]);
-      const context = m[1].trim();
-      mmt.push({ context: context || null, grade: `${grade}/5` });
+
+      /* Side, which was previously thrown away entirely — "deltoid strength is
+         4 out of 5 on the right" recorded a grade with no side, so a left/right
+         asymmetry (the whole point of measuring it) was invisible in the chart.
+         Look in the matched words first, then a short tail after the grade for
+         the trailing "on the right" form, then fall back to the joint anchor. */
+      let context = m[1].trim();
+      const start = m.index, end = start + m[0].length;
+      const leadSide = new RegExp(`^(${SIDE_WORDS})\\b\\s*`, "i").exec(context);
+      if (leadSide) context = context.slice(leadSide[0].length).trim();
+      // strip the grading verb itself — it names no muscle
+      context = context.replace(/\b(?:strength|mmt|lakas|is|was|at|graded?)\b/gi, "").replace(/\s+/g, " ").trim();
+
+      const trail = MMT_TRAIL_RE.exec(text.slice(end, end + 40));
+      const trailWords = (trail && trail[2] ? trail[2] : "").trim();
+      // Only borrow the trailing words as the muscle when nothing was said
+      // before the grade AND they actually read as anatomy, so "4 out of 5 and
+      // she reports pain" doesn't file "and she reports" as a muscle.
+      if (!context && trailWords && MMT_CONTEXT_RE.test(trailWords)) context = trailWords;
+
+      const side = sideWord(leadSide && leadSide[1]) || sideWord(trail && trail[1])
+        || ((anchorBefore(start) || {}).side ?? null);
+
+      const entry = { context: context || null, grade: `${grade}/5` };
+      if (side === "both") mmt.push({ side: "left", ...entry }, { side: "right", ...entry });
+      else mmt.push({ side, ...entry });
     }
 
     for (const s of specialTests(text)) special.push({ result: s.result, name: s.name });
