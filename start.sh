@@ -15,6 +15,12 @@ cd "$(dirname "$0")"
 
 PORT="${PORT:-8080}"
 PUBLIC_URL="https://therachart.testascript.app"
+
+# Show the seeded demo logins on the sign-in screen. This is a LOCAL/demo
+# convenience and is off by default everywhere else: /api/bootstrap is
+# unauthenticated, so enabling it publishes a working admin password to anyone
+# who fetches it. Never set this on a deployment holding real patients.
+export THERACHART_DEMO_LOGINS="${THERACHART_DEMO_LOGINS:-1}"
 GCLOUD="${GCLOUD:-$HOME/google-cloud-sdk/bin/gcloud}"
 [ -x "$GCLOUD" ] || GCLOUD="$(command -v gcloud || true)"
 

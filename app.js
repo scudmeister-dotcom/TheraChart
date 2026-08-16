@@ -9,6 +9,7 @@
   const S = window.TheraStore;
   const PR = window.TheraParser;
   const CL = window.TheraClinical; // billing rules, outcome measures, goals
+  const VD = window.TheraValidate; // intake guardrails: phone shapes, date bounds, duplicates
   S.load();
 
   const app = document.getElementById("app");
@@ -91,6 +92,117 @@
     return modalRoot.querySelector(".modal");
   }
   function closeModal() { modalRoot.innerHTML = ""; }
+
+  /* ================= FORM VALIDATION (shared) =================
+
+     validate.js decides what is wrong; this decides how it is shown. Three
+     pieces, used by both the intake page and the patient edit windows:
+
+     - paintFieldMessages puts each message under the input it belongs to.
+       A fourteen-field form with one line of red at the bottom makes the user
+       hunt; a message under the box does not.
+     - wirePhoneMasks reformats a phone as it is typed, so the shape of a
+       Philippine number is taught by the field rather than by an error after
+       the fact. It preserves the caret at the end, which is where it is 99%
+       of the time — a full caret-mapping implementation costs more than it
+       saves for a field this short.
+     - Errors block. Warnings are shown, and then the same button saves. */
+
+  const fieldWrap = (scope, inputId) => {
+    const el = scope.querySelector("#" + inputId);
+    return el ? el.closest(".field") : null;
+  };
+
+  function clearFieldMessages(scope) {
+    scope.querySelectorAll(".field.invalid, .field.warned")
+      .forEach((f) => f.classList.remove("invalid", "warned"));
+    scope.querySelectorAll(".field-msg").forEach((m) => m.remove());
+  }
+
+  /* messages: { fieldKey: text }, idFor: fieldKey -> DOM id.
+     Unknown keys (a field this form doesn't show) are skipped, which is what
+     lets the section-edit windows validate the whole patient but only surface
+     what is on screen. */
+  function paintFieldMessages(scope, messages, idFor, kind) {
+    let firstEl = null;
+    Object.keys(messages || {}).forEach((key) => {
+      const id = idFor[key];
+      if (!id) return;
+      const wrap = fieldWrap(scope, id);
+      if (!wrap) return;
+      wrap.classList.add(kind);
+      const msg = document.createElement("div");
+      msg.className = "field-msg";
+      msg.textContent = messages[key];
+      wrap.appendChild(msg);
+      if (!firstEl) firstEl = scope.querySelector("#" + id);
+    });
+    return firstEl;
+  }
+
+  function wirePhoneMasks(scope, ids) {
+    ids.forEach((id) => {
+      const el = scope.querySelector("#" + id);
+      if (!el) return;
+      el.setAttribute("inputmode", "tel");
+      el.addEventListener("input", () => {
+        const atEnd = el.selectionStart === el.value.length;
+        const next = VD.formatPhoneAsTyped(el.value);
+        if (next === el.value) return;
+        el.value = next;
+        if (atEnd) el.setSelectionRange(next.length, next.length);
+      });
+      // Whatever survives a blur is stored in its canonical form, so a number
+      // pasted from a message app is filed the same way as a typed one.
+      el.addEventListener("blur", () => {
+        const res = VD.checkPhone(el.value);
+        if (res.ok && res.value) el.value = res.value;
+      });
+    });
+  }
+
+  /* The one place that turns a validation result into screen state.
+
+     Returns "ok" (save it), "errors" (something is impossible — blocked until
+     fixed) or "confirm" (only warnings; the prompt is now on screen and the
+     next click on the same button should go through). Callers distinguish the
+     last two, because acknowledging a warning must not be a side effect of
+     having been stopped for an error.
+
+     Only keys present in `idFor` are considered, which is what lets the
+     patient edit windows validate the whole record while surfacing and
+     blocking on just the section that is open. */
+  function applyValidation(scope, result, idFor, opts) {
+    const o = opts || {};
+    clearFieldMessages(scope);
+    const summary = o.summaryEl || null;
+    if (summary) summary.textContent = "";
+    if (o.confirmEl) o.confirmEl.innerHTML = "";
+
+    const shown = (map) => Object.keys(map || {}).filter((k) => idFor[k]);
+    const blockingKeys = shown(result.errors);
+
+    if (blockingKeys.length) {
+      const first = paintFieldMessages(scope, result.errors, idFor, "invalid");
+      if (summary) {
+        summary.textContent = blockingKeys.length === 1
+          ? "One field needs fixing before this can be saved."
+          : `${blockingKeys.length} fields need fixing before this can be saved.`;
+      }
+      if (first) { first.focus(); first.scrollIntoView({ block: "center", behavior: "smooth" }); }
+      return "errors";
+    }
+
+    const warnKeys = shown(result.warnings);
+    paintFieldMessages(scope, result.warnings, idFor, "warned");
+    if (!warnKeys.length || !o.confirmEl || o.warningsAcknowledged) return "ok";
+
+    o.confirmEl.innerHTML = `<div class="warn-confirm">
+      <b>Check this before saving</b>
+      <ul>${warnKeys.map((k) => `<li>${esc(result.warnings[k])}</li>`).join("")}</ul>
+      Press <b>${esc(o.saveLabel || "Save")}</b> again to save anyway.</div>`;
+    return "confirm";
+  }
 
   function printHTML(html) {
     printArea.innerHTML = html;
@@ -571,7 +683,7 @@
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
         <a class="btn ghost lp-cta-btn" href="#features">See how it works</a>
       </div>
-      <div class="lp-trust">🔒 PHI stays under a Google Cloud BAA — audio is transcribed and discarded, never sold or used to train models.</div>
+      <div class="lp-trust">🔒 Records live in your clinic's own cloud project — not a shared vendor database. Dictation audio is transcribed and discarded, and Google's Vertex AI terms bar using your data to train its models.</div>
     </div>
     <div class="lp-hero-shot">
       <img src="marketing-screenshots/4-dictation-and-body-map.png" alt="TheraChart dictation and body map" loading="lazy" />
@@ -586,7 +698,7 @@
       ${feature("🌐", "Multilingual", "Understands English, Tagalog and Cebuano — including the Taglish code-switching real patients actually use.")}
       ${feature("✦", "Grounded AI assistant", "Ask about a patient's history, trends or precautions. Answers are drawn strictly from that patient's records — it cites its sources and says so when something isn't documented.")}
       ${feature("📈", "Clinical insights", "Cross-visit connections, ROM/pain trends and red flags surfaced as decision support for a licensed PT — never a diagnosis.")}
-      ${feature("🛡️", "Privacy by design", "One BAA, PHI kept in-region, e-signed and locked notes with authorized amendments. Built to be defensible.")}
+      ${feature("🛡️", "Privacy by design", "Your own database, walled off per clinic. E-signed notes that lock, amendments that are authorised and audited, and a plain-English page naming exactly which data leaves the clinic and where it goes.")}
     </div>
   </section>
 
@@ -616,8 +728,14 @@
     // we build the same list from the on-device roster.
     let testAccounts = (window.TheraSync && window.TheraSync.testAccounts) || [];
     if (!testAccounts.length && window.TheraSync && window.TheraSync.mode === "local") {
+      // Match on the seeded ids, not the email domain: a therapist added through
+      // Calendar → "+ Add PT" is saved without an email and gets an
+      // @therachart.demo one, so a domain filter would list real staff here as a
+      // test account with a published password. (Server mode is gated separately,
+      // behind THERACHART_DEMO_LOGINS — see server.js demoLogins.)
+      const seeded = new Set(S.SEEDED_DEMO_USER_IDS || []);
       testAccounts = S.users()
-        .filter((u) => /@therachart\.demo$/i.test(u.email || ""))
+        .filter((u) => seeded.has(u.id) && /@therachart\.demo$/i.test(u.email || ""))
         .map((u) => ({ name: u.name, email: u.email, role: u.role, password: "1234",
           status: u.active === false ? "sign-in blocked (voided)" : "" }));
     }
@@ -982,7 +1100,7 @@
     return `
 <div class="page-head">
   <div><h1>${p ? "Edit patient information" : "New patient intake"}</h1>
-  <div class="sub">Completed by front desk staff — stored on the clinic's own server, never a third-party cloud</div></div>
+  <div class="sub">Completed by front desk staff — stored in your clinic's own database, not a shared vendor system</div></div>
 </div>
 <div class="card" style="max-width:760px">
   <h2>Personal information</h2>
@@ -991,15 +1109,16 @@
     <div class="field"><label>Last name *</label><input id="in-last" value="${v("lastName")}" /></div>
   </div>
   <div class="field-row">
-    <div class="field"><label>Date of birth *</label><input id="in-dob" type="date" value="${v("dob")}" /></div>
+    <div class="field"><label>Date of birth *</label><input id="in-dob" type="date" max="${todayIso()}" value="${v("dob")}" /></div>
     <div class="field"><label>Sex</label><select id="in-sex">
       <option value="">—</option><option ${p && p.sex === "F" ? "selected" : ""}>F</option><option ${p && p.sex === "M" ? "selected" : ""}>M</option>
     </select></div>
   </div>
   <div class="field"><label>Address</label><input id="in-address" value="${v("address")}" /></div>
   <div class="field-row">
-    <div class="field"><label>Phone number *</label><input id="in-phone" value="${v("phone")}" placeholder="+63 …" /></div>
-    <div class="field"><label>Email</label><input id="in-email" type="email" value="${v("email")}" /></div>
+    <div class="field"><label>Phone number *</label><input id="in-phone" value="${v("phone")}" placeholder="0917 555 0101" />
+      <div class="field-hint">Mobile 0917 555 0101 · landline (02) 8123 4567 · a number from abroad starts with +</div></div>
+    <div class="field"><label>Email</label><input id="in-email" type="email" value="${v("email")}" placeholder="name@example.com" /></div>
   </div>
   <div class="field"><label>Referring physician</label><input id="in-ref" value="${v("referringPhysician")}" placeholder="Name and specialty" /></div>
 
@@ -1009,7 +1128,7 @@
     <div class="field"><label>Emergency contact</label><input id="in-ecname" value="${ec("name")}" placeholder="Full name" /></div>
     <div class="field"><label>Relationship</label><input id="in-ecrel" value="${ec("relationship")}" placeholder="Spouse, son, friend…" /></div>
   </div>
-  <div class="field"><label>Emergency contact phone</label><input id="in-ecphone" value="${ec("phone")}" placeholder="+63 …" /></div>
+  <div class="field"><label>Emergency contact phone</label><input id="in-ecphone" value="${ec("phone")}" placeholder="0917 555 0101" /></div>
 
   <h2 style="margin-top:16px">Insurance / payment</h2>
   <div class="field-row">
@@ -1022,6 +1141,7 @@
     <div class="field"><label>Authorisation expires</label><input id="in-authexp" type="date" value="${au("expiresOn")}" /></div>
   </div>
   <div class="field"><label>Authorisation reference</label><input id="in-authref" value="${au("reference")}" placeholder="Approval / reference number" /></div>
+  <div id="intakeWarn"></div>
   <div style="display:flex; gap:8px; margin-top:6px">
     <button class="btn primary" id="intakeSave">${p ? "Save changes" : "Register patient"}</button>
     <a class="btn" href="${p ? `#/patient/${p.id}` : "#/patients"}">Cancel</a>
@@ -1030,10 +1150,48 @@
 </div>`;
   }
 
+  /* Which DOM input each validate.js field key belongs to. Keeping the map
+     here — rather than naming the inputs after the keys — leaves the existing
+     `in-*` ids alone, and lets the patient edit windows reuse the same
+     validator against a completely different set of ids. */
+  const INTAKE_IDS = {
+    firstName: "in-first", lastName: "in-last", dob: "in-dob", address: "in-address",
+    phone: "in-phone", email: "in-email", referringPhysician: "in-ref", allergies: "in-allergies",
+    ecName: "in-ecname", ecRelationship: "in-ecrel", ecPhone: "in-ecphone",
+    provider: "in-prov", memberId: "in-member", paymentNotes: "in-paynotes",
+    visitsAuthorized: "in-authvisits", authExpires: "in-authexp", authReference: "in-authref",
+  };
+
+  /* The same keys again for the patient edit windows, which show one section
+     at a time under their own `pe-*` ids. A key missing from the map is a
+     field this window doesn't show — applyValidation skips it. */
+  const PERSONAL_IDS = {
+    firstName: "pe-first", lastName: "pe-last", dob: "pe-dob",
+    address: "pe-address", phone: "pe-phone", email: "pe-email", referringPhysician: "pe-ref",
+  };
+  const SAFETY_IDS = {
+    allergies: "pe-allergies", ecName: "pe-ecname", ecRelationship: "pe-ecrel", ecPhone: "pe-ecphone",
+  };
+  const INSURANCE_IDS = {
+    provider: "pe-prov", memberId: "pe-member", paymentNotes: "pe-paynotes",
+    visitsAuthorized: "pe-authvisits", authExpires: "pe-authexp", authReference: "pe-authref",
+  };
+
   function bindIntake(user) {
+    const form = document.getElementById("intakeSave").closest(".card");
+    const errEl = document.getElementById("intakeErr");
+    wirePhoneMasks(form, ["in-phone", "in-ecphone"]);
+
+    /* Warnings are acknowledged per attempt: any edit after the prompt appears
+       re-opens the question, so "save anyway" can never be inherited by a
+       different set of values than the one it was shown for. */
+    let acknowledged = false;
+    form.addEventListener("input", () => { acknowledged = false; });
+
     document.getElementById("intakeSave").addEventListener("click", () => {
       const g = (id) => document.getElementById(id).value.trim();
-      const fields = {
+      const editId = (location.hash.split("?edit=")[1] || "").trim();
+      const raw = {
         firstName: g("in-first"), lastName: g("in-last"), dob: g("in-dob"),
         sex: g("in-sex"), address: g("in-address"), phone: g("in-phone"),
         email: g("in-email"), referringPhysician: g("in-ref"),
@@ -1041,16 +1199,28 @@
         emergencyContact: { name: g("in-ecname"), relationship: g("in-ecrel"), phone: g("in-ecphone") },
         insurance: { provider: g("in-prov"), memberId: g("in-member"), notes: g("in-paynotes") },
         authorization: {
-          visitsAuthorized: Number(g("in-authvisits")) || 0,
-          expiresOn: g("in-authexp"), reference: g("in-authref"),
+          visitsAuthorized: g("in-authvisits"), expiresOn: g("in-authexp"), reference: g("in-authref"),
         },
       };
-      if (!fields.firstName || !fields.lastName || !fields.dob || !fields.phone) {
-        document.getElementById("intakeErr").textContent = "First name, last name, date of birth, and phone are required.";
-        return;
-      }
-      const editId = (location.hash.split("?edit=")[1] || "").trim();
-      const p = editId ? S.updatePatient(editId, fields, user.id) : S.addPatient(fields, user.id);
+      const result = VD.validatePatient(raw, {
+        today: todayIso(),
+        existingPatients: S.patients(),
+        patientId: editId || null,
+      });
+      const verdict = applyValidation(form, result, INTAKE_IDS, {
+        summaryEl: errEl,
+        confirmEl: document.getElementById("intakeWarn"),
+        warningsAcknowledged: acknowledged,
+        saveLabel: editId ? "Save changes" : "Register patient",
+      });
+      if (verdict === "errors") return;
+      if (verdict === "confirm") { acknowledged = true; return; }
+
+      // Store the cleaned values, not what was typed: a phone entered as
+      // +63 917 555 0101 is filed as 0917 555 0101 like every other one.
+      const p = editId
+        ? S.updatePatient(editId, result.cleaned, user.id)
+        : S.addPatient(result.cleaned, user.id);
       location.hash = `#/patient/${p.id}`;
     });
   }
@@ -1102,14 +1272,15 @@
         <div class="field"><label>Last name *</label><input id="pe-last" value="${esc(p.lastName || "")}" /></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Date of birth *</label><input id="pe-dob" type="date" value="${esc(p.dob || "")}" /></div>
+        <div class="field"><label>Date of birth *</label><input id="pe-dob" type="date" max="${todayIso()}" value="${esc(p.dob || "")}" /></div>
         <div class="field"><label>Sex</label><select id="pe-sex">
           <option value="">—</option><option ${p.sex === "F" ? "selected" : ""}>F</option><option ${p.sex === "M" ? "selected" : ""}>M</option></select></div>
       </div>
       <div class="field"><label>Address</label><input id="pe-address" value="${esc(p.address || "")}" /></div>
       <div class="field-row">
-        <div class="field"><label>Phone number *</label><input id="pe-phone" value="${esc(p.phone || "")}" /></div>
-        <div class="field"><label>Email</label><input id="pe-email" type="email" value="${esc(p.email || "")}" /></div>
+        <div class="field"><label>Phone number *</label><input id="pe-phone" value="${esc(p.phone || "")}" placeholder="0917 555 0101" />
+          <div class="field-hint">Mobile 0917 555 0101 · landline (02) 8123 4567</div></div>
+        <div class="field"><label>Email</label><input id="pe-email" type="email" value="${esc(p.email || "")}" placeholder="name@example.com" /></div>
       </div>
       <div class="field"><label>Referring physician</label><input id="pe-ref" value="${esc(p.referringPhysician || "")}" /></div>`
     : isSafety ? `
@@ -1120,7 +1291,7 @@
         <div class="field"><label>Emergency contact</label><input id="pe-ecname" value="${esc(ec.name || "")}" placeholder="Full name" /></div>
         <div class="field"><label>Relationship</label><input id="pe-ecrel" value="${esc(ec.relationship || "")}" placeholder="Spouse, son, friend…" /></div>
       </div>
-      <div class="field"><label>Emergency contact phone</label><input id="pe-ecphone" value="${esc(ec.phone || "")}" placeholder="+63 …" /></div>`
+      <div class="field"><label>Emergency contact phone</label><input id="pe-ecphone" value="${esc(ec.phone || "")}" placeholder="0917 555 0101" /></div>`
     : `
       <div class="field-row">
         <div class="field"><label>Provider</label><input id="pe-prov" value="${esc(insur.provider || "")}" placeholder="PhilHealth, HMO, self-pay…" /></div>
@@ -1136,6 +1307,7 @@
     const m = showModal(`
       <h2>${TITLES[section] || TITLES.insurance}</h2>
       ${fieldsHtml}
+      <div id="pe-warn"></div>
       <div class="error" id="pe-err" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px"></div>
       <div class="modal-actions" id="pe-actions"></div>`);
 
@@ -1148,30 +1320,62 @@
     const actions = m.querySelector("#pe-actions");
     const defaultActions = `<button class="btn" id="pe-cancel">Cancel</button><button class="btn primary" id="pe-save">${SAVE_LABELS[section] || SAVE_LABELS.insurance}</button>`;
 
+    wirePhoneMasks(m, isPersonal ? ["pe-phone"] : isSafety ? ["pe-ecphone"] : []);
+    let acknowledged = false;
+    m.addEventListener("input", () => { acknowledged = false; });
+
     const doSave = () => {
       const g = (id) => (m.querySelector("#" + id).value || "").trim();
-      let fields;
+      let edited, idFor;
       if (isPersonal) {
-        if (!g("pe-first") || !g("pe-last") || !g("pe-dob") || !g("pe-phone")) {
-          m.querySelector("#pe-err").textContent = "First name, last name, date of birth, and phone are required.";
-          return;
-        }
-        fields = { firstName: g("pe-first"), lastName: g("pe-last"), dob: g("pe-dob"), sex: g("pe-sex"),
+        idFor = PERSONAL_IDS;
+        edited = { firstName: g("pe-first"), lastName: g("pe-last"), dob: g("pe-dob"), sex: g("pe-sex"),
                    address: g("pe-address"), phone: g("pe-phone"), email: g("pe-email"), referringPhysician: g("pe-ref") };
       } else if (isSafety) {
-        fields = {
+        idFor = SAFETY_IDS;
+        edited = {
           allergies: g("pe-allergies"),
           emergencyContact: { name: g("pe-ecname"), relationship: g("pe-ecrel"), phone: g("pe-ecphone") },
         };
       } else {
-        fields = {
+        idFor = INSURANCE_IDS;
+        edited = {
           insurance: { provider: g("pe-prov"), memberId: g("pe-member"), notes: g("pe-paynotes") },
           authorization: {
-            visitsAuthorized: Number(g("pe-authvisits")) || 0,
-            expiresOn: g("pe-authexp"), reference: g("pe-authref"),
+            visitsAuthorized: g("pe-authvisits"), expiresOn: g("pe-authexp"), reference: g("pe-authref"),
           },
         };
       }
+
+      /* Validate the whole patient, not just this window: the duplicate check
+         needs the name and birth date even when insurance is what's open. Only
+         this section's fields are surfaced or blocked on, so a record that
+         predates these rules can still have its insurance corrected without
+         first being made to fix a phone number that isn't on screen. */
+      const result = VD.validatePatient({ ...p, ...edited }, {
+        today: todayIso(),
+        existingPatients: S.patients(),
+        patientId: p.id,
+      });
+      const verdict = applyValidation(m, result, idFor, {
+        summaryEl: m.querySelector("#pe-err"),
+        confirmEl: m.querySelector("#pe-warn"),
+        warningsAcknowledged: acknowledged,
+        saveLabel: SAVE_LABELS[section] || SAVE_LABELS.insurance,
+      });
+      if (verdict === "errors") return;
+      if (verdict === "confirm") { acknowledged = true; return; }
+
+      // Write back only this section, taking the cleaned values so a phone
+      // corrected here is stored in the same shape as one typed at intake.
+      const c = result.cleaned;
+      const fields = isPersonal
+        ? { firstName: c.firstName, lastName: c.lastName, dob: c.dob, sex: c.sex,
+            address: c.address, phone: c.phone, email: c.email, referringPhysician: c.referringPhysician }
+        : isSafety
+          ? { allergies: c.allergies, emergencyContact: c.emergencyContact }
+          : { insurance: c.insurance, authorization: c.authorization };
+
       S.updatePatient(p.id, fields, user.id);
       closeModal();
       alertBanner(`${cap(SECTION_NAMES[section] || SECTION_NAMES.insurance)} saved.`);
@@ -2143,7 +2347,7 @@ ${tabStrip}
           ${(v.rom.length + v.mmt.length + v.pain.length + v.special.length) ? `<label class="imp-label">Measurements</label>
             ${v.rom.map((r, j) => measRow(i, "rom", j, `ROM ${r.side || ""} ${r.joint} ${r.motion}`,
               `<input type="number" data-mval="${i}:rom:${j}" value="${r.degrees}" style="width:74px"/><span>°</span>`)).join("")}
-            ${v.mmt.map((r, j) => measRow(i, "mmt", j, `MMT ${r.context || ""}`,
+            ${v.mmt.map((r, j) => measRow(i, "mmt", j, `MMT ${r.side ? r.side + " " : ""}${r.context || ""}`,
               `<input data-mval="${i}:mmt:${j}" value="${esc(r.grade)}" style="width:64px"/>`)).join("")}
             ${v.pain.map((r, j) => measRow(i, "pain", j, `Pain ${r.location || ""}`,
               `<input type="number" min="0" max="10" data-mval="${i}:pain:${j}" value="${r.score}" style="width:60px"/><span>/10</span>`)).join("")}
@@ -2220,7 +2424,7 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     const data = {
       mapPoints, transcript: [],
       rom: kept(v.rom).map(({ side, joint, motion, degrees }) => ({ side, joint, motion, degrees })),
-      mmt: kept(v.mmt).map(({ context, grade }) => ({ context, grade })),
+      mmt: kept(v.mmt).map(({ side, context, grade }) => ({ side: side || null, context, grade })),
       pain: kept(v.pain).map(({ location, score }) => ({ location, score })),
       special: kept(v.special).map(({ name, result }) => ({ name, result })),
     };
@@ -2269,8 +2473,8 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
   function measurementTables(d) {
     const rom = (d.rom || []).length ? `<h3>Range of motion</h3><table><tr><th>Side</th><th>Joint</th><th>Motion</th><th>Degrees</th></tr>
       ${d.rom.map((r) => `<tr><td>${esc(r.side || "—")}</td><td>${esc(r.joint)}</td><td>${esc(r.motion)}</td><td>${r.degrees}°</td></tr>`).join("")}</table>` : "";
-    const mmt = (d.mmt || []).length ? `<h3>Manual muscle testing</h3><table><tr><th>Muscle / context</th><th>Grade</th></tr>
-      ${d.mmt.map((r) => `<tr><td>${esc(r.context || "—")}</td><td>${esc(r.grade)}</td></tr>`).join("")}</table>` : "";
+    const mmt = (d.mmt || []).length ? `<h3>Manual muscle testing</h3><table><tr><th>Side</th><th>Muscle / context</th><th>Grade</th></tr>
+      ${d.mmt.map((r) => `<tr><td>${esc(r.side || "—")}</td><td>${esc(r.context || "—")}</td><td>${esc(r.grade)}</td></tr>`).join("")}</table>` : "";
     const sp = (d.special || []).length ? `<h3>Special tests</h3><table><tr><th>Test</th><th>Result</th></tr>
       ${d.special.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.result)}</td></tr>`).join("")}</table>` : "";
     const pain = (d.pain || []).length ? `<h3>Pain</h3><table><tr><th>Location</th><th>Rating</th></tr>
@@ -2582,7 +2786,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const del = (kind, i) => editable ? `<button class="btn small" data-delmeas="${kind}:${i}" title="Remove">✕</button>` : "";
     const rows = [];
     (d.rom || []).forEach((r, i) => rows.push(`<tr><td>ROM</td><td>${esc(r.side || "—")} ${esc(r.joint)} ${esc(r.motion)}</td><td class="num">${r.degrees}°</td><td>${del("rom", i)}</td></tr>`));
-    (d.mmt || []).forEach((r, i) => rows.push(`<tr><td>MMT</td><td>${esc(r.context || "—")}</td><td class="num">${esc(r.grade)}</td><td>${del("mmt", i)}</td></tr>`));
+    (d.mmt || []).forEach((r, i) => rows.push(`<tr><td>MMT</td><td>${esc(r.side ? r.side + " " : "")}${esc(r.context || "—")}</td><td class="num">${esc(r.grade)}</td><td>${del("mmt", i)}</td></tr>`));
     (d.special || []).forEach((r, i) => rows.push(`<tr><td>Special test</td><td>${esc(r.name)}</td><td>${esc(r.result)}</td><td>${del("special", i)}</td></tr>`));
     (d.pain || []).forEach((r, i) => rows.push(`<tr><td>Pain</td><td>${esc(r.location || "—")}</td><td class="num">${r.score}/10</td><td>${del("pain", i)}</td></tr>`));
     return `
@@ -3729,7 +3933,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const measCount = meas.rom.length + meas.mmt.length + meas.special.length + meas.pain.length;
     const measList = [
       ...meas.rom.map((r) => `ROM · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`),
-      ...meas.mmt.map((r) => `MMT · ${r.context || ""} ${r.grade}`),
+      ...meas.mmt.map((r) => `MMT · ${r.side ? r.side + " " : ""}${r.context || ""} ${r.grade}`),
       ...meas.special.map((r) => `${r.name} — ${r.result}`),
       ...meas.pain.map((r) => `Pain · ${r.location || "—"} ${r.score}/10`),
     ];
@@ -4512,12 +4716,22 @@ ${isGoogleAccount(user)
 
   const gcalTime = (iso) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 
+  /* Print what is on the board, not everything.
+     This read `calTherapist`, a variable removed when the therapist dropdown
+     became the per-column chips in e92d02f. app.js runs under "use strict", so
+     reading it threw a ReferenceError and the button did nothing at all — no
+     print dialog, no message. Reading `calHidden` instead both fixes it and
+     makes the printout match the filtered board the user is looking at. */
   function printSchedule(user) {
-    const ths = calTherapist === "all" ? therapists() : therapists().filter((t) => t.id === calTherapist);
+    const shown = therapists().filter((t) => !calHidden.has(t.id));
+    const ths = shown.length ? shown : therapists(); // never print a blank page
+    const scope = calHidden.size && shown.length
+      ? " — " + ths.map((t) => t.name).join(", ")
+      : " — all therapists";
     const appts = S.apptsOn(calDate).sort((a, b) => (a.start < b.start ? -1 : 1));
     const html = `
 <h1>${esc(S.currentClinicName())}</h1>
-<div class="print-muted">Schedule for ${fmtDate(calDate + "T00:00:00")}${calTherapist !== "all" ? " — " + esc(ths[0]?.name || "") : " — all therapists"} · printed ${fmtDT(new Date().toISOString())} by ${esc(user.name)}</div>
+<div class="print-muted">Schedule for ${fmtDate(calDate + "T00:00:00")}${esc(scope)} · printed ${fmtDT(new Date().toISOString())} by ${esc(user.name)}</div>
 ${ths.map((t) => {
       const mine = appts.filter((a) => a.therapistId === t.id);
       return `<h2>${esc(t.name)}</h2>
@@ -4604,30 +4818,62 @@ ${ths.map((t) => {
 
   // The collapsed "how it works" accordion: each protection topic behind its own
   // disclosure so the page leads with the activity log instead of a wall of text.
+  //
+  // This copy is a compliance document, not marketing. Under RA 10173 a clinic
+  // is the personal information controller and has to be able to tell a patient
+  // — and the National Privacy Commission — which processors touch their health
+  // data and where. So it names them, and it names the regions, rather than
+  // reaching for a comforting absolute.
+  //
+  // Two claims were removed rather than softened, because they were false:
+  // "never a third-party cloud" (Google is a third party, and the whole stack
+  // runs there) and "PHI kept in-region" (Gemini 3.x is served from Vertex's
+  // GLOBAL endpoint, and Speech-to-Text and the database sit in a US region by
+  // default). A prospect's IT person would have found both in an afternoon.
+  //
+  // The regions are read from /api/ai-status at runtime instead of written into
+  // the copy, so redeploying to an Asia region updates the page rather than
+  // making it lie. See server.js GEMINI_LOCATION / STT_LOCATION.
   function privacyInfoAccordion(geminiOn) {
+    const ai = (window.TheraSync && window.TheraSync.ai) || {};
+    const sttLoc = (ai.stt && ai.stt.location) || "us-central1";
+    const geminiLoc = (String(ai.engine || "").match(/·\s*([^)]+)\)/) || [])[1] || "global";
+    const where = (loc) => loc === "global"
+      ? "Google's <b>global</b> Vertex endpoint (Google routes the request; it is not pinned to one country)"
+      : `Google's <b>${esc(loc)}</b> region`;
+
     const items = [
       { emoji: "🔐", title: "Where your data lives & your controls", body: `
-        <p>TheraChart runs as one secure service on <b>Google Cloud</b>, so your clinic can open it from anywhere — the office, a home visit, another city — with the same login. Records are kept in an <b>encrypted database</b>, and each clinic's data is walled off from every other clinic's.</p>
-        <p>Google Cloud holds that data under a signed <b>Business Associate Agreement (BAA)</b> — the healthcare contract that legally binds them to protect patient information. Nothing is stored on a service that isn't under that agreement.</p>
-        <p style="margin-bottom:0">You stay in control: use <b>Export backup</b> or <b>Erase all data</b> above at any time.</p>` },
+        <p>TheraChart runs on <b>your clinic's own Google Cloud project</b> — your database, your storage, your billing account. It is not a shared vendor system where every clinic's records sit in one pile: your data is yours, and each clinic's records are walled off from every other clinic's by a check on the server, not just in the screen.</p>
+        <p>Records are kept in an <b>encrypted managed database</b> (Cloud SQL for PostgreSQL). Encrypted in transit and at rest, backed up by Google, and reachable only by this application — never over the open internet.</p>
+        <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region. For a Philippine clinic that is a <b>cross-border transfer of sensitive personal information</b>, which RA 10173 permits but requires you to disclose and remain accountable for. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
+        <p style="margin-bottom:0">You stay in control: <b>Export backup</b> takes the whole record set with you in an open format, and <b>Erase all data</b> removes it. Neither needs our permission — there is no lock-in.</p>` },
       { emoji: "🎤", title: "Voice dictation", body: `
-        <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b>, which turns it into text and sends it straight back — under the <b>same Google Cloud BAA</b>, never a free consumer speech service. <b>By default the audio itself is kept only in memory and discarded</b> the moment it's transcribed; only the transcript is saved.</p>
-        <p style="margin-bottom:0"><b>Optional session-audio review.</b> A clinic can turn on a feature — off by default — that keeps the dictation audio briefly <b>for patients who consent</b>, so a clinician can replay it to double-check the transcript. That kept audio is <b>automatically deleted the moment the note is signed</b>, or after the clinic's short retention window, whichever comes first. It's never kept long-term, and the patient's consent is recorded in the chart.</p>` },
+        <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b> in ${where(sttLoc)}, which turns it into text and sends it straight back. It is a paid Google Cloud service under your own project — <b>not</b> a free consumer speech service, and not a phone's built-in dictation.</p>
+        <p><b>By default the audio is held only in memory and discarded</b> the moment it is transcribed. Only the transcript is saved to the chart.</p>
+        <p style="margin-bottom:0"><b>Optional session-audio review.</b> A clinic can turn on a feature — <b>off by default</b> — that briefly keeps dictation audio <b>for patients who have consented</b>, so a clinician can replay it to check the transcript. Kept audio is <b>deleted the moment the note is signed</b>, or after the clinic's retention window, whichever comes first. The patient's consent is recorded in their chart.</p>` },
       { emoji: "✦", title: `AI cleanup & insights${geminiOn ? " (Gemini)" : ""}`, body: geminiOn
-        ? `<p>When you press <b>✦ Review &amp; clean up</b> or ask for <b>insights</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, under the same Google Cloud BAA. Under that agreement, <b>Google does not use your data to train its models</b>.</p>
-        <p><b>Importing a scanned PDF</b> of past visits sends that document the same way, to be read into chart entries.</p>
-        <p style="margin-bottom:0">The AI only ever suggests — every result is shown for your review, and <b>nothing is saved until a licensed clinician approves and signs it</b>.</p>`
-        : `<p>Cleanup and insights run on a built-in reviewer <b>right on this device</b> — nothing is sent anywhere.</p>
-        <p style="margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> (under the BAA) for smarter results and scanned-PDF import; this one hasn't. Either way, a licensed clinician reviews and signs everything.</p>` },
+        ? `<p>When you press <b>✦ Review &amp; clean up</b>, ask for <b>insights</b>, or use the <b>patient assistant</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, served from ${where(geminiLoc)}. <b>Importing a scanned PDF</b> of past visits sends that document the same way.</p>
+        <p>That text can include the patient's name and clinical detail, so treat it as what it is: <b>health information leaving your clinic's region for processing</b>. Google's Vertex AI service terms state that customer prompts and responses are <b>not used to train Google's models</b> and are not sold. Your administrator should keep a copy of those terms with your clinic's records of processing.</p>
+        <p style="margin-bottom:0">The AI only ever suggests. Every result is shown for your review, and <b>nothing enters the chart until a licensed clinician approves and signs it</b>.</p>`
+        : `<p>Cleanup and insights run on a built-in reviewer <b>right on this device</b> — no clinical text leaves the clinic at all.</p>
+        <p style="margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> for stronger results and scanned-PDF import; this installation has not. That would send note text out for processing — the page above would then say so. Either way, a licensed clinician reviews and signs everything.</p>` },
       { emoji: "🛡", title: "Who can see what", body: `
         <ul style="margin:0; padding-left:18px; line-height:1.9">
           <li>Everyone signs in with their own account and sees only what their role needs (therapist / front desk / admin)</li>
           <li>Expired licenses and voided accounts lose access automatically</li>
-          <li>Signed documents lock — later changes need a signed, authorized amendment</li>
-          <li>Every notable action is recorded in the activity log</li>
+          <li>Signed documents lock — later changes need a signed, authorised amendment, and the original stays readable</li>
+          <li>Every notable action is recorded in the activity log below, including who read what</li>
         </ul>` },
-      { emoji: "🏛", title: "A note on real-world use", body: `
-        <p style="margin-bottom:0">This is a demonstration build. Before storing real patient data, deploy TheraChart's production configuration — sign the <b>Google Cloud BAA</b>, enable the encrypted database and the Vertex AI &amp; Speech-to-Text endpoints, and replace the demo logins with real per-user credentials — to meet <b>HIPAA</b> (US) or the <b>Data Privacy Act of 2012 / RA 10173</b> (Philippines).</p>` },
+      { emoji: "🏛", title: "What your clinic still has to do", body: `
+        <p>Software cannot make a clinic compliant on its own. Under the <b>Data Privacy Act of 2012 (RA 10173)</b> your clinic is the <b>personal information controller</b> for these records, and that carries obligations this app can support but not discharge for you:</p>
+        <ul style="margin:0 0 10px; padding-left:18px; line-height:1.9">
+          <li>Appoint a <b>Data Protection Officer</b> and register your data processing system with the <b>National Privacy Commission</b> if you meet the thresholds</li>
+          <li>Obtain and record <b>patient consent</b> covering the cross-border processing described above</li>
+          <li>Keep a record of processing activities, and notify the NPC and affected patients of a breach within the required period</li>
+          <li>Retain records for the period required of a Philippine health facility</li>
+        </ul>
+        <p style="margin-bottom:0">If your clinic also serves US patients or bills a US payer, <b>HIPAA</b> applies as well and needs a signed <b>Business Associate Agreement</b> with Google — a contract you execute in your own Google Cloud account, not something this software provides. <b>Have your own counsel or DPO confirm all of this</b>; the descriptions here are of what the software does, not legal advice.</p>` },
     ];
     return `<div class="info-acc">${items.map((it) => `
       <details class="info-acc-item">
@@ -4702,8 +4948,9 @@ ${ths.map((t) => {
 <div class="page-head">
   <div><h1>Privacy &amp; Security</h1><div class="sub">Your clinic's activity log, plus how TheraChart keeps information safe</div></div>
   <div class="page-head-actions">
+    ${user.role === "admin" ? `
     <button class="btn small" id="exportDataBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Export backup</button>
-    <button class="btn small danger" id="wipeBtn">Erase all data</button>
+    <button class="btn small danger" id="wipeBtn">Erase all data</button>` : ""}
   </div>
 </div>
 
@@ -4743,7 +4990,11 @@ ${privacyInfoAccordion(geminiOn)}
   }
 
   function bindPrivacy(user) {
-    document.getElementById("exportDataBtn").addEventListener("click", () => {
+    // Export and Erase render for admins only, so every binding here has to
+    // tolerate a missing element rather than throwing and taking the rest of
+    // the page's handlers — audit paging, filtering — down with it.
+    const onId = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+    onId("exportDataBtn", "click", () => {
       const blob = new Blob([S.exportAll()], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -4752,13 +5003,29 @@ ${privacyInfoAccordion(geminiOn)}
       URL.revokeObjectURL(a.href);
       S.audit(user.id, "data-exported", "full backup");
     });
-    document.getElementById("wipeBtn").addEventListener("click", () => {
+    /* Erase is the most destructive control in the product and it used to sit
+       one click from Export, available to every role, describing itself as a
+       device-local action. It is not: S.wipeAll() reseeds the whole store and
+       the next sync pushes that to the clinic server, so one front-desk click
+       destroyed every clinic's records for everyone. Now: admin only (the
+       button isn't rendered otherwise), honest about the blast radius, and it
+       takes a typed confirmation rather than a second click in the same spot. */
+    onId("wipeBtn", "click", () => {
       const m = showModal(`<h2>Erase all data?</h2>
-        <p style="font-size:13.5px">This permanently removes every patient, document, and schedule from this device and restores the demo seed data.</p>
+        <p style="font-size:13.5px">This permanently deletes <b>every patient, document, and schedule</b> and restores the demo seed data.</p>
+        <p style="font-size:13.5px; color:var(--danger)"><b>This is not limited to this device.</b> The change syncs to the clinic server, so it removes the records for everyone, on every device. It cannot be undone — export a backup first if you might want the data back.</p>
+        <div class="field"><label>Type ERASE to confirm</label><input id="wConfirm" autocomplete="off" placeholder="ERASE" /></div>
+        <div class="error" id="wErr" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
         <div class="modal-actions"><button class="btn" id="wCancel">Cancel</button>
         <button class="btn danger" id="wOk">Erase everything</button></div>`);
       m.querySelector("#wCancel").addEventListener("click", closeModal);
+      m.querySelector("#wConfirm").focus();
       m.querySelector("#wOk").addEventListener("click", () => {
+        if (m.querySelector("#wConfirm").value.trim().toUpperCase() !== "ERASE") {
+          m.querySelector("#wErr").textContent = "Type ERASE in the box to confirm.";
+          return;
+        }
+        S.audit(user.id, "data-erased", "all clinic data erased and reseeded");
         S.wipeAll();
         closeModal();
         location.hash = "#/dashboard";
@@ -4768,7 +5035,6 @@ ${privacyInfoAccordion(geminiOn)}
 
     // date-window navigation (day / week / month), defaulting to today
     const rerenderPrivacy = () => renderShell(location.hash, privacyView(user), user, bindPrivacy);
-    const onId = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
     onId("auditPrev", "click", () => { shiftAudit(-1); rerenderPrivacy(); });
     onId("auditNext", "click", () => { shiftAudit(1); rerenderPrivacy(); });
     onId("auditToday", "click", () => { auditRange = "day"; auditDate = todayIso(); rerenderPrivacy(); });

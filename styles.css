@@ -596,6 +596,41 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 700px) { .field-row { grid-template-columns: 1fr; } }
 
+/* ---- field-level validation (intake and the patient edit windows) ----
+   The message sits under the input it belongs to, not in one line at the
+   bottom of a long form, so a front-desk user doesn't have to hunt for which
+   of fourteen boxes is wrong. Two weights, because they mean different things:
+   .invalid blocks the save, .warned lets it through after a confirmation. */
+.field.invalid input, .field.invalid select, .field.warned input, .field.warned select {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 4%, var(--panel));
+}
+.field.warned input, .field.warned select {
+  border-color: var(--review);
+  background: var(--review-soft);
+}
+.field .field-msg {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger);
+  margin-top: -1px;
+}
+.field.warned .field-msg { color: var(--review); }
+.field .field-hint { font-size: 11.5px; color: var(--muted); margin-top: -1px; }
+/* The confirm step shown when only warnings remain — the save is one more
+   click away, never blocked. */
+.warn-confirm {
+  border: 1px solid var(--review);
+  background: var(--review-soft);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 10px 0;
+}
+.warn-confirm b { display: block; margin-bottom: 4px; }
+.warn-confirm ul { margin: 4px 0 0; padding-left: 18px; }
+
 .empty-state {
   text-align: center; color: var(--muted); padding: 26px 16px; font-size: 13.5px; line-height: 1.6;
 }

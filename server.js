@@ -27,6 +27,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 const { execFile } = require("child_process"); // local-dev gcloud credential only
 
 const PORT = Number(process.env.PORT || 8080);
@@ -440,15 +441,33 @@ function bootstrapInfo() {
   };
 }
 
-// Demo/test logins shown on the sign-in screen. Deliberately limited to the
-// seeded accounts (emails @therachart.demo) so real staff are never listed; if
-// the demo accounts are removed the list is empty and the panel disappears. All
-// seeded demo accounts share one password.
+/* Demo/test logins shown on the sign-in screen.
+
+   These are genuinely useful — a sales demo or a tester should be able to click
+   a row and be inside the app — but publishing a working admin password on an
+   unauthenticated endpoint is not something that should happen by DEFAULT. It
+   did: any deployment that ran the seed advertised grace@therachart.demo (an
+   admin) and its password to anyone who fetched /api/bootstrap.
+
+   So the panel is now opt-in. THERACHART_DEMO_LOGINS=1 turns it on for a demo
+   box; a real clinic deployment simply doesn't set it and the endpoint returns
+   an empty list, which makes the panel disappear on the sign-in screen.
+
+   The accounts themselves still exist in the seed — this hides them, it does
+   not disable them. Deleting the seeded accounts (or changing their passwords)
+   is still the thing to do before real patients are on an instance. */
+const DEMO_LOGINS_ENABLED = process.env.THERACHART_DEMO_LOGINS === "1";
 const DEMO_LOGIN_PASSWORD = "1234";
+const SEEDED_DEMO_IDS = new Set(store.SEEDED_DEMO_USER_IDS);
 function demoLogins() {
+  if (!DEMO_LOGINS_ENABLED) return [];
   const today = new Date().toISOString().slice(0, 10);
   return store.users()
-    .filter((u) => /@therachart\.demo$/i.test(u.email || ""))
+    /* Match the seeded ids too, not just the email domain: store.ensureEmails()
+       mints an @therachart.demo address for any account created without one —
+       including a therapist the clinic adds through Calendar → "+ Add PT" — so
+       the domain alone would eventually list real staff. */
+    .filter((u) => /@therachart\.demo$/i.test(u.email || "") && SEEDED_DEMO_IDS.has(u.id))
     .slice(0, 10)
     .map((u) => {
       let status = "";
@@ -744,17 +763,50 @@ const MIME = {
 const CLIENT_FILES = new Set([
   "/index.html", "/styles.css", "/sw.js", "/manifest.webmanifest",
   // the scripts index.html loads, in order
-  "/parser.js", "/insights.js", "/clinical.js", "/store.js", "/app.js", "/sync.js",
+  "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/app.js", "/sync.js",
 ]);
 const CLIENT_DIRS = ["/icons/", "/assets/", "/marketing-screenshots/"];
 const isClientAsset = (webPath) =>
   CLIENT_FILES.has(webPath) || CLIENT_DIRS.some((d) => webPath.startsWith(d));
 
+/* Compress JSON responses.
+
+   This is a cost line, not a nicety. A device polls /api/rev every 6s and
+   refetches the WHOLE clinic state whenever the revision moved, so a busy
+   clinic re-downloads the entire record set hundreds of times a day. Uncompressed
+   that dominates the bill: modelled at three clinic sizes, egress ran several
+   times the AI spend and grew with chart history, while the clinical text itself
+   gzips roughly 8:1 because it is repetitive JSON.
+
+   Applied in json() so all ~70 call sites get it at once. Skipped below 1 KB,
+   where the header overhead and CPU are not worth it, and skipped entirely for a
+   client that did not offer gzip. Async rather than gzipSync: the service runs
+   --max-instances 1, so blocking the event loop on a multi-megabyte payload
+   would stall every other request behind it.
+
+   This does NOT make the whole-blob sync design correct — a delta/since-rev
+   endpoint is the real fix. It buys the room to do that later. */
+const GZIP_MIN_BYTES = 1024;
+
 function json(res, code, obj) {
   if (res.headersSent) { try { res.end(); } catch { } return; } // never re-write headers mid-response
   const body = JSON.stringify(obj);
-  res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
-  res.end(body);
+  const headers = { "content-type": "application/json", "cache-control": "no-store" };
+  const accepts = String((res.req && res.req.headers && res.req.headers["accept-encoding"]) || "");
+
+  if (Buffer.byteLength(body) < GZIP_MIN_BYTES || !/\bgzip\b/i.test(accepts)) {
+    res.writeHead(code, headers);
+    return res.end(body);
+  }
+  zlib.gzip(body, (err, buf) => {
+    if (res.headersSent) return;                       // client vanished mid-compress
+    if (err) {                                          // never fail a response over compression
+      res.writeHead(code, headers);
+      return res.end(body);
+    }
+    res.writeHead(code, { ...headers, "content-encoding": "gzip", vary: "accept-encoding" });
+    res.end(buf);
+  });
 }
 
 /* Errors that reach a client must not carry internals. Node's messages
