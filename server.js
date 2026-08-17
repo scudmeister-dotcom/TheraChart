@@ -216,8 +216,15 @@ function usageAll() {
   return usageCache;
 }
 
-/** Record one unit of spend. `kind` is "gemini" or "stt". */
-function meter(clinicId, kind, fields) {
+/** Record one unit of spend. `kind` is "gemini" or "stt".
+
+    `purpose` splits the row by which feature spent it. A total that only moves
+    up tells you a bill grew; it cannot tell you whether documentation got
+    busier or one screen started looping, and those need different responses.
+    Tokens are kept per purpose, not just call counts — attributing a spike
+    needs pesos, and a cheap feature called often looks identical to an
+    expensive one called twice if you only count calls. */
+function meter(clinicId, kind, fields, purpose) {
   try {
     const all = usageAll();
     const day = new Date().toISOString().slice(0, 10);
@@ -225,11 +232,17 @@ function meter(clinicId, kind, fields) {
     const bucket = (all[day] = all[day] || {});
     const clinic = (bucket[cid] = bucket[cid] || {});
     const row = (clinic[kind] = clinic[kind] || {});
+    const bucketFor = purpose
+      ? ((row.byPurpose = row.byPurpose || {})[purpose] = (row.byPurpose || {})[purpose] || {})
+      : null;
     for (const [k, v] of Object.entries(fields)) {
-      if (typeof v === "number") row[k] = (row[k] || 0) + v;
-      else row[k] = v; // last-writer wins for labels like model
+      if (typeof v === "number") {
+        row[k] = (row[k] || 0) + v;
+        if (bucketFor) bucketFor[k] = (bucketFor[k] || 0) + v;
+      } else row[k] = v; // last-writer wins for labels like model
     }
     row.calls = (row.calls || 0) + 1;
+    if (bucketFor) bucketFor.calls = (bucketFor.calls || 0) + 1;
     usageDirty = true;
   } catch (e) { console.error("[usage] meter failed:", e.message); }
 }
@@ -244,18 +257,94 @@ setInterval(() => {
     const cutoff = new Date(Date.now() - USAGE_DAYS * 86400000).toISOString().slice(0, 10);
     for (const day of Object.keys(all)) if (day < cutoff) delete all[day];
     db.set(USAGE_KEY, JSON.stringify(all));
+    // drop rate buckets nobody has touched for a day, so the map cannot grow
+    // without bound on a long-lived server with many tenants
+    const stale = Date.now() - 86400000;
+    for (const [k, b] of rateBuckets) if (b.dayStart < stale && b.minStart < stale) rateBuckets.delete(k);
   } catch (e) { console.error("[usage] flush failed:", e.message); }
 }, 30000).unref?.();
+
+/* ---------------- AI rate limits ----------------
+
+   Every AI route checks a ROLE, and nothing checked a RATE. A signed-in account
+   with the right role could call Gemini as fast as the network allowed, so the
+   only thing standing between a retry loop and an open-ended bill was that
+   nobody had written one yet. Individually these calls are cheap — the patient
+   assistant measures about a peso for eight questions — which is exactly why
+   volume, not unit cost, is the exposure.
+
+   These are RUNAWAY DETECTORS, not quotas. Every limit is set several times
+   above the busiest plausible clinic, because the failure mode of a limit that
+   is too tight is a therapist blocked mid-visit, and that is far worse than the
+   money. A twelve-therapist clinic documenting sixty visits a day sits at
+   roughly a tenth of these.
+
+   Per clinic rather than per user: the bill is per clinic, and a limit that one
+   tenant could exhaust on another's behalf would be its own problem.
+
+   Fixed windows rather than sliding — a boundary can let through up to double
+   for one minute, which is irrelevant when the point is to catch something
+   calling in a loop forever. */
+const AI_LIMITS = {
+  refine:    { perMin: 40,  perDay: 2000 },   // one per processed recording
+  insights:  { perMin: 40,  perDay: 2000 },   // one per chart change
+  assistant: { perMin: 20,  perDay: 600 },    // interactive, so genuinely open-ended
+  blend:     { perMin: 30,  perDay: 600 },    // a button, a few fields per visit
+  extract:   { perMin: 5,   perDay: 120 },    // whole PDFs, the priciest single call
+  // STT chunks fan out in parallel — a 20-minute recording is ~24 at once — so
+  // the per-minute figure has to clear a burst comfortably. Spend per visit is
+  // already bounded by the per-visit ceiling in the recorder.
+  stt:       { perMin: 200, perDay: 20000 },
+};
+const rateBuckets = new Map();
+
+/** null if the call is allowed; otherwise details of the limit it hit. */
+function rateHit(clinicId, purpose) {
+  const lim = AI_LIMITS[purpose];
+  if (!lim) return null;
+  const now = Date.now();
+  const key = `${clinicId || DEFAULT_CLINIC}:${purpose}`;
+  let b = rateBuckets.get(key);
+  if (!b) { b = { minStart: now, minCount: 0, dayStart: now, dayCount: 0 }; rateBuckets.set(key, b); }
+  if (now - b.minStart >= 60000) { b.minStart = now; b.minCount = 0; }
+  if (now - b.dayStart >= 86400000) { b.dayStart = now; b.dayCount = 0; }
+  if (b.minCount >= lim.perMin)
+    return { scope: "minute", limit: lim.perMin, retryAfter: Math.max(1, Math.ceil((60000 - (now - b.minStart)) / 1000)) };
+  if (b.dayCount >= lim.perDay)
+    return { scope: "day", limit: lim.perDay, retryAfter: Math.max(1, Math.ceil((86400000 - (now - b.dayStart)) / 1000)) };
+  b.minCount += 1; b.dayCount += 1;
+  return null;
+}
+
+/** Send a 429 and return true if this call is over the limit.
+
+    The message is written for a clinician mid-visit, not an operator reading
+    logs: it says the work is safe, what to do now, and who to tell. A recording
+    survives this — the audio is still in IndexedDB and Process can be pressed
+    again — and that is worth saying out loud. */
+function aiRateLimited(res, req, user, purpose) {
+  const hit = rateHit(clinicOfUser(user), purpose);
+  if (!hit) return false;
+  console.warn(`[ratelimit] clinic=${clinicOfUser(user)} purpose=${purpose} hit the per-${hit.scope} limit of ${hit.limit}`);
+  res.setHeader("retry-after", String(hit.retryAfter));
+  json(res, 429, {
+    error: hit.scope === "minute"
+      ? "The AI is handling a lot of requests from your clinic right now. Nothing has been lost — wait a moment and try again."
+      : "Your clinic has reached today's limit for this AI feature. Nothing has been lost, and it resets automatically. If you are seeing this during normal work, tell your administrator — the limit is set well above ordinary use, so it usually means something is retrying in a loop.",
+    retryAfter: hit.retryAfter,
+    scope: hit.scope,
+  });
+  return true;
+}
 
 /** Billed seconds for a WAV, by Google's rule: round UP to the next second.
     16 kHz, 16-bit, mono = 32000 bytes/second, minus the 44-byte header. */
 const wavBilledSeconds = (buf) => Math.max(1, Math.ceil((buf.length - 44) / 32000));
 
 const GEMINI_OPTS = (user, purpose) => {
-  const onUsage = (u) => meter(clinicOfUser(user), "gemini", {
-    model: u.model, in: u.in, out: u.out, thinking: u.thinking,
-    [`calls_${purpose || u.purpose || "other"}`]: 1,
-  });
+  const onUsage = (u) => meter(clinicOfUser(user), "gemini",
+    { model: u.model, in: u.in, out: u.out, thinking: u.thinking },
+    purpose || u.purpose || "other");
   return vertexConfigured()
     ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
         model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, purpose, onUsage,
@@ -1226,7 +1315,7 @@ const server = http.createServer(async (req, res) => {
         const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
         const from = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
         const all = usageAll();
-        const out = { from, to: new Date().toISOString().slice(0, 10), days, byDay: {},
+        const out = { from, to: new Date().toISOString().slice(0, 10), days, byDay: {}, byPurpose: {},
           totals: { geminiIn: 0, geminiOut: 0, geminiThinking: 0, geminiCalls: 0, sttSeconds: 0, sttCalls: 0 } };
         for (const [day, clinics] of Object.entries(all)) {
           if (day < from) continue;
@@ -1240,12 +1329,21 @@ const server = http.createServer(async (req, res) => {
           out.totals.geminiIn += g.in || 0; out.totals.geminiOut += g.out || 0;
           out.totals.geminiThinking += g.thinking || 0; out.totals.geminiCalls += g.calls || 0;
           out.totals.sttSeconds += t.seconds || 0; out.totals.sttCalls += t.calls || 0;
+          // which feature spent it — the question a total cannot answer
+          for (const [p, v] of Object.entries(g.byPurpose || {})) {
+            const acc = (out.byPurpose[p] = out.byPurpose[p] || { in: 0, out: 0, thinking: 0, calls: 0 });
+            acc.in += v.in || 0; acc.out += v.out || 0;
+            acc.thinking += v.thinking || 0; acc.calls += v.calls || 0;
+          }
         }
         /* List prices, August 2026 (Gemini 3.7 Flash introductory to
            2026-12-31; Speech-to-Text v2 standard). Thinking bills as output. */
         const T = out.totals;
         const geminiUsd = (T.geminiIn * 0.75 + (T.geminiOut + T.geminiThinking) * 3.75) / 1e6;
         const sttUsd = (T.sttSeconds / 60) * 0.016;
+        // price each purpose the same way, so a spike names its own cause
+        const priced = (v) => (v.in * 0.75 + (v.out + v.thinking) * 3.75) / 1e6;
+        for (const [p, v] of Object.entries(out.byPurpose)) v.usd = Number(priced(v).toFixed(5));
         out.estimatedUsd = {
           gemini: Number(geminiUsd.toFixed(4)),
           stt: Number(sttUsd.toFixed(4)),
@@ -1287,6 +1385,7 @@ const server = http.createServer(async (req, res) => {
         // uses) — canAccessEmr would let front desk through, and this ships
         // transcript PHI off-box to Gemini.
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        if (aiRateLimited(res, req, user, "refine")) return;
         const { transcript } = await readBody(req);
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
         const clean = transcript.map((t) => String(t || "").slice(0, 2000)).slice(0, 500);
@@ -1299,6 +1398,7 @@ const server = http.createServer(async (req, res) => {
          not add. Anything not in one of the two inputs must not appear. */
       if (url.pathname === "/api/blend-note" && req.method === "POST") {
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can\u2019t create clinical documents." });
+        if (aiRateLimited(res, req, user, "blend")) return;
         const b = await readBody(req);
         const mine = String(b.mine || "").slice(0, 6000).trim();
         const other = String(b.ai || "").slice(0, 6000).trim();
@@ -1333,12 +1433,14 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/insights" && req.method === "POST") {
         // decision support for a licensed clinician — same gate as /api/refine
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        if (aiRateLimited(res, req, user, "insights")) return;
         const ctx = await readBody(req);
         const result = await clinicalInsights(ctx || {}, user);
         return json(res, 200, result);
       }
       if (url.pathname === "/api/patient-assistant" && req.method === "POST") {
         if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
+        if (aiRateLimited(res, req, user, "assistant")) return;
         const { chart, question, history } = await readBody(req);
         const q = String(question || "").slice(0, 2000).trim();
         if (!q) return json(res, 400, { error: "No question provided." });
@@ -1355,6 +1457,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === "/api/extract-doc" && req.method === "POST") {
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        if (aiRateLimited(res, req, user, "extract")) return;
         const { pdf, mime } = await readBody(req);
         if (!pdf || typeof pdf !== "string") return json(res, 400, { error: "No document received." });
         if (pdf.length > 11 * 1024 * 1024) return json(res, 400, { error: "Document too large (limit ~8 MB)." });
@@ -1375,6 +1478,10 @@ const server = http.createServer(async (req, res) => {
         // gets the older engine without any sign that it happened
         const model = (url.searchParams.get("model") || "standard").replace(/[^a-z0-9_]/gi, "");
         const docId = url.searchParams.get("docId") || "";
+        /* Checked before the body is read: a runaway recorder posting megabytes
+           of audio should be turned away at the door, not after we have taken
+           delivery of it. */
+        if (aiRateLimited(res, req, user, "stt")) return;
         const wav = await readRawBody(req);
         if (wav.length < 200) return json(res, 400, { error: "Empty audio." });
         // opt-in temporary retention: keep the raw segment for later review if

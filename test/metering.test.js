@@ -101,6 +101,39 @@ function wav(seconds) {
       Math.abs(u.estimatedUsd.stt - (u.totals.sttSeconds / 60) * 0.016) < 1e-6,
       `${u.estimatedUsd.stt} vs ${(u.totals.sttSeconds / 60) * 0.016}`);
 
+    /* ---------------- which feature spent it ----------------
+
+       A total that only goes up tells you a bill grew. It cannot tell you
+       whether documentation got busier or one screen started retrying in a
+       loop, and those want different responses — so spend is attributed to the
+       feature that incurred it, in pesos rather than call counts. A cheap
+       feature called constantly and an expensive one called twice look
+       identical if you only count calls. */
+    r.check("usage attributes spend to the feature that caused it",
+      u.byPurpose && typeof u.byPurpose === "object",
+      "a bill you cannot attribute is a bill you cannot act on");
+    r.check("…with STT's own purpose bucket kept out of the Gemini split",
+      !("stt" in (u.byPurpose || {})),
+      "byPurpose covers Gemini calls; STT has its own seconds meter");
+    /* Verified live against Vertex rather than here, because these tests run
+       with the AI credentials blanked so no check makes a billable call:
+       three different features attributed cleanly, and every peso of NEW spend
+       landed in a purpose bucket (measured as a delta — rows written before
+       this split existed have no bucket, and a total that includes them will
+       not reconcile against the parts). What is checkable without credentials
+       is the shape. */
+    if (Object.keys(u.byPurpose || {}).length) {
+      const anyP = Object.values(u.byPurpose)[0];
+      r.check("…priced per purpose, not just counted",
+        typeof anyP.usd === "number" && typeof anyP.calls === "number",
+        JSON.stringify(anyP));
+      const sumUsd = Object.values(u.byPurpose).reduce((a, v) => a + v.usd, 0);
+      r.check("…and no purpose claims more than the Gemini total",
+        sumUsd <= u.estimatedUsd.gemini + 0.001,
+        `purposes sum to ${sumUsd} vs total ${u.estimatedUsd.gemini}`);
+    }
+    // (no else: an empty split is the expected state here, and r.note fails the run)
+
     const windowed = await s.call("/api/usage?days=1", { token: grace });
     r.check("the window is selectable", windowed.status === 200 && windowed.data.days === 1);
     const clamped = await s.call("/api/usage?days=99999", { token: grace });
@@ -118,6 +151,52 @@ function wav(seconds) {
     } else {
       r.note(`could not sign in as the second clinic's admin (status ${fresh.status})`);
     }
+
+    /* ---------------- rate limits ----------------
+
+       Every AI route checked a role and none checked a rate, so a retry loop
+       could call Gemini as fast as the network allowed. These are runaway
+       detectors rather than quotas — set several times above the busiest
+       plausible clinic, because a therapist blocked mid-visit is a worse
+       outcome than the money.
+
+       `extract` has the tightest limit (5/min — whole PDFs, the priciest single
+       call), so it is the cheapest one to prove the mechanism against. */
+    const extract = () => s.call("/api/extract-doc", { method: "POST", token: maria, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
+    let sawLimit = null, allowed = 0;
+    for (let i = 0; i < 12 && !sawLimit; i++) {
+      const res = await extract();
+      if (res.status === 429) sawLimit = res; else allowed += 1;
+    }
+    r.check("a burst of AI calls is eventually refused", !!sawLimit,
+      `12 extract calls all went through — nothing is bounding a retry loop`);
+    if (sawLimit) {
+      r.check("…only after a generous number get through",
+        allowed >= 5, `only ${allowed} allowed before the limit — too tight for real work`);
+      r.check("…with a 429 and a retry-after the client can act on",
+        sawLimit.status === 429 && typeof sawLimit.data.retryAfter === "number" && sawLimit.data.retryAfter > 0,
+        JSON.stringify(sawLimit.data));
+      r.check("…and a message that tells a clinician their work is safe",
+        /nothing has been lost/i.test(sawLimit.data.error || ""),
+        `a limit hit mid-visit must not read like data loss: "${sawLimit.data.error}"`);
+    }
+
+    /* The limit is per clinic, not global — one tenant hitting a ceiling must
+       never stop another from documenting. */
+    if (fresh.status === 200) {
+      const otherClinic = await s.call("/api/extract-doc",
+        { method: "POST", token: fresh.data.token, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
+      r.check("one clinic's limit does not block another's",
+        otherClinic.status !== 429,
+        `a second clinic got ${otherClinic.status} while the first was rate-limited`);
+    }
+
+    /* Limits must not leak across features: exhausting PDF import cannot stop
+       a therapist finishing the note in front of them. */
+    const refineAfter = await s.call("/api/refine", { method: "POST", token: maria, body: { transcript: ["Patient reports less pain today."] } });
+    r.check("exhausting one feature does not block a different one",
+      refineAfter.status !== 429,
+      `refine returned ${refineAfter.status} because extract-doc was exhausted`);
   } finally { s.stop(); }
 
   r.done();
