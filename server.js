@@ -264,6 +264,14 @@ setInterval(() => {
   } catch (e) { console.error("[usage] flush failed:", e.message); }
 }, 30000).unref?.();
 
+/* True for the seeded accounts the demo sign-in screen publishes a password
+   for. Only meaningful when the demo panel is switched on — a real deployment
+   never has these accounts, and if one somehow did, it should not be treated
+   leniently just because an id matched. Defined here and evaluated lazily, as
+   SEEDED_DEMO_IDS is built further down the file. */
+const isDemoAccount = (user) =>
+  DEMO_LOGINS_ENABLED && !!user && SEEDED_DEMO_IDS.has(user.id);
+
 /* ---------------- AI rate limits ----------------
 
    Every AI route checks a ROLE, and nothing checked a RATE. A signed-in account
@@ -296,14 +304,49 @@ const AI_LIMITS = {
   // already bounded by the per-visit ceiling in the recorder.
   stt:       { perMin: 200, perDay: 20000 },
 };
+
+/* The demo deployment is a different risk entirely: its admin password is
+   printed on the public sign-in screen, so "authenticated" means "anyone on the
+   internet who read the page". Limits there are sized for SHOWING the product,
+   not running a clinic on it — roughly a tenth of the real ones, which still
+   covers several full demos a day.
+
+   Kept as a whole table rather than a multiplier so each number can be reasoned
+   about against what a demo actually does: record two or three visits, process
+   them, look at the chart review, ask the assistant a few questions. */
+const DEMO_AI_LIMITS = {
+  refine:    { perMin: 6,  perDay: 60 },
+  insights:  { perMin: 6,  perDay: 60 },
+  assistant: { perMin: 5,  perDay: 50 },
+  blend:     { perMin: 5,  perDay: 40 },
+  extract:   { perMin: 2,  perDay: 10 },
+  // still has to clear one recording's parallel chunk burst (~7 for six minutes)
+  stt:       { perMin: 20, perDay: 120 },
+};
+
+/* Requests are the wrong unit for the one path that can actually run up a bill:
+   a single Speech-to-Text call can carry a second of audio or fifty-eight of
+   them. So the demo also gets a daily budget in SECONDS OF AUDIO, which is what
+   Google charges for. 45 minutes is about eight honest demo sessions and caps
+   the day at roughly P44 however it is spent.
+
+   Tunable without a deploy, because the right number is a judgement about how
+   many demos a day you expect to run, and that changes faster than the code
+   does. The per-minute request limit above still bounds a burst; this bounds
+   the day. */
+const DEMO_STT_SECONDS_PER_DAY =
+  Math.max(60, Number(process.env.THERACHART_DEMO_STT_SECONDS) || 45 * 60);
+
 const rateBuckets = new Map();
 
 /** null if the call is allowed; otherwise details of the limit it hit. */
-function rateHit(clinicId, purpose) {
-  const lim = AI_LIMITS[purpose];
+function rateHit(clinicId, purpose, demo) {
+  const lim = (demo ? DEMO_AI_LIMITS : AI_LIMITS)[purpose];
   if (!lim) return null;
   const now = Date.now();
-  const key = `${clinicId || DEFAULT_CLINIC}:${purpose}`;
+  // demo counters are their own buckets, so a demo clinic and a real one that
+  // somehow shared an id could never spend each other's budget
+  const key = `${demo ? "demo:" : ""}${clinicId || DEFAULT_CLINIC}:${purpose}`;
   let b = rateBuckets.get(key);
   if (!b) { b = { minStart: now, minCount: 0, dayStart: now, dayCount: 0 }; rateBuckets.set(key, b); }
   if (now - b.minStart >= 60000) { b.minStart = now; b.minCount = 0; }
@@ -323,9 +366,10 @@ function rateHit(clinicId, purpose) {
     survives this — the audio is still in IndexedDB and Process can be pressed
     again — and that is worth saying out loud. */
 function aiRateLimited(res, req, user, purpose) {
-  const hit = rateHit(clinicOfUser(user), purpose);
+  const demo = isDemoAccount(user);
+  const hit = rateHit(clinicOfUser(user), purpose, demo);
   if (!hit) return false;
-  console.warn(`[ratelimit] clinic=${clinicOfUser(user)} purpose=${purpose} hit the per-${hit.scope} limit of ${hit.limit}`);
+  console.warn(`[ratelimit]${demo ? " DEMO" : ""} clinic=${clinicOfUser(user)} purpose=${purpose} hit the per-${hit.scope} limit of ${hit.limit}`);
   res.setHeader("retry-after", String(hit.retryAfter));
   json(res, 429, {
     error: hit.scope === "minute"
@@ -1322,27 +1366,55 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, id: report.id, delivered });
       }
 
-      /* What this clinic has actually spent. Admin-only: it is commercial
-         information, and on a multi-tenant server one clinic must not see
-         another's volumes. Prices are applied here rather than stored, so a
-         rate change re-prices history instead of leaving it stale. */
+      /* Usage, at two different altitudes.
+
+         WHAT A CLINIC MAY SEE is its own volumes: tokens, seconds, calls, and
+         which feature spent them. That is their activity and it is useful to
+         them.
+
+         WHAT ONLY THE PLATFORM OWNER MAY SEE is the money. `estimatedUsd` is
+         our cost of goods, and a clinic administrator reading it can derive our
+         margin on the plan they are about to renew. The gate for it is
+         isPlatformOwner rather than role === "admin", because "admin" means
+         admin OF A CLINIC — and on the demo deployment those admins' password
+         is printed on the public sign-in screen, so anything behind the role
+         alone is behind a published credential.
+
+         The owner also reads ACROSS clinics, since the question that matters at
+         that altitude is which tenant is costing what. A clinic admin stays
+         scoped to their own.
+
+         Demo accounts get nothing here at all: the credential is public, the
+         plan-usage card in the app reads local state rather than this endpoint,
+         so refusing costs the demo nothing. */
       if (url.pathname === "/api/usage" && req.method === "GET") {
-        if (user.role !== "admin") return json(res, 403, { error: "Admins only." });
+        const owner = isPlatformOwner(user);
+        if (!owner && isDemoAccount(user))
+          return json(res, 403, { error: "Not available on demo accounts." });
+        if (!owner && user.role !== "admin") return json(res, 403, { error: "Admins only." });
         const cid = clinicOfUser(user);
         const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
         const from = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
         const all = usageAll();
         const out = { from, to: new Date().toISOString().slice(0, 10), days, byDay: {}, byPurpose: {},
+          scope: owner ? "platform" : "clinic",
           totals: { geminiIn: 0, geminiOut: 0, geminiThinking: 0, geminiCalls: 0, sttSeconds: 0, sttCalls: 0 } };
+        if (owner) out.byClinic = {};
         for (const [day, clinics] of Object.entries(all)) {
           if (day < from) continue;
-          const row = (clinics || {})[cid];
+          /* The owner folds every tenant into the same totals and also keeps
+             them apart in byClinic; a clinic admin only ever sees its own row. */
+          const rows = owner ? Object.entries(clinics || {}) : [[cid, (clinics || {})[cid]]];
+          for (const [rowClinic, rowData] of rows) {
+          const row = rowData;
           if (!row) continue;
           const g = row.gemini || {}, t = row.stt || {};
-          out.byDay[day] = {
-            geminiIn: g.in || 0, geminiOut: g.out || 0, geminiThinking: g.thinking || 0,
-            geminiCalls: g.calls || 0, sttSeconds: t.seconds || 0, sttCalls: t.calls || 0,
-          };
+          // days accumulate, because the owner's view folds several clinics in
+          const d = (out.byDay[day] = out.byDay[day] ||
+            { geminiIn: 0, geminiOut: 0, geminiThinking: 0, geminiCalls: 0, sttSeconds: 0, sttCalls: 0 });
+          d.geminiIn += g.in || 0; d.geminiOut += g.out || 0; d.geminiThinking += g.thinking || 0;
+          d.geminiCalls += g.calls || 0; d.sttSeconds += t.seconds || 0; d.sttCalls += t.calls || 0;
+
           out.totals.geminiIn += g.in || 0; out.totals.geminiOut += g.out || 0;
           out.totals.geminiThinking += g.thinking || 0; out.totals.geminiCalls += g.calls || 0;
           out.totals.sttSeconds += t.seconds || 0; out.totals.sttCalls += t.calls || 0;
@@ -1352,21 +1424,32 @@ const server = http.createServer(async (req, res) => {
             acc.in += v.in || 0; acc.out += v.out || 0;
             acc.thinking += v.thinking || 0; acc.calls += v.calls || 0;
           }
+          if (out.byClinic) {
+            const c = (out.byClinic[rowClinic] = out.byClinic[rowClinic] ||
+              { name: store.clinicName(rowClinic),
+                geminiIn: 0, geminiOut: 0, geminiThinking: 0, geminiCalls: 0, sttSeconds: 0, sttCalls: 0 });
+            c.geminiIn += g.in || 0; c.geminiOut += g.out || 0; c.geminiThinking += g.thinking || 0;
+            c.geminiCalls += g.calls || 0; c.sttSeconds += t.seconds || 0; c.sttCalls += t.calls || 0;
+          }
+          }
         }
         /* List prices, August 2026 (Gemini 3.7 Flash introductory to
            2026-12-31; Speech-to-Text v2 standard). Thinking bills as output. */
-        const T = out.totals;
-        const geminiUsd = (T.geminiIn * 0.75 + (T.geminiOut + T.geminiThinking) * 3.75) / 1e6;
-        const sttUsd = (T.sttSeconds / 60) * 0.016;
-        // price each purpose the same way, so a spike names its own cause
-        const priced = (v) => (v.in * 0.75 + (v.out + v.thinking) * 3.75) / 1e6;
-        for (const [p, v] of Object.entries(out.byPurpose)) v.usd = Number(priced(v).toFixed(5));
-        out.estimatedUsd = {
-          gemini: Number(geminiUsd.toFixed(4)),
-          stt: Number(sttUsd.toFixed(4)),
-          total: Number((geminiUsd + sttUsd).toFixed(4)),
-          note: "List prices applied at read time; not an invoice.",
-        };
+        const geminiUsd = (v) => (v.geminiIn * 0.75 + (v.geminiOut + v.geminiThinking) * 3.75) / 1e6;
+        const sttUsd = (v) => (v.sttSeconds / 60) * 0.016;
+        if (owner) {
+          const T = out.totals;
+          const priced = (v) => (v.in * 0.75 + (v.out + v.thinking) * 3.75) / 1e6;
+          for (const [, v] of Object.entries(out.byPurpose)) v.usd = Number(priced(v).toFixed(5));
+          for (const [, v] of Object.entries(out.byClinic))
+            v.usd = Number((geminiUsd(v) + sttUsd(v)).toFixed(4));
+          out.estimatedUsd = {
+            gemini: Number(geminiUsd(T).toFixed(4)),
+            stt: Number(sttUsd(T).toFixed(4)),
+            total: Number((geminiUsd(T) + sttUsd(T)).toFixed(4)),
+            note: "List prices applied at read time; not an invoice.",
+          };
+        }
         return json(res, 200, out);
       }
 
@@ -1510,6 +1593,26 @@ const server = http.createServer(async (req, res) => {
         // Google rounds each request up to the next second, and we hold the
         // exact buffer, so this is the billed figure — not an estimate.
         const billedSeconds = wavBilledSeconds(wav);
+        /* The demo's audio budget, checked here rather than at the door because
+           only now do we know how much audio this actually is — the request
+           limit above cannot tell a one-second clip from a fifty-eight-second
+           one, and that is a 58x difference in what Google charges.
+
+           Read off the meter we already keep, so there is no second source of
+           truth to drift. Refused BEFORE the call to Google, so a blocked
+           request costs nothing. */
+        if (isDemoAccount(user)) {
+          const today = new Date().toISOString().slice(0, 10);
+          const spent = (((usageAll()[today] || {})[clinicOfUser(user)] || {}).stt || {}).seconds || 0;
+          if (spent + billedSeconds > DEMO_STT_SECONDS_PER_DAY) {
+            console.warn(`[ratelimit] DEMO clinic=${clinicOfUser(user)} audio budget spent (${spent}s of ${DEMO_STT_SECONDS_PER_DAY}s)`);
+            res.setHeader("retry-after", "3600");
+            return json(res, 429, {
+              error: `The demo has used its ${Math.round(DEMO_STT_SECONDS_PER_DAY / 60)} minutes of dictation for today. It resets tomorrow — everything else in the demo still works, and you can type into any note instead.`,
+              scope: "demo-audio",
+            });
+          }
+        }
         meter(clinicOfUser(user), "stt", { seconds: billedSeconds, bytes: wav.length, model });
         /* `billedSeconds` goes back to the caller so the chart can record what
            a visit actually cost against the same number that drives the bill,

@@ -26,7 +26,11 @@ function wav(seconds) {
 
 (async () => {
   const r = reporter("metering checker");
-  const s = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+  /* Demo logins OFF for the bulk of this file, so the seeded admin is treated
+     as an ordinary clinic admin. With the panel on she is a DEMO admin whose
+     password is published on the sign-in screen, and the usage endpoint refuses
+     those outright — that behaviour gets its own server at the end. */
+  const s = await startServer();
 
   try {
     const maria = (await s.login("maria@therachart.demo", "1234")).data.token;
@@ -35,10 +39,28 @@ function wav(seconds) {
 
     /* ---------------- who may read the meter ---------------- */
 
-    r.check("an admin can read usage", (await s.call("/api/usage", { token: grace })).status === 200);
     r.check("a therapist cannot", (await s.call("/api/usage", { token: maria })).status === 403);
     r.check("front desk cannot", (await s.call("/api/usage", { token: ana })).status === 403);
     r.check("an unauthenticated caller cannot", (await s.call("/api/usage")).status === 401);
+
+    r.check("a clinic admin can read their own usage",
+      (await s.call("/api/usage", { token: grace })).status === 200);
+
+    /* THE MONEY IS NOT THEIRS TO SEE. `estimatedUsd` is our cost of goods, and
+       a clinic administrator reading it can derive our margin on the plan they
+       are about to renew. Volumes are their own activity and stay visible;
+       pesos need isPlatformOwner, which is a different thing from being an
+       admin OF A CLINIC. */
+    const clinicView = (await s.call("/api/usage", { token: grace })).data;
+    r.check("…but not what it cost us",
+      !("estimatedUsd" in clinicView),
+      "a clinic admin who can read estimatedUsd can work out our margin before a renewal");
+    r.check("…while still seeing their own volumes",
+      typeof clinicView.totals.sttSeconds === "number" && clinicView.scope === "clinic",
+      JSON.stringify(clinicView.totals));
+    r.check("…and never another clinic's rows",
+      !("byClinic" in clinicView),
+      "the per-clinic split is an operator view, not a tenant one");
 
     /* ---------------- STT seconds are counted, not estimated ----------------
        Tests run without Google credentials, so transcription itself fails with
@@ -94,12 +116,7 @@ function wav(seconds) {
     r.check("…and separates thinking tokens from answer tokens",
       "geminiThinking" in u.totals && "geminiOut" in u.totals,
       "thinking is the dominant cost and the lever we tune — folding it into output hides that");
-    r.check("…and prices it at read time rather than storing a stale figure",
-      u.estimatedUsd && typeof u.estimatedUsd.total === "number" && /not an invoice/i.test(u.estimatedUsd.note || ""),
-      JSON.stringify(u.estimatedUsd));
-    r.check("…with STT priced from the metered seconds",
-      Math.abs(u.estimatedUsd.stt - (u.totals.sttSeconds / 60) * 0.016) < 1e-6,
-      `${u.estimatedUsd.stt} vs ${(u.totals.sttSeconds / 60) * 0.016}`);
+    // pricing itself is checked from the operator's seat, further down
 
     /* ---------------- which feature spent it ----------------
 
@@ -122,17 +139,9 @@ function wav(seconds) {
        this split existed have no bucket, and a total that includes them will
        not reconcile against the parts). What is checkable without credentials
        is the shape. */
-    if (Object.keys(u.byPurpose || {}).length) {
-      const anyP = Object.values(u.byPurpose)[0];
-      r.check("…priced per purpose, not just counted",
-        typeof anyP.usd === "number" && typeof anyP.calls === "number",
-        JSON.stringify(anyP));
-      const sumUsd = Object.values(u.byPurpose).reduce((a, v) => a + v.usd, 0);
-      r.check("…and no purpose claims more than the Gemini total",
-        sumUsd <= u.estimatedUsd.gemini + 0.001,
-        `purposes sum to ${sumUsd} vs total ${u.estimatedUsd.gemini}`);
-    }
-    // (no else: an empty split is the expected state here, and r.note fails the run)
+    r.check("…and a clinic sees the split without a price on it",
+      Object.values(u.byPurpose || {}).every((v) => !("usd" in v)),
+      "per-purpose pesos are cost of goods, same as the total");
 
     const windowed = await s.call("/api/usage?days=1", { token: grace });
     r.check("the window is selectable", windowed.status === 200 && windowed.data.days === 1);
@@ -198,6 +207,94 @@ function wav(seconds) {
       refineAfter.status !== 429,
       `refine returned ${refineAfter.status} because extract-doc was exhausted`);
   } finally { s.stop(); }
+
+  /* ---------------- the operator's seat ----------------
+     Same endpoint, a strictly larger view: money, and every tenant at once.
+     Gated on the owner's email rather than a role, so it cannot be reached by
+     an account whose password is printed on a sign-in screen. */
+  const o = await startServer({ GOOGLE_OWNER_EMAIL: "grace@therachart.demo" });
+  try {
+    const owner = (await o.login("grace@therachart.demo", "1234")).data.token;
+    const staff = (await o.login("maria@therachart.demo", "1234")).data.token;
+    const view = await o.call("/api/usage", { token: owner });
+    r.check("the platform owner sees the money", view.status === 200 && view.data.estimatedUsd,
+      `status=${view.status}`);
+    r.check("…priced at read time, so a rate change re-prices history",
+      /not an invoice/i.test((view.data.estimatedUsd || {}).note || ""),
+      JSON.stringify(view.data.estimatedUsd));
+    r.check("…and sees every clinic broken out, which is the operator's question",
+      view.data.scope === "platform" && view.data.byClinic && typeof view.data.byClinic === "object",
+      `scope=${view.data.scope}`);
+    r.check("…with each clinic named and costed",
+      Object.values(view.data.byClinic).every((c) => typeof c.name === "string" && typeof c.usd === "number"),
+      JSON.stringify(view.data.byClinic).slice(0, 200));
+    /* Owner is an identity, not a role: a therapist at the same clinic gets
+       nothing, and the check does not fall back to role === "admin". */
+    r.check("a therapist is still refused on the owner's server",
+      (await o.call("/api/usage", { token: staff })).status === 403);
+  } finally { o.stop(); }
+
+  /* ---------------- the demo box ----------------
+     Its admin password is published on the sign-in screen, so "authenticated"
+     there means "anyone who read the page". Limits are sized for showing the
+     product, and the usage endpoint is closed entirely. */
+  /* The audio budget is set to two minutes here rather than the real 45, so it
+     is reached inside the per-minute request allowance. At the production
+     figure the request limiter would trip first in a tight loop and the budget
+     would never be exercised — over a real day it binds first, since 120
+     requests of up to 58 seconds is nearly two hours against a 45-minute
+     budget. */
+  const d = await startServer({ THERACHART_DEMO_LOGINS: "1", THERACHART_DEMO_STT_SECONDS: "120" });
+  try {
+    const demoAdmin = (await d.login("grace@therachart.demo", "1234")).data.token;
+    const demoPt = (await d.login("maria@therachart.demo", "1234")).data.token;
+    r.check("a demo admin cannot read usage at all",
+      (await d.call("/api/usage", { token: demoAdmin })).status === 403,
+      "this account's password is on the public sign-in screen");
+
+    /* Demo AI limits are about a tenth of a real clinic's. extract is the
+       tightest at 10/day, so it proves the tighter table is in force — the same
+       burst passes comfortably on a real clinic (checked above, where 12 calls
+       were needed to trip a 120/day limit). */
+    let demoAllowed = 0, demoBlocked = false;
+    for (let i = 0; i < 14 && !demoBlocked; i++) {
+      const res = await d.call("/api/extract-doc",
+        { method: "POST", token: demoPt, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
+      if (res.status === 429) demoBlocked = true; else demoAllowed += 1;
+    }
+    r.check("the demo hits its AI limit sooner than a real clinic would",
+      demoBlocked && demoAllowed <= 10,
+      `${demoAllowed} calls got through on the demo — the real-clinic table would allow more`);
+    r.check("…but enough of them to actually show the product",
+      demoAllowed >= 2, `only ${demoAllowed} allowed — too tight to demo with`);
+
+    /* Requests are the wrong unit for audio: one call can carry a second or
+       fifty-eight. The demo also has a daily budget in SECONDS, which is what
+       Google charges for, and it is refused before the call to Google so a
+       blocked request costs nothing. */
+    const bigWav = wav(58);
+    const post = (buf, token) => new Promise((resolve) => {
+      const uu = new URL(d.base + "/api/stt?lang=en-US&model=chirp2");
+      const rq = require("http").request({ hostname: uu.hostname, port: uu.port, path: uu.pathname + uu.search,
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": buf.length } },
+        (rs) => { let b = ""; rs.on("data", (x) => { b += x; }); rs.on("end", () => { let j = {}; try { j = JSON.parse(b); } catch (_) { } resolve({ status: rs.statusCode, data: j }); }); });
+      rq.on("error", () => resolve({ status: 0, data: {} }));
+      rq.end(buf);
+    });
+    let audioBlocked = null, minutes = 0;
+    for (let i = 0; i < 60 && !audioBlocked; i++) {
+      const res = await post(bigWav, demoPt);
+      if (res.status === 429) audioBlocked = res; else minutes += 58 / 60;
+    }
+    r.check("the demo's audio budget is enforced in seconds, not requests",
+      !!audioBlocked && audioBlocked.data.scope === "demo-audio",
+      `sent ${minutes.toFixed(0)} minutes without being stopped by the audio budget`);
+    r.check("…at the configured budget, not at a request count",
+      minutes >= 1 && minutes <= 3, `budget was 2 minutes; stopped after ${minutes.toFixed(1)}`);
+    r.check("…telling the presenter what still works",
+      /still works|type into any note/i.test((audioBlocked || { data: {} }).data.error || ""),
+      `a limit hit mid-pitch must not read like the product is broken: "${(audioBlocked || { data: {} }).data.error}"`);
+  } finally { d.stop(); }
 
   r.done();
 })().catch((e) => { console.error(e); process.exit(1); });
