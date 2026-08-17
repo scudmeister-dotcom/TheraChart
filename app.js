@@ -3961,7 +3961,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      any amount we save. */
 
   const RECORD_DB = "therachart-audio";
-  const CHUNK_SECONDS = 55;        // sync recognize allows 60; leave headroom
+  const CHUNK_SECONDS = 50;        // start looking for a pause here; hard ceiling is 58s
   const RECORD_MAX_MINUTES = 20;   // a hard stop, so a stuck recorder can't run away
 
   function audioStore() {
@@ -4055,7 +4055,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
           if (onLevel) onLevel(voiced, rms);
           if (onElapsed) onElapsed(totalMs / 1000, voicedMs / 1000);
-          if (chunkSamples >= perChunk) flushChunk();
+
+          /* Cut chunks at a PAUSE, never mid-word.
+
+             Each chunk is transcribed as an independent request, so a word
+             split across a boundary is mangled in both halves — "shoulder"
+             becomes "shoul" + "der" and the model recovers neither. Since the
+             audio is already voice-gated we have natural boundaries to use:
+             once a chunk is long enough, wait for the speaker to stop before
+             closing it.
+
+             hardCap is the backstop for someone who genuinely does not pause.
+             It sits below Google's 60-second sync limit, and cutting mid-word
+             there is the lesser evil against the request being rejected
+             outright — but at 58 seconds of continuous speech it is close to
+             unreachable in dictation. */
+          const softCap = perChunk;                       // ~55s: start looking for a pause
+          const hardCap = 58 * ctx.sampleRate;            // absolute ceiling under the API limit
+          if (chunkSamples >= hardCap) flushChunk();
+          else if (chunkSamples >= softCap && !voiced && tailMs >= POST_ROLL) flushChunk();
           if (totalMs > RECORD_MAX_MINUTES * 60000) { this.stop(); if (onStop) onStop("limit"); }
         };
         src.connect(proc); proc.connect(ctx.destination);
