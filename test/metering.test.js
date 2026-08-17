@@ -54,15 +54,29 @@ function wav(seconds) {
       const u = new URL(s.base + "/api/stt?lang=en-US&model=chirp2");
       const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search,
         method: "POST", headers: { authorization: `Bearer ${maria}`, "content-type": "application/octet-stream", "content-length": buf.length } },
-        (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
-      req.on("error", () => resolve(0));
+        (res) => {
+          let body = "";
+          res.on("data", (d) => { body += d; });
+          res.on("end", () => { let data = {}; try { data = JSON.parse(body); } catch (_) { } resolve({ status: res.statusCode, data }); });
+        });
+      req.on("error", () => resolve({ status: 0, data: {} }));
       req.end(buf);
     });
 
     await rawPost(wav(3));
     await rawPost(wav(2));
     // 0.4s must bill as a whole second — Google rounds every request UP
-    await rawPost(wav(0.4));
+    const short = await rawPost(wav(0.4));
+
+    /* The chart records what a visit's dictation cost from the figure the
+       SERVER returns, not from the client's own count of voiced milliseconds —
+       only one of those is the number on the invoice. A 501 is the exception:
+       it means Cloud STT was never configured, so the audio never reached
+       Google and nothing was billed. Tests run without credentials, so that is
+       the path exercised here. */
+    r.check("a 501 does not report billed seconds",
+      short.status === 501 && !("billedSeconds" in short.data),
+      `status=${short.status} body=${JSON.stringify(short.data)} — audio that never reached Google must not land on a visit`);
 
     const after = (await s.call("/api/usage", { token: grace })).data;
     const delta = after.totals.sttSeconds - before;

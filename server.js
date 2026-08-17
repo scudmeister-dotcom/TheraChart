@@ -1377,19 +1377,27 @@ const server = http.createServer(async (req, res) => {
         if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         // Google rounds each request up to the next second, and we hold the
         // exact buffer, so this is the billed figure — not an estimate.
-        meter(clinicOfUser(user), "stt", { seconds: wavBilledSeconds(wav), bytes: wav.length, model });
+        const billedSeconds = wavBilledSeconds(wav);
+        meter(clinicOfUser(user), "stt", { seconds: billedSeconds, bytes: wav.length, model });
+        /* `billedSeconds` goes back to the caller so the chart can record what
+           a visit actually cost against the same number that drives the bill,
+           rather than the client's own estimate of how long someone spoke.
+           It is deliberately absent from the 501 below: that means Cloud STT
+           was never configured, so the audio never reached Google and nothing
+           was billed for it. */
         try {
           const out = await transcribe(wav, lang, model);
           // `model` is what actually ran, which is not always what was asked
           // for — see the English-only fallback in transcribe()
-          return json(res, 200, { text: out.text, model: out.model, retained });
+          return json(res, 200, { text: out.text, model: out.model, retained, billedSeconds });
         } catch (e) {
           // 501 is our own "Speech-to-Text isn't set up yet" guidance; anything
           // else is a raw Google error and stays in the log
           if (e.code === 501) return json(res, 501, { error: e.message, retained });
           const ref = crypto.randomBytes(4).toString("hex");
           console.error(`[error ${ref}] POST /api/stt —`, e);
-          return json(res, 500, { error: "Transcription failed.", ref, retained });
+          // audio that reached Google and failed there is still billed
+          return json(res, 500, { error: "Transcription failed.", ref, retained, billedSeconds });
         }
       }
       if (url.pathname === "/api/audio") {

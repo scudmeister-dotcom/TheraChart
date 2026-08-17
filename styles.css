@@ -99,6 +99,13 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute only sets `display: none` at user-agent priority, so
+   any component rule that sets `display` silently beats it — `.btn` is
+   inline-flex, which is why the recorder's Process/Discard buttons showed with
+   nothing to process. Two backdrops already carried their own `[hidden]` patch
+   for the same reason; this makes the attribute mean what it says everywhere. */
+[hidden] { display: none !important; }
+
 /* ---- Sidebar palette: dark teal-gradient rail in EVERY theme ----
    The rail is a fixed brand surface (the teal→ink gradient with soft teal/violet
    glows) that anchors the lighter content beside it; the rest of the app still
@@ -1927,3 +1934,49 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .cmp-col:last-child textarea { border-color: var(--accent); background: var(--accent-soft); }
 .cmp-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
 .cmp-state { font-size: 12px; color: var(--accent); }
+
+/* ---- per-visit dictation total, and the clinic's plan-usage meter ---- */
+.dict-total { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.dict-total b { color: var(--ink); }
+.dict-total .hint { font-size: 11.5px; }
+
+.allowance { margin-bottom: 16px; }
+.allowance-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.allowance-head h2 { margin: 0; }
+.allowance-head .sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.allowance-count { text-align: right; line-height: 1.15; white-space: nowrap; }
+.allowance-count b { display: block; font-size: 27px; font-variant-numeric: tabular-nums; }
+.allowance-count span { font-size: 12px; color: var(--muted); }
+.allowance-count.good b { color: var(--good); }
+.allowance-count.warn b { color: var(--warn, #b06d0b); }
+.allowance-count.bad b { color: var(--danger); }
+
+.allowance-bar { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; margin: 12px 0 14px; }
+.allowance-fill { height: 100%; border-radius: 99px; transition: width .3s ease; }
+.allowance-fill.good { background: var(--good); }
+.allowance-fill.warn { background: var(--warn, #d18b18); }
+.allowance-fill.bad { background: var(--danger); }
+
+.allowance-stats { display: flex; gap: 26px; flex-wrap: wrap; }
+.allowance-stats div { line-height: 1.25; }
+.allowance-stats b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+.allowance-stats span { font-size: 11.5px; color: var(--muted); }
+.allowance-note { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* ---- per-patient dictation history (a scheduling hint, in "At a glance") ---- */
+/* Stacked, not inline: an open <details> inside a table cell reflows the
+   summary line around its own expanded body, which dropped the headline figure
+   below the history list. */
+.dict-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.dict-cell-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dict-hist { display: block; width: 100%; }
+.dict-hist summary { cursor: pointer; font-size: 11.5px; color: var(--muted); list-style: none; }
+.dict-hist summary::-webkit-details-marker { display: none; }
+.dict-hist summary::before { content: "▸ "; font-size: 9px; }
+.dict-hist[open] summary::before { content: "▾ "; }
+.dict-hist summary:hover { color: var(--accent); }
+.dict-hist-body { margin-top: 7px; border-top: 1px solid var(--border); padding-top: 7px; }
+.dict-hist-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
+.dict-hist-date { color: var(--muted); flex: 1; }
+.dict-hist-secs { font-variant-numeric: tabular-nums; }
+.dict-hist-foot { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.45; white-space: normal; }

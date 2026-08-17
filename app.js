@@ -1913,6 +1913,38 @@ ${tabStrip}
     return items;
   }
 
+  /* How long this patient takes to dictate — shown so the desk can book a slot
+     that fits, and expanded to the last few visits for anyone who wants to see
+     where the figure came from.
+
+     Written as a property of the PATIENT, never of whoever was holding the
+     microphone: a complex presentation legitimately takes longer to describe.
+     The same numbers sliced by clinician would be a stopwatch on staff, and
+     would push therapists to say less about harder patients. */
+  function dictationRow(p) {
+    const d = S.patientDictation(p.id);
+    if (!d.typical) return ""; // fewer than 3 dictated visits — no honest answer yet
+    const note = d.longer
+      ? `<span class="chip warn">runs long</span> <span class="hint">allow a longer slot</span>`
+      : d.shorter
+        ? `<span class="chip good">quick</span> <span class="hint">a shorter slot would fit</span>`
+        : d.clinicTypical ? `<span class="hint">about typical for your clinic</span>` : "";
+    return `<tr><td style="color:var(--muted)">Typical dictation</td><td>
+        <div class="dict-cell">
+          <div class="dict-cell-head"><span class="num">${mmssOf(d.typical)}</span> ${note}</div>
+          <details class="dict-hist"><summary>last ${d.recent.length} visit${d.recent.length === 1 ? "" : "s"}</summary>
+            <div class="dict-hist-body">
+              ${d.recent.map((r) => `<div class="dict-hist-row">
+                <span class="doc-tag ${docMeta(r.type).cls}">${docMeta(r.type).short}</span>
+                <span class="dict-hist-date">${fmtDate(r.createdAt)}</span>
+                <span class="dict-hist-secs num">${mmssOf(r.seconds)}</span></div>`).join("")}
+              <div class="dict-hist-foot">Median of ${d.visits} dictated visit${d.visits === 1 ? "" : "s"}${d.clinicTypical ? ` · clinic typical ${mmssOf(d.clinicTypical)}` : ""}. Speech only — pauses aren't counted.</div>
+            </div>
+          </details>
+        </div>
+      </td></tr>`;
+  }
+
   function overviewPanel(p, user) {
     const gaps = needsAttention(p);        // deterministic documentation / workflow gaps
     const tasks = S.actionItems(p.id);     // accepted AI recommendations + manual tasks
@@ -1983,6 +2015,7 @@ ${tabStrip}
           <tr><td style="color:var(--muted)">Visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
           ${authRow}
           <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${toward}/${every}</td></tr>
+          ${dictationRow(p)}
         </tbody></table>
       </div>`;
 
@@ -3123,6 +3156,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>
       <div class="rec-progress" id="recProgress" hidden></div>
     </div>` : ""}
+    ${dictationLine(doc)}
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="figures">
       <figure><figcaption>Front <span class="hint">(patient's L on your right)</span></figcaption><div class="bodymap" id="mapFront">${figureMarkup("front")}</div></figure>
@@ -4107,7 +4141,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      order. Each chunk is inside the sync limit, so each returns on its own. */
   async function processRecording(docId, lang, model, chunks, onProgress) {
     const done = new Array(chunks.length).fill(null);
-    let finished = 0;
+    let finished = 0, billedSeconds = 0;
     await Promise.all(chunks.map(async (c, i) => {
       const wav = encodeWav(c.pcm, c.rate);
       try {
@@ -4118,6 +4152,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           body: wav,
         });
         const data = await res.json().catch(() => ({}));
+        /* Take the SERVER's billed figure, not our own count of voiced
+           milliseconds. The two are close, but only one of them is the number
+           on the invoice — and a chunk that failed at Google was still billed,
+           so this is summed outside the res.ok branch. */
+        if (typeof data.billedSeconds === "number") billedSeconds += data.billedSeconds;
         done[i] = res.ok ? (data.text || "") : "";
         if (!res.ok) done[i] = { error: (data && data.error) || `HTTP ${res.status}` };
       } catch (e) { done[i] = { error: e.message || "network error" }; }
@@ -4126,7 +4165,34 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }));
     const errors = done.filter((d) => d && d.error).map((d) => d.error);
     const text = done.filter((d) => typeof d === "string").join(" ").replace(/\s+/g, " ").trim();
-    return { text, errors, chunks: chunks.length };
+    return { text, errors, chunks: chunks.length, billedSeconds };
+  }
+
+  /** "6:12" for 372 seconds. */
+  function mmssOf(s) {
+    return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  }
+
+  /* What this visit's dictation actually cost, in the unit that was billed.
+     Shown to the clinician on their own note — it is a feedback loop on their
+     own work, not a scoreboard, so it is deliberately stated as speech time
+     and never as money or as a comparison against anyone else. */
+  function dictationLine(doc) {
+    const s = Number((doc.data || {})._dictationSeconds) || 0;
+    if (!s) return "";
+    return `<div class="dict-total" id="dictTotal">🎙 <b>${mmssOf(s)}</b> of dictation billed on this visit`
+      + `<span class="hint"> · pauses aren't counted — only speech</span></div>`;
+  }
+
+  /** Add billed dictation seconds to a visit, so the chart carries what the
+      documentation actually cost. Additive: a therapist can record, process,
+      then record more onto the same note, and each pass is real spend. */
+  function recordDictationSeconds(docId, seconds, user) {
+    if (!seconds || seconds <= 0) return;
+    const live = S.getDoc(docId);
+    if (!live || live.status === "signed") return; // signed docs are locked
+    const prev = Number(live.data._dictationSeconds) || 0;
+    S.updateDocData(docId, { _dictationSeconds: prev + seconds }, user);
   }
 
   /* Google Cloud Speech-to-Text engine. Records short WAV segments in the page
@@ -4134,7 +4200,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      proxies to Google Cloud under the clinic's BAA. Segments are held only in
      memory and sent immediately — no audio is written to the device — and are
      delivered in order via a promise chain. */
-  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop }) {
+  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop, onBilled }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
     /* Voice gating. PRE_ROLL_CHUNKS x ~85ms of audio is carried across the
@@ -4167,6 +4233,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             body: wav,
           });
           const data = await res.json().catch(() => ({}));
+          // billed whether or not the transcript came back usable
+          if (typeof data.billedSeconds === "number" && typeof onBilled === "function") onBilled(data.billedSeconds);
           if (res.ok) { if (data.text) onText(data.text); }
           else onStatus(res.status === 501
             ? "Google Cloud dictation isn't set up on the server yet — see Privacy & Security."
@@ -4391,6 +4459,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           } else {
             prog.textContent = "Transcribed. Review what the AI filled in against your own notes below.";
           }
+          // Record the spend before routing: routeUtterance persists doc.data,
+          // and a crash mid-routing should not lose what we were already billed.
+          recordDictationSeconds(doc.id, out.billedSeconds, user);
           // Route it exactly as dictation would, so measurements, the body map
           // and the SOAP fields all fill the same way.
           /* Snapshot what the therapist wrote BEFORE the AI touches anything,
@@ -4447,6 +4518,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // The idle backstop stopped the mic itself; put the button back in step
       // so the therapist can see it happened and tap once to resume.
       onAutoStop: () => { listening = false; setUI(); },
+      // Live dictation bills exactly as record-then-process does, so it lands
+      // on the visit the same way — otherwise the chart would show a cost of
+      // zero for a note dictated the other way round.
+      onBilled: (secs) => recordDictationSeconds(doc.id, secs, user),
     };
 
     let engine = null;
@@ -5997,12 +6072,51 @@ ${privacyInfoAccordion(geminiOn)}
 </div>`;
   }
 
+  /* This month against the plan.
+
+     Deliberately shows VISITS as the headline and dictation time as secondary,
+     because visits are what the clinic is billed for and dictation is only the
+     thing that drives our cost. Leading with minutes would train an owner to
+     lean on therapists to talk less, which buys a few pesos and costs
+     documentation quality.
+
+     Nothing here shows our own cost of goods — that lives behind /api/usage and
+     is not the clinic's business. */
+  function allowanceCard() {
+    const u = S.monthUsage();
+    const pct = Math.min(100, Math.round((u.visits / u.allowance) * 100));
+    const over = u.overBy > 0;
+    // Only project once there is enough of the month to project from; a pace
+    // read off two days is noise dressed up as a forecast.
+    const project = u.daysElapsed >= 5 && u.projectedVisits > u.allowance && !over;
+    const month = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const tone = over ? "bad" : pct >= 85 ? "warn" : "good";
+    return `
+<div class="card allowance">
+  <div class="allowance-head">
+    <div><h2>Plan usage — ${esc(month)}</h2>
+      <div class="sub">${esc(u.planName)} plan · ${u.allowance} documented visits included</div></div>
+    <div class="allowance-count ${tone}"><b>${u.visits}</b><span>of ${u.allowance}</span></div>
+  </div>
+  <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
+  <div class="allowance-stats">
+    <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
+    <div><b>${u.dictationSeconds ? mmssOf(u.dictationSeconds) : "—"}</b><span>dictation this month</span></div>
+    <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
+  </div>
+  ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
+  ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, which is over your ${u.allowance}. Nothing stops working — the extra visits simply bill as overage.</div>` : ""}
+  <div class="allowance-note">Dictation is billed on <b>speech only</b> — pauses, and a mic left open in a quiet room, cost nothing. ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}</div>
+</div>`;
+  }
+
   function facilityView(user) {
     const st = S.settings();
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
 <div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Approvals, settings and staff licenses</div></div></div>
 ${accessRequestsCard(user)}
+${allowanceCard()}
 <div class="cards-2">
   <div class="card">
     <h2>Facility settings</h2>
@@ -6021,6 +6135,14 @@ ${accessRequestsCard(user)}
         <input type="checkbox" class="st-day" value="${i}" ${st.workDays.includes(i) ? "checked" : ""}/>${d}</label>`).join("")}
       </div>
     </div>
+    <div class="field-row" style="border-top:1px solid var(--border); padding-top:12px">
+      <div class="field"><label>Plan</label>
+        <select id="st-plan">
+          ${["Solo", "Practice", "Clinic", "Group"].map((p) => `<option value="${p}" ${st.planName === p ? "selected" : ""}>${p}</option>`).join("")}
+        </select></div>
+      <div class="field"><label>Visits included per month</label><input id="st-allowance" type="number" min="1" max="10000" value="${st.visitAllowance}" /></div>
+    </div>
+    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter above counts against. Change it when you move plans.</div>
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
@@ -6089,6 +6211,8 @@ ${accessRequestsCard(user)}
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
         audioReview: document.getElementById("st-audio").checked,
         audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
+        planName: document.getElementById("st-plan").value,
+        visitAllowance: Math.max(1, Number(document.getElementById("st-allowance").value) || 130),
       }, user);
       render();
     });

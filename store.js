@@ -873,6 +873,13 @@
     workDays: [1, 2, 3, 4, 5, 6],
     audioReview: false,
     audioReviewDays: 7,
+    /* Commercial plan. The allowance is what the clinic bought, in DOCUMENTED
+       VISITS — not seats, because cost tracks visits and a clinic that adds a
+       part-time therapist without adding visits costs us nothing more. Defaults
+       to the entry rung so a fresh install shows a real meter rather than an
+       empty one; an admin sets their actual plan in Facility Admin. */
+    planName: "Solo",
+    visitAllowance: 130,
   };
 
   /** Effective settings for one clinic: its own block over the legacy global
@@ -1066,6 +1073,122 @@
 
   function visitCount(patientId) {
     return docsFor(patientId).filter((d) => d.type === "daily").length;
+  }
+
+  /* ---------------- dictation history, for scheduling ----------------
+
+     How long this patient's visits actually take to dictate, so the front desk
+     can book a slot that fits. A patient with a complex neuro presentation
+     genuinely needs more talking than a straightforward knee, and the schedule
+     should reflect that rather than running late every week.
+
+     Three deliberate constraints, because this is the number most easily
+     misread as a productivity score:
+
+       MEDIAN, not mean. One runaway session — a mic left open before the idle
+       stop caught it, or an unusually messy visit — must not move a
+       recommendation that will be applied every week from now on.
+
+       A MINIMUM SAMPLE. Below MIN_SAMPLE dictated visits there is no answer,
+       and the caller shows nothing. A "typical" built from one visit is noise
+       wearing the costume of advice.
+
+       NO THERAPIST DIMENSION, deliberately. This is keyed on the patient and
+       nothing else. The same figure grouped by clinician is a stopwatch on
+       staff, and the incentive it creates — dictate less — degrades exactly
+       the documentation the product exists to improve. */
+  const MIN_SAMPLE = 3;        // dictated visits before this patient has a "typical"
+  const MIN_CLINIC_SAMPLE = 5; // …and before the clinic has a baseline to compare against
+
+  const median = (sorted) => {
+    if (!sorted.length) return 0;
+    const m = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[m] : Math.round((sorted[m - 1] + sorted[m]) / 2);
+  };
+  const dictationSecs = (docs) => docs
+    .map((d) => Number((d.data || {})._dictationSeconds) || 0)
+    .filter((s) => s > 0)
+    .sort((a, b) => a - b);
+
+  function patientDictation(patientId) {
+    load();
+    const mineSecs = dictationSecs(docsFor(patientId));
+    /* The baseline is every OTHER patient, not the whole clinic. Including this
+       patient's own visits compares them partly against themselves, which in a
+       small clinic — where one heavy patient can be a large share of all
+       dictation — quietly cancels the signal we are looking for. */
+    const clinicSecs = dictationSecs(load().documents.filter(mine).filter((d) => d.patientId !== patientId));
+    const typical = mineSecs.length >= MIN_SAMPLE ? median(mineSecs) : 0;
+    const clinicTypical = clinicSecs.length >= MIN_CLINIC_SAMPLE ? median(clinicSecs) : 0;
+    /* "Runs long" needs BOTH a ratio and an absolute gap. A ratio alone fires
+       on a clinic whose typical visit is 90 seconds, where a 2-minute patient
+       is 1.3x but the extra 30s is not worth re-arranging a schedule over. */
+    const longer = !!(typical && clinicTypical && typical >= clinicTypical * 1.3 && typical - clinicTypical >= 120);
+    const shorter = !!(typical && clinicTypical && typical <= clinicTypical * 0.7 && clinicTypical - typical >= 120);
+    return {
+      visits: mineSecs.length,
+      typical,
+      longest: mineSecs.length ? mineSecs[mineSecs.length - 1] : 0,
+      clinicTypical,
+      clinicVisits: clinicSecs.length,
+      longer,
+      shorter,
+      // recent visits, newest first, for the scheduling detail view
+      recent: docsFor(patientId)
+        .filter((d) => Number((d.data || {})._dictationSeconds) > 0)
+        .slice(-6).reverse()
+        .map((d) => ({ id: d.id, type: d.type, createdAt: d.createdAt, seconds: Number(d.data._dictationSeconds) })),
+    };
+  }
+
+  /* ---------------- plan usage ----------------
+
+     What this clinic has consumed against its allowance, for the current
+     calendar month. Two different quantities, and conflating them would
+     mislead:
+
+       visits    — what the plan is SOLD in, and what the clinic is charged
+                   for. A document created this month counts once, whether or
+                   not anyone dictated into it.
+       dictation — the billed SECONDS of audio behind those visits, summed from
+                   `_dictationSeconds`, which the server (not the client) put
+                   there. This is the cost driver, not the price driver.
+
+     Counted on createdAt rather than signing, because a visit consumes its AI
+     the day it is documented; a note signed three days late would otherwise
+     land in the wrong month and make the meter disagree with the bill. */
+  function monthUsage(monthStart) {
+    load();
+    const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const startMs = start.getTime();
+    const docs = load().documents.filter(mine)
+      .filter((d) => new Date(d.createdAt || 0).getTime() >= startMs);
+    let seconds = 0, dictated = 0;
+    for (const d of docs) {
+      const s = Number((d.data || {})._dictationSeconds) || 0;
+      if (s > 0) { seconds += s; dictated += 1; }
+    }
+    const st = settings();
+    const allowance = Math.max(1, Number(st.visitAllowance) || 130);
+    // Pace is measured against days ELAPSED, so a projection on the 2nd of the
+    // month is honest about being built on one day of data.
+    const now = new Date();
+    const daysElapsed = Math.max(1, Math.round((now - start) / 86400000) + 1);
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return {
+      planName: st.planName || "Solo",
+      allowance,
+      visits: docs.length,
+      remaining: Math.max(0, allowance - docs.length),
+      overBy: Math.max(0, docs.length - allowance),
+      dictationSeconds: Math.round(seconds),
+      dictatedVisits: dictated,
+      avgSecondsPerVisit: dictated ? Math.round(seconds / dictated) : 0,
+      daysElapsed,
+      daysInMonth,
+      projectedVisits: Math.round((docs.length / daysElapsed) * daysInMonth),
+      monthStart: start.toISOString().slice(0, 10),
+    };
   }
 
   /** Does this patient need a progress report? Triggered every N daily
@@ -1578,6 +1701,10 @@
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
     documents: () => load().documents.filter(mine), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     visitCount, progressDue,
+    // plan allowance vs. what has actually been consumed this month
+    monthUsage,
+    // how long this patient takes to dictate — a scheduling input, not a score
+    patientDictation,
     // calendar — appointments() is clinic-scoped; allAppointments() is unscoped (server reminders)
     appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
     // admin
