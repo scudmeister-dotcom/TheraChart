@@ -686,7 +686,7 @@
       <div class="lp-trust">🔒 Records live in your clinic's own cloud project — not a shared vendor database. Dictation audio is transcribed and discarded, and Google's Vertex AI terms bar using your data to train its models.</div>
     </div>
     <div class="lp-hero-shot">
-      <img src="marketing-screenshots/4-dictation-and-body-map.png" alt="TheraChart dictation and body map" loading="lazy" />
+      <img src="marketing-screenshots/walkthrough/05-dictation-body-map.jpg" alt="TheraChart dictation and body map" loading="lazy" />
     </div>
   </section>
 
