@@ -766,7 +766,7 @@ ${walkthroughMarkup()}`;
     <div class="field"><label for="bugExpected">What did you expect instead?</label>
       <textarea id="bugExpected" rows="2" placeholder="e.g. I expected to see 120 degrees of knee flexion listed"></textarea></div>
     <div class="field"><label for="bugSteps">What were you doing just before?</label>
-      <textarea id="bugSteps" rows="2" placeholder="e.g. Opened Juan Reyes, started a daily note, pressed Listen and read out two measurements"></textarea></div>
+      <textarea id="bugSteps" rows="2" placeholder="e.g. Opened a patient chart, started a daily note, pressed Listen and read out two measurements"></textarea></div>
 
     <div class="field"><label>How much does it get in your way?</label>
       <div class="bug-sevs" id="bugSevs">${BUG_SEVERITIES.map((sv, i) =>

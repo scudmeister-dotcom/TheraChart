@@ -282,7 +282,10 @@ test.describe("TheraChart", () => {
     await expect(page.locator("#sigPin")).toHaveCount(0);
     await expect(page.locator("#sigGoogle")).toBeVisible();
     await expect(page.locator("#sigOk")).toBeDisabled();
-    await expect(page.locator(".modal, [class*=modal]").first()).toContainText(/confirm with google/i);
+    /* :visible matters now — the bug reporter keeps its own hidden dialog in
+       the DOM on every screen, so "the first .modal" is no longer "the modal
+       that just opened". */
+    await expect(page.locator(".modal:visible").first()).toContainText(/confirm with google/i);
 
     // and the note is still a draft — nothing was signed without confirmation
     const status = await store(page, (id) => (window.TheraStore.getDoc(id) || {}).status, docId);
