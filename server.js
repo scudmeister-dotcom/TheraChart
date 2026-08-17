@@ -1285,6 +1285,43 @@ const server = http.createServer(async (req, res) => {
         const result = await refineTranscript(clean, user);
         return json(res, 200, result);
       }
+      /* Blend a therapist's own wording with the AI's, for ONE field.
+         Same gate as the other clinical AI paths — this writes prose that ends
+         up in a signed record. The prompt is deliberately narrow: combine, do
+         not add. Anything not in one of the two inputs must not appear. */
+      if (url.pathname === "/api/blend-note" && req.method === "POST") {
+        if (!store.canDocument(user)) return json(res, 403, { error: "Your account can\u2019t create clinical documents." });
+        const b = await readBody(req);
+        const mine = String(b.mine || "").slice(0, 6000).trim();
+        const other = String(b.ai || "").slice(0, 6000).trim();
+        if (!mine || !other) return json(res, 400, { error: "Both versions are needed to blend." });
+        if (!geminiActive()) return json(res, 503, { error: "Blending needs the AI service, which isn\u2019t configured here." });
+        try {
+          const prompt = [
+            "You are helping a physical therapist merge two versions of ONE section of a clinical note.",
+            "VERSION A is what the therapist typed themselves. VERSION B was produced from a recording of the visit.",
+            "",
+            "Produce ONE merged version that keeps every clinical fact present in either version.",
+            "HARD RULES:",
+            "- Do NOT introduce any finding, measurement, symptom or plan that is not in A or B.",
+            "- Where they disagree on a fact, keep BOTH and mark the disagreement inline like: (recording says 8/10; typed says 7/10).",
+            "- Keep the therapist's voice and clinical shorthand where the meaning is the same.",
+            "- Do not add pleasantries, headings, or commentary. Return the merged text only.",
+            "",
+            `SECTION: ${String(b.field || "note").slice(0, 40)}`,
+            "", "VERSION A (therapist typed):", mine, "", "VERSION B (from recording):", other,
+          ].join("\n");
+          const out = await ai.geminiJson(prompt,
+            { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+            Object.assign(GEMINI_OPTS(user, "blend"), { thinkingLevel: "medium", temperature: 0.1 }));
+          return json(res, 200, { text: String((out && out.text) || "").trim() });
+        } catch (e) {
+          const ref = crypto.randomBytes(4).toString("hex");
+          console.error(`[error ${ref}] POST /api/blend-note \u2014`, e);
+          return json(res, 500, { error: "Couldn\u2019t blend those. Edit by hand instead.", ref });
+        }
+      }
+
       if (url.pathname === "/api/insights" && req.method === "POST") {
         // decision support for a licensed clinician — same gate as /api/refine
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });

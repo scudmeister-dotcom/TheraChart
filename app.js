@@ -3101,6 +3101,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
+    ${editable ? `
+    <div class="rec-bar" id="recBar">
+      <div class="rec-main">
+        <button class="btn rec-btn" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
+        <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
+        <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
+        <span class="rec-meta" id="recMeta">Record straight through, then process once — cheaper than live, and you don't have to watch the screen.</span>
+      </div>
+      <div class="rec-progress" id="recProgress" hidden></div>
+    </div>` : ""}
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="figures">
       <figure><figcaption>Front <span class="hint">(patient's L on your right)</span></figcaption><div class="bodymap" id="mapFront">${figureMarkup("front")}</div></figure>
@@ -3822,6 +3832,273 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   // BCP-47 codes Google Cloud Speech-to-Text expects for each UI language
   const STT_LANG = { "en-US": "en-US", "fil-PH": "fil-PH", "ceb-PH": "ceb-PH" };
 
+  /* ---- side-by-side review after processing ----
+
+     The therapist has two versions of the same visit: what they typed while it
+     was happening, and what the AI produced from the recording. Neither is
+     authoritative. This puts them next to each other while the patient is still
+     in the room and the memory is fresh, and makes the therapist choose.
+
+     Deliberately NOT a merge button that runs first and asks later. The note is
+     a legal record they sign; a blend they did not read is exactly the failure
+     this whole product is meant to avoid. Blend is offered per field, it shows
+     the result for editing, and nothing is written until Apply. */
+
+  const COMPARE_FIELDS = {
+    eval: [["subjective", "Subjective"], ["objectiveText", "Objective"], ["assessment", "Assessment"], ["plan", "Plan"]],
+    daily: [["subjective", "Subjective"], ["summary", "Treatment summary"], ["assessment", "Assessment"], ["plan", "Plan"]],
+    progress: [["currentStatus", "Current status"], ["updatedFindings", "Updated findings"], ["goalsProgress", "Progress toward goals"], ["assessment", "Assessment"]],
+    discharge: [["summary", "Summary of care"], ["outcome", "Outcome"], ["recommendations", "Recommendations"]],
+  };
+
+  function openCompare(doc, user) {
+    const fields = COMPARE_FIELDS[doc.type] || COMPARE_FIELDS.daily;
+    const mine = doc.data._preRecording || {};
+    const rows = fields.filter(([k]) => (mine[k] || "").trim() || (doc.data[k] || "").trim());
+    if (!rows.length) return; // nothing to compare — the AI filled empty fields
+
+    const m = showModal(`
+      <h2>Check the AI against your own notes</h2>
+      <p style="font-size:13px; color:var(--muted); margin:-4px 0 14px">
+        Left is what you wrote. Right is what the recording produced. Keep whichever is right —
+        or blend them and edit the result. <b>Nothing changes in the note until you press Apply.</b></p>
+      <div class="cmp-list">
+        ${rows.map(([k, lbl], i) => `
+          <div class="cmp-row" data-cmp="${k}">
+            <div class="cmp-label">${esc(lbl)}</div>
+            <div class="cmp-cols">
+              <div class="cmp-col">
+                <div class="cmp-head">Yours</div>
+                <textarea class="cmp-mine" data-mine="${k}" rows="4">${esc(mine[k] || "")}</textarea>
+              </div>
+              <div class="cmp-col">
+                <div class="cmp-head ai">From the recording</div>
+                <textarea class="cmp-ai" data-ai="${k}" rows="4">${esc(doc.data[k] || "")}</textarea>
+              </div>
+            </div>
+            <div class="cmp-actions">
+              <button class="btn small" data-keep="mine:${k}" type="button">Keep mine</button>
+              <button class="btn small" data-keep="ai:${k}" type="button">Keep the AI's</button>
+              <button class="btn small ai" data-blend="${k}" type="button">✦ Blend both</button>
+              <span class="cmp-state" data-state="${k}"></span>
+            </div>
+          </div>`).join("")}
+      </div>
+      <div class="error" id="cmpErr" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
+      <div class="modal-actions">
+        <button class="btn" id="cmpCancel" type="button">Leave the note as it is</button>
+        <button class="btn primary" id="cmpApply" type="button">Apply to the note</button>
+      </div>`);
+
+    const setState = (k, txt) => { const el = m.querySelector(`[data-state="${k}"]`); if (el) el.textContent = txt; };
+
+    m.querySelectorAll("[data-keep]").forEach((b) => b.addEventListener("click", () => {
+      const [which, k] = b.dataset.keep.split(":");
+      const src = m.querySelector(which === "mine" ? `[data-mine="${k}"]` : `[data-ai="${k}"]`);
+      const dst = m.querySelector(which === "mine" ? `[data-ai="${k}"]` : `[data-mine="${k}"]`);
+      dst.value = src.value;
+      setState(k, which === "mine" ? "using yours" : "using the AI's");
+    }));
+
+    m.querySelectorAll("[data-blend]").forEach((b) => b.addEventListener("click", async () => {
+      const k = b.dataset.blend;
+      const a = m.querySelector(`[data-mine="${k}"]`).value.trim();
+      const c = m.querySelector(`[data-ai="${k}"]`).value.trim();
+      if (!a || !c) { setState(k, "nothing to blend"); return; }
+      b.disabled = true; setState(k, "blending…");
+      try {
+        const sync = window.TheraSync || {};
+        const out = sync.blendNote ? await sync.blendNote({ mine: a, ai: c, field: k, type: doc.type }) : null;
+        if (out && out.text) {
+          m.querySelector(`[data-ai="${k}"]`).value = out.text;
+          setState(k, "blended — read it before applying");
+        } else setState(k, "couldn't blend — edit by hand");
+      } catch (e) { setState(k, "couldn't blend — edit by hand"); }
+      finally { b.disabled = false; }
+    }));
+
+    m.querySelector("#cmpCancel").addEventListener("click", closeModal);
+    m.querySelector("#cmpApply").addEventListener("click", () => {
+      /* The right-hand column is the one that lands, because every action above
+         writes its result there. Whatever the therapist is looking at is what
+         gets saved — no hidden third version. */
+      const patch = {};
+      rows.forEach(([k]) => { patch[k] = m.querySelector(`[data-ai="${k}"]`).value.trim(); });
+      S.updateDocData(doc.id, patch, user);
+      delete doc.data._preRecording;
+      closeModal();
+      alertBanner("Note updated — read it once more before signing.");
+      renderShell(location.hash, "", user, bindDoc);
+    });
+  }
+
+  /* ================= RECORD-THEN-PROCESS DICTATION =================
+
+     The therapist records the whole dictation uninterrupted, then presses
+     Process. Nothing is transcribed until they do.
+
+     WHY THIS EXISTS, AND WHY IT IS NOT batchRecognize.
+     Live dictation cuts on every pause and POSTs ~54 separate clips, and Google
+     rounds EVERY request up to the next second — so a visit pays roughly 27
+     seconds for silence it never recorded. Sending one recording collapses that
+     to a handful of rounding events.
+     Google's batchRecognize would be the obvious home for a long recording, but
+     it requires the audio to land in Cloud Storage first and returns a
+     long-running operation. The therapist needs the result while the patient is
+     still in the room, so instead the gated audio is split into chunks inside
+     the SYNC limit (1 minute / 10 MB per request) and sent in parallel. Same
+     billed seconds, answers in seconds, no bucket, no polling, nothing to
+     clean up afterwards.
+
+     Silence is dropped as it is captured, for the same reason live dictation
+     now does it: Speech-to-Text bills by the second of audio submitted, so a
+     pause costs the same as a sentence. The pre/post roll is deliberately
+     generous — clipping the "no" off "no numbness" is a clinical safety event.
+
+     Chunks are written to IndexedDB as they are captured. Six minutes of audio
+     is ~11 MB, a backgrounded tab can be killed by the OS, and losing a
+     therapist's whole dictation because a phone locked would be far worse than
+     any amount we save. */
+
+  const RECORD_DB = "therachart-audio";
+  const CHUNK_SECONDS = 55;        // sync recognize allows 60; leave headroom
+  const RECORD_MAX_MINUTES = 20;   // a hard stop, so a stuck recorder can't run away
+
+  function audioStore() {
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(RECORD_DB, 1); } catch (_) { return resolve(null); }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("chunks")) db.createObjectStore("chunks", { keyPath: "id", autoIncrement: true });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null); // private mode / quota — fall back to memory only
+    });
+  }
+
+  const audioTx = async (mode, fn) => {
+    const db = await audioStore();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      let out = null;
+      const tx = db.transaction("chunks", mode);
+      out = fn(tx.objectStore("chunks"));
+      tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+      tx.onerror = () => resolve(null);
+    });
+  };
+
+  const savedAudio = {
+    async put(docId, pcm) { await audioTx("readwrite", (st) => st.add({ docId, pcm, at: Date.now() })); },
+    async forDoc(docId) {
+      const all = await audioTx("readonly", (st) => st.getAll());
+      return (all || []).filter((r) => r.docId === docId).sort((a, b) => a.id - b.id);
+    },
+    async clear(docId) {
+      const all = await audioTx("readonly", (st) => st.getAll());
+      for (const r of (all || [])) if (r.docId === docId) await audioTx("readwrite", (st) => st.delete(r.id));
+    },
+  };
+
+  /* Capture gated audio and hand back one Float32Array per ~55s chunk. */
+  function recorderEngine({ docId, onLevel, onElapsed, onStop }) {
+    let ctx = null, stream = null, proc = null, on = false;
+    let chunk = [], chunkSamples = 0, voicedMs = 0, tailMs = 0, totalMs = 0;
+    let preRoll = [];
+    const PRE_ROLL_CHUNKS = 4, POST_ROLL = 350;
+    const chunks = [];   // in-memory mirror of what is in IndexedDB
+
+    const flushChunk = async () => {
+      if (!chunk.length) return;
+      const flat = new Float32Array(chunk.reduce((n, a) => n + a.length, 0));
+      let off = 0; for (const a of chunk) { flat.set(a, off); off += a.length; }
+      chunk = []; chunkSamples = 0;
+      chunks.push({ pcm: flat, rate: ctx ? ctx.sampleRate : 16000 });
+      try { await savedAudio.put(docId, flat); } catch (_) { /* memory copy still holds it */ }
+    };
+
+    return {
+      voicedSeconds: () => voicedMs / 1000,
+      chunks: () => chunks,
+      async start() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        } catch (_) { return false; }
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        proc = ctx.createScriptProcessor(4096, 1, 1);
+        const perChunk = CHUNK_SECONDS * ctx.sampleRate;
+        proc.onaudioprocess = (e) => {
+          if (!on) return;
+          const data = e.inputBuffer.getChannelData(0);
+          const ms = (data.length / ctx.sampleRate) * 1000;
+          totalMs += ms;
+          let rms = 0;
+          for (let i = 0; i < data.length; i += 8) rms += data[i] * data[i];
+          rms = Math.sqrt(rms / (data.length / 8));
+          const voiced = rms > 0.012;
+
+          if (voiced) {
+            if (!chunk.length && preRoll.length) {
+              for (const p of preRoll) { chunk.push(p); chunkSamples += p.length; }
+              preRoll = [];
+            }
+            chunk.push(new Float32Array(data)); chunkSamples += data.length;
+            voicedMs += ms; tailMs = 0;
+          } else if (chunk.length && tailMs < POST_ROLL) {
+            chunk.push(new Float32Array(data)); chunkSamples += data.length; tailMs += ms;
+          } else if (!chunk.length) {
+            preRoll.push(new Float32Array(data));
+            while (preRoll.length > PRE_ROLL_CHUNKS) preRoll.shift();
+          } else { tailMs += ms; }
+
+          if (onLevel) onLevel(voiced, rms);
+          if (onElapsed) onElapsed(totalMs / 1000, voicedMs / 1000);
+          if (chunkSamples >= perChunk) flushChunk();
+          if (totalMs > RECORD_MAX_MINUTES * 60000) { this.stop(); if (onStop) onStop("limit"); }
+        };
+        src.connect(proc); proc.connect(ctx.destination);
+        on = true;
+        return true;
+      },
+      async stop() {
+        on = false;
+        await flushChunk();
+        try { if (proc) proc.disconnect(); } catch (_) { }
+        try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
+        try { if (ctx) ctx.close(); } catch (_) { }
+        return chunks;
+      },
+    };
+  }
+
+  /* Send every chunk to /api/stt in parallel and stitch the transcript back in
+     order. Each chunk is inside the sync limit, so each returns on its own. */
+  async function processRecording(docId, lang, model, chunks, onProgress) {
+    const done = new Array(chunks.length).fill(null);
+    let finished = 0;
+    await Promise.all(chunks.map(async (c, i) => {
+      const wav = encodeWav(c.pcm, c.rate);
+      try {
+        const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || "en-US")}&model=${encodeURIComponent(model)}&docId=${encodeURIComponent(docId)}`, {
+          method: "POST",
+          headers: Object.assign({ "content-type": "audio/wav" },
+            (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
+          body: wav,
+        });
+        const data = await res.json().catch(() => ({}));
+        done[i] = res.ok ? (data.text || "") : "";
+        if (!res.ok) done[i] = { error: (data && data.error) || `HTTP ${res.status}` };
+      } catch (e) { done[i] = { error: e.message || "network error" }; }
+      finished += 1;
+      if (onProgress) onProgress(finished, chunks.length);
+    }));
+    const errors = done.filter((d) => d && d.error).map((d) => d.error);
+    const text = done.filter((d) => typeof d === "string").join(" ").replace(/\s+/g, " ").trim();
+    return { text, errors, chunks: chunks.length };
+  }
+
   /* Google Cloud Speech-to-Text engine. Records short WAV segments in the page
      and POSTs each straight to /api/stt (model = "standard" | "chirp"), which
      proxies to Google Cloud under the clinic's BAA. Segments are held only in
@@ -4010,6 +4287,110 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         o.textContent = o.textContent.replace(/\s*\([^)]*\)\s*$/, "") + " · needs Google Cloud setup";
       });
     }
+    /* ---- record-then-process ----
+       A second way to dictate that costs less and asks less of the therapist's
+       attention: record straight through, process once, then read what the AI
+       produced next to what you wrote yourself. Nothing reaches the note until
+       the therapist accepts it. */
+    (function wireRecorder() {
+      const bar = document.getElementById("recBar");
+      if (!bar) return;
+      const btn = document.getElementById("recBtn");
+      const label = document.getElementById("recBtnLabel");
+      const processBtn = document.getElementById("recProcess");
+      const discardBtn = document.getElementById("recDiscard");
+      const meta = document.getElementById("recMeta");
+      const prog = document.getElementById("recProgress");
+      let rec = null, recording = false, captured = null;
+
+      const mmss = (s2) => `${Math.floor(s2 / 60)}:${String(Math.floor(s2 % 60)).padStart(2, "0")}`;
+      const showIdle = () => {
+        label.textContent = captured && captured.length ? "Record more" : "Record the visit";
+        btn.classList.remove("on");
+        processBtn.hidden = !(captured && captured.length);
+        discardBtn.hidden = processBtn.hidden;
+      };
+
+      btn.addEventListener("click", async () => {
+        if (recording) {
+          recording = false;
+          const chunks = await rec.stop();
+          captured = chunks;
+          meta.textContent = `${mmss(rec.voicedSeconds())} of speech captured — silence was skipped, so that is all you'll be charged for.`;
+          showIdle();
+          return;
+        }
+        rec = recorderEngine({
+          docId: doc.id,
+          onElapsed: (total, voiced) => { meta.textContent = `Recording — ${mmss(voiced)} of speech (${mmss(total)} elapsed)`; },
+          onStop: (why) => { if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another."; },
+        });
+        const ok = await rec.start();
+        if (!ok) { meta.textContent = "Mic blocked — allow microphone access and try again."; return; }
+        recording = true;
+        label.textContent = "Stop recording";
+        btn.classList.add("on");
+        processBtn.hidden = true; discardBtn.hidden = true;
+      });
+
+      discardBtn.addEventListener("click", async () => {
+        captured = null;
+        await savedAudio.clear(doc.id).catch(() => {});
+        meta.textContent = "Recording discarded.";
+        showIdle();
+      });
+
+      processBtn.addEventListener("click", async () => {
+        if (!captured || !captured.length) return;
+        processBtn.disabled = true; btn.disabled = true;
+        prog.hidden = false;
+        prog.textContent = `Transcribing ${captured.length} chunk${captured.length > 1 ? "s" : ""}…`;
+        const engine = (localStorage.getItem("therachart-engine") || "").startsWith("cloud:")
+          ? localStorage.getItem("therachart-engine").split(":")[1] : "chirp2";
+        try {
+          const out = await processRecording(doc.id, langSel.value, engine, captured,
+            (n, total) => { prog.textContent = `Transcribing… ${n} of ${total}`; });
+          if (!out.text) {
+            prog.textContent = out.errors.length
+              ? `Couldn't transcribe: ${out.errors[0]}. The recording is still here — try Process again.`
+              : "Nothing recognisable in that recording. The audio is still here if you want to try again.";
+            return;
+          }
+          if (out.errors.length) {
+            prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed — review carefully.`;
+          } else {
+            prog.textContent = "Transcribed. Review what the AI filled in against your own notes below.";
+          }
+          // Route it exactly as dictation would, so measurements, the body map
+          // and the SOAP fields all fill the same way.
+          /* Snapshot what the therapist wrote BEFORE the AI touches anything,
+             so the comparison is against their own words rather than against
+             whatever the routing has already overwritten. */
+          const keys = (COMPARE_FIELDS[doc.type] || COMPARE_FIELDS.daily).map(([k]) => k);
+          doc.data._preRecording = Object.fromEntries(keys.map((k) => [k, doc.data[k] || ""]));
+
+          // Route it line by line exactly as typed dictation does, so
+          // measurements, the body map and the SOAP fields all fill the same way.
+          out.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
+            .forEach((line) => routeUtterance(doc, user, line, dstate));
+          captured = null;
+          await savedAudio.clear(doc.id).catch(() => {});
+          showIdle();
+          openCompare(doc, user);
+        } finally { processBtn.disabled = false; btn.disabled = false; }
+      });
+
+      // an unfinished recording from a previous session (tab closed, phone locked)
+      savedAudio.forDoc(doc.id).then((rows) => {
+        if (!rows || !rows.length || recording) return;
+        captured = rows.map((r) => ({ pcm: r.pcm, rate: 16000 }));
+        meta.textContent = `An unfinished recording from earlier is still here (${rows.length} chunk${rows.length > 1 ? "s" : ""}). Process it, or discard.`;
+        showIdle();
+      }).catch(() => {});
+
+      showIdle();
+    })();
+
     let engineChoice = localStorage.getItem("therachart-engine") || "browser";
     if (engineChoice.startsWith("cloud:") && !stt.available) engineChoice = "browser";
     engineSel.value = engineChoice;

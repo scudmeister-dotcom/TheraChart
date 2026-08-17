@@ -352,6 +352,15 @@
     return res.ok ? null : ((res.data && res.data.error) || "Could not change password.");
   };
 
+  /* Blend the therapist's own wording with the AI's, for one field.
+     Server-only and deliberately explicit: the result is shown for editing and
+     never written to the note without the therapist pressing Apply. */
+  sync.blendNote = async ({ mine, ai, field, type }) => {
+    if (sync.mode !== "server" || !sync.token) return null;
+    const res = await api("/api/blend-note", { method: "POST", body: { mine, ai, field, type } });
+    return res.ok ? res.data : null;
+  };
+
   /* File a tester's bug report. Server-only: there is nowhere for a report to
      go in local/offline mode, and silently swallowing one would be worse than
      saying so. Returns null on success, or a message to show the reporter. */
