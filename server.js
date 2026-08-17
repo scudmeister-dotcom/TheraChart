@@ -19,6 +19,10 @@
      THERACHART_DATA    data directory (default ./data)
      REMINDER_WEBHOOK   optional URL; each due reminder is POSTed to it as
                         JSON so you can wire any SMS/email provider
+     BUG_REPORT_WEBHOOK optional URL; tester bug reports are POSTed to it as
+                        JSON (with an optional screenshot as a data URL) so you
+                        can forward them to email. Reports are stored on the
+                        server either way — the webhook only delivers them.
 */
 
 "use strict";
@@ -1064,6 +1068,85 @@ const server = http.createServer(async (req, res) => {
         if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev });
       }
+      /* ---- bug reports from testers ----
+         Testers are the most valuable source of defects this product has, and
+         the friction between "that's odd" and a written report is where most
+         reports die. So this takes a note, an optional screenshot and the
+         context the tester would otherwise have to describe by hand, and files
+         it in one click.
+
+         Stored server-side under its own key rather than in the clinic state
+         blob: reports are not clinical data, and putting them in the blob would
+         sync every tester's complaints to every device in the clinic.
+
+         Delivery is the same webhook pattern the reminder scheduler uses. The
+         report is persisted FIRST and the webhook is best-effort, so a broken
+         or unconfigured webhook loses a note instead of the report. */
+      if (url.pathname === "/api/bug-report" && req.method === "POST") {
+        const body = await readBody(req);
+        const clip = (v, n) => String(v == null ? "" : v).slice(0, n).trim();
+        const report = {
+          id: "bug-" + crypto.randomBytes(5).toString("hex"),
+          at: new Date().toISOString(),
+          summary: clip(body.summary, 2000),
+          expected: clip(body.expected, 2000),
+          steps: clip(body.steps, 4000),
+          severity: ["blocks-me", "annoying", "cosmetic", "idea"].includes(body.severity) ? body.severity : "annoying",
+          reporter: { id: user.id, name: user.name, role: user.role, email: user.email || "" },
+          clinic: clinicOfUser(user),
+          context: {
+            route: clip((body.context || {}).route, 200),
+            screen: clip((body.context || {}).screen, 60),
+            browser: clip((body.context || {}).browser, 300),
+            online: !!(body.context || {}).online,
+            appRev: rev,
+            model: GEMINI_MODEL,
+          },
+        };
+        if (!report.summary) return json(res, 400, { error: "Tell us what happened, in a sentence or two." });
+
+        // A screenshot is a data: URL; cap it so one report can't fill the row.
+        const shot = String(body.screenshot || "");
+        const shotOk = /^data:image\/(png|jpeg|webp);base64,/.test(shot) && shot.length <= 4 * 1024 * 1024;
+        if (shot && !shotOk) return json(res, 400, { error: "That screenshot is too large or not an image. Keep it under 4 MB." });
+
+        let stored = false;
+        try {
+          const prior = JSON.parse(db.get("bugReports") || "[]");
+          // newest first, capped — the webhook is the real inbox
+          prior.unshift({ ...report, screenshot: shotOk ? shot : null });
+          db.set("bugReports", JSON.stringify(prior.slice(0, 200)));
+          await db.flushNow();
+          stored = true;
+        } catch (e) { console.error("[bug] could not store report:", e.message); }
+
+        let delivered = false;
+        if (process.env.BUG_REPORT_WEBHOOK) {
+          try {
+            const r = await fetch(process.env.BUG_REPORT_WEBHOOK, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...report, screenshot: shotOk ? shot : null }),
+              signal: AbortSignal.timeout(20000),
+            });
+            delivered = r.ok;
+            if (!r.ok) console.error("[bug] webhook returned", r.status);
+          } catch (e) { console.error("[bug] webhook failed:", e.message); }
+        }
+        console.log(`[bug] ${report.id} from ${report.reporter.name} (${report.severity}) — stored=${stored} delivered=${delivered}: ${report.summary.slice(0, 90)}`);
+        if (!stored && !delivered) return json(res, 500, { error: "Couldn't file that report. Please tell Amador directly." });
+        return json(res, 200, { ok: true, id: report.id, delivered });
+      }
+
+      // The reports themselves, for an admin who wants them without the inbox.
+      if (url.pathname === "/api/bug-reports" && req.method === "GET") {
+        if (user.role !== "admin") return json(res, 403, { error: "Admins only." });
+        let list = [];
+        try { list = JSON.parse(db.get("bugReports") || "[]"); } catch { /* none yet */ }
+        // strip screenshots from the list view; they are large and rarely needed in bulk
+        return json(res, 200, { reports: list.map(({ screenshot, ...r }) => ({ ...r, hasScreenshot: !!screenshot })) });
+      }
+
       if (url.pathname === "/api/users" && req.method === "POST") {
         if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can add employees." });
         const result = store.addUser(await readBody(req), user); // password hashed server-side

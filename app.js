@@ -515,8 +515,10 @@
     </div>
     <div class="asst-card assistant-drawer-body" id="patientAssistant"></div>
   </aside>` : ""}
+  ${bugButtonMarkup()}
 </div>`;
     document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
+    bindBugReporter(user);
 
     // account menu (Privacy / Admin / Profile / Sign out), opened from the avatar
     const acctBtn = document.getElementById("acctBtn");
@@ -721,6 +723,196 @@ ${walkthroughMarkup()}`;
       if (el) el.addEventListener("click", go);
     });
     bindWalkthrough();
+  }
+
+  /* ================= BUG REPORTING =================
+
+     A tester who spots something odd is the most valuable input this product
+     gets, and almost all of it is lost in the gap between noticing and writing
+     it down. So this is one always-visible button, three short questions, and
+     everything else collected automatically — the route, the screen size, the
+     browser, the app revision — because those are exactly the details a tester
+     shouldn't have to think about and a developer can't debug without.
+
+     The screenshot is opt-in and carries an explicit warning, because a capture
+     of an open chart contains patient information and the report leaves the
+     clinic by email. During a demo the data is seeded and fake; on a real
+     clinic's instance it would not be, and the warning has to survive that
+     change of context.
+
+     Screen capture uses getDisplayMedia, which desktop browsers support and
+     iOS Safari does not — so attaching an image file is offered alongside it
+     rather than as a fallback nobody finds. */
+
+  const BUG_SEVERITIES = [
+    { id: "blocks-me", label: "Blocks me", hint: "I can't carry on" },
+    { id: "annoying", label: "Annoying", hint: "There's a way around it" },
+    { id: "cosmetic", label: "Looks wrong", hint: "Layout, wording, spacing" },
+    { id: "idea", label: "Idea", hint: "Not broken — could be better" },
+  ];
+
+  function bugButtonMarkup() {
+    return `
+<button class="bug-fab" id="bugFab" type="button" title="Report a problem or an idea">
+  <span class="bug-fab-ico" aria-hidden="true">🐞</span><span class="bug-fab-label">Report a bug</span>
+</button>
+<div class="modal-backdrop bug-backdrop" id="bugBackdrop" role="dialog" aria-modal="true" aria-label="Report a bug" hidden>
+  <div class="modal bug-modal">
+    <h2>Report a bug or an idea</h2>
+    <p class="bug-intro">Every report makes the app better for the clinicians who use it next — thank you for taking the time. Nothing here is too small to send.</p>
+
+    <div class="field"><label for="bugSummary">What happened? *</label>
+      <textarea id="bugSummary" rows="2" placeholder="e.g. The measurement table stayed empty after I dictated the knee angles"></textarea></div>
+    <div class="field"><label for="bugExpected">What did you expect instead?</label>
+      <textarea id="bugExpected" rows="2" placeholder="e.g. I expected to see 120 degrees of knee flexion listed"></textarea></div>
+    <div class="field"><label for="bugSteps">What were you doing just before?</label>
+      <textarea id="bugSteps" rows="2" placeholder="e.g. Opened Juan Reyes, started a daily note, pressed Listen and read out two measurements"></textarea></div>
+
+    <div class="field"><label>How much does it get in your way?</label>
+      <div class="bug-sevs" id="bugSevs">${BUG_SEVERITIES.map((sv, i) =>
+        `<button class="bug-sev ${i === 1 ? "on" : ""}" data-sev="${sv.id}" type="button"><b>${sv.label}</b><small>${sv.hint}</small></button>`).join("")}</div></div>
+
+    <div class="field"><label>Picture of the problem (optional)</label>
+      <div class="bug-shot-actions">
+        <button class="btn small" id="bugCapture" type="button">Capture this screen</button>
+        <label class="btn small" for="bugFile" style="cursor:pointer">Attach an image</label>
+        <input type="file" id="bugFile" accept="image/*" hidden />
+        <button class="btn small" id="bugShotClear" type="button" hidden>Remove</button>
+      </div>
+      <div class="bug-shot-warn">⚠ A picture of an open chart will include patient details. Only attach one when you're on demo data, or blank out anything real first.</div>
+      <div class="bug-shot-preview" id="bugShotPreview" hidden></div>
+    </div>
+
+    <div class="bug-ctx" id="bugCtx"></div>
+    <div class="error" id="bugErr" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
+    <div class="modal-actions">
+      <button class="btn" id="bugCancel" type="button">Cancel</button>
+      <button class="btn primary" id="bugSend" type="button">Send report</button>
+    </div>
+  </div>
+</div>`;
+  }
+
+  function bindBugReporter(user) {
+    const fab = document.getElementById("bugFab");
+    const back = document.getElementById("bugBackdrop");
+    if (!fab || !back) return;
+    const $ = (id) => document.getElementById(id);
+    let severity = "annoying";
+    let screenshot = null;
+
+    const context = () => ({
+      route: location.hash || "#/",
+      screen: `${window.innerWidth}×${window.innerHeight}`,
+      browser: navigator.userAgent,
+      online: navigator.onLine,
+    });
+
+    const showCtx = () => {
+      const c = context();
+      $("bugCtx").innerHTML = `<b>Sent automatically with your report</b>
+        <span>Screen: <span class="mono">${esc(c.route)}</span> · ${esc(c.screen)} · signed in as ${esc(user.name)} (${esc(roleLabel(user))})${c.online ? "" : " · offline"}</span>`;
+    };
+
+    const setShot = (dataUrl) => {
+      screenshot = dataUrl;
+      const prev = $("bugShotPreview");
+      prev.hidden = !dataUrl;
+      prev.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="Attached screenshot" />` : "";
+      $("bugShotClear").hidden = !dataUrl;
+    };
+
+    const open = () => {
+      $("bugSummary").value = ""; $("bugExpected").value = ""; $("bugSteps").value = "";
+      $("bugErr").textContent = ""; setShot(null); severity = "annoying";
+      back.querySelectorAll("[data-sev]").forEach((b) => b.classList.toggle("on", b.dataset.sev === severity));
+      showCtx();
+      back.hidden = false;
+      $("bugSummary").focus();
+    };
+    const close = () => { back.hidden = true; };
+
+    fab.addEventListener("click", open);
+    $("bugCancel").addEventListener("click", close);
+    back.addEventListener("click", (e) => { if (e.target === back) close(); });
+    document.addEventListener("keydown", (e) => { if (!back.hidden && e.key === "Escape") close(); });
+
+    back.querySelectorAll("[data-sev]").forEach((b) => b.addEventListener("click", () => {
+      severity = b.dataset.sev;
+      back.querySelectorAll("[data-sev]").forEach((x) => x.classList.toggle("on", x === b));
+    }));
+
+    /* Downscale before sending: a 4K screen grab is ~8 MB of base64, which the
+       server rejects and an inbox doesn't want. 1400px wide is plenty to read a
+       UI bug from. */
+    const shrink = (srcUrl) => new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1400 / img.naturalWidth);
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.naturalWidth * scale);
+        c.height = Math.round(img.naturalHeight * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.72));
+      };
+      img.onerror = () => resolve(null);
+      img.src = srcUrl;
+    });
+
+    $("bugCapture").addEventListener("click", async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        $("bugErr").textContent = "This browser can't capture the screen — use “Attach an image” instead.";
+        return;
+      }
+      try {
+        // hide our own dialog so the capture shows the app, not this form
+        back.style.visibility = "hidden";
+        await new Promise((r) => setTimeout(r, 250));
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: false });
+        const track = stream.getVideoTracks()[0];
+        const video = document.createElement("video");
+        video.srcObject = stream;
+        await video.play();
+        await new Promise((r) => setTimeout(r, 300)); // let the first frame arrive
+        const c = document.createElement("canvas");
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext("2d").drawImage(video, 0, 0);
+        track.stop(); stream.getTracks().forEach((t) => t.stop());
+        setShot(await shrink(c.toDataURL("image/png")));
+        $("bugErr").textContent = "";
+      } catch (e) {
+        // the user cancelling the picker is not an error worth shouting about
+        if (e && e.name !== "NotAllowedError") $("bugErr").textContent = "Couldn't capture the screen — try “Attach an image”.";
+      } finally {
+        back.style.visibility = "";
+      }
+    });
+
+    $("bugFile").addEventListener("change", async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = async () => setShot(await shrink(String(reader.result)));
+      reader.readAsDataURL(f);
+    });
+    $("bugShotClear").addEventListener("click", () => { setShot(null); $("bugFile").value = ""; });
+
+    $("bugSend").addEventListener("click", async () => {
+      const summary = $("bugSummary").value.trim();
+      if (!summary) { $("bugErr").textContent = "Please describe what happened, even in one line."; $("bugSummary").focus(); return; }
+      const btn = $("bugSend");
+      btn.disabled = true; btn.textContent = "Sending…"; $("bugErr").textContent = "";
+      try {
+        const sync = window.TheraSync || {};
+        const fail = await (sync.sendBugReport ? sync.sendBugReport({
+          summary, expected: $("bugExpected").value.trim(), steps: $("bugSteps").value.trim(),
+          severity, screenshot, context: context(),
+        }) : Promise.resolve("Bug reporting needs the clinic server — you appear to be offline."));
+        if (fail) { $("bugErr").textContent = fail; return; }
+        close();
+        alertBanner("Report sent — thank you. That genuinely helps.");
+      } finally { btn.disabled = false; btn.textContent = "Send report"; }
+    });
   }
 
   /* ================= "SEE HOW IT WORKS" WALKTHROUGH =================

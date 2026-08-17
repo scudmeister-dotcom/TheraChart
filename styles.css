@@ -1532,6 +1532,60 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   box-shadow: 0 24px 60px rgba(15, 30, 45, 0.18);
 }
 
+/* ---- bug reporting ----
+   The button is always on screen during testing, because a tester who has to
+   go looking for the report form will simply not report the thing. It sits
+   above the mobile tab bar so it never covers navigation. */
+.bug-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 70;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 16px; border-radius: 999px; cursor: pointer;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--border); box-shadow: 0 4px 18px rgba(0,0,0,.16);
+  font-size: 13.5px; font-weight: 600; font-family: inherit;
+}
+.bug-fab:hover { background: var(--hover); transform: translateY(-1px); }
+.bug-fab-ico { font-size: 15px; }
+@media (max-width: 720px) {
+  .bug-fab { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); right: 12px; padding: 9px 13px; }
+  .bug-fab-label { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .bug-fab:hover { transform: none; } }
+
+.bug-backdrop[hidden] { display: none; }
+.bug-modal { max-width: 620px; max-height: 92vh; overflow-y: auto; }
+.bug-intro { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin: -4px 0 16px; }
+
+.bug-sevs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (max-width: 620px) { .bug-sevs { grid-template-columns: repeat(2, 1fr); } }
+.bug-sev {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer;
+  padding: 9px 11px; border-radius: 10px; font-family: inherit;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+}
+.bug-sev b { font-size: 13px; font-weight: 650; }
+.bug-sev small { font-size: 11px; color: var(--muted); line-height: 1.35; }
+.bug-sev:hover { background: var(--hover); }
+.bug-sev.on { border-color: var(--accent); background: var(--accent-soft); }
+.bug-sev.on small { color: var(--accent-ink, var(--accent)); }
+
+.bug-shot-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.bug-shot-warn {
+  font-size: 11.5px; line-height: 1.5; color: var(--review);
+  background: var(--review-soft); border-radius: 8px; padding: 7px 10px; margin-top: 8px;
+}
+.bug-shot-preview { margin-top: 10px; }
+.bug-shot-preview img {
+  display: block; max-width: 100%; max-height: 200px; border-radius: 9px;
+  border: 1px solid var(--border);
+}
+.bug-ctx {
+  display: flex; flex-direction: column; gap: 3px; margin: 4px 0 10px;
+  font-size: 11.5px; color: var(--muted); line-height: 1.5;
+  border-top: 1px dashed var(--border); padding-top: 10px;
+}
+.bug-ctx b { font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--sil-line, var(--muted)); }
+
 /* ---- "See how it works" walkthrough ----
    A full-screen guided tour of real app screenshots, opened from the landing
    page. Two columns on a desktop (screen on the left, the argument on the

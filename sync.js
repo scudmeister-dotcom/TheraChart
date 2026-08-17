@@ -352,6 +352,18 @@
     return res.ok ? null : ((res.data && res.data.error) || "Could not change password.");
   };
 
+  /* File a tester's bug report. Server-only: there is nowhere for a report to
+     go in local/offline mode, and silently swallowing one would be worse than
+     saying so. Returns null on success, or a message to show the reporter. */
+  sync.sendBugReport = async (report) => {
+    if (sync.mode !== "server" || !sync.token) {
+      return "Bug reports need the clinic server — this device isn't connected to one right now.";
+    }
+    const res = await api("/api/bug-report", { method: "POST", body: report });
+    if (res.ok) return null;
+    return (res.data && res.data.error) || "Couldn't send that report. Please try again, or tell Amador directly.";
+  };
+
   /* Admin: create an employee. Server-authoritative (password hashed there),
      then re-pull so the new user appears. Returns { error } or { userId }. */
   sync.addUser = async (fields) => {
