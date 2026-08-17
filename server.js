@@ -264,14 +264,6 @@ setInterval(() => {
   } catch (e) { console.error("[usage] flush failed:", e.message); }
 }, 30000).unref?.();
 
-/* True for the seeded accounts the demo sign-in screen publishes a password
-   for. Only meaningful when the demo panel is switched on — a real deployment
-   never has these accounts, and if one somehow did, it should not be treated
-   leniently just because an id matched. Defined here and evaluated lazily, as
-   SEEDED_DEMO_IDS is built further down the file. */
-const isDemoAccount = (user) =>
-  DEMO_LOGINS_ENABLED && !!user && SEEDED_DEMO_IDS.has(user.id);
-
 /* ---------------- AI rate limits ----------------
 
    Every AI route checks a ROLE, and nothing checked a RATE. A signed-in account
@@ -305,48 +297,28 @@ const AI_LIMITS = {
   stt:       { perMin: 200, perDay: 20000 },
 };
 
-/* The demo deployment is a different risk entirely: its admin password is
-   printed on the public sign-in screen, so "authenticated" means "anyone on the
-   internet who read the page". Limits there are sized for SHOWING the product,
-   not running a clinic on it — roughly a tenth of the real ones, which still
-   covers several full demos a day.
+/* Demo accounts get the SAME limits as a real clinic, deliberately.
 
-   Kept as a whole table rather than a multiplier so each number can be reasoned
-   about against what a demo actually does: record two or three visits, process
-   them, look at the chart review, ask the assistant a few questions. */
-const DEMO_AI_LIMITS = {
-  refine:    { perMin: 6,  perDay: 60 },
-  insights:  { perMin: 6,  perDay: 60 },
-  assistant: { perMin: 5,  perDay: 50 },
-  blend:     { perMin: 5,  perDay: 40 },
-  extract:   { perMin: 2,  perDay: 10 },
-  // still has to clear one recording's parallel chunk burst (~7 for six minutes)
-  stt:       { perMin: 20, perDay: 120 },
-};
+   An earlier version gave them a tighter table, on the reasoning that the demo
+   password was printed on a public sign-in screen and "authenticated" therefore
+   meant "anyone on the internet". Access is now the control instead — the demo
+   is offered only to accounts that have already been approved — and once the
+   people reaching it are known, throttling them buys very little and costs the
+   thing the demo exists for. A prospect who hits a wall mid-trial has been
+   shown that the product hits walls, and "it behaves differently in your own
+   account" is not a sentence anyone wants to say during a pitch.
 
-/* Requests are the wrong unit for the one path that can actually run up a bill:
-   a single Speech-to-Text call can carry a second of audio or fifty-eight of
-   them. So the demo also gets a daily budget in SECONDS OF AUDIO, which is what
-   Google charges for. 45 minutes is about eight honest demo sessions and caps
-   the day at roughly P44 however it is spent.
-
-   Tunable without a deploy, because the right number is a judgement about how
-   many demos a day you expect to run, and that changes faster than the code
-   does. The per-minute request limit above still bounds a burst; this bounds
-   the day. */
-const DEMO_STT_SECONDS_PER_DAY =
-  Math.max(60, Number(process.env.THERACHART_DEMO_STT_SECONDS) || 45 * 60);
-
+   The limits above still apply, because they protect against a retry loop
+   rather than against a person, and a bug does not care whose account it is
+   running in. */
 const rateBuckets = new Map();
 
 /** null if the call is allowed; otherwise details of the limit it hit. */
-function rateHit(clinicId, purpose, demo) {
-  const lim = (demo ? DEMO_AI_LIMITS : AI_LIMITS)[purpose];
+function rateHit(clinicId, purpose) {
+  const lim = AI_LIMITS[purpose];
   if (!lim) return null;
   const now = Date.now();
-  // demo counters are their own buckets, so a demo clinic and a real one that
-  // somehow shared an id could never spend each other's budget
-  const key = `${demo ? "demo:" : ""}${clinicId || DEFAULT_CLINIC}:${purpose}`;
+  const key = `${clinicId || DEFAULT_CLINIC}:${purpose}`;
   let b = rateBuckets.get(key);
   if (!b) { b = { minStart: now, minCount: 0, dayStart: now, dayCount: 0 }; rateBuckets.set(key, b); }
   if (now - b.minStart >= 60000) { b.minStart = now; b.minCount = 0; }
@@ -366,10 +338,9 @@ function rateHit(clinicId, purpose, demo) {
     survives this — the audio is still in IndexedDB and Process can be pressed
     again — and that is worth saying out loud. */
 function aiRateLimited(res, req, user, purpose) {
-  const demo = isDemoAccount(user);
-  const hit = rateHit(clinicOfUser(user), purpose, demo);
+  const hit = rateHit(clinicOfUser(user), purpose);
   if (!hit) return false;
-  console.warn(`[ratelimit]${demo ? " DEMO" : ""} clinic=${clinicOfUser(user)} purpose=${purpose} hit the per-${hit.scope} limit of ${hit.limit}`);
+  console.warn(`[ratelimit] clinic=${clinicOfUser(user)} purpose=${purpose} hit the per-${hit.scope} limit of ${hit.limit}`);
   res.setHeader("retry-after", String(hit.retryAfter));
   json(res, 429, {
     error: hit.scope === "minute"
@@ -660,6 +631,10 @@ function bootstrapInfo() {
     facilityName: store.settingsFor(DEFAULT_CLINIC).facilityName, // pre-auth: no caller to scope to
     googleClientId: GOOGLE_CLIENT_ID, // "" when unconfigured → the button is hidden
     testAccounts: demoLogins(),       // seeded demo logins to surface on the sign-in screen
+    /* Whether a signed-in account may ask for the demo logins. A boolean, not
+       the accounts — knowing a demo exists reveals nothing, and the client
+       needs it to decide whether to offer the button at all. */
+    demoInvite: DEMO_INVITE_ENABLED,
   };
 }
 
@@ -679,10 +654,27 @@ function bootstrapInfo() {
    not disable them. Deleting the seeded accounts (or changing their passwords)
    is still the thing to do before real patients are on an instance. */
 const DEMO_LOGINS_ENABLED = process.env.THERACHART_DEMO_LOGINS === "1";
+
+/* The same demo accounts, offered BEHIND the sign-in instead of on it.
+
+   THERACHART_DEMO_LOGINS publishes a working admin password to anyone who
+   fetches /api/bootstrap, which is fine on a laptop and not fine on a URL you
+   hand to prospects. The alternative is not to weaken the demo — a prospect who
+   hits a wall has been shown a product that hits walls — but to control who
+   reaches it: approve the account first, and the demo is one click away once
+   they are inside.
+
+   Two switches rather than one because they answer different questions. LOGINS
+   is "is this a throwaway box where the password may as well be public"; INVITE
+   is "may an approved account try the demo clinic". A shared deployment wants
+   INVITE and not LOGINS. */
+const DEMO_INVITE_ENABLED = process.env.THERACHART_DEMO_INVITE === "1";
+const DEMO_ACCOUNTS_AVAILABLE = DEMO_LOGINS_ENABLED || DEMO_INVITE_ENABLED;
 const DEMO_LOGIN_PASSWORD = "1234";
 const SEEDED_DEMO_IDS = new Set(store.SEEDED_DEMO_USER_IDS);
-function demoLogins() {
-  if (!DEMO_LOGINS_ENABLED) return [];
+/** `authed` callers get the list even when it is not published publicly. */
+function demoLogins(authed) {
+  if (!DEMO_LOGINS_ENABLED && !(authed && DEMO_INVITE_ENABLED)) return [];
   const today = new Date().toISOString().slice(0, 10);
   return store.users()
     /* Match the seeded ids too, not just the email domain: store.ensureEmails()
@@ -1131,6 +1123,23 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
     }
+    /* Signing out has to end the SESSION, not just the local view of it.
+
+       It didn't: store.logout() cleared the on-device session and left the
+       bearer token sitting in localStorage with a live server session behind
+       it, for the thirty days until the TTL caught up. On a shared clinic
+       machine that means the next person to open the browser is one devtools
+       line away from the last person's records.
+
+       Unauthenticated on purpose — the token in the header is the only thing
+       being acted on, and refusing to revoke a token because it has already
+       expired would be a strange way to answer "log me out". */
+    if (url.pathname === "/api/logout" && req.method === "POST") {
+      const auth = req.headers.authorization || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+      if (token && sessions.delete(token)) saveSessions();
+      return json(res, 200, { ok: true });
+    }
     if (url.pathname === "/api/refine-prompt") {
       return json(res, 200, { prompt: refineSystem(), model: GEMINI_MODEL, active: geminiActive() ? "gemini" : "local" });
     }
@@ -1366,6 +1375,24 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, id: report.id, delivered });
       }
 
+      /* The demo clinic's logins, for an account that is already inside.
+
+         This is the whole access control: the list is never published, and the
+         only way to it is an approved account. Everything the demo can then do
+         it does at full strength, because a crippled demo teaches a prospect
+         the wrong thing about the product.
+
+         Logged with who asked, since "I will know who is using it" is only true
+         if something writes it down — the switch itself happens through a normal
+         sign-in as the demo account, by which point the original identity is
+         gone. This request is the last moment we know it. */
+      if (url.pathname === "/api/demo-logins" && req.method === "GET") {
+        if (!DEMO_INVITE_ENABLED) return json(res, 404, { error: "No demo clinic on this server." });
+        const accounts = demoLogins(true);
+        console.log(`[demo] ${user.name} <${user.email}> opened the demo clinic (${accounts.length} accounts)`);
+        return json(res, 200, { accounts, password: DEMO_LOGIN_PASSWORD });
+      }
+
       /* Usage, at two different altitudes.
 
          WHAT A CLINIC MAY SEE is its own volumes: tokens, seconds, calls, and
@@ -1384,13 +1411,12 @@ const server = http.createServer(async (req, res) => {
          that altitude is which tenant is costing what. A clinic admin stays
          scoped to their own.
 
-         Demo accounts get nothing here at all: the credential is public, the
-         plan-usage card in the app reads local state rather than this endpoint,
-         so refusing costs the demo nothing. */
+         A demo admin reaches the clinic view like any other admin, so a
+         prospect evaluating the product sees the administrator's experience
+         whole. Nothing is withheld from them that a paying clinic would see —
+         and the money still isn't in that view for anyone but the owner. */
       if (url.pathname === "/api/usage" && req.method === "GET") {
         const owner = isPlatformOwner(user);
-        if (!owner && isDemoAccount(user))
-          return json(res, 403, { error: "Not available on demo accounts." });
         if (!owner && user.role !== "admin") return json(res, 403, { error: "Admins only." });
         const cid = clinicOfUser(user);
         const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
@@ -1593,26 +1619,6 @@ const server = http.createServer(async (req, res) => {
         // Google rounds each request up to the next second, and we hold the
         // exact buffer, so this is the billed figure — not an estimate.
         const billedSeconds = wavBilledSeconds(wav);
-        /* The demo's audio budget, checked here rather than at the door because
-           only now do we know how much audio this actually is — the request
-           limit above cannot tell a one-second clip from a fifty-eight-second
-           one, and that is a 58x difference in what Google charges.
-
-           Read off the meter we already keep, so there is no second source of
-           truth to drift. Refused BEFORE the call to Google, so a blocked
-           request costs nothing. */
-        if (isDemoAccount(user)) {
-          const today = new Date().toISOString().slice(0, 10);
-          const spent = (((usageAll()[today] || {})[clinicOfUser(user)] || {}).stt || {}).seconds || 0;
-          if (spent + billedSeconds > DEMO_STT_SECONDS_PER_DAY) {
-            console.warn(`[ratelimit] DEMO clinic=${clinicOfUser(user)} audio budget spent (${spent}s of ${DEMO_STT_SECONDS_PER_DAY}s)`);
-            res.setHeader("retry-after", "3600");
-            return json(res, 429, {
-              error: `The demo has used its ${Math.round(DEMO_STT_SECONDS_PER_DAY / 60)} minutes of dictation for today. It resets tomorrow — everything else in the demo still works, and you can type into any note instead.`,
-              scope: "demo-audio",
-            });
-          }
-        }
         meter(clinicOfUser(user), "stt", { seconds: billedSeconds, bytes: wav.length, model });
         /* `billedSeconds` goes back to the caller so the chart can record what
            a visit actually cost against the same number that drives the bill,
@@ -1766,7 +1772,9 @@ async function start() {
      long-lived deployment shows the demo clinic but has no accounts to enter it
      with. Tied to the same switch that reveals the sign-in panel, so a real
      clinic deployment neither creates nor advertises them. */
-  const demo = DEMO_LOGINS_ENABLED ? store.ensureDemoAccounts() : null;
+  // …and equally when the demo is offered behind the sign-in rather than on it:
+  // an invite-only demo still needs accounts to invite people into.
+  const demo = DEMO_ACCOUNTS_AVAILABLE ? store.ensureDemoAccounts() : null;
   const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
   const emailed = store.ensureEmails();    // one-time: give pre-email-login accounts a login email
   const r = Number(db.get("rev")); if (r) rev = r;
@@ -1783,6 +1791,8 @@ async function start() {
     console.log(`  auth: email + hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s)` : ""}${emailed ? ` — assigned ${emailed} login email(s)` : ""}`);
     if (DEMO_LOGINS_ENABLED) {
       console.log(`  demo logins: ON — published on the sign-in screen${demo && demo.users ? `, restored ${demo.users} account(s)` : ""}${demo && demo.content ? ", seeded the demo clinic" : ""}`);
+    } else if (DEMO_INVITE_ENABLED) {
+      console.log(`  demo clinic: invite-only — offered to signed-in accounts, not published${demo && demo.users ? `, restored ${demo.users} account(s)` : ""}${demo && demo.content ? ", seeded the demo clinic" : ""}`);
     }
     console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);

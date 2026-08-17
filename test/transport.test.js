@@ -150,5 +150,42 @@ function rawGet(base, path, headers) {
     } finally { s2.stop(); }
   }
 
+  /* ---------------- signing out ends the session ----------------
+
+     store.logout() clears the on-device session. That is not the same as ending
+     the SESSION: the bearer token stayed in localStorage with a live server
+     session behind it until the thirty-day TTL expired, so on a shared clinic
+     machine the next person to open the browser was one devtools line from the
+     last person's records. */
+  {
+    const s3 = await startServer();
+    try {
+      const tok = (await s3.login("maria@therachart.demo", "1234")).data.token;
+      r.check("a fresh token works", (await s3.call("/api/rev", { token: tok })).status === 200);
+
+      const out = await s3.call("/api/logout", { method: "POST", token: tok });
+      r.check("signing out is accepted", out.status === 200, `got ${out.status}`);
+      r.check("…and the token stops working immediately",
+        (await s3.call("/api/rev", { token: tok })).status === 401,
+        "a revoked token must not outlive the sign-out that revoked it");
+
+      /* Revoking is idempotent and unauthenticated on purpose — refusing to
+         log someone out because their token already expired would be a strange
+         reading of the request. */
+      r.check("revoking twice is not an error",
+        (await s3.call("/api/logout", { method: "POST", token: tok })).status === 200);
+      r.check("…and revoking without a token is harmless",
+        (await s3.call("/api/logout", { method: "POST" })).status === 200);
+
+      // one device signing out must not sign the account out everywhere
+      const a = (await s3.login("maria@therachart.demo", "1234")).data.token;
+      const b = (await s3.login("maria@therachart.demo", "1234")).data.token;
+      await s3.call("/api/logout", { method: "POST", token: a });
+      r.check("signing out one device leaves the other signed in",
+        (await s3.call("/api/rev", { token: b })).status === 200,
+        "sessions are per device; revoking one must not revoke the rest");
+    } finally { s3.stop(); }
+  }
+
   r.done();
 })().catch((e) => { console.error(e); process.exit(1); });

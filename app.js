@@ -548,10 +548,11 @@
     </div>
     <div class="asst-card assistant-drawer-body" id="patientAssistant"></div>
   </aside>` : ""}
-  ${bugModalMarkup()}
+  ${demoFabMarkup()}${bugModalMarkup()}
 </div>`;
-    document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
+    document.getElementById("logoutBtn").addEventListener("click", async () => { await signOutFully(); render(); });
     bindBugReporter(user);
+    bindDemoSwitch();
 
     // account menu (Privacy / Admin / Profile / Sign out), opened from the avatar
     const acctBtn = document.getElementById("acctBtn");
@@ -571,7 +572,7 @@
       acctBtn.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!acctMenu.classList.contains("open")); });
       acctMenu.querySelectorAll("a.acct-item, .acct-item.bug-trigger").forEach((a) => a.addEventListener("click", () => setOpen(false)));
       const acctLogout = document.getElementById("acctLogout");
-      if (acctLogout) acctLogout.addEventListener("click", () => { S.logout(); render(); });
+      if (acctLogout) acctLogout.addEventListener("click", async () => { await signOutFully(); render(); });
     }
     // paint the top-bar sync dot with the live connection state
     if (window.TheraSync && window.TheraSync.refreshBadge) window.TheraSync.refreshBadge();
@@ -677,7 +678,7 @@
   </div>
 </div>`;
     const err = document.getElementById("fpErr");
-    document.getElementById("fpLogout").addEventListener("click", async () => { await Promise.resolve(S.logout()); render(); });
+    document.getElementById("fpLogout").addEventListener("click", async () => { await signOutFully(); render(); });
     document.getElementById("fpSave").addEventListener("click", async () => {
       const cur = document.getElementById("fpCur").value;
       const nw = document.getElementById("fpNew").value;
@@ -785,6 +786,14 @@ ${walkthroughMarkup()}`;
     { id: "idea", label: "Idea", hint: "Not broken — could be better" },
   ];
 
+  /* Sign out through the sync layer, which also revokes the server session —
+     clearing only the local view would leave a live bearer token on the device. */
+  async function signOutFully() {
+    const sync = window.TheraSync;
+    if (sync && typeof sync.signOut === "function") await sync.signOut();
+    await Promise.resolve(S.logout());
+  }
+
   /* The opener lives in the left rail, styled as one more nav entry, so it sits
      where a tester already looks for app-level actions instead of floating over
      the content. On phones the rail's links collapse into the account menu, so
@@ -792,6 +801,19 @@ ${walkthroughMarkup()}`;
   function bugTriggerMarkup() {
     return `<button class="nav-link nav-btn bug-trigger" type="button" title="Report a problem or an idea">
       <span class="nav-ico">${ICON.wrench}</span><span class="nav-label">Report a bug</span></button>`;
+  }
+
+  /* The demo switch stays a floating button rather than following the reporter
+     into the rail: it is an affordance for an evaluator deciding whether to
+     look around, not an app-level action a working clinician reaches for. It
+     only appears when the server offers an invite-only demo, which a real
+     clinic deployment does not. */
+  function demoFabMarkup() {
+    const demoOffered = !!(window.TheraSync && window.TheraSync.demoInvite);
+    if (!demoOffered) return "";
+    return `<button class="demo-fab" id="demoFab" type="button" title="Sign in to the demo clinic to explore any role">
+  <span class="demo-fab-ico" aria-hidden="true">🧪</span><span class="demo-fab-label">Demo clinic</span>
+</button>`;
   }
 
   function bugModalMarkup() {
@@ -831,6 +853,47 @@ ${walkthroughMarkup()}`;
     </div>
   </div>
 </div>`;
+  }
+
+  /* Hand a signed-in account the demo clinic's logins and drop them at the
+     sign-in screen with the picker open.
+
+     Fetched rather than shipped with the page, so the credentials only ever
+     leave the server for someone already approved — that request is also the
+     record of who asked. Then a plain sign-out: the demo is entered by signing
+     in as a demo account like anyone else, rather than by some parallel
+     impersonation path that would need its own permissions story. */
+  function bindDemoSwitch() {
+    const fab = document.getElementById("demoFab");
+    if (!fab) return;
+    fab.addEventListener("click", async () => {
+      const sync = window.TheraSync || {};
+      fab.disabled = true;
+      const label = fab.querySelector(".demo-fab-label");
+      const was = label ? label.textContent : "";
+      if (label) label.textContent = "Opening…";
+      try {
+        const r = await fetch("/api/demo-logins", {
+          headers: sync.token ? { authorization: `Bearer ${sync.token}` } : {},
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !(data.accounts || []).length) {
+          if (label) label.textContent = "Demo unavailable";
+          setTimeout(() => { if (label) label.textContent = was; fab.disabled = false; }, 2500);
+          return;
+        }
+        // the sign-in screen reads this; it survives sign-out because nothing reloads
+        sync.testAccounts = data.accounts;
+        sync.demoOpen = true;
+        // a full sign-out, so the evaluator's own session is not left live on
+        // the device while they wander around the demo clinic
+        await signOutFully();
+        render();
+      } catch (_) {
+        if (label) label.textContent = "Couldn't reach the server";
+        setTimeout(() => { if (label) label.textContent = was; fab.disabled = false; }, 2500);
+      }
+    });
   }
 
   function bindBugReporter(user) {
@@ -1204,7 +1267,7 @@ ${walkthroughMarkup()}`;
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
       ${googleClientId ? `<div class="login-or"><span>or</span></div><div id="googleBtnWrap" class="google-btn-wrap"></div>` : ""}
       ${testAccounts.length ? `
-      <details class="test-accounts" id="demoAccounts">
+      <details class="test-accounts" id="demoAccounts"${(window.TheraSync && window.TheraSync.demoOpen) ? " open" : ""}>
         <summary class="ta-summary">
           <span class="ta-sum-main">
             <span class="ta-sum-title">Demo Clinic</span>

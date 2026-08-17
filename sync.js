@@ -305,6 +305,23 @@
     }
   };
 
+  /* Drop the device's credential AND the session behind it.
+
+     Clearing localStorage alone would leave a working token on the server for
+     the rest of its thirty-day life; telling the server alone would leave a
+     dead token on the device. Both, and the local clear happens even if the
+     request fails, because a sign-out that depends on the network is not a
+     sign-out. */
+  sync.signOut = async () => {
+    const had = sync.token;
+    sync.token = null;
+    lsSet(LS_TOKEN, "");
+    if (!had || sync.mode !== "server") return;
+    try {
+      await fetch("/api/logout", { method: "POST", headers: { authorization: `Bearer ${had}` } });
+    } catch (_) { /* the device is clean either way; the session ages out */ }
+  };
+
   /* Google sign-in: exchange a Google ID token (from the GIS button) for a
      server session, then adopt the server copy — the same success path as the
      password login above. Server-mode + online only: an offline device can't
@@ -575,6 +592,7 @@
         S.save();
         sync.googleClientId = boot.googleClientId || ""; // "" → login screen hides the Google button
         sync.testAccounts = boot.testAccounts || [];     // demo logins surfaced on the sign-in screen
+        sync.demoInvite = !!boot.demoInvite;             // may a signed-in account ask for the demo clinic?
 
         // token from a previous visit? resume and sync any queued work
         if (sync.token) {

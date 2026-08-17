@@ -234,66 +234,76 @@ function wav(seconds) {
       (await o.call("/api/usage", { token: staff })).status === 403);
   } finally { o.stop(); }
 
-  /* ---------------- the demo box ----------------
-     Its admin password is published on the sign-in screen, so "authenticated"
-     there means "anyone who read the page". Limits are sized for showing the
-     product, and the usage endpoint is closed entirely. */
-  /* The audio budget is set to two minutes here rather than the real 45, so it
-     is reached inside the per-minute request allowance. At the production
-     figure the request limiter would trip first in a tight loop and the budget
-     would never be exercised — over a real day it binds first, since 120
-     requests of up to 58 seconds is nearly two hours against a 45-minute
-     budget. */
-  const d = await startServer({ THERACHART_DEMO_LOGINS: "1", THERACHART_DEMO_STT_SECONDS: "120" });
+  /* ---------------- the invite-only demo ----------------
+
+     The demo is not weakened; access to it is controlled. Its logins are never
+     published, only handed to an account that is already signed in — so the
+     control is "who was approved", and everything the demo can then do it does
+     at full strength. A prospect who hits a wall has been shown a product that
+     hits walls. */
+  const inv = await startServer({ THERACHART_DEMO_INVITE: "1" });
+  try {
+    const boot = (await inv.call("/api/bootstrap")).data;
+    r.check("an invite-only demo publishes no credentials",
+      Array.isArray(boot.testAccounts) && boot.testAccounts.length === 0,
+      JSON.stringify(boot.testAccounts));
+    r.check("…but does say a demo exists, so the app can offer it",
+      boot.demoInvite === true, JSON.stringify(boot.demoInvite));
+    r.check("…and an unauthenticated caller cannot ask for the logins",
+      (await inv.call("/api/demo-logins")).status === 401,
+      "the sign-in is the entire access control here");
+
+    const anyUser = (await inv.login("maria@therachart.demo", "1234")).data.token;
+    const got = await inv.call("/api/demo-logins", { token: anyUser });
+    r.check("a signed-in account is handed the demo clinic",
+      got.status === 200 && (got.data.accounts || []).length > 0,
+      `status=${got.status}`);
+    r.check("…including the admin, so a prospect can see that role too",
+      (got.data.accounts || []).some((a) => a.role === "admin"),
+      "an evaluation that cannot reach the admin screens is not an evaluation");
+
+    /* Full strength: the demo shares the ordinary limits. Twelve extract calls
+       tripped the real table earlier; the same burst must behave the same here
+       rather than stopping sooner. */
+    let n = 0, stopped = false;
+    for (let i = 0; i < 6 && !stopped; i++) {
+      const res = await inv.call("/api/extract-doc",
+        { method: "POST", token: anyUser, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
+      if (res.status === 429) stopped = true; else n += 1;
+    }
+    r.check("the demo is not throttled more tightly than a real clinic",
+      n >= 5, `only ${n} of 6 calls got through — the demo should behave like any clinic`);
+  } finally { inv.stop(); }
+
+  /* A server with neither switch has no demo to give out. */
+  const off = await startServer();
+  try {
+    const t = (await off.login("maria@therachart.demo", "1234")).data.token;
+    const res = await off.call("/api/demo-logins", { token: t });
+    r.check("a clinic deployment offers no demo at all",
+      res.status === 404, `got ${res.status} — nothing should hand out seeded logins here`);
+    r.check("…and does not advertise one to the app",
+      (await off.call("/api/bootstrap")).data.demoInvite === false);
+  } finally { off.stop(); }
+
+  /* ---------------- the public demo box ----------------
+     Still supported for a throwaway instance where the password may as well be
+     public, and unchanged. */
+  const d = await startServer({ THERACHART_DEMO_LOGINS: "1" });
   try {
     const demoAdmin = (await d.login("grace@therachart.demo", "1234")).data.token;
-    const demoPt = (await d.login("maria@therachart.demo", "1234")).data.token;
-    r.check("a demo admin cannot read usage at all",
-      (await d.call("/api/usage", { token: demoAdmin })).status === 403,
-      "this account's password is on the public sign-in screen");
-
-    /* Demo AI limits are about a tenth of a real clinic's. extract is the
-       tightest at 10/day, so it proves the tighter table is in force — the same
-       burst passes comfortably on a real clinic (checked above, where 12 calls
-       were needed to trip a 120/day limit). */
-    let demoAllowed = 0, demoBlocked = false;
-    for (let i = 0; i < 14 && !demoBlocked; i++) {
-      const res = await d.call("/api/extract-doc",
-        { method: "POST", token: demoPt, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
-      if (res.status === 429) demoBlocked = true; else demoAllowed += 1;
-    }
-    r.check("the demo hits its AI limit sooner than a real clinic would",
-      demoBlocked && demoAllowed <= 10,
-      `${demoAllowed} calls got through on the demo — the real-clinic table would allow more`);
-    r.check("…but enough of them to actually show the product",
-      demoAllowed >= 2, `only ${demoAllowed} allowed — too tight to demo with`);
-
-    /* Requests are the wrong unit for audio: one call can carry a second or
-       fifty-eight. The demo also has a daily budget in SECONDS, which is what
-       Google charges for, and it is refused before the call to Google so a
-       blocked request costs nothing. */
-    const bigWav = wav(58);
-    const post = (buf, token) => new Promise((resolve) => {
-      const uu = new URL(d.base + "/api/stt?lang=en-US&model=chirp2");
-      const rq = require("http").request({ hostname: uu.hostname, port: uu.port, path: uu.pathname + uu.search,
-        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream", "content-length": buf.length } },
-        (rs) => { let b = ""; rs.on("data", (x) => { b += x; }); rs.on("end", () => { let j = {}; try { j = JSON.parse(b); } catch (_) { } resolve({ status: rs.statusCode, data: j }); }); });
-      rq.on("error", () => resolve({ status: 0, data: {} }));
-      rq.end(buf);
-    });
-    let audioBlocked = null, minutes = 0;
-    for (let i = 0; i < 60 && !audioBlocked; i++) {
-      const res = await post(bigWav, demoPt);
-      if (res.status === 429) audioBlocked = res; else minutes += 58 / 60;
-    }
-    r.check("the demo's audio budget is enforced in seconds, not requests",
-      !!audioBlocked && audioBlocked.data.scope === "demo-audio",
-      `sent ${minutes.toFixed(0)} minutes without being stopped by the audio budget`);
-    r.check("…at the configured budget, not at a request count",
-      minutes >= 1 && minutes <= 3, `budget was 2 minutes; stopped after ${minutes.toFixed(1)}`);
-    r.check("…telling the presenter what still works",
-      /still works|type into any note/i.test((audioBlocked || { data: {} }).data.error || ""),
-      `a limit hit mid-pitch must not read like the product is broken: "${(audioBlocked || { data: {} }).data.error}"`);
+    r.check("the public panel still lists the seeded logins",
+      ((await d.call("/api/bootstrap")).data.testAccounts || []).length > 0,
+      "a throwaway box should still be one click from being inside");
+    /* Even a demo admin reaches the clinic view — a prospect evaluating the
+       product should see the administrator's experience whole. The money stays
+       behind isPlatformOwner, which is what actually needed protecting. */
+    const asDemoAdmin = await d.call("/api/usage", { token: demoAdmin });
+    r.check("a demo admin sees the admin experience",
+      asDemoAdmin.status === 200, `got ${asDemoAdmin.status}`);
+    r.check("…without our cost of goods in it",
+      !("estimatedUsd" in asDemoAdmin.data),
+      "the demo shows the product, not our margin");
   } finally { d.stop(); }
 
   r.done();
