@@ -2004,3 +2004,15 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .dict-hist-date { color: var(--muted); flex: 1; }
 .dict-hist-secs { font-variant-numeric: tabular-nums; }
 .dict-hist-foot { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.45; white-space: normal; }
+
+/* two plan meters, each in its own unit (visits / dictation minutes) */
+.meter { margin-top: 15px; }
+.meter:first-of-type { margin-top: 14px; }
+.meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.meter-head > span { font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 620; }
+.meter-head b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.meter-head b.good { color: var(--good); }
+.meter-head b.warn { color: var(--warn, #b06d0b); }
+.meter-head b.bad { color: var(--danger); }
+.meter-head b span { font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.meter-foot { margin-top: 5px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

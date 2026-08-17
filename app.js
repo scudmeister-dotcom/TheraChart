@@ -6219,42 +6219,54 @@ ${privacyInfoAccordion(geminiOn)}
      is not the clinic's business. */
   function allowanceCard() {
     const u = S.monthUsage();
-    // measured against what is CHARGED, which is visits weighted by how much
-    // dictation each carried — not the raw document count
-    const pct = Math.min(100, Math.round((u.chargeableVisits / u.allowance) * 100));
     const over = u.overBy > 0;
+    const minsOver = u.excessMinutes > 0;
+    const pct = Math.min(100, Math.round((u.visits / u.allowance) * 100));
+    // the minute bar tracks the pool the visits have actually earned
+    const mPct = u.includedMinutes ? Math.min(100, Math.round((u.minutesUsed / u.includedMinutes) * 100)) : 0;
     // Only project once there is enough of the month to project from; a pace
     // read off two days is noise dressed up as a forecast.
     const project = u.daysElapsed >= 5 && u.projectedVisits > u.allowance && !over;
     const month = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
     const tone = over ? "bad" : pct >= 85 ? "warn" : "good";
+    const mTone = minsOver ? "bad" : mPct >= 85 ? "warn" : "good";
     const resets = new Date(u.resetsOn + "T00:00:00")
       .toLocaleDateString(undefined, { day: "numeric", month: "long" });
-    /* Dictation has no meter of its own — it is priced through the visit
-       allowance, so it is stated against the budget a visit includes and not
-       as a second thing to run out of. */
+    const peso = (n) => `₱${n.toLocaleString()}`;
+    /* Two meters, each in its own unit. An earlier version folded dictation
+       into the visit count as fractional "visit units" — same arithmetic, but
+       it made the reader reverse a conversion to check their own bill. */
     return `
 <div class="card allowance">
   <div class="allowance-head">
     <div><h2>Plan usage — ${esc(month)}</h2>
-      <div class="sub">${esc(u.planName)} plan · ${u.allowance} documented visits included</div></div>
-    <div class="allowance-count ${tone}"><b>${u.chargeableVisits}</b><span>of ${u.allowance}</span></div>
+      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits, each including ${u.fairUsePerVisit} min of dictation</div></div>
+    ${u.estimatedOverage ? `<div class="allowance-count bad"><b>${peso(u.estimatedOverage)}</b><span>overage so far</span></div>` : ""}
   </div>
-  <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
-  <div class="allowance-stats">
-    <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
-    <div><b>${u.spareMinutes >= 0 ? hoursOf(u.spareMinutes) : hoursOf(-u.spareMinutes)}</b><span>${u.spareMinutes >= 0 ? "dictation spare" : "dictation over pool"}</span></div>
-    <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
+
+  <div class="meter">
+    <div class="meter-head"><span>Visits</span><b class="${tone}">${u.visits} <span>of ${u.allowance}</span></b></div>
+    <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
+    <div class="meter-foot">${over
+      ? `${u.overBy} over · ${peso(u.overBy * u.overagePerVisit)} at ${peso(u.overagePerVisit)}/visit`
+      : `${u.remaining} left`}</div>
   </div>
-  ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
-  ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, which is over your ${u.allowance}. Nothing stops working — the extra visits simply bill as overage.</div>` : ""}
-  ${u.unitsFromDictation ? `<div class="banner">${u.visits} visit${u.visits === 1 ? "" : "s"} documented, counting as <b>${u.chargeableVisits}</b> — dictation ran ${hoursOf(u.excessMinutes)} past the ${hoursOf(u.includedMinutes)} those visits include. Nothing was interrupted and there is no separate dictation charge.</div>` : ""}
+
+  <div class="meter">
+    <div class="meter-head"><span>Dictation</span><b class="${mTone}">${hoursOf(u.minutesUsed)} <span>of ${hoursOf(u.includedMinutes)}</span></b></div>
+    <div class="allowance-bar"><div class="allowance-fill ${mTone}" style="width:${mPct}%"></div></div>
+    <div class="meter-foot">${minsOver
+      ? `${hoursOf(u.excessMinutes)} over · ${peso(u.excessMinutes * u.overagePerMinute)} at ${peso(u.overagePerMinute)}/min`
+      : `${hoursOf(u.spareMinutes)} left · pooled across every visit`}</div>
+  </div>
+
+  ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included. If this is your normal month, the next plan up costs less than the overage.</div>` : ""}
+  ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, over your ${u.allowance}. Nothing stops working — the extra visits bill at ${peso(u.overagePerVisit)} each.</div>` : ""}
   <div class="allowance-note">
-    <b>Visits reset on ${esc(resets)} and don't roll over</b> — an unused visit this month isn't added to next month's ${u.allowance}.
-    Every visit brings <b>${u.fairUsePerVisit} minutes of dictation</b> into a shared pool — ${hoursOf(u.minutesUsed)} used of ${hoursOf(u.includedMinutes)} earned so far.
-    Nothing is reserved when you start a note: a new visit <b>adds</b> its ${u.fairUsePerVisit} minutes and only spends what is actually dictated, so a short note leaves the pool better off than it found it. Only past the pool does a visit use more than one visit of allowance.
-    Only <b>speech</b> counts — pauses, and a mic left open in a quiet room, cost nothing.
-    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}
+    <b>Both reset on ${esc(resets)} and neither rolls over</b> — nothing unused this month is added to next month's.
+    Every visit adds <b>${u.fairUsePerVisit} minutes</b> to a shared dictation pool, so a short note's leftovers pay for a long evaluation and finishing early is never wasted. Nothing is reserved when you open a note — a new visit <b>adds</b> its minutes and only spends what is actually said.
+    Only <b>speech</b> counts: pauses, and a mic left open in a quiet room, cost nothing.
+    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation, averaging ${mmssOf(u.avgSecondsPerVisit)}.` : "No dictation recorded yet this month."}
   </div>
 </div>`;
   }

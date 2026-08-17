@@ -978,6 +978,12 @@
        the point. It is shown, never enforced; cutting a therapist off
        mid-dictation to save a peso would be indefensible. */
     fairUseMinutesPerVisit: 10,
+    /* Overage, quoted per unit rather than blended. P28 a visit over a
+       10-minute budget works out at P2.80 a minute, so P3 keeps the two rates
+       consistent with each other while staying a round number on a price page
+       — and roughly 3x the ~P0.98 a minute actually costs us. */
+    overagePerVisit: 28,
+    overagePerMinute: 3,
     /* Backstop, not a limit. The voice gate is an energy threshold, so a room
        loud enough to clear it defeats BOTH the silence gating and the idle
        auto-stop at once — noise reads as speech, so `idleMs` never accumulates
@@ -1279,36 +1285,47 @@
        is the one number that can take a tier underwater: on the Clinic rung,
        past ~16 minutes a visit we lose money on every visit.
 
-       Rather than bolt a second overage meter onto the price list, dictation is
-       priced through the visit allowance. Every visit brings its own budget of
-       included minutes, and those minutes POOL across the month.
+       TWO METERS, BOTH SAID PLAINLY, because the plan has two dimensions and
+       collapsing them hid one of them.
 
-       Pooling is the part that matters for fairness. Charging each visit
+         visits  — every documented visit costs us a Gemini call (~P0.97)
+                   whether a word was dictated or not, so a clinic that types
+                   all its notes still has to be bounded. A minutes-only plan
+                   leaves this open: 2,000 typed notes is zero minutes and
+                   nearly P2,000 of Gemini.
+         minutes — every visit brings a budget of included minutes into a
+                   shared monthly pool, and dictation is drawn from it.
+
+       An earlier version converted excess minutes into fractional "visit
+       units" so there was a single number. The arithmetic was identical —
+       P28 a visit over a 10-minute budget IS P2.80 a minute — but the meter
+       said "11 visits counting as 12", which is a conversion the reader has to
+       reverse-engineer to check. Overage is now quoted in the unit it was
+       incurred in: minutes over, at a peso rate per minute.
+
+       Pooling is what makes the minute side fair. Charging each visit
        max(1, minutes/budget) would floor a 4-minute note at a whole visit and
-       silently discard the 6 minutes it did not use, so a clinic doing mostly
-       short notes pays for a long-visit allowance it never gets. Against a
-       realistic mixed month — 60 visits averaging 6.3 minutes with a handful of
-       long evaluations — flooring bills 68 visits where pooling bills 60. The
-       clinic keeps the 8 visits of allowance it actually earned.
-
-       Pooling also tracks OUR cost more honestly, because our cost is
-       proportional to total minutes and cares nothing for how they were split
-       across visits. And it stays safe at the extreme: with every visit pinned
-       at the 30-minute hard ceiling, the Clinic rung still clears 42%.
-
-       Fractional throughout, rounded ONCE for the month. Rounding per visit
-       would turn 10 minutes 1 second into two visits — a cliff a clinician
-       would rightly find absurd — and ceiling the month total has the same bug
-       one level up, where any fraction of excess costs a whole visit. */
+       discard the 6 minutes it did not use, so a clinic writing mostly short
+       notes would pay for a long-visit allowance it never received. Pooled,
+       those minutes carry to the long evaluations instead. It also tracks OUR
+       cost more honestly, since Speech-to-Text bills total minutes and is
+       indifferent to how they were split across visits. */
     let seconds = 0, dictated = 0;
     for (const d of docs) {
       const s = Number((d.data || {})._dictationSeconds) || 0;
       if (s > 0) { seconds += s; dictated += 1; }
     }
     const includedMinutes = docs.length * fairUsePerVisit;
-    const excessMinutes = Math.max(0, seconds / 60 - includedMinutes);
-    // floored at the document count: a visit never costs less than one
-    const chargeable = Math.max(docs.length, Math.round(docs.length + excessMinutes / fairUsePerVisit));
+    const usedMinutes = seconds / 60;
+    /* Rounded BEFORE it is priced, not after. The card shows whole minutes, and
+       a clinic checking "35 minutes over x P3" against the total must get the
+       same answer we did — pricing the unrounded 34.83 and rounding the pesos
+       gives P104 against a displayed P105, which is precisely the kind of
+       one-peso disagreement that makes someone distrust the whole bill. */
+    const excessMinutes = Math.round(Math.max(0, usedMinutes - includedMinutes));
+    const perMinute = Math.max(0, Number(st.overagePerMinute) || 0);
+    const perVisit = Math.max(0, Number(st.overagePerVisit) || 0);
+    const visitsOver = Math.max(0, docs.length - allowance);
     // Pace is measured against days ELAPSED, so a projection on the 2nd of the
     // month is honest about being built on one day of data.
     const now = new Date();
@@ -1317,29 +1334,28 @@
     return {
       planName: st.planName || "Solo",
       allowance,
+      // ---- meter 1: visits ----
       visits: docs.length,
-      /* Allowance is consumed in visit-units, so `remaining` and `overBy` are
-         measured against those, not against a raw document count — a clinic
-         dictating twice the fair-use budget is genuinely twice as far through
-         its plan as the document count suggests. */
-      chargeableVisits: chargeable,
-      remaining: Math.max(0, allowance - chargeable),
-      overBy: Math.max(0, chargeable - allowance),
-      // how much of the consumption is dictation length rather than volume
-      unitsFromDictation: Math.max(0, chargeable - docs.length),
+      remaining: Math.max(0, allowance - docs.length),
+      overBy: visitsOver,
       dictationSeconds: Math.round(seconds),
       dictatedVisits: dictated,
       avgSecondsPerVisit: dictated ? Math.round(seconds / dictated) : 0,
-      /* Fair use is sized off the ALLOWANCE, not off visits used — a clinic
-         part-way through the month must see the whole month's budget, or the
-         line would shrink as they work and read like a countdown they were
-         losing. */
+      // ---- meter 2: dictation minutes ----
       fairUsePerVisit,
-      fairUseMinutes: allowance * fairUsePerVisit,   // the whole plan's budget
-      // what the visits documented SO FAR have earned, which is the pool the
-      // month is actually charged against
+      // the whole plan's dictation budget, if every included visit were used
+      fairUseMinutes: allowance * fairUsePerVisit,
+      // what the visits documented SO FAR have earned — the pool actually in play
       includedMinutes: Math.round(includedMinutes),
-      excessMinutes: Math.round(excessMinutes),
+      excessMinutes,
+      /* Overage is quoted in the unit it was incurred in. Two separate figures
+         rather than one blended number, because a clinic well inside its visit
+         allowance but heavy on dictation should see exactly which one it
+         crossed — and be able to check the arithmetic without reversing a
+         conversion. */
+      overagePerMinute: perMinute,
+      overagePerVisit: perVisit,
+      estimatedOverage: Math.round(excessMinutes * perMinute + visitsOver * perVisit),
       /* Minutes still in the pool. Negative once the pool is spent, so the view
          can say "6 min over" rather than clamping to zero and implying there is
          nothing to see. Nothing is ever RESERVED against this — a visit adds
@@ -1350,9 +1366,9 @@
       minutesUsed: Math.round(seconds / 60),
       daysElapsed,
       daysInMonth,
-      // projected on what is CHARGED, not on documents written — a clinic that
-      // dictates heavily should see the overage coming, not be surprised by it
-      projectedVisits: Math.round((chargeable / daysElapsed) * daysInMonth),
+      projectedVisits: Math.round((docs.length / daysElapsed) * daysInMonth),
+      // the minute side needs its own projection now that it bills separately
+      projectedMinutes: Math.round((usedMinutes / daysElapsed) * daysInMonth),
       monthStart: start.toISOString().slice(0, 10),
       /* Allowances do NOT roll over. Saying so, with the date, is the whole
          point of carrying it here: an unstated reset is how a billing dispute

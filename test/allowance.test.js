@@ -208,20 +208,17 @@ const base4 = store.monthUsage();
 
 say(0); say(4); say(6);
 let uu = store.monthUsage();
-check("visits inside the included minutes each cost exactly one",
-  uu.chargeableVisits === base4.chargeableVisits + 3 && uu.unitsFromDictation === 0,
-  `chargeable ${base4.chargeableVisits} -> ${uu.chargeableVisits}, extra=${uu.unitsFromDictation}`);
+check("each documented visit consumes exactly one visit, dictated or not",
+  uu.visits === base4.visits + 3 && uu.excessMinutes === 0,
+  `visits ${base4.visits} -> ${uu.visits}, excess minutes ${uu.excessMinutes}`);
 
-/* The cliff this design exists to avoid: charging ceil() per visit would make
-   10 minutes 1 second cost two visits. Aggregating first means it costs ~1. */
+/* Overage is quoted in the unit it was incurred in — minutes over the pool at
+   a per-minute rate, never converted into fractional visits. */
 say(10.02);
 uu = store.monthUsage();
-check("a hair over the included minutes does NOT cost a second visit",
-  uu.unitsFromDictation === 0,
-  `10m02s must not round up to 2 visits (extra=${uu.unitsFromDictation})`);
-
-/* Sustained heavy dictation does move it, and by the right amount: three
-   30-minute visits are 9 visits' worth of the expensive resource. */
+check("a hair over one visit's budget costs nothing while the pool covers it",
+  uu.excessMinutes === 0 && uu.estimatedOverage === 0,
+  `excess=${uu.excessMinutes}min overage=${uu.estimatedOverage}`);
 /* ---- minutes POOL across the month ----
 
    The reason this matters: flooring each visit at one would silently discard
@@ -239,14 +236,11 @@ const pre6 = store.monthUsage();
 for (let i = 0; i < 4; i++) say6(4);
 say6(30);
 const pooled = store.monthUsage();
-const dVisits = pooled.visits - pre6.visits;
-const dCharged = pooled.chargeableVisits - pre6.chargeableVisits;
 check("unused minutes from short visits pay for a long one",
-  dVisits === 5 && dCharged === 5,
-  `5 visits totalling 46 min against 50 pooled minutes must charge 5, got ${dCharged} (flooring each visit would charge 7)`);
+  pooled.visits - pre6.visits === 5 && pooled.excessMinutes === 0,
+  `5 visits totalling 46 min against 50 pooled minutes must incur no overage, got ${pooled.excessMinutes} min over`);
 check("…so nothing is 'lost' by finishing a note early",
-  pooled.unitsFromDictation - pre6.unitsFromDictation === 0,
-  `no extra should be charged while the pool covers it`);
+  pooled.estimatedOverage === 0, `charged ${pooled.estimatedOverage} while the pool still covers it`);
 check("the pool is reported so the card can show it",
   pooled.includedMinutes === pooled.visits * 10 && pooled.excessMinutes === 0,
   `included=${pooled.includedMinutes} for ${pooled.visits} visits, excess=${pooled.excessMinutes}`);
@@ -277,8 +271,9 @@ check("the pool is reported so the card can show it",
   check("opening a note ADDS its minutes to the pool rather than reserving them",
     opened.spareMinutes === 19,
     `9 spare + a new visit's 10 should be 19, got ${opened.spareMinutes} — nothing is deducted up front`);
-  check("…and it costs one visit, not more, before anything is said",
-    opened.chargeableVisits === opened.visits, `charged ${opened.chargeableVisits} for ${opened.visits} visits`);
+  check("…and it costs one visit and no minutes before anything is said",
+    opened.excessMinutes === 0 && opened.estimatedOverage === 0,
+    `excess=${opened.excessMinutes} overage=${opened.estimatedOverage}`);
 
   store.updateDocData(ev.id, { _dictationSeconds: 5 * 60 }, m9);
   const short = store.monthUsage(w);
@@ -288,14 +283,17 @@ check("the pool is reported so the card can show it",
   check("…leaving the clinic BETTER off than before the evaluation",
     short.spareMinutes > before.spareMinutes,
     `${before.spareMinutes} -> ${short.spareMinutes}: a short note must never cost spare minutes`);
-  check("…and still charging exactly one visit",
-    short.chargeableVisits === short.visits, `charged ${short.chargeableVisits} for ${short.visits}`);
+  check("…and still costing nothing in overage",
+    short.estimatedOverage === 0, `charged ${short.estimatedOverage}`);
 
   store.updateDocData(ev.id, { _dictationSeconds: 25 * 60 }, m9);
   const long = store.monthUsage(w);
-  check("a 25-minute evaluation overdraws the pool and charges for it",
-    long.spareMinutes === -6 && long.chargeableVisits === long.visits + 1,
-    `spare=${long.spareMinutes} charged=${long.chargeableVisits} of ${long.visits} visits`);
+  check("a 25-minute evaluation overdraws the pool and bills the minutes",
+    long.spareMinutes === -6 && long.excessMinutes === 6,
+    `spare=${long.spareMinutes} excess=${long.excessMinutes}`);
+  check("…quoted in minutes at the per-minute rate, not converted to visits",
+    long.estimatedOverage === 6 * long.overagePerMinute && long.overagePerMinute === 3,
+    `6 min x P${long.overagePerMinute} should be P${6 * long.overagePerMinute}, got P${long.estimatedOverage}`);
 }
 
 /* The pool is drawn from EVERY visit, including notes that were typed rather
@@ -306,7 +304,7 @@ check("the pool is reported so the card can show it",
 const pre7 = store.monthUsage();
 const untouchedPool = pre7.includedMinutes - pre7.minutesUsed;
 check("visits that were typed rather than dictated still contribute their minutes",
-  untouchedPool > 0 && pre7.chargeableVisits === pre7.visits,
+  untouchedPool > 0 && pre7.estimatedOverage === 0,
   `pool has ${untouchedPool} unused minutes and nothing extra is charged`);
 
 /* Uniform-heavy is the case pooling must NOT discount — it is a concession on
@@ -325,9 +323,9 @@ check("the window is isolated for the exact-arithmetic checks below",
 
 for (let i = 0; i < 3; i++) { const d = store.createDoc("p-juan", "daily", m8).doc; store.updateDocData(d.id, { _dictationSeconds: 30 * 60 }, m8); }
 const heavy3 = store.monthUsage(cutoff);
-check("three visits all at 3x the budget cost nine, with no pool to draw on",
-  heavy3.chargeableVisits === 9 && heavy3.visits === 3,
-  `got ${heavy3.chargeableVisits} from ${heavy3.visits} — pooling must not discount consistently long visits`);
+check("three visits all at 3x the budget bill the full excess, with no pool to draw on",
+  heavy3.visits === 3 && heavy3.excessMinutes === 60 && heavy3.estimatedOverage === 180,
+  `3 x 30min against 30 pooled = 60 min over = P180, got ${heavy3.excessMinutes} min / P${heavy3.estimatedOverage}`);
 check("…and the excess is reported in minutes, not guessed",
   heavy3.includedMinutes === 30 && heavy3.excessMinutes === 60,
   `included=${heavy3.includedMinutes} excess=${heavy3.excessMinutes} of ${heavy3.minutesUsed} used`);
@@ -378,6 +376,42 @@ for (let i = 0; i < LADDER.length - 1; i++) {
 }
 check("overage pushes an upgrade before the next tier's allowance runs out",
   upgradesInTime, ud.join(" · "));
+
+/* The two overage rates have to agree with each other, or the same excess costs
+   a different amount depending on which meter noticed it. P28 a visit over a
+   10-minute budget is P2.80 a minute; P3 is the rounded published rate. */
+{
+  const s = store.settings();
+  const impliedPerMinute = s.overagePerVisit / s.fairUseMinutesPerVisit;
+  check("the per-minute and per-visit overage rates are consistent",
+    Math.abs(s.overagePerMinute - impliedPerMinute) <= 0.5,
+    `P${s.overagePerMinute}/min vs P${impliedPerMinute.toFixed(2)}/min implied by P${s.overagePerVisit} per ${s.fairUseMinutesPerVisit}-min visit`);
+  /* Both meters have to exist. Minutes alone would leave visit volume
+     unbounded — a clinic typing 2,000 notes dictates zero minutes and still
+     costs a Gemini call each — and visits alone was the gap that let dictation
+     run a tier underwater. */
+  /* The card shows whole minutes beside a peso total, and a clinic will
+     multiply one by the rate to check the other. Pricing the unrounded figure
+     and rounding the pesos gave P104 next to a displayed "35 min x P3". */
+  {
+    const g10 = store.getUser("u-grace"), m10 = store.getUser("u-maria");
+    store.resetAll();
+    store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10, overagePerMinute: 3 }, store.getUser("u-grace"));
+    const w2 = new Date(Date.now() - 200);
+    const mm = store.getUser("u-maria");
+    // 34.83 minutes of excess — deliberately not a whole number
+    const d1 = store.createDoc("p-juan", "daily", mm).doc;
+    store.updateDocData(d1.id, { _dictationSeconds: Math.round(44.83 * 60) }, mm);
+    const r = store.monthUsage(w2);
+    check("the displayed minutes and the charged pesos agree exactly",
+      r.estimatedOverage === r.excessMinutes * r.overagePerMinute,
+      `card shows ${r.excessMinutes} min x P${r.overagePerMinute} = P${r.excessMinutes * r.overagePerMinute}, charge says P${r.estimatedOverage}`);
+  }
+
+  check("both dimensions are metered, not just one",
+    s.overagePerVisit > 0 && s.overagePerMinute > 0,
+    "a minutes-only plan leaves typed-note volume uncharged; a visits-only plan leaves dictation length uncharged");
+}
 
 /* ---------------- per-patient dictation, for scheduling ----------------
 
