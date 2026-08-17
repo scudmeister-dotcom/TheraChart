@@ -2125,15 +2125,23 @@ ${tabStrip}
       return;
     }
     if (aiReviewRuns[p.id]) return renderAiReviewCard(el, p, user, "running");
-    if (p.aiReview && p.aiReview.ranOn === todayIso()) {
+    /* Reuse the stored review whenever the chart has not changed since it ran.
+       A failed review is NOT cached — an error should be retried, not shown
+       back for a week. */
+    if (p.aiReview && !p.aiReview.error && p.aiReview.key && p.aiReview.key === chartReviewKey(p)) {
+      return renderAiReviewCard(el, p, user, "done");
+    }
+    // Fall back to the old date guard for reviews stored before keys existed,
+    // so upgrading doesn't re-run every chart in the clinic at once.
+    if (p.aiReview && !p.aiReview.key && p.aiReview.ranOn === todayIso()) {
       return renderAiReviewCard(el, p, user, p.aiReview.error ? "error" : "done");
     }
-    startAiReview(p, user); // first open today → auto-run
+    startAiReview(p, user); // chart changed (or never reviewed) → run
   }
 
   function renderAiReviewCard(el, p, user, state) {
     const review = p.aiReview || {};
-    const note = `<p class="ins-disclaimer">Runs automatically the first time you open this chart each day${review.ranAt ? ` · last run ${fmtTime(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
+    const note = `<p class="ins-disclaimer">Runs automatically when this chart changes${review.ranAt ? ` · last run ${fmtDT(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
     let body;
     if (state === "running") {
       body = `<div class="empty-state" style="padding:16px">
@@ -2167,6 +2175,37 @@ ${tabStrip}
     }));
   }
 
+  /* A fingerprint of everything the chart review actually reads.
+
+     The review used to be cached on the DATE — "have I run today?" — which
+     meant opening a chart to check a phone number burned a full deep-thinking
+     run over the last twelve visits, and cost scaled with charts BROWSED
+     rather than visits documented. Keyed on content instead, an unchanged
+     chart costs nothing to reopen and a changed one re-runs immediately,
+     which is also better clinical behaviour than waiting for tomorrow.
+
+     Deliberately cheap and deliberately over-sensitive: it hashes the same
+     inputs gatherInsightContext feeds the model (document ids, their
+     modification stamps, status and type, plus the patient facts that reach
+     the prompt). Anything that changes the prompt changes this string; a
+     false MISS costs one extra run, a false HIT would show a stale review, so
+     it errs toward re-running. */
+  function chartReviewKey(p) {
+    const docs = S.docsFor(p.id)
+      .map((d) => `${d.id}:${d._mod || d.createdAt}:${d.status}:${d.type}`)
+      .sort()
+      .join("|");
+    const facts = [p.dob, p.sex, p.referringPhysician, p.pmh, p.allergies].join("~");
+    // FNV-1a: not cryptographic, just a stable short digest of a long string
+    let h = 0x811c9dc5;
+    const str = docs + "#" + facts;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return `${str.length.toString(36)}-${h.toString(36)}`;
+  }
+
   async function startAiReview(p, user) {
     if (aiReviewRuns[p.id]) return;
     aiReviewRuns[p.id] = true;
@@ -2182,7 +2221,7 @@ ${tabStrip}
     } catch (e) { error = e.message || "review failed"; }
 
     delete aiReviewRuns[p.id];
-    const review = { ranOn: todayIso(), ranAt: new Date().toISOString() };
+    const review = { ranOn: todayIso(), ranAt: new Date().toISOString(), key: chartReviewKey(p) };
     if (error) review.error = error; else review.result = result;
     S.saveAiReview(p.id, review);
     if (!error) S.audit(user.id, "ai-chart-review", `${S.patientName(p)}: ${(result.connections || []).length} connections, ${(result.recommendations || []).length} recs`);
@@ -3788,9 +3827,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      proxies to Google Cloud under the clinic's BAA. Segments are held only in
      memory and sent immediately — no audio is written to the device — and are
      delivered in order via a promise chain. */
-  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus }) {
+  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
+    /* Voice gating. PRE_ROLL_CHUNKS x ~85ms of audio is carried across the
+       moment speech starts so a soft onset isn't clipped; POST_ROLL keeps the
+       tail of an utterance for the same reason in reverse. IDLE_STOP_MS is the
+       backstop for a microphone nobody turned off. */
+    const PRE_ROLL_CHUNKS = 4;     // ~340ms at 4096 samples / 48kHz
+    const POST_ROLL = 350;         // ms of trailing silence kept per utterance
+    const IDLE_STOP_MS = 60000;    // stop after a minute with no speech at all
+    let preRoll = [], tailMs = 0, idleMs = 0;
     let pending = 0;               // segments in flight
     let chain = Promise.resolve(); // keeps segments transcribing in order
 
@@ -3826,7 +3873,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     function cut(force) {
       const dur = segMs;
       const samples = seg;
-      seg = []; voicedMs = 0; silenceMs = 0; segMs = 0;
+      seg = []; voicedMs = 0; silenceMs = 0; segMs = 0; tailMs = 0;
       if (!samples.length || voicedTotal(samples) === 0) return;
       if (!force && dur < 900) return;
       const flat = new Float32Array(samples.reduce((n, a) => n + a.length, 0));
@@ -3859,17 +3906,61 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         proc.onaudioprocess = (e) => {
           if (!listening) return;
           const data = e.inputBuffer.getChannelData(0);
-          seg.push(new Float32Array(data));
           const chunkMs = (data.length / ctx.sampleRate) * 1000;
-          segMs += chunkMs;
           let rms = 0;
           for (let i = 0; i < data.length; i += 8) rms += data[i] * data[i];
           rms = Math.sqrt(rms / (data.length / 8));
-          if (rms > 0.012) { voicedMs += chunkMs; silenceMs = 0; }
-          else silenceMs += chunkMs;
+          const voiced = rms > 0.012;
+
+          /* Only buffer audio that is worth transcribing.
+
+             Speech-to-Text bills by the SECOND OF AUDIO SUBMITTED, so every
+             quiet moment inside a segment was money. This used to push every
+             chunk unconditionally, which made billed seconds equal
+             microphone-on wall-clock time rather than speech time.
+
+             PRE_ROLL keeps the moment before the mic decided someone was
+             talking, so a soft word onset is not clipped; POST_ROLL keeps the
+             tail so a trailing negation — "…no numbness" — cannot be cut off.
+             Both are deliberately generous: losing the "no" from a denial is a
+             clinical safety event, and it is worth paying for 600ms of silence
+             per segment to make that impossible. */
+          if (voiced) {
+            if (!seg.length && preRoll.length) {
+              for (const p of preRoll) { seg.push(p); segMs += (p.length / ctx.sampleRate) * 1000; }
+              preRoll.length = 0;
+            }
+            seg.push(new Float32Array(data));
+            segMs += chunkMs;
+            voicedMs += chunkMs; silenceMs = 0; tailMs = 0;
+          } else if (seg.length) {
+            // still inside an utterance: keep the tail, but only POST_ROLL of it
+            if (tailMs < POST_ROLL) { seg.push(new Float32Array(data)); segMs += chunkMs; }
+            tailMs += chunkMs;
+            silenceMs += chunkMs;
+          } else {
+            // between utterances: remember just enough to rewind into
+            preRoll.push(new Float32Array(data));
+            while (preRoll.length > PRE_ROLL_CHUNKS) preRoll.shift();
+            silenceMs += chunkMs;
+          }
+
+          idleMs = voiced ? 0 : idleMs + chunkMs;
           onInterim(voicedMs > 200 ? "recording…" : "");
           // cut on a natural pause, or hard-cut long monologues
           if ((voicedMs > 400 && silenceMs > 750) || segMs > 15000) cut(false);
+
+          /* A microphone nobody stopped bills until someone notices. Nothing
+             here stopped it but a button press or navigating away, so a mic
+             left on through hands-on treatment ran at roughly a peso a minute
+             indefinitely. Stop it — LOUDLY, because a silent auto-stop that
+             swallowed what the therapist said next would be a data-loss bug
+             wearing a saving's clothes. */
+          if (idleMs > IDLE_STOP_MS) {
+            cut(true);
+            onStatus("Dictation paused — no speech for a minute. Tap Listen to carry on.", false);
+            if (typeof onAutoStop === "function") onAutoStop();
+          }
         };
         src.connect(proc);
         proc.connect(ctx.destination);
@@ -3879,6 +3970,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       },
       stop() {
         listening = false;
+        preRoll = []; idleMs = 0;
         cut(true); // flush whatever was being said
         try { if (proc) proc.disconnect(); } catch (_) { }
         try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
@@ -3941,6 +4033,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       onText: deliver,
       onInterim: (t) => { interimEl.textContent = t ? t + " …" : "…"; },
       onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
+      // The idle backstop stopped the mic itself; put the button back in step
+      // so the therapist can see it happened and tap once to resume.
+      onAutoStop: () => { listening = false; setUI(); },
     };
 
     let engine = null;

@@ -188,12 +188,82 @@ const GEMINI_VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "")
 // if data residency requires it AND the models exist in that region.
 const GEMINI_LOCATION = process.env.GEMINI_LOCATION || "global";
 
-const GEMINI_OPTS = () => vertexConfigured()
-  ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
-      model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL,
-      onError: (w, e) => console.error(`[${w}] Gemini (Vertex) failed, using local:`, e.message) }
-  : { key: activeGeminiKey(), model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, base: GEMINI_BASE,
-      onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) };
+/* ---------------- usage metering ----------------
+
+   Until now nothing in this codebase recorded what a call actually cost, so
+   every cost figure was derived from list prices rather than measured, a
+   runaway tenant was invisible, and a usage-based price was unsellable.
+
+   Two meters: Gemini tokens (reported by the API) and Speech-to-Text billed
+   SECONDS (derived from the WAV we already hold, using Google's own
+   round-up-to-the-next-second rule). Both are recorded per clinic per day.
+
+   Thinking tokens are kept apart from answer tokens even though both bill as
+   output — thinking is the dominant cost and the thing we tune, so folding it
+   in would hide the effect of every change we make to thinkingLevel.
+
+   Deliberately cheap: an in-memory tally flushed to the kv store, capped at 90
+   days. This is a cost signal, not an accounting ledger, and it must never slow
+   down or break a clinical call. */
+const USAGE_KEY = "usageMeter";
+const USAGE_DAYS = 90;
+let usageDirty = false;
+let usageCache = null;
+
+function usageAll() {
+  if (usageCache) return usageCache;
+  try { usageCache = JSON.parse(db.get(USAGE_KEY) || "{}"); } catch { usageCache = {}; }
+  return usageCache;
+}
+
+/** Record one unit of spend. `kind` is "gemini" or "stt". */
+function meter(clinicId, kind, fields) {
+  try {
+    const all = usageAll();
+    const day = new Date().toISOString().slice(0, 10);
+    const cid = clinicId || DEFAULT_CLINIC;
+    const bucket = (all[day] = all[day] || {});
+    const clinic = (bucket[cid] = bucket[cid] || {});
+    const row = (clinic[kind] = clinic[kind] || {});
+    for (const [k, v] of Object.entries(fields)) {
+      if (typeof v === "number") row[k] = (row[k] || 0) + v;
+      else row[k] = v; // last-writer wins for labels like model
+    }
+    row.calls = (row.calls || 0) + 1;
+    usageDirty = true;
+  } catch (e) { console.error("[usage] meter failed:", e.message); }
+}
+
+// Flushed on a timer rather than per call: a clinical request must not wait on
+// a write that only matters for billing.
+setInterval(() => {
+  if (!usageDirty) return;
+  usageDirty = false;
+  try {
+    const all = usageAll();
+    const cutoff = new Date(Date.now() - USAGE_DAYS * 86400000).toISOString().slice(0, 10);
+    for (const day of Object.keys(all)) if (day < cutoff) delete all[day];
+    db.set(USAGE_KEY, JSON.stringify(all));
+  } catch (e) { console.error("[usage] flush failed:", e.message); }
+}, 30000).unref?.();
+
+/** Billed seconds for a WAV, by Google's rule: round UP to the next second.
+    16 kHz, 16-bit, mono = 32000 bytes/second, minus the 44-byte header. */
+const wavBilledSeconds = (buf) => Math.max(1, Math.ceil((buf.length - 44) / 32000));
+
+const GEMINI_OPTS = (user, purpose) => {
+  const onUsage = (u) => meter(clinicOfUser(user), "gemini", {
+    model: u.model, in: u.in, out: u.out, thinking: u.thinking,
+    [`calls_${purpose || u.purpose || "other"}`]: 1,
+  });
+  return vertexConfigured()
+    ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
+        model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, purpose, onUsage,
+        onError: (w, e) => console.error(`[${w}] Gemini (Vertex) failed, using local:`, e.message) }
+    : { key: activeGeminiKey(), model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, base: GEMINI_BASE,
+        purpose, onUsage,
+        onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) };
+};
 
 function activeGeminiKey() {
   return process.env.GEMINI_API_KEY || null;
@@ -209,9 +279,9 @@ function geminiEngineDesc() {
 }
 
 const refineSystem = ai.refineSystem;
-const refineTranscript = (utterances) => ai.refine(utterances, GEMINI_OPTS());
-const clinicalInsights = (ctx) => ai.insightsRun(ctx, GEMINI_OPTS());
-const patientAssistant = (chart, question, history) => ai.patientAssistant(chart, question, history, GEMINI_OPTS());
+const refineTranscript = (utterances, user) => ai.refine(utterances, GEMINI_OPTS(user, "refine"));
+const clinicalInsights = (ctx, user) => ai.insightsRun(ctx, GEMINI_OPTS(user, "insights"));
+const patientAssistant = (chart, question, history, user) => ai.patientAssistant(chart, question, history, GEMINI_OPTS(user, "assistant"));
 
 // rev + sessions persist through db (populated from it in start(), below).
 let rev = 1;
@@ -1138,6 +1208,45 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, id: report.id, delivered });
       }
 
+      /* What this clinic has actually spent. Admin-only: it is commercial
+         information, and on a multi-tenant server one clinic must not see
+         another's volumes. Prices are applied here rather than stored, so a
+         rate change re-prices history instead of leaving it stale. */
+      if (url.pathname === "/api/usage" && req.method === "GET") {
+        if (user.role !== "admin") return json(res, 403, { error: "Admins only." });
+        const cid = clinicOfUser(user);
+        const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
+        const from = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+        const all = usageAll();
+        const out = { from, to: new Date().toISOString().slice(0, 10), days, byDay: {},
+          totals: { geminiIn: 0, geminiOut: 0, geminiThinking: 0, geminiCalls: 0, sttSeconds: 0, sttCalls: 0 } };
+        for (const [day, clinics] of Object.entries(all)) {
+          if (day < from) continue;
+          const row = (clinics || {})[cid];
+          if (!row) continue;
+          const g = row.gemini || {}, t = row.stt || {};
+          out.byDay[day] = {
+            geminiIn: g.in || 0, geminiOut: g.out || 0, geminiThinking: g.thinking || 0,
+            geminiCalls: g.calls || 0, sttSeconds: t.seconds || 0, sttCalls: t.calls || 0,
+          };
+          out.totals.geminiIn += g.in || 0; out.totals.geminiOut += g.out || 0;
+          out.totals.geminiThinking += g.thinking || 0; out.totals.geminiCalls += g.calls || 0;
+          out.totals.sttSeconds += t.seconds || 0; out.totals.sttCalls += t.calls || 0;
+        }
+        /* List prices, August 2026 (Gemini 3.7 Flash introductory to
+           2026-12-31; Speech-to-Text v2 standard). Thinking bills as output. */
+        const T = out.totals;
+        const geminiUsd = (T.geminiIn * 0.75 + (T.geminiOut + T.geminiThinking) * 3.75) / 1e6;
+        const sttUsd = (T.sttSeconds / 60) * 0.016;
+        out.estimatedUsd = {
+          gemini: Number(geminiUsd.toFixed(4)),
+          stt: Number(sttUsd.toFixed(4)),
+          total: Number((geminiUsd + sttUsd).toFixed(4)),
+          note: "List prices applied at read time; not an invoice.",
+        };
+        return json(res, 200, out);
+      }
+
       // The reports themselves, for an admin who wants them without the inbox.
       if (url.pathname === "/api/bug-reports" && req.method === "GET") {
         if (user.role !== "admin") return json(res, 403, { error: "Admins only." });
@@ -1173,14 +1282,14 @@ const server = http.createServer(async (req, res) => {
         const { transcript } = await readBody(req);
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
         const clean = transcript.map((t) => String(t || "").slice(0, 2000)).slice(0, 500);
-        const result = await refineTranscript(clean);
+        const result = await refineTranscript(clean, user);
         return json(res, 200, result);
       }
       if (url.pathname === "/api/insights" && req.method === "POST") {
         // decision support for a licensed clinician — same gate as /api/refine
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
         const ctx = await readBody(req);
-        const result = await clinicalInsights(ctx || {});
+        const result = await clinicalInsights(ctx || {}, user);
         return json(res, 200, result);
       }
       if (url.pathname === "/api/patient-assistant" && req.method === "POST") {
@@ -1190,7 +1299,7 @@ const server = http.createServer(async (req, res) => {
         if (!q) return json(res, 400, { error: "No question provided." });
         const turns = Array.isArray(history) ? history.slice(-8).map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", text: String(t.text || "").slice(0, 2000) })) : [];
         try {
-          const result = await patientAssistant(chart || {}, q, turns);
+          const result = await patientAssistant(chart || {}, q, turns, user);
           return json(res, 200, result);
         } catch (e) {
           // a 501 carries our own "not set up on this server yet" text, which is
@@ -1205,7 +1314,7 @@ const server = http.createServer(async (req, res) => {
         if (!pdf || typeof pdf !== "string") return json(res, 400, { error: "No document received." });
         if (pdf.length > 11 * 1024 * 1024) return json(res, 400, { error: "Document too large (limit ~8 MB)." });
         try {
-          const result = await ai.extractRecords(pdf, mime, GEMINI_OPTS());
+          const result = await ai.extractRecords(pdf, mime, GEMINI_OPTS(user, "extract"));
           return json(res, 200, result);
         } catch (e) {
           // a 501 carries our own "not set up on this server yet" text, which is
@@ -1229,6 +1338,9 @@ const server = http.createServer(async (req, res) => {
         const doc = docForUser(docId, user);
         let retained = false;
         if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
+        // Google rounds each request up to the next second, and we hold the
+        // exact buffer, so this is the billed figure — not an estimate.
+        meter(clinicOfUser(user), "stt", { seconds: wavBilledSeconds(wav), bytes: wav.length, model });
         try {
           const out = await transcribe(wav, lang, model);
           // `model` is what actually ran, which is not always what was asked

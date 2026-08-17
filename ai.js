@@ -208,6 +208,34 @@
     });
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
+
+    /* Report what the call actually cost.
+
+       Everything we believed about AI spend was derived from reading code and
+       applying list prices — no number had ever been reconciled against a bill,
+       which meant a runaway tenant was invisible and a usage-based price was
+       unsellable. Gemini returns the real counts; we were throwing them away.
+
+       Thinking is recorded SEPARATELY from the answer even though both bill as
+       output, because thinking is the dominant cost and the lever we tune
+       (thinkingLevel). A meter that folds it into `out` cannot explain a bill
+       or show the effect of changing the level. */
+    const u = data.usageMetadata || {};
+    if (typeof opts.onUsage === "function") {
+      const thoughts = Number(u.thoughtsTokenCount || 0);
+      try {
+        opts.onUsage({
+          model: model,
+          purpose: opts.purpose || "unknown",
+          thinkingLevel: opts.thinkingLevel || THINKING_STANDARD,
+          in: Number(u.promptTokenCount || 0),
+          out: Math.max(0, Number(u.candidatesTokenCount || 0) - thoughts),
+          thinking: thoughts,
+          total: Number(u.totalTokenCount || 0),
+        });
+      } catch (e) { /* metering must never break a clinical call */ }
+    }
+
     // Skip any thought parts — only the answer parts are the JSON payload.
     const text = (data?.candidates?.[0]?.content?.parts || [])
       .filter((p) => !p.thought).map((p) => p.text || "").join("") || "{}";
