@@ -1538,6 +1538,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
    as one more rail entry, pinned just above the account chip, rather than a
    floating button that covers the content it's meant to describe. */
 .nav-utility { flex: none; margin-bottom: 4px; }
+.nav-utility .nav-group { margin-bottom: 0; }
 
 .bug-backdrop[hidden] { display: none; }
 .bug-modal { max-width: 620px; max-height: 92vh; overflow-y: auto; }

@@ -76,7 +76,7 @@
     signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
     logo: LOGO_MARK,
     spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg>',
-    bug: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6a4 4 0 0 1 8 0"/><rect x="7" y="6" width="10" height="13" rx="5"/><path d="M7 11H3M7 15.5H4M17 11h4M17 15.5h3M9.5 4.2 8 2.5M14.5 4.2 16 2.5"/></svg>',
+    wrench: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg>',
   };
 
   /* scroll memory: return to where you were when navigating back */
@@ -468,7 +468,7 @@
           <div><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
         </div>
         ${acctNav.map((n) => `<a class="acct-item" role="menuitem" href="${n.hash}"><span class="acct-ico">${n.icon}</span>${esc(n.label)}</a>`).join("")}
-        <button class="acct-item bug-trigger" role="menuitem" type="button"><span class="acct-ico">${ICON.bug}</span>Report a bug</button>
+        <button class="acct-item bug-trigger" role="menuitem" type="button"><span class="acct-ico">${ICON.wrench}</span>Report a bug</button>
         <button class="acct-item danger" id="acctLogout" role="menuitem" type="button"><span class="acct-ico">${ICON.signout}</span>Sign out</button>
       </div>`;
 
@@ -498,7 +498,9 @@
         <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
       </div>` : ""}</div>
       <div class="spacer"></div>
-      <div class="nav nav-utility">${bugTriggerMarkup()}</div>
+      <div class="nav nav-utility"><div class="nav-group">
+        <div class="nav-group-label">Help</div>${bugTriggerMarkup()}
+      </div></div>
       <div class="userchip">
         <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
         <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
@@ -761,7 +763,7 @@ ${walkthroughMarkup()}`;
      the same trigger is rendered there too — hence a class, not an id. */
   function bugTriggerMarkup() {
     return `<button class="nav-link nav-btn bug-trigger" type="button" title="Report a problem or an idea">
-      <span class="nav-ico">${ICON.bug}</span><span class="nav-label">Report a bug</span></button>`;
+      <span class="nav-ico">${ICON.wrench}</span><span class="nav-label">Report a bug</span></button>`;
   }
 
   function bugModalMarkup() {
