@@ -76,6 +76,7 @@
     signout: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5H3.5A1.5 1.5 0 002 4v8a1.5 1.5 0 001.5 1.5H6M10.5 11l3-3-3-3M13 8H6"/></svg>',
     logo: LOGO_MARK,
     spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg>',
+    bug: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6a4 4 0 0 1 8 0"/><rect x="7" y="6" width="10" height="13" rx="5"/><path d="M7 11H3M7 15.5H4M17 11h4M17 15.5h3M9.5 4.2 8 2.5M14.5 4.2 16 2.5"/></svg>',
   };
 
   /* scroll memory: return to where you were when navigating back */
@@ -467,6 +468,7 @@
           <div><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
         </div>
         ${acctNav.map((n) => `<a class="acct-item" role="menuitem" href="${n.hash}"><span class="acct-ico">${n.icon}</span>${esc(n.label)}</a>`).join("")}
+        <button class="acct-item bug-trigger" role="menuitem" type="button"><span class="acct-ico">${ICON.bug}</span>Report a bug</button>
         <button class="acct-item danger" id="acctLogout" role="menuitem" type="button"><span class="acct-ico">${ICON.signout}</span>Sign out</button>
       </div>`;
 
@@ -496,6 +498,7 @@
         <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
       </div>` : ""}</div>
       <div class="spacer"></div>
+      <div class="nav nav-utility">${bugTriggerMarkup()}</div>
       <div class="userchip">
         <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
         <div class="who"><b>${esc(user.name)}</b><small>${esc(roleLabel(user))}</small></div>
@@ -515,7 +518,7 @@
     </div>
     <div class="asst-card assistant-drawer-body" id="patientAssistant"></div>
   </aside>` : ""}
-  ${bugButtonMarkup()}
+  ${bugModalMarkup()}
 </div>`;
     document.getElementById("logoutBtn").addEventListener("click", () => { S.logout(); render(); });
     bindBugReporter(user);
@@ -536,7 +539,7 @@
         if (!acctMenu.contains(e.target) && !acctBtn.contains(e.target)) setOpen(false);
       }
       acctBtn.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!acctMenu.classList.contains("open")); });
-      acctMenu.querySelectorAll("a.acct-item").forEach((a) => a.addEventListener("click", () => setOpen(false)));
+      acctMenu.querySelectorAll("a.acct-item, .acct-item.bug-trigger").forEach((a) => a.addEventListener("click", () => setOpen(false)));
       const acctLogout = document.getElementById("acctLogout");
       if (acctLogout) acctLogout.addEventListener("click", () => { S.logout(); render(); });
     }
@@ -729,7 +732,8 @@ ${walkthroughMarkup()}`;
 
      A tester who spots something odd is the most valuable input this product
      gets, and almost all of it is lost in the gap between noticing and writing
-     it down. So this is one always-visible button, three short questions, and
+     it down. So this is one button in the left rail — where app-level actions
+     already live, rather than floating over the page — three short questions, and
      everything else collected automatically — the route, the screen size, the
      browser, the app revision — because those are exactly the details a tester
      shouldn't have to think about and a developer can't debug without.
@@ -751,11 +755,17 @@ ${walkthroughMarkup()}`;
     { id: "idea", label: "Idea", hint: "Not broken — could be better" },
   ];
 
-  function bugButtonMarkup() {
+  /* The opener lives in the left rail, styled as one more nav entry, so it sits
+     where a tester already looks for app-level actions instead of floating over
+     the content. On phones the rail's links collapse into the account menu, so
+     the same trigger is rendered there too — hence a class, not an id. */
+  function bugTriggerMarkup() {
+    return `<button class="nav-link nav-btn bug-trigger" type="button" title="Report a problem or an idea">
+      <span class="nav-ico">${ICON.bug}</span><span class="nav-label">Report a bug</span></button>`;
+  }
+
+  function bugModalMarkup() {
     return `
-<button class="bug-fab" id="bugFab" type="button" title="Report a problem or an idea">
-  <span class="bug-fab-ico" aria-hidden="true">🐞</span><span class="bug-fab-label">Report a bug</span>
-</button>
 <div class="modal-backdrop bug-backdrop" id="bugBackdrop" role="dialog" aria-modal="true" aria-label="Report a bug" hidden>
   <div class="modal bug-modal">
     <h2>Report a bug or an idea</h2>
@@ -794,9 +804,9 @@ ${walkthroughMarkup()}`;
   }
 
   function bindBugReporter(user) {
-    const fab = document.getElementById("bugFab");
+    const triggers = document.querySelectorAll(".bug-trigger");
     const back = document.getElementById("bugBackdrop");
-    if (!fab || !back) return;
+    if (!triggers.length || !back) return;
     const $ = (id) => document.getElementById(id);
     let severity = "annoying";
     let screenshot = null;
@@ -832,7 +842,7 @@ ${walkthroughMarkup()}`;
     };
     const close = () => { back.hidden = true; };
 
-    fab.addEventListener("click", open);
+    triggers.forEach((t) => t.addEventListener("click", open));
     $("bugCancel").addEventListener("click", close);
     back.addEventListener("click", (e) => { if (e.target === back) close(); });
     document.addEventListener("keydown", (e) => { if (!back.hidden && e.key === "Escape") close(); });

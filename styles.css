@@ -1533,24 +1533,11 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 
 /* ---- bug reporting ----
-   The button is always on screen during testing, because a tester who has to
-   go looking for the report form will simply not report the thing. It sits
-   above the mobile tab bar so it never covers navigation. */
-.bug-fab {
-  position: fixed; right: 18px; bottom: 18px; z-index: 70;
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 10px 16px; border-radius: 999px; cursor: pointer;
-  background: var(--panel); color: var(--ink);
-  border: 1px solid var(--border); box-shadow: 0 4px 18px rgba(0,0,0,.16);
-  font-size: 13.5px; font-weight: 600; font-family: inherit;
-}
-.bug-fab:hover { background: var(--hover); transform: translateY(-1px); }
-.bug-fab-ico { font-size: 15px; }
-@media (max-width: 720px) {
-  .bug-fab { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); right: 12px; padding: 9px 13px; }
-  .bug-fab-label { display: none; }
-}
-@media (prefers-reduced-motion: reduce) { .bug-fab:hover { transform: none; } }
+   The opener is always one click away during testing, because a tester who has
+   to go looking for the report form will simply not report the thing. It reads
+   as one more rail entry, pinned just above the account chip, rather than a
+   floating button that covers the content it's meant to describe. */
+.nav-utility { flex: none; margin-bottom: 4px; }
 
 .bug-backdrop[hidden] { display: none; }
 .bug-modal { max-width: 620px; max-height: 92vh; overflow-y: auto; }
