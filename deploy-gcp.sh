@@ -109,10 +109,22 @@ echo "==> 6/6  Deploying code to Cloud Run [$SERVICE @ $REGION]…"
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 GOOGLE_OWNER_EMAIL="${GOOGLE_OWNER_EMAIL:-amador.moriles@gmail.com}"
 
+# Demo/sales box: export THERACHART_DEMO_LOGINS=1 before running to seed the
+# demo clinic's logins and list them (with their password) on the sign-in
+# screen, so a prospect can click a role and be inside the app. /api/bootstrap
+# is unauthenticated, so this publishes a working admin password to anyone who
+# asks — leave it unset on any deployment that will hold real patients. The
+# demo accounts live in their own clinics and cannot see another clinic's
+# records, but they are still a published credential on a public URL.
+THERACHART_DEMO_LOGINS="${THERACHART_DEMO_LOGINS:-0}"
+if [ "$THERACHART_DEMO_LOGINS" = "1" ]; then
+  echo "    ⚠️  DEMO LOGINS ON — the sign-in screen will publish demo accounts + password."
+fi
+
 gcloud run deploy "$SERVICE" --source . --project "$PROJ" --region "$REGION" \
   --allow-unauthenticated --add-cloudsql-instances "$CONN" --max-instances 1 \
   --set-secrets "DATABASE_URL=${SECRET}:latest" \
-  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${STT_REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_OWNER_EMAIL=${GOOGLE_OWNER_EMAIL}"
+  --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${STT_REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_OWNER_EMAIL=${GOOGLE_OWNER_EMAIL},THERACHART_DEMO_LOGINS=${THERACHART_DEMO_LOGINS}"
 
 # Optional email allowlist for additional Google users (owner is always admin).
 # Uses a custom delimiter (^@^) so the commas inside the value are preserved.

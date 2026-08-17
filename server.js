@@ -548,7 +548,15 @@ function demoLogins() {
       if (u.active === false) status = "sign-in blocked (voided)";
       else if (u.role !== "frontdesk" && u.license && u.license.expires && u.license.expires < today)
         status = "license expired — EMR read-only";
-      return { name: u.name, email: u.email, role: u.role, password: DEMO_LOGIN_PASSWORD, status };
+      /* The clinic name groups the rows in the sign-in dropdown. It matters
+         because u-fresh deliberately lives in its OWN empty clinic — listing it
+         flat under "Demo Clinic" would promise the seeded charts and then open
+         a blank EMR. Safe to publish: these are seeded demo clinics, and the
+         demo clinic's name is already the public facilityName. */
+      return {
+        name: u.name, email: u.email, role: u.role, password: DEMO_LOGIN_PASSWORD, status,
+        clinic: store.clinicName(clinicOfUser(u)),
+      };
     });
 }
 
@@ -1496,6 +1504,12 @@ async function start() {
   const dbInfo = await db.init({ dataDir: DATA_DIR, databaseUrl: process.env.DATABASE_URL || null });
   const filesInfo = await files.init({ dataDir: DATA_DIR, bucket: GCS_BUCKET || null, getToken: GCS_BUCKET ? gcpAccessToken : null });
   store.load();
+  /* Demo box: put the seeded demo logins back before the pin-hashing step below
+     picks them up. seed() only fires on empty storage, so without this a
+     long-lived deployment shows the demo clinic but has no accounts to enter it
+     with. Tied to the same switch that reveals the sign-in panel, so a real
+     clinic deployment neither creates nor advertises them. */
+  const demo = DEMO_LOGINS_ENABLED ? store.ensureDemoAccounts() : null;
   const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
   const emailed = store.ensureEmails();    // one-time: give pre-email-login accounts a login email
   const r = Number(db.get("rev")); if (r) rev = r;
@@ -1510,6 +1524,9 @@ async function start() {
     console.log(`  app:  http://localhost:${PORT}`);
     console.log(`  data: ${dbInfo.backend === "postgres" ? "Postgres (durable) — keys: " + dbInfo.keys.join(", ") : DATA_DIR + " (flat file)"}`);
     console.log(`  auth: email + hashed passwords (scrypt)${migrated ? ` — migrated ${migrated} legacy PIN(s)` : ""}${emailed ? ` — assigned ${emailed} login email(s)` : ""}`);
+    if (DEMO_LOGINS_ENABLED) {
+      console.log(`  demo logins: ON — published on the sign-in screen${demo && demo.users ? `, restored ${demo.users} account(s)` : ""}${demo && demo.content ? ", seeded the demo clinic" : ""}`);
+    }
     console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);

@@ -72,6 +72,20 @@ const { startServer, reporter } = require("./helpers/server.js");
       r.check("the listed accounts carry the shared demo password",
         (data.testAccounts || []).every((a) => a.password === "1234"));
 
+      /* Each row carries its clinic name so the sign-in dropdown can group by
+         clinic. u-fresh deliberately sits in its own empty clinic — without
+         this the panel would file it under the staffed demo clinic and then
+         open a blank EMR on whoever clicked it. */
+      const accounts = data.testAccounts || [];
+      r.check("every listed account names its clinic",
+        accounts.every((a) => typeof a.clinic === "string" && a.clinic.length > 0),
+        JSON.stringify(accounts.map((a) => [a.email, a.clinic])));
+      const freshRow = accounts.find((a) => a.email === "fresh@therachart.demo");
+      const mariaRow = accounts.find((a) => a.email === "maria@therachart.demo");
+      r.check("the blank-clinic account is grouped apart from the staffed clinic",
+        !!freshRow && !!mariaRow && freshRow.clinic !== mariaRow.clinic,
+        `fresh=${freshRow && freshRow.clinic} maria=${mariaRow && mariaRow.clinic}`);
+
     } finally { s.stop(); }
   }
 
@@ -139,6 +153,123 @@ const { startServer, reporter } = require("./helpers/server.js");
         JSON.stringify(listed.map((a) => a.email).filter((e) => !seededEmails.has(String(e).toLowerCase()))));
     } finally { second.stop(); }
     try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  A long-lived deployment that has NEVER had the demo accounts
+   *
+   *  This is the state the Cloud Run instance was actually in: storage is
+   *  non-empty, so seed() never fires, so the demo logins simply do not exist
+   *  — enabling the panel alone would have shown nothing, and typing the
+   *  addresses by hand returned "Incorrect email or password".
+   *  store.ensureDemoAccounts() (run at boot, behind the same flag) grafts
+   *  them back. What it must NOT do is touch the clinic's real staff.
+   * ---------------------------------------------------------------- */
+
+  {
+    // A "production" database: one real clinic, one real admin, no demo anything.
+    const prodBlob = JSON.stringify({
+      settings: { facilityName: "Real Clinic" },
+      clinics: { "clinic-owner": { id: "clinic-owner", name: "Real Clinic" } },
+      users: [{
+        id: "u-owner", name: "Dr. Real Owner", email: "owner@realclinic.ph", role: "admin",
+        pin: "supersecret", active: true, clinicId: "clinic-owner",
+        license: { number: "PT-9999999", expires: "2030-01-01" },
+      }],
+      patients: [{ id: "p-real", clinicId: "clinic-owner", name: "Real Patient" }],
+      documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+    });
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-nodemo-"));
+    fs.writeFileSync(path.join(dataDir, "therachart.json"), prodBlob);
+
+    const s = await startServer({ THERACHART_DEMO_LOGINS: "1" }, { dataDir });
+    try {
+      const { data } = await s.call("/api/bootstrap");
+      const emails = (data.testAccounts || []).map((a) => String(a.email).toLowerCase());
+      r.check("demo logins are restored on a database that never had them",
+        emails.length === 6, `${emails.length} listed: ${JSON.stringify(emails)}`);
+      r.check("the blank-clinic login is among them",
+        emails.includes("fresh@therachart.demo"), JSON.stringify(emails));
+
+      // The whole point: every advertised row must actually work.
+      for (const email of ["grace@therachart.demo", "maria@therachart.demo", "ana@therachart.demo", "fresh@therachart.demo"]) {
+        const login = await s.login(email, "1234");
+        r.check(`${email} can sign in`, login.status === 200 && !!login.data.token,
+          `status ${login.status} ${JSON.stringify(login.data)}`);
+      }
+      // carlo is seeded as voided — the panel says so, and the server agrees
+      const voided = await s.login("carlo@therachart.demo", "1234");
+      r.check("the voided demo account is still refused", voided.status !== 200, `status ${voided.status}`);
+
+      // ...and the real clinic is untouched.
+      r.check("the real admin's password was NOT reset",
+        (await s.login("owner@realclinic.ph", "1234")).status !== 200);
+      const owner = await s.login("owner@realclinic.ph", "supersecret");
+      r.check("the real admin can still sign in", owner.status === 200 && !!owner.data.token,
+        `status ${owner.status}`);
+      r.check("the real admin is not published on the sign-in screen",
+        !JSON.stringify(data).includes("realclinic.ph"), JSON.stringify(data).slice(0, 300));
+
+      // Tenancy is what keeps the published password harmless: a demo admin
+      // must not be able to see the real clinic's patients.
+      const grace = await s.login("grace@therachart.demo", "1234");
+      const seen = await s.call("/api/state", { token: grace.data.token });
+      const names = JSON.stringify(((seen.data || {}).state || {}).patients || []);
+      r.check("a demo admin cannot see the real clinic's patients",
+        !names.includes("Real Patient"), names.slice(0, 300));
+    } finally { s.stop(); }
+
+    /* The address drift that actually broke the live instance. Accounts stored
+       before email login had no email; ensureEmails() derived one from the name
+       ("Maria Santos, PT" -> maria.santos@therachart.demo), so the documented
+       maria@therachart.demo returned "Incorrect email or password" even though
+       the account was right there. The graft must restore the seed address. */
+    {
+      const drift = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-drift-"));
+      fs.writeFileSync(path.join(drift, "therachart.json"), JSON.stringify({
+        settings: { facilityName: "Physical Therapy Center" },
+        clinics: { "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center" } },
+        // seeded ids, but no email — exactly the pre-email-login shape
+        users: [{ id: "u-maria", name: "Maria Santos, PT", role: "therapist", active: true, clinicId: "clinic-demo" }],
+        patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+      }));
+      const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" }, { dataDir: drift });
+      try {
+        const login = await s2.login("maria@therachart.demo", "1234");
+        r.check("a drifted demo address is restored to the documented one",
+          login.status === 200 && !!login.data.token, `status ${login.status}`);
+        const { data } = await s2.call("/api/bootstrap");
+        const emails = (data.testAccounts || []).map((a) => String(a.email).toLowerCase());
+        r.check("the panel advertises the documented address, not the derived one",
+          emails.includes("maria@therachart.demo") && !emails.includes("maria.santos@therachart.demo"),
+          JSON.stringify(emails));
+      } finally { s2.stop(); }
+      try { fs.rmSync(drift, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+
+    // Idempotent: a second boot must not duplicate anything.
+    const again = await startServer({ THERACHART_DEMO_LOGINS: "1" }, { dataDir });
+    try {
+      const { data } = await again.call("/api/bootstrap");
+      r.check("a second boot does not duplicate the demo accounts",
+        (data.testAccounts || []).length === 6, `${(data.testAccounts || []).length} listed`);
+    } finally { again.stop(); }
+
+    // The same production database, with the flag OFF, must stay clean — the
+    // graft is opt-in, so an ordinary clinic deployment grows no demo logins.
+    // (Copied from the pristine blob, not from dataDir, which has been grafted.)
+    const off = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-off-"));
+    fs.writeFileSync(path.join(off, "therachart.json"), prodBlob);
+    const clean = await startServer({}, { dataDir: off });
+    try {
+      const { data } = await clean.call("/api/bootstrap");
+      r.check("the panel stays empty when the flag is off",
+        (data.testAccounts || []).length === 0, JSON.stringify(data.testAccounts));
+      r.check("no demo account is created when the flag is off",
+        (await clean.login("grace@therachart.demo", "1234")).status !== 200);
+    } finally { clean.stop(); }
+
+    for (const d of [dataDir, off]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
   }
 
   r.done();
