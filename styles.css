@@ -1225,10 +1225,20 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .slot-appt:hover { filter: brightness(0.97); }
 .slot-appt small { display: block; font-weight: 400; color: var(--muted); }
-/* ---- allergies: the one thing that must be seen before treating ---- */
+/* ---- allergies: the one thing that must be seen before treating ----
+   This used to truncate with an ellipsis and rely on a hover title for the
+   rest. Phones and tablets have no hover, so on the devices a therapist
+   actually carries around the ward, "Penicillin — rash. Latex sensitivity"
+   was cut to "Penicillin — rash. Latex sensit" with no way to read the rest.
+   It wraps now: a two-line banner is a fair price for the one field that
+   exists to stop someone being harmed. */
 .pb-chip.allergy {
   background: var(--danger-soft, #fdecec); color: var(--danger);
-  font-weight: 600; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600; max-width: 560px;
+  white-space: normal; overflow-wrap: anywhere; align-items: flex-start;
+}
+@media (max-width: 620px) {
+  .pb-chip.allergy { max-width: 100%; width: 100%; }
 }
 .pb-chip.allergy .pb-k { color: inherit; opacity: .85; }
 .allergy-box {

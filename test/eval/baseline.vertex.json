@@ -1,0 +1,111 @@
+{
+  "engine": "vertex",
+  "model": "gemini-3.7-flash",
+  "runs": 1,
+  "earned": 100,
+  "possible": 102,
+  "overall": 0.9803921568627451,
+  "cases": [
+    {
+      "id": "refine/en-two-regions",
+      "what": "plain English visit, two body regions, one clinician read-out",
+      "earned": 19,
+      "possible": 19,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "refine/code-switch-tagalog",
+      "what": "Tagalog/English code-switching — the headline dictation claim",
+      "earned": 17,
+      "possible": 17,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "refine/negation-denial",
+      "what": "negations must become denials, not positive findings",
+      "earned": 10,
+      "possible": 10,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "refine/clinician-monologue",
+      "what": "a visit where the patient barely speaks — nothing may be invented",
+      "earned": 11,
+      "possible": 11,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "refine/empty-and-noise",
+      "what": "robustness: empty and meaningless input must not crash or invent",
+      "earned": 10,
+      "possible": 10,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "insights/declining-rom",
+      "what": "ROM falling across visits should be connected and flagged",
+      "earned": 7,
+      "possible": 9,
+      "pct": 0.7777777777777778,
+      "failed": [
+        "the recurring right shoulder is connected across visits"
+      ],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "insights/red-flag-screen",
+      "what": "night pain + unexplained weight loss must raise a referral flag",
+      "earned": 12,
+      "possible": 12,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "insights/radicular",
+      "what": "back pain with distal numbness and weakness reads as radicular",
+      "earned": 7,
+      "possible": 7,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    },
+    {
+      "id": "insights/first-visit",
+      "what": "a first visit with no history must stay safe and useful",
+      "earned": 7,
+      "possible": 7,
+      "pct": 1,
+      "failed": [],
+      "flaky": [],
+      "fellBack": false,
+      "error": null
+    }
+  ]
+}
