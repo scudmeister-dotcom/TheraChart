@@ -978,6 +978,13 @@
        the point. It is shown, never enforced; cutting a therapist off
        mid-dictation to save a peso would be indefensible. */
     fairUseMinutesPerVisit: 10,
+    /* Backstop, not a limit. The voice gate is an energy threshold, so a room
+       loud enough to clear it defeats BOTH the silence gating and the idle
+       auto-stop at once — noise reads as speech, so `idleMs` never accumulates
+       and the microphone never turns itself off. The adaptive floor in app.js
+       is the real fix; this bounds the damage when a room beats it anyway.
+       Set at 3x fair use so no honest visit ever reaches it. */
+    maxDictationMinutesPerVisit: 30,
   };
 
   /** Effective settings for one clinic: its own block over the legacy global
@@ -1261,14 +1268,39 @@
     const startMs = start.getTime();
     const docs = load().documents.filter(mine)
       .filter((d) => new Date(d.createdAt || 0).getTime() >= startMs);
-    let seconds = 0, dictated = 0;
-    for (const d of docs) {
-      const s = Number((d.data || {})._dictationSeconds) || 0;
-      if (s > 0) { seconds += s; dictated += 1; }
-    }
     const st = settings();
     const allowance = Math.max(1, Number(st.visitAllowance) || 130);
     const fairUsePerVisit = Math.max(1, Number(st.fairUseMinutesPerVisit) || 10);
+
+    /* ---- what the month actually consumes ----
+
+       Speech-to-Text is a third of revenue and the only cost that scales with
+       how a clinic works rather than how much it works, so an uncapped minute
+       is the one number that can take a tier underwater: on the Clinic rung,
+       past ~16 minutes a visit we lose money on every visit.
+
+       Rather than bolt a second overage meter onto the price list, a visit
+       consumes allowance IN PROPORTION to the dictation behind it — a visit is
+       a visit of normal length, and one that runs to three times that consumes
+       three. One meter, the overage rate that already exists, and nothing is
+       ever interrupted: a heavy month simply eats the allowance faster.
+
+       Fractional, then rounded ONCE at the month level. Charging ceil() per
+       visit would turn 10 minutes 1 second into two visits, which is a cliff a
+       clinician would rightly find absurd; aggregating first means only
+       sustained heavy dictation moves the number at all. */
+    let seconds = 0, dictated = 0, units = 0;
+    for (const d of docs) {
+      const s = Number((d.data || {})._dictationSeconds) || 0;
+      if (s > 0) { seconds += s; dictated += 1; }
+      // every visit costs at least one, however little was said in it
+      units += Math.max(1, (s / 60) / fairUsePerVisit);
+    }
+    /* ROUND, not ceil. Ceiling the month total reintroduces the very cliff the
+       fractional accounting removes — one visit two seconds over budget would
+       round the whole month up by a visit. Floored at the document count so a
+       visit can never cost less than one. */
+    const chargeable = Math.max(docs.length, Math.round(units));
     // Pace is measured against days ELAPSED, so a projection on the 2nd of the
     // month is honest about being built on one day of data.
     const now = new Date();
@@ -1278,8 +1310,15 @@
       planName: st.planName || "Solo",
       allowance,
       visits: docs.length,
-      remaining: Math.max(0, allowance - docs.length),
-      overBy: Math.max(0, docs.length - allowance),
+      /* Allowance is consumed in visit-units, so `remaining` and `overBy` are
+         measured against those, not against a raw document count — a clinic
+         dictating twice the fair-use budget is genuinely twice as far through
+         its plan as the document count suggests. */
+      chargeableVisits: chargeable,
+      remaining: Math.max(0, allowance - chargeable),
+      overBy: Math.max(0, chargeable - allowance),
+      // how much of the consumption is dictation length rather than volume
+      unitsFromDictation: Math.max(0, chargeable - docs.length),
       dictationSeconds: Math.round(seconds),
       dictatedVisits: dictated,
       avgSecondsPerVisit: dictated ? Math.round(seconds / dictated) : 0,
@@ -1292,7 +1331,9 @@
       minutesUsed: Math.round(seconds / 60),
       daysElapsed,
       daysInMonth,
-      projectedVisits: Math.round((docs.length / daysElapsed) * daysInMonth),
+      // projected on what is CHARGED, not on documents written — a clinic that
+      // dictates heavily should see the overage coming, not be surprised by it
+      projectedVisits: Math.round((chargeable / daysElapsed) * daysInMonth),
       monthStart: start.toISOString().slice(0, 10),
       /* Allowances do NOT roll over. Saying so, with the date, is the whole
          point of carrying it here: an unstated reset is how a billing dispute

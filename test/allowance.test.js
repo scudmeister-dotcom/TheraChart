@@ -185,6 +185,73 @@ const jun = store.monthUsage(new Date(2026, 5, 1));
 check("…and is the 1st of the following month otherwise",
   jun.resetsOn === "2026-07-01", `got ${jun.resetsOn}`);
 
+/* ---------------- dictation consumes allowance ----------------
+
+   Speech-to-Text is a third of revenue and the only cost that scales with HOW a
+   clinic works rather than how much. Left uncapped it takes a tier underwater:
+   past ~16 minutes a visit, the Clinic rung loses money on every visit.
+
+   Rather than a second overage meter, a visit consumes allowance in proportion
+   to the dictation behind it. These checks pin that the proportion is right and,
+   just as importantly, that a normal clinic never notices it. */
+
+store.resetAll();
+const m4 = store.getUser("u-maria");
+const g4 = store.getUser("u-grace");
+store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g4);
+const say = (mins) => {
+  const d = store.createDoc("p-juan", "daily", m4).doc;
+  if (mins) store.updateDocData(d.id, { _dictationSeconds: Math.round(mins * 60) }, m4);
+  return d;
+};
+const base4 = store.monthUsage();
+
+say(0); say(4); say(6);
+let uu = store.monthUsage();
+check("visits inside the included minutes each cost exactly one",
+  uu.chargeableVisits === base4.chargeableVisits + 3 && uu.unitsFromDictation === 0,
+  `chargeable ${base4.chargeableVisits} -> ${uu.chargeableVisits}, extra=${uu.unitsFromDictation}`);
+
+/* The cliff this design exists to avoid: charging ceil() per visit would make
+   10 minutes 1 second cost two visits. Aggregating first means it costs ~1. */
+say(10.02);
+uu = store.monthUsage();
+check("a hair over the included minutes does NOT cost a second visit",
+  uu.unitsFromDictation === 0,
+  `10m02s must not round up to 2 visits (extra=${uu.unitsFromDictation})`);
+
+/* Sustained heavy dictation does move it, and by the right amount: three
+   30-minute visits are 9 visits' worth of the expensive resource. */
+// the seed backdates only ~2 weeks, so some seeded notes land in this month —
+// measure the delta rather than an absolute, as everywhere else in this file
+const preHeavy = store.monthUsage();
+say(30); say(30); say(30);
+const heavy3 = store.monthUsage();
+check("a visit at 3x the included dictation consumes three visits",
+  heavy3.chargeableVisits - preHeavy.chargeableVisits === 9 && heavy3.visits - preHeavy.visits === 3,
+  `3 visits x 30 min against a 10-min budget = +9 units, got +${heavy3.chargeableVisits - preHeavy.chargeableVisits} from +${heavy3.visits - preHeavy.visits} visits`);
+check("…and the card can say how much of that was length rather than volume",
+  heavy3.unitsFromDictation - preHeavy.unitsFromDictation === 6,
+  `got +${heavy3.unitsFromDictation - preHeavy.unitsFromDictation}`);
+
+/* The economics this is protecting. At P0.98/min speech + P0.97 Gemini, a
+   30-minute visit costs about P30.40 and would be sold for P17.56 on the
+   Clinic rung — a loss. Charged as three visits it clears cost with room. */
+const PER_MIN = 0.016 * 61.4, GEMINI = 0.01586 * 61.4, CLINIC_RATE = 7900 / 450;
+const costOf = (mins) => PER_MIN * mins + GEMINI;
+check("a 30-minute visit would lose money if charged as one",
+  costOf(30) > CLINIC_RATE,
+  `cost P${costOf(30).toFixed(2)} vs P${CLINIC_RATE.toFixed(2)} charged — this is why the weighting exists`);
+check("…and is comfortably profitable charged as three",
+  costOf(30) < CLINIC_RATE * 3,
+  `cost P${costOf(30).toFixed(2)} vs P${(CLINIC_RATE * 3).toFixed(2)}`);
+/* The weighting must never turn a NORMAL visit into more than one, or every
+   clinic silently loses a fifth of its plan. 4.5 min is the measured length of
+   a full initial evaluation. */
+check("a normal visit is never weighted above one",
+  Math.max(1, 4.5 / 10) === 1 && Math.max(1, 6 / 10) === 1,
+  "an eval at 4.5 min and a long note at 6 min must both count as exactly one");
+
 /* ---------------- the ladder rewards upgrading ----------------
 
    A tier that costs MORE per visit than the one above it is a reason to stay

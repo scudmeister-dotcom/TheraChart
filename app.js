@@ -4075,13 +4075,81 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     },
   };
 
+  /* ---------------- the voice gate ----------------
+
+     Deciding "is this speech?" is what makes dictation cost speech-time rather
+     than wall-clock time, and a fixed threshold got that wrong in exactly one
+     situation — a room louder than the threshold.
+
+     That case is not rare here and it is not benign. A Philippine clinic runs
+     an aircon or an electric fan essentially always, and when room tone clears
+     the gate, EVERY protection fails at once: noise is buffered and billed as
+     speech, and because `idleMs` only accumulates on non-voiced frames, the
+     microphone's own idle auto-stop never fires either. Both safeguards hang
+     off this one number.
+
+     So the number is measured instead of assumed. Sample the room before
+     trusting it, set the bar above whatever the room is doing, and re-check as
+     the session goes on — an aircon that cycles on mid-visit moves the floor.
+
+     Bounded at both ends, because each end is a different failure:
+       FLOOR  — a silent room must not get a hair-trigger gate that bills for
+                breathing and keyboard clicks.
+       CAP    — the threshold must never climb so high that real speech stops
+                registering. Losing a clinician's words to save a peso is the
+                worse bug by a wide margin, so the cap wins ties.
+
+     The ambient estimate is a MINIMUM rather than a mean: if someone happens
+     to be talking during calibration, the mean is their voice, but the quietest
+     frame in half a second is still the room. */
+  function voiceGate() {
+    const FLOOR = 0.012;          // the old fixed threshold, now the lower bound
+    const CAP = 0.05;             // speech sits well above this; never gate higher
+    const MARGIN = 3;             // speech must clear the room by this factor
+    const CALIBRATE_MS = 500;
+    const REESTIMATE_FRAMES = 120; // ~10s of quiet frames before moving the bar
+
+    let calMs = 0, calMin = Infinity, ready = false;
+    let threshold = FLOOR;
+    let quietMin = Infinity, quietN = 0;
+
+    const set = (ambient) => { threshold = Math.min(CAP, Math.max(FLOOR, ambient * MARGIN)); };
+
+    return {
+      threshold: () => threshold,
+      calibrated: () => ready,
+      /** Is this frame speech? */
+      test(rms, ms) {
+        if (!ready) {
+          calMin = Math.min(calMin, rms);
+          calMs += ms;
+          if (calMs >= CALIBRATE_MS) { set(calMin); ready = true; }
+          // during calibration fall back to the fixed floor, so a therapist who
+          // starts talking immediately doesn't lose their first half-second
+          return rms > FLOOR;
+        }
+        const voiced = rms > threshold;
+        if (!voiced) {
+          quietMin = Math.min(quietMin, rms);
+          if (++quietN >= REESTIMATE_FRAMES) { set(quietMin); quietMin = Infinity; quietN = 0; }
+        }
+        return voiced;
+      },
+    };
+  }
+
   /* Capture gated audio and hand back one Float32Array per ~55s chunk. */
-  function recorderEngine({ docId, onLevel, onElapsed, onStop }) {
+  function recorderEngine({ docId, onLevel, onElapsed, onStop, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, on = false;
     let chunk = [], chunkSamples = 0, voicedMs = 0, tailMs = 0, totalMs = 0;
     let preRoll = [];
     const PRE_ROLL_CHUNKS = 4, POST_ROLL = 350;
     const chunks = [];   // in-memory mirror of what is in IndexedDB
+    const gate = voiceGate();
+    // the visit's ceiling counts what earlier recordings on this note already
+    // billed, or "record more" would walk straight around it
+    const priorSec = Number(billedSoFar) || 0;
+    const ceilSec = Number(ceilingSeconds) || 0;
 
     const flushChunk = async () => {
       if (!chunk.length) return;
@@ -4111,7 +4179,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           let rms = 0;
           for (let i = 0; i < data.length; i += 8) rms += data[i] * data[i];
           rms = Math.sqrt(rms / (data.length / 8));
-          const voiced = rms > 0.012;
+          const voiced = gate.test(rms, ms);
 
           if (voiced) {
             if (!chunk.length && preRoll.length) {
@@ -4149,6 +4217,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           if (chunkSamples >= hardCap) flushChunk();
           else if (chunkSamples >= softCap && !voiced && tailMs >= POST_ROLL) flushChunk();
           if (totalMs > RECORD_MAX_MINUTES * 60000) { this.stop(); if (onStop) onStop("limit"); }
+          /* The per-visit ceiling. This is the backstop for a room that beats
+             the adaptive gate anyway — it counts BILLED speech, not wall-clock,
+             so a normal visit can never reach it however long the appointment
+             runs. Stops loudly, like the idle stop, and the therapist can start
+             a fresh recording if they genuinely need to keep going. */
+          if (ceilSec && priorSec + voicedMs / 1000 >= ceilSec) { this.stop(); if (onStop) onStop("ceiling"); }
         };
         src.connect(proc); proc.connect(ctx.destination);
         on = true;
@@ -4236,9 +4310,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      proxies to Google Cloud under the clinic's BAA. Segments are held only in
      memory and sent immediately — no audio is written to the device — and are
      delivered in order via a promise chain. */
-  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop, onBilled }) {
+  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop, onBilled, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
+    const gate = voiceGate();
+    let sentSec = Number(billedSoFar) || 0;   // billed on this visit, incl. earlier runs
+    const ceilSec = Number(ceilingSeconds) || 0;
     /* Voice gating. PRE_ROLL_CHUNKS x ~85ms of audio is carried across the
        moment speech starts so a soft onset isn't clipped; POST_ROLL keeps the
        tail of an utterance for the same reason in reverse. IDLE_STOP_MS is the
@@ -4270,7 +4347,18 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           });
           const data = await res.json().catch(() => ({}));
           // billed whether or not the transcript came back usable
-          if (typeof data.billedSeconds === "number" && typeof onBilled === "function") onBilled(data.billedSeconds);
+          if (typeof data.billedSeconds === "number") {
+            sentSec += data.billedSeconds;
+            if (typeof onBilled === "function") onBilled(data.billedSeconds);
+            /* Per-visit ceiling — the backstop for a room that beats the
+               adaptive gate. Enforced on what has actually been BILLED, so it
+               tracks spend rather than how long the appointment ran. */
+            if (ceilSec && sentSec >= ceilSec && listening) {
+              listening = false;
+              onStatus(`Dictation stopped — this visit has reached ${Math.round(ceilSec / 60)} minutes of recorded speech. Tap Listen to carry on if you need to.`, false);
+              if (typeof onAutoStop === "function") onAutoStop();
+            }
+          }
           if (res.ok) { if (data.text) onText(data.text); }
           else onStatus(res.status === 501
             ? "Google Cloud dictation isn't set up on the server yet — see Privacy & Security."
@@ -4321,7 +4409,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           let rms = 0;
           for (let i = 0; i < data.length; i += 8) rms += data[i] * data[i];
           rms = Math.sqrt(rms / (data.length / 8));
-          const voiced = rms > 0.012;
+          const voiced = gate.test(rms, chunkMs);
 
           /* Only buffer audio that is worth transcribing.
 
@@ -4454,10 +4542,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           showIdle();
           return;
         }
+        const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
         rec = recorderEngine({
           docId: doc.id,
+          billedSoFar: Number(doc.data._dictationSeconds) || 0,
+          ceilingSeconds: ceilMin * 60,
           onElapsed: (total, voiced) => { meta.textContent = `Recording — ${mmss(voiced)} of speech (${mmss(total)} elapsed)`; },
-          onStop: (why) => { if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another."; },
+          onStop: (why) => {
+            if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another.";
+            else if (why === "ceiling") meta.textContent = `Stopped — this visit has reached ${ceilMin} minutes of recorded speech. Process this, then start another recording if you need to.`;
+            recording = false; showIdle();
+          },
         });
         const ok = await rec.start();
         if (!ok) { meta.textContent = "Mic blocked — allow microphone access and try again."; return; }
@@ -4558,6 +4653,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // on the visit the same way — otherwise the chart would show a cost of
       // zero for a note dictated the other way round.
       onBilled: (secs) => recordDictationSeconds(doc.id, secs, user),
+      // the ceiling counts everything already billed on this visit, so neither
+      // switching engines nor starting a second run walks around it
+      billedSoFar: Number(doc.data._dictationSeconds) || 0,
+      ceilingSeconds: (S.settings().maxDictationMinutesPerVisit || 30) * 60,
     };
 
     let engine = null;
@@ -6120,7 +6219,9 @@ ${privacyInfoAccordion(geminiOn)}
      is not the clinic's business. */
   function allowanceCard() {
     const u = S.monthUsage();
-    const pct = Math.min(100, Math.round((u.visits / u.allowance) * 100));
+    // measured against what is CHARGED, which is visits weighted by how much
+    // dictation each carried — not the raw document count
+    const pct = Math.min(100, Math.round((u.chargeableVisits / u.allowance) * 100));
     const over = u.overBy > 0;
     // Only project once there is enough of the month to project from; a pace
     // read off two days is noise dressed up as a forecast.
@@ -6129,29 +6230,29 @@ ${privacyInfoAccordion(geminiOn)}
     const tone = over ? "bad" : pct >= 85 ? "warn" : "good";
     const resets = new Date(u.resetsOn + "T00:00:00")
       .toLocaleDateString(undefined, { day: "numeric", month: "long" });
-    /* Dictation is fair use, not a second meter to run out of, so it is stated
-       as "X of Y" without a bar and without a tone — a clinic should read it
-       and move on unless it is genuinely an outlier. */
-    const heavy = u.fairUseMinutes && u.minutesUsed > u.fairUseMinutes;
+    /* Dictation has no meter of its own — it is priced through the visit
+       allowance, so it is stated against the budget a visit includes and not
+       as a second thing to run out of. */
     return `
 <div class="card allowance">
   <div class="allowance-head">
     <div><h2>Plan usage — ${esc(month)}</h2>
       <div class="sub">${esc(u.planName)} plan · ${u.allowance} documented visits included</div></div>
-    <div class="allowance-count ${tone}"><b>${u.visits}</b><span>of ${u.allowance}</span></div>
+    <div class="allowance-count ${tone}"><b>${u.chargeableVisits}</b><span>of ${u.allowance}</span></div>
   </div>
   <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
   <div class="allowance-stats">
     <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
-    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.fairUseMinutes)}</span></b><span>dictation · fair use</span></div>
+    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.fairUseMinutes)}</span></b><span>dictation · included</span></div>
     <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
   </div>
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
   ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, which is over your ${u.allowance}. Nothing stops working — the extra visits simply bill as overage.</div>` : ""}
-  ${heavy ? `<div class="banner">Dictation is past the ${hoursOf(u.fairUseMinutes)} of fair use your plan assumes (${u.fairUsePerVisit} min a visit). <b>Nothing is capped and nothing extra is charged</b> — but if this is normal for your clinic, tell us, because the plan was priced for less.</div>` : ""}
+  ${u.unitsFromDictation ? `<div class="banner">${u.visits} visit${u.visits === 1 ? "" : "s"} documented, counting as <b>${u.chargeableVisits}</b> — ${u.unitsFromDictation} extra because dictation ran past the ${u.fairUsePerVisit} minutes a visit includes. Nothing was interrupted and there is no separate dictation charge; longer visits simply use the allowance faster.</div>` : ""}
   <div class="allowance-note">
     <b>Visits reset on ${esc(resets)} and don't roll over</b> — an unused visit this month isn't added to next month's ${u.allowance}.
-    Dictation is counted on <b>speech only</b>: pauses, and a mic left open in a quiet room, cost nothing.
+    A visit includes <b>${u.fairUsePerVisit} minutes of dictation</b>; one that runs longer counts proportionally, so a ${u.fairUsePerVisit * 3}-minute visit uses three.
+    Only <b>speech</b> is counted — pauses, and a mic left open in a quiet room, cost nothing.
     ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}
   </div>
 </div>`;
@@ -6188,9 +6289,10 @@ ${allowanceCard()}
           ${["Solo", "Practice", "Clinic", "Group"].map((p) => `<option value="${p}" ${st.planName === p ? "selected" : ""}>${p}</option>`).join("")}
         </select></div>
       <div class="field"><label>Visits included per month</label><input id="st-allowance" type="number" min="1" max="10000" value="${st.visitAllowance}" /></div>
-      <div class="field"><label>Fair-use dictation (min/visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
+      <div class="field"><label>Dictation included per visit (min)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
+      <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter above counts against. Change it when you move plans. Visits reset monthly and don't roll over; fair-use dictation is shown, never enforced.</div>
+    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter counts against. Visits reset monthly and don't roll over. A visit that dictates past the included minutes uses more than one visit of allowance. The hard stop is a runaway-microphone backstop — set well above any real visit.</div>
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
@@ -6262,6 +6364,7 @@ ${allowanceCard()}
         planName: document.getElementById("st-plan").value,
         visitAllowance: Math.max(1, Number(document.getElementById("st-allowance").value) || 130),
         fairUseMinutesPerVisit: Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10)),
+        maxDictationMinutesPerVisit: Math.min(180, Math.max(5, Number(document.getElementById("st-maxdict").value) || 30)),
       }, user);
       render();
     });
