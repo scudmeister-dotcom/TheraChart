@@ -251,6 +251,53 @@ check("the pool is reported so the card can show it",
   pooled.includedMinutes === pooled.visits * 10 && pooled.excessMinutes === 0,
   `included=${pooled.includedMinutes} for ${pooled.visits} visits, excess=${pooled.excessMinutes}`);
 
+/* ---- nothing is reserved when a note is opened ----
+
+   The intuition to disprove: "9 minutes spare, I start an evaluation, so I'm
+   1 minute overdrawn before anyone speaks." Accounting is retrospective — the
+   pool is (visits x budget) and spend is what was actually dictated, so opening
+   a note ADDS to the pool rather than drawing on it, and a short note leaves it
+   better off than it found it. */
+{
+  // reset first: earlier blocks in this file created documents moments ago,
+  // and they would otherwise fall inside the window opened below
+  store.resetAll();
+  const g9 = store.getUser("u-grace"), m9 = store.getUser("u-maria");
+  store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g9);
+  const w = new Date(Date.now() - 200);
+  const dictate = (min) => { const d = store.createDoc("p-juan", "daily", m9).doc;
+    if (min) store.updateDocData(d.id, { _dictationSeconds: Math.round(min * 60) }, m9); return d; };
+  for (let i = 0; i < 10; i++) dictate(9.1);          // 10 visits, 91 min, pool 100
+  const before = store.monthUsage(w);
+  check("the window starts on exactly 9 spare minutes",
+    before.spareMinutes === 9, `got ${before.spareMinutes}`);
+
+  const ev = store.createDoc("p-liza", "eval", m9).doc;
+  const opened = store.monthUsage(w);
+  check("opening a note ADDS its minutes to the pool rather than reserving them",
+    opened.spareMinutes === 19,
+    `9 spare + a new visit's 10 should be 19, got ${opened.spareMinutes} — nothing is deducted up front`);
+  check("…and it costs one visit, not more, before anything is said",
+    opened.chargeableVisits === opened.visits, `charged ${opened.chargeableVisits} for ${opened.visits} visits`);
+
+  store.updateDocData(ev.id, { _dictationSeconds: 5 * 60 }, m9);
+  const short = store.monthUsage(w);
+  check("a 5-minute evaluation spends 5, not the 10 it brought",
+    short.spareMinutes === 14,
+    `19 - 5 = 14, got ${short.spareMinutes}`);
+  check("…leaving the clinic BETTER off than before the evaluation",
+    short.spareMinutes > before.spareMinutes,
+    `${before.spareMinutes} -> ${short.spareMinutes}: a short note must never cost spare minutes`);
+  check("…and still charging exactly one visit",
+    short.chargeableVisits === short.visits, `charged ${short.chargeableVisits} for ${short.visits}`);
+
+  store.updateDocData(ev.id, { _dictationSeconds: 25 * 60 }, m9);
+  const long = store.monthUsage(w);
+  check("a 25-minute evaluation overdraws the pool and charges for it",
+    long.spareMinutes === -6 && long.chargeableVisits === long.visits + 1,
+    `spare=${long.spareMinutes} charged=${long.chargeableVisits} of ${long.visits} visits`);
+}
+
 /* The pool is drawn from EVERY visit, including notes that were typed rather
    than dictated. That is deliberate and not a leak: an undictated visit is
    revenue at almost no cost, so a clinic that types most of its notes has

@@ -6243,7 +6243,7 @@ ${privacyInfoAccordion(geminiOn)}
   <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
   <div class="allowance-stats">
     <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
-    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.includedMinutes)}</span></b><span>dictation · pooled</span></div>
+    <div><b>${u.spareMinutes >= 0 ? hoursOf(u.spareMinutes) : hoursOf(-u.spareMinutes)}</b><span>${u.spareMinutes >= 0 ? "dictation spare" : "dictation over pool"}</span></div>
     <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
   </div>
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
@@ -6251,7 +6251,8 @@ ${privacyInfoAccordion(geminiOn)}
   ${u.unitsFromDictation ? `<div class="banner">${u.visits} visit${u.visits === 1 ? "" : "s"} documented, counting as <b>${u.chargeableVisits}</b> — dictation ran ${hoursOf(u.excessMinutes)} past the ${hoursOf(u.includedMinutes)} those visits include. Nothing was interrupted and there is no separate dictation charge.</div>` : ""}
   <div class="allowance-note">
     <b>Visits reset on ${esc(resets)} and don't roll over</b> — an unused visit this month isn't added to next month's ${u.allowance}.
-    Every visit brings <b>${u.fairUsePerVisit} minutes of dictation</b>, and those minutes <b>pool across the month</b> — a short note's unused minutes go to a long one, so nothing is wasted by finishing early. Only past the pool does a visit start using more than one visit of allowance.
+    Every visit brings <b>${u.fairUsePerVisit} minutes of dictation</b> into a shared pool — ${hoursOf(u.minutesUsed)} used of ${hoursOf(u.includedMinutes)} earned so far.
+    Nothing is reserved when you start a note: a new visit <b>adds</b> its ${u.fairUsePerVisit} minutes and only spends what is actually dictated, so a short note leaves the pool better off than it found it. Only past the pool does a visit use more than one visit of allowance.
     Only <b>speech</b> counts — pauses, and a mic left open in a quiet room, cost nothing.
     ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}
   </div>

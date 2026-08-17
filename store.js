@@ -1340,6 +1340,13 @@
       // month is actually charged against
       includedMinutes: Math.round(includedMinutes),
       excessMinutes: Math.round(excessMinutes),
+      /* Minutes still in the pool. Negative once the pool is spent, so the view
+         can say "6 min over" rather than clamping to zero and implying there is
+         nothing to see. Nothing is ever RESERVED against this — a visit adds
+         its minutes to the pool when the note is created and only spends what
+         is actually dictated, so starting a long evaluation with 9 minutes
+         spare leaves 19, not −1. */
+      spareMinutes: Math.round(includedMinutes - seconds / 60),
       minutesUsed: Math.round(seconds / 60),
       daysElapsed,
       daysInMonth,
