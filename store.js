@@ -1279,28 +1279,36 @@
        is the one number that can take a tier underwater: on the Clinic rung,
        past ~16 minutes a visit we lose money on every visit.
 
-       Rather than bolt a second overage meter onto the price list, a visit
-       consumes allowance IN PROPORTION to the dictation behind it — a visit is
-       a visit of normal length, and one that runs to three times that consumes
-       three. One meter, the overage rate that already exists, and nothing is
-       ever interrupted: a heavy month simply eats the allowance faster.
+       Rather than bolt a second overage meter onto the price list, dictation is
+       priced through the visit allowance. Every visit brings its own budget of
+       included minutes, and those minutes POOL across the month.
 
-       Fractional, then rounded ONCE at the month level. Charging ceil() per
-       visit would turn 10 minutes 1 second into two visits, which is a cliff a
-       clinician would rightly find absurd; aggregating first means only
-       sustained heavy dictation moves the number at all. */
-    let seconds = 0, dictated = 0, units = 0;
+       Pooling is the part that matters for fairness. Charging each visit
+       max(1, minutes/budget) would floor a 4-minute note at a whole visit and
+       silently discard the 6 minutes it did not use, so a clinic doing mostly
+       short notes pays for a long-visit allowance it never gets. Against a
+       realistic mixed month — 60 visits averaging 6.3 minutes with a handful of
+       long evaluations — flooring bills 68 visits where pooling bills 60. The
+       clinic keeps the 8 visits of allowance it actually earned.
+
+       Pooling also tracks OUR cost more honestly, because our cost is
+       proportional to total minutes and cares nothing for how they were split
+       across visits. And it stays safe at the extreme: with every visit pinned
+       at the 30-minute hard ceiling, the Clinic rung still clears 42%.
+
+       Fractional throughout, rounded ONCE for the month. Rounding per visit
+       would turn 10 minutes 1 second into two visits — a cliff a clinician
+       would rightly find absurd — and ceiling the month total has the same bug
+       one level up, where any fraction of excess costs a whole visit. */
+    let seconds = 0, dictated = 0;
     for (const d of docs) {
       const s = Number((d.data || {})._dictationSeconds) || 0;
       if (s > 0) { seconds += s; dictated += 1; }
-      // every visit costs at least one, however little was said in it
-      units += Math.max(1, (s / 60) / fairUsePerVisit);
     }
-    /* ROUND, not ceil. Ceiling the month total reintroduces the very cliff the
-       fractional accounting removes — one visit two seconds over budget would
-       round the whole month up by a visit. Floored at the document count so a
-       visit can never cost less than one. */
-    const chargeable = Math.max(docs.length, Math.round(units));
+    const includedMinutes = docs.length * fairUsePerVisit;
+    const excessMinutes = Math.max(0, seconds / 60 - includedMinutes);
+    // floored at the document count: a visit never costs less than one
+    const chargeable = Math.max(docs.length, Math.round(docs.length + excessMinutes / fairUsePerVisit));
     // Pace is measured against days ELAPSED, so a projection on the 2nd of the
     // month is honest about being built on one day of data.
     const now = new Date();
@@ -1327,7 +1335,11 @@
          line would shrink as they work and read like a countdown they were
          losing. */
       fairUsePerVisit,
-      fairUseMinutes: allowance * fairUsePerVisit,
+      fairUseMinutes: allowance * fairUsePerVisit,   // the whole plan's budget
+      // what the visits documented SO FAR have earned, which is the pool the
+      // month is actually charged against
+      includedMinutes: Math.round(includedMinutes),
+      excessMinutes: Math.round(excessMinutes),
       minutesUsed: Math.round(seconds / 60),
       daysElapsed,
       daysInMonth,

@@ -6243,16 +6243,16 @@ ${privacyInfoAccordion(geminiOn)}
   <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
   <div class="allowance-stats">
     <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
-    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.fairUseMinutes)}</span></b><span>dictation · included</span></div>
+    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.includedMinutes)}</span></b><span>dictation · pooled</span></div>
     <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
   </div>
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
   ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, which is over your ${u.allowance}. Nothing stops working — the extra visits simply bill as overage.</div>` : ""}
-  ${u.unitsFromDictation ? `<div class="banner">${u.visits} visit${u.visits === 1 ? "" : "s"} documented, counting as <b>${u.chargeableVisits}</b> — ${u.unitsFromDictation} extra because dictation ran past the ${u.fairUsePerVisit} minutes a visit includes. Nothing was interrupted and there is no separate dictation charge; longer visits simply use the allowance faster.</div>` : ""}
+  ${u.unitsFromDictation ? `<div class="banner">${u.visits} visit${u.visits === 1 ? "" : "s"} documented, counting as <b>${u.chargeableVisits}</b> — dictation ran ${hoursOf(u.excessMinutes)} past the ${hoursOf(u.includedMinutes)} those visits include. Nothing was interrupted and there is no separate dictation charge.</div>` : ""}
   <div class="allowance-note">
     <b>Visits reset on ${esc(resets)} and don't roll over</b> — an unused visit this month isn't added to next month's ${u.allowance}.
-    A visit includes <b>${u.fairUsePerVisit} minutes of dictation</b>; one that runs longer counts proportionally, so a ${u.fairUsePerVisit * 3}-minute visit uses three.
-    Only <b>speech</b> is counted — pauses, and a mic left open in a quiet room, cost nothing.
+    Every visit brings <b>${u.fairUsePerVisit} minutes of dictation</b>, and those minutes <b>pool across the month</b> — a short note's unused minutes go to a long one, so nothing is wasted by finishing early. Only past the pool does a visit start using more than one visit of allowance.
+    Only <b>speech</b> counts — pauses, and a mic left open in a quiet room, cost nothing.
     ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}
   </div>
 </div>`;

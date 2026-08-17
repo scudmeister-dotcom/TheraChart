@@ -222,17 +222,68 @@ check("a hair over the included minutes does NOT cost a second visit",
 
 /* Sustained heavy dictation does move it, and by the right amount: three
    30-minute visits are 9 visits' worth of the expensive resource. */
-// the seed backdates only ~2 weeks, so some seeded notes land in this month —
-// measure the delta rather than an absolute, as everywhere else in this file
-const preHeavy = store.monthUsage();
-say(30); say(30); say(30);
-const heavy3 = store.monthUsage();
-check("a visit at 3x the included dictation consumes three visits",
-  heavy3.chargeableVisits - preHeavy.chargeableVisits === 9 && heavy3.visits - preHeavy.visits === 3,
-  `3 visits x 30 min against a 10-min budget = +9 units, got +${heavy3.chargeableVisits - preHeavy.chargeableVisits} from +${heavy3.visits - preHeavy.visits} visits`);
-check("…and the card can say how much of that was length rather than volume",
-  heavy3.unitsFromDictation - preHeavy.unitsFromDictation === 6,
-  `got +${heavy3.unitsFromDictation - preHeavy.unitsFromDictation}`);
+/* ---- minutes POOL across the month ----
+
+   The reason this matters: flooring each visit at one would silently discard
+   the minutes a short note didn't use, so a clinic doing mostly short daily
+   notes would pay for a long-visit allowance it never received. Pooling means
+   finishing early is never wasted. */
+
+store.resetAll();
+store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, store.getUser("u-grace"));
+const m6 = store.getUser("u-maria");
+const say6 = (mins) => { const d = store.createDoc("p-juan", "daily", m6).doc; store.updateDocData(d.id, { _dictationSeconds: Math.round(mins * 60) }, m6); };
+const pre6 = store.monthUsage();
+
+// four short notes bank 24 unused minutes, then one long visit draws on them
+for (let i = 0; i < 4; i++) say6(4);
+say6(30);
+const pooled = store.monthUsage();
+const dVisits = pooled.visits - pre6.visits;
+const dCharged = pooled.chargeableVisits - pre6.chargeableVisits;
+check("unused minutes from short visits pay for a long one",
+  dVisits === 5 && dCharged === 5,
+  `5 visits totalling 46 min against 50 pooled minutes must charge 5, got ${dCharged} (flooring each visit would charge 7)`);
+check("…so nothing is 'lost' by finishing a note early",
+  pooled.unitsFromDictation - pre6.unitsFromDictation === 0,
+  `no extra should be charged while the pool covers it`);
+check("the pool is reported so the card can show it",
+  pooled.includedMinutes === pooled.visits * 10 && pooled.excessMinutes === 0,
+  `included=${pooled.includedMinutes} for ${pooled.visits} visits, excess=${pooled.excessMinutes}`);
+
+/* The pool is drawn from EVERY visit, including notes that were typed rather
+   than dictated. That is deliberate and not a leak: an undictated visit is
+   revenue at almost no cost, so a clinic that types most of its notes has
+   genuinely paid for dictation it never used. Verified across the range —
+   the tightest case (every visit at the ceiling) still clears 40%. */
+const pre7 = store.monthUsage();
+const untouchedPool = pre7.includedMinutes - pre7.minutesUsed;
+check("visits that were typed rather than dictated still contribute their minutes",
+  untouchedPool > 0 && pre7.chargeableVisits === pre7.visits,
+  `pool has ${untouchedPool} unused minutes and nothing extra is charged`);
+
+/* Uniform-heavy is the case pooling must NOT discount — it is a concession on
+   mixed months, never a loophole on consistently long ones. Isolated from the
+   seed so the arithmetic is exact: with no banked minutes, three visits at
+   three times the budget cost nine. */
+store.resetAll();
+const g8 = store.getUser("u-grace"), m8 = store.getUser("u-maria");
+store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g8);
+/* Isolated by WINDOW rather than by deleting: the seed contains signed notes,
+   and signed clinical records are not deletable — correctly so. Counting from
+   a moment just before these three visits excludes every seeded note. */
+const cutoff = new Date(Date.now() - 500);
+check("the window is isolated for the exact-arithmetic checks below",
+  store.monthUsage(cutoff).visits === 0, `got ${store.monthUsage(cutoff).visits} leftover visits`);
+
+for (let i = 0; i < 3; i++) { const d = store.createDoc("p-juan", "daily", m8).doc; store.updateDocData(d.id, { _dictationSeconds: 30 * 60 }, m8); }
+const heavy3 = store.monthUsage(cutoff);
+check("three visits all at 3x the budget cost nine, with no pool to draw on",
+  heavy3.chargeableVisits === 9 && heavy3.visits === 3,
+  `got ${heavy3.chargeableVisits} from ${heavy3.visits} — pooling must not discount consistently long visits`);
+check("…and the excess is reported in minutes, not guessed",
+  heavy3.includedMinutes === 30 && heavy3.excessMinutes === 60,
+  `included=${heavy3.includedMinutes} excess=${heavy3.excessMinutes} of ${heavy3.minutesUsed} used`);
 
 /* The economics this is protecting. At P0.98/min speech + P0.97 Gemini, a
    30-minute visit costs about P30.40 and would be sold for P17.56 on the
