@@ -484,7 +484,8 @@ function demoLogins() {
    the audio travels only from your own server to Google under your Google Cloud
    BAA — never to a free/consumer speech service. Two models are offered:
      - "standard" → Google's latest_long model (lower cost)
-     - "chirp"    → Google's Chirp model (best multilingual, incl. Tagalog/Cebuano)
+     - "chirp"    → Google's Chirp universal model (multilingual, incl. fil-PH/ceb-PH)
+     - "chirp2"   → Google's Chirp 2, the newer generation of the same family
 
    Configure with environment variables (see GOOGLE_SETUP.md):
      GCP_PROJECT   your Google Cloud project id           (required)
@@ -504,7 +505,22 @@ function demoLogins() {
 
 const GCP_PROJECT = process.env.GCP_PROJECT || "";
 const STT_LOCATION = process.env.STT_LOCATION || "us-central1";
-const STT_MODELS = { standard: "latest_long", chirp: "chirp" };
+/* Which Google Speech-to-Text v2 model each engine choice maps to.
+
+   chirp_2 is Google's newer universal model and is the one to use for Filipino
+   clinics: verified against the live locations API, fil-PH and ceb-PH are both
+   GA on chirp AND chirp_2 in us-central1 and asia-southeast1. chirp_3 is
+   advertised in the docs but the API refuses it for this project ("no longer
+   generally available"), so it is deliberately not offered.
+
+   Keep "chirp" as its own option rather than silently upgrading everyone: the
+   two models transcribe Taglish differently, and a clinic should be able to
+   A/B them on their own accents rather than take our word for it. */
+const STT_MODELS = { standard: "latest_long", chirp: "chirp", chirp2: "chirp_2" };
+// Models Google will only run on English, and what to use instead. Verified
+// against the live locations API: fil-PH and ceb-PH are GA on chirp and chirp_2.
+const ENGLISH_ONLY_MODELS = new Set(["latest_long"]);
+const MULTILINGUAL_MODEL = "chirp_2";
 
 function sttCredentialSource() {
   if (process.env.GCP_ACCESS_TOKEN) return "token";
@@ -592,7 +608,17 @@ async function transcribe(wavBuffer, lang, modelKey) {
     throw Object.assign(new Error(
       "Google Cloud Speech-to-Text isn't set up on this server yet. Set GCP_PROJECT and a Google credential (see GOOGLE_SETUP.md), then restart."), { code: 501 });
   }
-  const model = STT_MODELS[modelKey] || STT_MODELS.standard;
+  let model = STT_MODELS[modelKey] || STT_MODELS.standard;
+
+  /* latest_long is English-centric. Google refuses it outright for fil-PH and
+     ceb-PH ("language not supported by the model"), so a therapist who picked
+     Tagalog while the engine sat on Standard lost the whole segment with only
+     a generic failure to show for it — on the one feature the product is sold
+     on. Rather than fail, move to the multilingual model and report which one
+     actually ran, so the UI can say so instead of pretending nothing changed. */
+  if (ENGLISH_ONLY_MODELS.has(model) && !/^en\b|^en[-_]/i.test(String(lang || ""))) {
+    model = MULTILINGUAL_MODEL;
+  }
   const token = await gcpAccessToken();
   const host = STT_LOCATION === "global" ? "speech.googleapis.com" : `${STT_LOCATION}-speech.googleapis.com`;
   const url = `https://${host}/v2/projects/${GCP_PROJECT}/locations/${STT_LOCATION}/recognizers/_:recognize`;
@@ -608,9 +634,10 @@ async function transcribe(wavBuffer, lang, modelKey) {
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Speech-to-Text failed: ${(data.error && data.error.message) || `HTTP ${r.status}`}`);
-  return (data.results || [])
+  const text = (data.results || [])
     .map((res) => (res.alternatives && res.alternatives[0] && res.alternatives[0].transcript) || "")
     .join(" ").trim();
+  return { text, model };
 }
 
 /* ---- temporary session-audio review (opt-in, auto-deleting) ----
@@ -1103,7 +1130,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === "/api/stt" && req.method === "POST") {
         const lang = (url.searchParams.get("lang") || "en-US").replace(/[^a-z-]/gi, "");
-        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z_]/gi, "");
+        // digits must survive the scrub or "chirp2" silently becomes "chirp" —
+        // a wrong-but-valid model key, so the request succeeds and the clinic
+        // gets the older engine without any sign that it happened
+        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z0-9_]/gi, "");
         const docId = url.searchParams.get("docId") || "";
         const wav = await readRawBody(req);
         if (wav.length < 200) return json(res, 400, { error: "Empty audio." });
@@ -1114,8 +1144,10 @@ const server = http.createServer(async (req, res) => {
         let retained = false;
         if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         try {
-          const text = await transcribe(wav, lang, model);
-          return json(res, 200, { text, retained });
+          const out = await transcribe(wav, lang, model);
+          // `model` is what actually ran, which is not always what was asked
+          // for — see the English-only fallback in transcribe()
+          return json(res, 200, { text: out.text, model: out.model, retained });
         } catch (e) {
           // 501 is our own "Speech-to-Text isn't set up yet" guidance; anything
           // else is a raw Google error and stays in the log

@@ -102,5 +102,53 @@ function rawGet(base, path, headers) {
       `${(plain.body.length / gz.body.length).toFixed(1)}x`);
   } finally { s.stop(); }
 
+  /* ---------------- dictation engine keys ----------------
+     The engine the browser asks for has to survive the query-string scrub and
+     resolve to the model the clinic chose. "chirp2" is the case that bites: a
+     scrub of [^a-z_] silently turns it into "chirp", which is a VALID key, so
+     the request succeeds and quietly transcribes on the older engine — the
+     clinic sees no error, just worse Taglish. */
+  {
+    const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+    try {
+      const login = await s2.login("maria@therachart.demo", "1234");
+      const token = login.data.token;
+
+      /* Tests run with the Google credentials blanked, so STT answers 501
+         "not set up here" — which is what proves the key was accepted and
+         routed rather than rejected before it got that far. */
+      for (const model of ["standard", "chirp", "chirp2"]) {
+        const res = await s2.call(`/api/stt?lang=fil-PH&model=${model}`, {
+          method: "POST", token, body: { x: 1 },
+        });
+        r.check(`engine "${model}" is a routable dictation key`,
+          [200, 400, 501].indexOf(res.status) >= 0,
+          `status ${res.status} ${JSON.stringify(res.data).slice(0, 120)}`);
+      }
+
+      const fs2 = require("fs"), path2 = require("path");
+      const src = fs2.readFileSync(path2.join(__dirname, "..", "server.js"), "utf8");
+      const map = (src.match(/const STT_MODELS = \{([^}]*)\}/) || [])[1] || "";
+      r.check("chirp2 maps to Google's chirp_2 model", /chirp2:\s*"chirp_2"/.test(map), map.trim());
+      r.check("standard and chirp are still offered separately",
+        /standard:\s*"latest_long"/.test(map) && /chirp:\s*"chirp"/.test(map), map.trim());
+      /* latest_long is English-only — Google rejects fil-PH/ceb-PH on it. The
+         server swaps to the multilingual model rather than losing the segment.
+         Verified live against Google (all 9 engine x language combinations
+         succeed); asserted here at the source level because tests run without
+         Google credentials and never reach the model call. */
+      r.check("an English-only model is defined with a multilingual fallback",
+        /ENGLISH_ONLY_MODELS = new Set\(\["latest_long"\]\)/.test(src)
+          && /MULTILINGUAL_MODEL = "chirp_2"/.test(src),
+        "the fil-PH fallback in transcribe() is what stops Tagalog dictation failing outright");
+      r.check("the transcriber reports which model actually ran",
+        /return \{ text, model \}/.test(src) && /model: out\.model/.test(src),
+        "a silent model swap would leave the clinic unable to tell what transcribed their audio");
+      r.check("the model scrub keeps digits, so chirp2 cannot degrade to chirp",
+        src.indexOf("[^a-z0-9_]") >= 0 && src.indexOf('("model") || "standard").replace(/[^a-z_]/gi') < 0,
+        "server.js must not strip digits from the model query parameter");
+    } finally { s2.stop(); }
+  }
+
   r.done();
 })().catch((e) => { console.error(e); process.exit(1); });

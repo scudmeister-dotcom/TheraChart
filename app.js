@@ -2685,9 +2685,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <option value="ceb-PH">Cebuano</option>
       </select>
       <select id="engineSel" title="Dictation engine" ${editable ? "" : "disabled"}>
-        <option value="browser">Dictation: Browser (current)</option>
-        <option value="cloud:standard">Dictation: Google Cloud — Standard (BAA)</option>
-        <option value="cloud:chirp">Dictation: Google Cloud — Chirp (BAA)</option>
+        <option value="browser">Dictation: Browser — on this device</option>
+        <option value="cloud:standard">Dictation: Google Cloud — Standard</option>
+        <option value="cloud:chirp">Dictation: Google Cloud — Chirp</option>
+        <option value="cloud:chirp2">Dictation: Google Cloud — Chirp 2 (best for Taglish)</option>
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
@@ -3543,7 +3544,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!stt.available) {
       engineSel.querySelectorAll('option[value^="cloud:"]').forEach((o) => {
         o.disabled = true;
-        o.textContent = o.textContent.replace(" (BAA)", " — needs Google Cloud setup");
+        // drop any trailing "(…)" qualifier, then say why the option is greyed
+        o.textContent = o.textContent.replace(/\s*\([^)]*\)\s*$/, "") + " · needs Google Cloud setup";
       });
     }
     let engineChoice = localStorage.getItem("therachart-engine") || "browser";
