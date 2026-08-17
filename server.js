@@ -27,6 +27,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 const { execFile } = require("child_process"); // local-dev gcloud credential only
 
 const PORT = Number(process.env.PORT || 8080);
@@ -440,15 +441,33 @@ function bootstrapInfo() {
   };
 }
 
-// Demo/test logins shown on the sign-in screen. Deliberately limited to the
-// seeded accounts (emails @therachart.demo) so real staff are never listed; if
-// the demo accounts are removed the list is empty and the panel disappears. All
-// seeded demo accounts share one password.
+/* Demo/test logins shown on the sign-in screen.
+
+   These are genuinely useful — a sales demo or a tester should be able to click
+   a row and be inside the app — but publishing a working admin password on an
+   unauthenticated endpoint is not something that should happen by DEFAULT. It
+   did: any deployment that ran the seed advertised grace@therachart.demo (an
+   admin) and its password to anyone who fetched /api/bootstrap.
+
+   So the panel is now opt-in. THERACHART_DEMO_LOGINS=1 turns it on for a demo
+   box; a real clinic deployment simply doesn't set it and the endpoint returns
+   an empty list, which makes the panel disappear on the sign-in screen.
+
+   The accounts themselves still exist in the seed — this hides them, it does
+   not disable them. Deleting the seeded accounts (or changing their passwords)
+   is still the thing to do before real patients are on an instance. */
+const DEMO_LOGINS_ENABLED = process.env.THERACHART_DEMO_LOGINS === "1";
 const DEMO_LOGIN_PASSWORD = "1234";
+const SEEDED_DEMO_IDS = new Set(store.SEEDED_DEMO_USER_IDS);
 function demoLogins() {
+  if (!DEMO_LOGINS_ENABLED) return [];
   const today = new Date().toISOString().slice(0, 10);
   return store.users()
-    .filter((u) => /@therachart\.demo$/i.test(u.email || ""))
+    /* Match the seeded ids too, not just the email domain: store.ensureEmails()
+       mints an @therachart.demo address for any account created without one —
+       including a therapist the clinic adds through Calendar → "+ Add PT" — so
+       the domain alone would eventually list real staff. */
+    .filter((u) => /@therachart\.demo$/i.test(u.email || "") && SEEDED_DEMO_IDS.has(u.id))
     .slice(0, 10)
     .map((u) => {
       let status = "";
@@ -465,7 +484,8 @@ function demoLogins() {
    the audio travels only from your own server to Google under your Google Cloud
    BAA — never to a free/consumer speech service. Two models are offered:
      - "standard" → Google's latest_long model (lower cost)
-     - "chirp"    → Google's Chirp model (best multilingual, incl. Tagalog/Cebuano)
+     - "chirp"    → Google's Chirp universal model (multilingual, incl. fil-PH/ceb-PH)
+     - "chirp2"   → Google's Chirp 2, the newer generation of the same family
 
    Configure with environment variables (see GOOGLE_SETUP.md):
      GCP_PROJECT   your Google Cloud project id           (required)
@@ -485,7 +505,22 @@ function demoLogins() {
 
 const GCP_PROJECT = process.env.GCP_PROJECT || "";
 const STT_LOCATION = process.env.STT_LOCATION || "us-central1";
-const STT_MODELS = { standard: "latest_long", chirp: "chirp" };
+/* Which Google Speech-to-Text v2 model each engine choice maps to.
+
+   chirp_2 is Google's newer universal model and is the one to use for Filipino
+   clinics: verified against the live locations API, fil-PH and ceb-PH are both
+   GA on chirp AND chirp_2 in us-central1 and asia-southeast1. chirp_3 is
+   advertised in the docs but the API refuses it for this project ("no longer
+   generally available"), so it is deliberately not offered.
+
+   Keep "chirp" as its own option rather than silently upgrading everyone: the
+   two models transcribe Taglish differently, and a clinic should be able to
+   A/B them on their own accents rather than take our word for it. */
+const STT_MODELS = { standard: "latest_long", chirp: "chirp", chirp2: "chirp_2" };
+// Models Google will only run on English, and what to use instead. Verified
+// against the live locations API: fil-PH and ceb-PH are GA on chirp and chirp_2.
+const ENGLISH_ONLY_MODELS = new Set(["latest_long"]);
+const MULTILINGUAL_MODEL = "chirp_2";
 
 function sttCredentialSource() {
   if (process.env.GCP_ACCESS_TOKEN) return "token";
@@ -573,7 +608,17 @@ async function transcribe(wavBuffer, lang, modelKey) {
     throw Object.assign(new Error(
       "Google Cloud Speech-to-Text isn't set up on this server yet. Set GCP_PROJECT and a Google credential (see GOOGLE_SETUP.md), then restart."), { code: 501 });
   }
-  const model = STT_MODELS[modelKey] || STT_MODELS.standard;
+  let model = STT_MODELS[modelKey] || STT_MODELS.standard;
+
+  /* latest_long is English-centric. Google refuses it outright for fil-PH and
+     ceb-PH ("language not supported by the model"), so a therapist who picked
+     Tagalog while the engine sat on Standard lost the whole segment with only
+     a generic failure to show for it — on the one feature the product is sold
+     on. Rather than fail, move to the multilingual model and report which one
+     actually ran, so the UI can say so instead of pretending nothing changed. */
+  if (ENGLISH_ONLY_MODELS.has(model) && !/^en\b|^en[-_]/i.test(String(lang || ""))) {
+    model = MULTILINGUAL_MODEL;
+  }
   const token = await gcpAccessToken();
   const host = STT_LOCATION === "global" ? "speech.googleapis.com" : `${STT_LOCATION}-speech.googleapis.com`;
   const url = `https://${host}/v2/projects/${GCP_PROJECT}/locations/${STT_LOCATION}/recognizers/_:recognize`;
@@ -589,9 +634,10 @@ async function transcribe(wavBuffer, lang, modelKey) {
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Speech-to-Text failed: ${(data.error && data.error.message) || `HTTP ${r.status}`}`);
-  return (data.results || [])
+  const text = (data.results || [])
     .map((res) => (res.alternatives && res.alternatives[0] && res.alternatives[0].transcript) || "")
     .join(" ").trim();
+  return { text, model };
 }
 
 /* ---- temporary session-audio review (opt-in, auto-deleting) ----
@@ -744,17 +790,50 @@ const MIME = {
 const CLIENT_FILES = new Set([
   "/index.html", "/styles.css", "/sw.js", "/manifest.webmanifest",
   // the scripts index.html loads, in order
-  "/parser.js", "/insights.js", "/clinical.js", "/store.js", "/app.js", "/sync.js",
+  "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/app.js", "/sync.js",
 ]);
 const CLIENT_DIRS = ["/icons/", "/assets/", "/marketing-screenshots/"];
 const isClientAsset = (webPath) =>
   CLIENT_FILES.has(webPath) || CLIENT_DIRS.some((d) => webPath.startsWith(d));
 
+/* Compress JSON responses.
+
+   This is a cost line, not a nicety. A device polls /api/rev every 6s and
+   refetches the WHOLE clinic state whenever the revision moved, so a busy
+   clinic re-downloads the entire record set hundreds of times a day. Uncompressed
+   that dominates the bill: modelled at three clinic sizes, egress ran several
+   times the AI spend and grew with chart history, while the clinical text itself
+   gzips roughly 8:1 because it is repetitive JSON.
+
+   Applied in json() so all ~70 call sites get it at once. Skipped below 1 KB,
+   where the header overhead and CPU are not worth it, and skipped entirely for a
+   client that did not offer gzip. Async rather than gzipSync: the service runs
+   --max-instances 1, so blocking the event loop on a multi-megabyte payload
+   would stall every other request behind it.
+
+   This does NOT make the whole-blob sync design correct — a delta/since-rev
+   endpoint is the real fix. It buys the room to do that later. */
+const GZIP_MIN_BYTES = 1024;
+
 function json(res, code, obj) {
   if (res.headersSent) { try { res.end(); } catch { } return; } // never re-write headers mid-response
   const body = JSON.stringify(obj);
-  res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
-  res.end(body);
+  const headers = { "content-type": "application/json", "cache-control": "no-store" };
+  const accepts = String((res.req && res.req.headers && res.req.headers["accept-encoding"]) || "");
+
+  if (Buffer.byteLength(body) < GZIP_MIN_BYTES || !/\bgzip\b/i.test(accepts)) {
+    res.writeHead(code, headers);
+    return res.end(body);
+  }
+  zlib.gzip(body, (err, buf) => {
+    if (res.headersSent) return;                       // client vanished mid-compress
+    if (err) {                                          // never fail a response over compression
+      res.writeHead(code, headers);
+      return res.end(body);
+    }
+    res.writeHead(code, { ...headers, "content-encoding": "gzip", vary: "accept-encoding" });
+    res.end(buf);
+  });
 }
 
 /* Errors that reach a client must not carry internals. Node's messages
@@ -1051,7 +1130,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === "/api/stt" && req.method === "POST") {
         const lang = (url.searchParams.get("lang") || "en-US").replace(/[^a-z-]/gi, "");
-        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z_]/gi, "");
+        // digits must survive the scrub or "chirp2" silently becomes "chirp" —
+        // a wrong-but-valid model key, so the request succeeds and the clinic
+        // gets the older engine without any sign that it happened
+        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z0-9_]/gi, "");
         const docId = url.searchParams.get("docId") || "";
         const wav = await readRawBody(req);
         if (wav.length < 200) return json(res, 400, { error: "Empty audio." });
@@ -1062,8 +1144,10 @@ const server = http.createServer(async (req, res) => {
         let retained = false;
         if (doc && audioRetentionOK(doc)) { try { await saveAudioSegment(docId, wav); retained = true; } catch (e) { console.error("[audio] save failed:", e.message); } }
         try {
-          const text = await transcribe(wav, lang, model);
-          return json(res, 200, { text, retained });
+          const out = await transcribe(wav, lang, model);
+          // `model` is what actually ran, which is not always what was asked
+          // for — see the English-only fallback in transcribe()
+          return json(res, 200, { text: out.text, model: out.model, retained });
         } catch (e) {
           // 501 is our own "Speech-to-Text isn't set up yet" guidance; anything
           // else is a raw Google error and stays in the log

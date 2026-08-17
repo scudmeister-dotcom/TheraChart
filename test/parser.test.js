@@ -498,6 +498,123 @@ function mention(result, partName, side = undefined) {
 
 /* ------------------------------------------------------------------ */
 
+
+/* ------------------------------------------------------------------ *
+ * 1c-bis. Measurements as a therapist actually dictates them
+ *
+ * The joint is stated ONCE and then a run of motions follows, usually with
+ * the unit dropped after the first: "right shoulder abduction 90 degrees,
+ * external rotation 45, flexion 120". Requiring a joint and a unit on every
+ * motion meant only the first number of a run was ever recorded — three
+ * measurements spoken, one filed, and no error to say so.
+ * ------------------------------------------------------------------ */
+
+{
+  const r = parseUtterance("right shoulder abduction 90 degrees, external rotation 45, flexion 120");
+  const rom = r.measurements.rom;
+  check("run of motions: all three are captured", rom.length === 3, JSON.stringify(rom));
+  check("run of motions: every one inherits the joint",
+    rom.every((x) => x.joint === "shoulder"), JSON.stringify(rom));
+  check("run of motions: every one inherits the side",
+    rom.every((x) => x.side === "right"), JSON.stringify(rom));
+  check("run of motions: degrees are right",
+    JSON.stringify(rom.map((x) => x.degrees)) === "[90,45,120]", JSON.stringify(rom));
+  check("run of motions: motions are right",
+    JSON.stringify(rom.map((x) => x.motion)) === '["abduction","external rotation","flexion"]',
+    JSON.stringify(rom));
+}
+
+{
+  const r = parseUtterance("left knee flexion 130 degrees, extension 5");
+  check("a small trailing value is still a measurement",
+    r.measurements.rom.length === 2 && r.measurements.rom[1].degrees === 5,
+    JSON.stringify(r.measurements.rom));
+}
+
+{
+  const r = parseUtterance("shoulder ER 45 degrees and IR 60 degrees");
+  const motions = r.measurements.rom.map((x) => x.motion);
+  check("spoken abbreviations expand to full motion names",
+    JSON.stringify(motions) === '["external rotation","internal rotation"]', JSON.stringify(motions));
+}
+
+{
+  const r = parseUtterance("both shoulders flexion 150 degrees, abduction 140");
+  const rom = r.measurements.rom;
+  check("a plural joint is recognised", rom.length === 4, JSON.stringify(rom));
+  check("'both' still splits into left and right",
+    rom.filter((x) => x.side === "left").length === 2 && rom.filter((x) => x.side === "right").length === 2,
+    JSON.stringify(rom));
+}
+
+/* The guards. A number near a motion word is only an angle in the right
+   company — otherwise the parser would invent measurements out of prose. */
+{
+  const r = parseUtterance("abduction is 90 degrees");
+  check("a motion with no joint anywhere is dropped, not guessed",
+    r.measurements.rom.length === 0, JSON.stringify(r.measurements.rom));
+}
+{
+  const r = parseUtterance("knee flexion 4 out of 5");
+  check("a muscle grade is not read as an angle", r.measurements.rom.length === 0, JSON.stringify(r.measurements.rom));
+  check("…it is read as MMT instead", r.measurements.mmt.length === 1, JSON.stringify(r.measurements.mmt));
+}
+{
+  const r = parseUtterance("patient did abduction exercises, 3 sets of 10");
+  check("prose near a motion word does not become a measurement",
+    r.measurements.rom.length === 0, JSON.stringify(r.measurements.rom));
+}
+{
+  const r = parseUtterance("shoulder flexion 120 degrees then we did abduction work for 3 minutes");
+  const rom = r.measurements.rom;
+  check("the unitless pass does not swallow unrelated numbers",
+    rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
+}
+
+/* MMT: the side is the point of measuring it, and the muscle is often named
+   after the grade in Taglish word order. */
+{
+  const r = parseUtterance("deltoid strength is 4 out of 5 on the right");
+  const mmt = r.measurements.mmt;
+  check("a trailing side is attached to the grade",
+    mmt.length === 1 && mmt[0].side === "right", JSON.stringify(mmt));
+  check("…and the muscle is kept", mmt[0] && mmt[0].context === "deltoid", JSON.stringify(mmt));
+}
+{
+  const r = parseUtterance("right deltoid strength 4/5");
+  check("a leading side is attached to the grade",
+    r.measurements.mmt[0] && r.measurements.mmt[0].side === "right", JSON.stringify(r.measurements.mmt));
+}
+{
+  const r = parseUtterance("strength 4 over 5 sa deltoid");
+  const mmt = r.measurements.mmt;
+  check("'4 over 5' is a grade", mmt.length === 1 && mmt[0].grade === "4/5", JSON.stringify(mmt));
+  check("a muscle named after the grade is captured",
+    mmt[0] && mmt[0].context === "deltoid", JSON.stringify(mmt));
+}
+{
+  const r = parseUtterance("quad strength is 5 out of 5 and she reports pain");
+  check("trailing prose is not filed as a muscle",
+    r.measurements.mmt[0] && r.measurements.mmt[0].context === "quad",
+    JSON.stringify(r.measurements.mmt));
+}
+{
+  const r = parseUtterance("she has 4 out of 5 kids at home");
+  check("an unrelated 'out of 5' is still not a muscle grade",
+    r.measurements.mmt.length === 0, JSON.stringify(r.measurements.mmt));
+}
+
+/* The whole utterance from the live Vertex run that exposed all of this. */
+{
+  const r = parseUtterance("right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5");
+  check("the reported dictation yields 2 ROM + 1 MMT",
+    r.measurements.rom.length === 2 && r.measurements.mmt.length === 1,
+    JSON.stringify(r.measurements));
+  check("…with the side carried onto the muscle grade too",
+    r.measurements.mmt[0] && r.measurements.mmt[0].side === "right",
+    JSON.stringify(r.measurements.mmt));
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart parser checker: ${passed}/${total} checks passed`);
 if (failures.length) {

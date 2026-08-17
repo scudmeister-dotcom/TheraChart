@@ -11,6 +11,14 @@
 
   const KEY = "therachart-emr-v1";
 
+  /* The accounts seed() creates, by id. This is the ONLY safe way to identify a
+     demo login: ensureEmails() mints an @therachart.demo address for any account
+     saved without one — including a therapist a clinic adds through the calendar
+     — so a filter on the email domain would eventually list real staff on the
+     public sign-in screen under "Test accounts · password 1234". server.js and
+     app.js both read this rather than keeping their own copies. */
+  const SEEDED_DEMO_USER_IDS = ["u-maria", "u-jose", "u-carlo", "u-ana", "u-grace", "u-fresh"];
+
   let storage;
   if (typeof globalThis !== "undefined" && globalThis.THERACHART_STORAGE) {
     storage = globalThis.THERACHART_STORAGE; // server injects file-backed storage
@@ -1558,6 +1566,8 @@
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, addProvider, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
+    // which accounts are seeded demo logins (never infer this from the email domain)
+    SEEDED_DEMO_USER_IDS,
     // patients — patients() is clinic-scoped; allPatients() is unscoped (server-side lookups)
     patients: () => load().patients.filter(mine), allPatients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
     // patient action items / care history (accepted AI recommendations)
