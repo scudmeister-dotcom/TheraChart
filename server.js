@@ -777,6 +777,9 @@ const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".json": "application/json",
   ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain; charset=utf-8",
+  // the walkthrough screenshots are JPEG — without this they fall through to
+  // application/octet-stream and the browser offers to download them
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
   ".woff2": "font/woff2", ".woff": "font/woff", ".webmanifest": "application/manifest+json",
 };
 

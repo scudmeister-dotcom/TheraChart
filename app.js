@@ -681,7 +681,7 @@
       <p class="lp-lead">Press listen and just talk. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English, Tagalog, and Cebuano</b>. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
       <div class="lp-cta">
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
-        <a class="btn ghost lp-cta-btn" href="#features">See how it works</a>
+        <button class="btn ghost lp-cta-btn" data-open-walkthrough type="button">See how it works</button>
       </div>
       <div class="lp-trust">🔒 Records live in your clinic's own cloud project — not a shared vendor database. Dictation audio is transcribed and discarded, and Google's Vertex AI terms bar using your data to train its models.</div>
     </div>
@@ -703,8 +703,8 @@
   </section>
 
   <section class="lp-shots">
-    <div class="lp-shot"><img src="marketing-screenshots/3-patient-chart-documents.png" alt="Patient chart and documents" loading="lazy" /><span>A full chart — evaluations, daily notes, progress reports and imported history.</span></div>
-    <div class="lp-shot"><img src="marketing-screenshots/2-dashboard-clinic-overview.png" alt="Clinic dashboard" loading="lazy" /><span>Clinic-wide view: today's schedule, unsigned drafts and progress reports due.</span></div>
+    <div class="lp-shot"><img src="marketing-screenshots/walkthrough/02-patient-overview.jpg" alt="Patient chart overview" loading="lazy" /><span>Everything that needs attention on one patient, before you open a single note.</span></div>
+    <div class="lp-shot"><img src="marketing-screenshots/walkthrough/01-dashboard.jpg" alt="Clinic dashboard" loading="lazy" /><span>Clinic-wide view: today's schedule, unsigned drafts and progress reports due.</span></div>
   </section>
 
   <section class="lp-final">
@@ -713,12 +713,190 @@
     <button class="btn primary lp-cta-btn" id="lpStart2">Sign in</button>
     <div class="lp-foot">TheraChart EMR · ${facility}</div>
   </section>
-</div>`;
+</div>
+${walkthroughMarkup()}`;
     const go = () => { showLogin = true; render(); };
     ["lpSignIn", "lpStart", "lpStart2"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener("click", go);
     });
+    bindWalkthrough();
+  }
+
+  /* ================= "SEE HOW IT WORKS" WALKTHROUGH =================
+
+     A guided tour of real screenshots, opened from the landing page. It exists
+     because the hard part of selling this isn't explaining features — it's
+     showing a clinic that already has a workflow why they'd change it. So every
+     step is framed as "what you do now" against "what happens here", and each
+     one points at the actual screen where it lives.
+
+     The images are captured from the running app rather than mocked up, so a
+     stale screenshot is a bug we can see rather than a promise we can't keep.
+     They are numbered by step because a visit genuinely is a sequence.
+
+     Nothing here claims a feature the product doesn't have — the AI review,
+     the 8-minute rule, the authorisation counter and the audit log are all
+     shown in their own screens, from seeded clinical data. */
+
+  const WALKTHROUGH = [
+    {
+      shot: "05-dictation-body-map",
+      title: "Talk through the visit. It writes the note.",
+      now: "You finish the session, then type the note up afterwards — usually after hours, usually from memory.",
+      here: "Press <b>Listen</b> and speak the way you already speak, in English, Tagalog or Taglish. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
+      where: "Inside any note · <b>Dictation &amp; body map</b>, top left",
+    },
+    {
+      shot: "06-measurements-filed",
+      title: "Measurements sort themselves into the right rows.",
+      now: "ROM and strength go on a paper form, then get copied into the note, then copied again into the progress report.",
+      here: 'Say <i>"right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5"</i> and all three land as separate, labelled measurements — joint, motion, side and value — without you naming the joint twice.',
+      where: "Inside any note · <b>Objective measurements</b>, right column",
+    },
+    {
+      shot: "07-ai-review",
+      title: "A second read before you sign.",
+      now: "Nobody checks the note. Whatever you typed at 8pm is what the payer sees.",
+      here: "Ask for a clean-up and it reorganises the transcript, proposes the findings, and tidies the wording. <b>You approve every line</b> — speaker labels, findings, section text. Nothing enters the chart until you accept it and sign.",
+      where: "Inside any note · <b>✦ Review &amp; clean up with AI</b>",
+    },
+    {
+      shot: "02-patient-overview",
+      title: "The chart remembers, so you don't have to.",
+      now: "\"How is this patient actually doing?\" means flipping back through months of paper and comparing numbers by eye.",
+      here: "One screen: what needs attention today, goals against their target dates, outcome scores trended across the episode, and allergies on a banner that follows you into every screen of the chart.",
+      where: "Any patient · <b>Overview</b> tab",
+    },
+    {
+      shot: "08-billing",
+      title: "The units are counted for you.",
+      now: "Someone works out timed units by hand against the 8-minute rule, and a miscount is either lost revenue or a claim problem.",
+      here: "Enter the interventions and minutes. TheraChart computes what the units <i>should</i> be and flags a mismatch instead of silently billing whatever was typed. The signature, licence number and timestamp lock to the note.",
+      where: "Inside any note · <b>Billing — CPT codes, minutes and units</b>",
+    },
+    {
+      shot: "04-patient-info",
+      title: "Authorisation you can see before the visit, not after.",
+      now: "Nobody notices the HMO approval ran out until the claim is rejected — months later, when the money is already spent.",
+      here: "Visits authorised, visits used and the expiry date sit on the patient's chart and count down as they attend. Provider, member ID and approval reference are all in one place when the claim has to be filed.",
+      where: "Any patient · <b>Info</b> tab · Insurance &amp; authorisation",
+    },
+    {
+      shot: "10-intake-guardrails",
+      title: "Front desk can't fat-finger a patient in.",
+      now: "A mistyped mobile number isn't found until someone tries to phone about a cancelled slot.",
+      here: "Phone numbers format themselves as Philippine numbers as they're typed. Birth dates can't be in the future. A patient who already exists is flagged before a duplicate chart is made. Real mistakes are blocked; judgement calls are only warned about.",
+      where: "<b>Patients → New patient intake</b>",
+    },
+    {
+      shot: "11-privacy",
+      title: "Who saw what, in plain language.",
+      now: "Records sit in a filing cabinet or a shared folder, and there's no way to answer \"who opened this chart?\"",
+      here: "Every sign-in, chart opened, note signed and amendment is recorded and searchable. The same page states plainly which company processes what data and where — the disclosure the Data Privacy Act expects you to be able to make.",
+      where: "<b>Privacy &amp; Security</b> in the sidebar",
+    },
+  ];
+
+  function walkthroughMarkup() {
+    const slides = WALKTHROUGH.map((s, i) => `
+      <figure class="wt-slide ${i === 0 ? "on" : ""}" data-wt-slide="${i}" ${i === 0 ? "" : 'aria-hidden="true"'}>
+        <div class="wt-shotwrap">
+          <!-- data-src, not src+lazy: a lazy image inside a display:none slide
+               never enters the viewport, so it never loads and the tour opens
+               on a blank panel. show() assigns the real src for the current
+               step and pre-loads the next one. -->
+          <img data-src="marketing-screenshots/walkthrough/${s.shot}.jpg" alt="${esc(s.title)}" />
+        </div>
+        <figcaption class="wt-copy">
+          <div class="wt-step">Step ${i + 1} of ${WALKTHROUGH.length}</div>
+          <h3>${s.title}</h3>
+          <div class="wt-compare">
+            <div class="wt-now"><span class="wt-tag">How it works now</span><p>${s.now}</p></div>
+            <div class="wt-here"><span class="wt-tag">With TheraChart</span><p>${s.here}</p></div>
+          </div>
+          <div class="wt-where"><span>Where it lives</span> ${s.where}</div>
+        </figcaption>
+      </figure>`).join("");
+
+    return `
+<div class="wt-backdrop" id="wtBackdrop" role="dialog" aria-modal="true" aria-label="How TheraChart works" hidden>
+  <div class="wt-panel">
+    <header class="wt-head">
+      <div><b>How it works</b><span class="wt-sub">A visit, start to finish — in the real app</span></div>
+      <button class="wt-close" id="wtClose" type="button" aria-label="Close">✕</button>
+    </header>
+    <div class="wt-stage" id="wtStage">${slides}</div>
+    <footer class="wt-foot">
+      <button class="btn" id="wtPrev" type="button">← Back</button>
+      <div class="wt-dots" id="wtDots">${WALKTHROUGH.map((s, i) =>
+        `<button class="wt-dot ${i === 0 ? "on" : ""}" data-wt-go="${i}" type="button" aria-label="Step ${i + 1}: ${esc(s.title)}"></button>`).join("")}</div>
+      <button class="btn primary" id="wtNext" type="button">Next →</button>
+    </footer>
+  </div>
+</div>`;
+  }
+
+  function bindWalkthrough() {
+    const back = document.getElementById("wtBackdrop");
+    if (!back) return;
+    const slides = [...back.querySelectorAll("[data-wt-slide]")];
+    const dots = [...back.querySelectorAll("[data-wt-go]")];
+    const stage = document.getElementById("wtStage");
+    let at = 0;
+
+    // Load this step's screenshot and the next one, so paging forward is
+    // instant without pulling all 2 MB the moment the tour opens.
+    const load = (i) => {
+      const img = slides[i] && slides[i].querySelector("img[data-src]");
+      if (img) { img.src = img.dataset.src; img.removeAttribute("data-src"); }
+    };
+
+    const show = (n) => {
+      at = Math.max(0, Math.min(WALKTHROUGH.length - 1, n));
+      load(at); load(at + 1);
+      slides.forEach((el, i) => {
+        el.classList.toggle("on", i === at);
+        if (i === at) el.removeAttribute("aria-hidden"); else el.setAttribute("aria-hidden", "true");
+      });
+      dots.forEach((d, i) => d.classList.toggle("on", i === at));
+      document.getElementById("wtPrev").disabled = at === 0;
+      const next = document.getElementById("wtNext");
+      next.textContent = at === WALKTHROUGH.length - 1 ? "Sign in →" : "Next →";
+      if (stage) stage.scrollTop = 0;
+    };
+
+    const open = () => {
+      back.hidden = false;
+      document.body.style.overflow = "hidden";
+      show(0);
+      document.getElementById("wtNext").focus();
+    };
+    const close = () => {
+      back.hidden = true;
+      document.body.style.overflow = "";
+    };
+
+    document.getElementById("wtClose").addEventListener("click", close);
+    back.addEventListener("click", (e) => { if (e.target === back) close(); });
+    document.getElementById("wtPrev").addEventListener("click", () => show(at - 1));
+    document.getElementById("wtNext").addEventListener("click", () => {
+      // the last step hands straight over to signing in — the whole point
+      if (at === WALKTHROUGH.length - 1) { close(); showLogin = true; render(); return; }
+      show(at + 1);
+    });
+    dots.forEach((d) => d.addEventListener("click", () => show(Number(d.dataset.wtGo))));
+
+    document.addEventListener("keydown", (e) => {
+      if (back.hidden) return;
+      if (e.key === "Escape") close();
+      else if (e.key === "ArrowRight") show(at + 1);
+      else if (e.key === "ArrowLeft") show(at - 1);
+    });
+
+    // the landing page's "See how it works" opens this instead of jumping to an anchor
+    document.querySelectorAll('[data-open-walkthrough]').forEach((el) =>
+      el.addEventListener("click", (e) => { e.preventDefault(); open(); }));
   }
 
   function renderLogin() {

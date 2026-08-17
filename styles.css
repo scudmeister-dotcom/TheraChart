@@ -1522,6 +1522,93 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   box-shadow: 0 24px 60px rgba(15, 30, 45, 0.18);
 }
 
+/* ---- "See how it works" walkthrough ----
+   A full-screen guided tour of real app screenshots, opened from the landing
+   page. Two columns on a desktop (screen on the left, the argument on the
+   right); stacked on a phone, where the screenshot goes first because that is
+   what the reader came to see. */
+.wt-backdrop {
+  position: fixed; inset: 0; z-index: 90;
+  background: color-mix(in srgb, var(--ink) 62%, transparent);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.wt-backdrop[hidden] { display: none; }
+.wt-panel {
+  background: var(--panel); border-radius: 18px; box-shadow: 0 24px 70px rgba(0,0,0,.32);
+  width: min(1180px, 100%); max-height: min(880px, 94vh);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.wt-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 16px 22px; border-bottom: 1px solid var(--border); flex: none;
+}
+.wt-head b { font-size: 16.5px; }
+.wt-sub { color: var(--muted); font-size: 13px; margin-left: 10px; }
+.wt-close {
+  border: 1px solid var(--border); background: var(--bg); color: var(--ink);
+  width: 34px; height: 34px; border-radius: 9px; cursor: pointer; font-size: 15px; line-height: 1;
+}
+.wt-close:hover { background: var(--hover); }
+
+.wt-stage { flex: 1; overflow-y: auto; padding: 22px; }
+.wt-slide { display: none; margin: 0; }
+.wt-slide.on { display: grid; grid-template-columns: 1.15fr 1fr; gap: 26px; align-items: start; }
+.wt-shotwrap {
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--bg); box-shadow: var(--shadow);
+}
+.wt-shotwrap img { display: block; width: 100%; height: auto; }
+
+.wt-copy { display: flex; flex-direction: column; gap: 14px; }
+.wt-step {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase;
+  color: var(--accent);
+}
+.wt-copy h3 { font-size: 23px; line-height: 1.22; letter-spacing: -0.3px; margin: -4px 0 0; }
+.wt-compare { display: flex; flex-direction: column; gap: 12px; }
+.wt-now, .wt-here { border-radius: 11px; padding: 13px 15px; font-size: 14px; line-height: 1.55; }
+.wt-now { background: var(--hover); border: 1px solid var(--border); color: var(--muted); }
+.wt-here { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--ink); }
+.wt-now p, .wt-here p { margin: 0; }
+.wt-tag {
+  display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+  text-transform: uppercase; margin-bottom: 5px;
+}
+.wt-now .wt-tag { color: var(--sev-none); }
+.wt-here .wt-tag { color: var(--accent); }
+.wt-where {
+  font-size: 13px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 12px;
+}
+.wt-where span {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--sev-none); margin-right: 8px;
+}
+
+.wt-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 22px; border-top: 1px solid var(--border); flex: none;
+}
+.wt-dots { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.wt-dot {
+  width: 9px; height: 9px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  background: var(--sil); transition: background .15s, transform .15s;
+}
+.wt-dot:hover { transform: scale(1.25); }
+.wt-dot.on { background: var(--accent); transform: scale(1.25); }
+.wt-foot .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .wt-backdrop { padding: 0; }
+  .wt-panel { max-height: 100vh; border-radius: 0; width: 100%; }
+  .wt-slide.on { grid-template-columns: 1fr; gap: 18px; }
+  .wt-copy h3 { font-size: 20px; }
+  .wt-sub { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wt-dot { transition: none; }
+}
+
 .lp-section-title { font-size: 28px; text-align: center; letter-spacing: -0.3px; margin-bottom: 34px; }
 .lp-features { padding: 40px 0; }
 .lp-feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }

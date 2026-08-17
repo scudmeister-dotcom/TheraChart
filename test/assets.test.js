@@ -125,6 +125,49 @@ check("the service-worker cache is versioned", /const CACHE = "therachart-v\d+"/
 }
 
 /* ---------------------------------------------------------------- *
+ *  Landing-page walkthrough screenshots
+ *
+ *  The "See how it works" tour is a sales asset shown to prospective clinics,
+ *  and every step is a real screenshot of the app. A renamed or deleted file
+ *  shows a broken image to exactly the audience it was built for, so the step
+ *  list and the files on disk have to agree.
+ * ---------------------------------------------------------------- */
+
+{
+  const appSrc = read("app.js");
+  const block = (appSrc.match(/const WALKTHROUGH = \[([\s\S]*?)\n  \];/) || [])[1];
+  check("app.js still declares the WALKTHROUGH steps", !!block,
+    "the tour was renamed or restructured — update this test with it");
+
+  const shots = [...(block || "").matchAll(/shot:\s*"([^"]+)"/g)].map((m) => m[1]);
+  check("the walkthrough has steps to show", shots.length >= 4, `${shots.length} found`);
+
+  const dir = "marketing-screenshots/walkthrough";
+  const missing = shots.filter((n) => !fs.existsSync(path.join(ROOT, dir, n + ".jpg")));
+  check("every walkthrough step has its screenshot on disk", missing.length === 0,
+    missing.length ? `missing ${JSON.stringify(missing.map((n) => `${dir}/${n}.jpg`))}` : "");
+
+  // The images live under a CLIENT_DIRS prefix; if that ever changes they 404
+  // silently in the browser, exactly like the validate.js case above.
+  check("the walkthrough directory is servable",
+    CLIENT_DIRS.some((d) => ("/" + dir + "/").startsWith(d)),
+    `"/${dir}/" is not covered by ${JSON.stringify(CLIENT_DIRS)}`);
+
+  // JPEG needs a MIME entry or the browser is offered a download instead.
+  check("server.js maps .jpg to image/jpeg",
+    /"\.jpe?g":\s*"image\/jpeg"/.test(serverSrc),
+    "walkthrough screenshots would serve as application/octet-stream");
+
+  // Keep the tour light enough to open on a clinic's connection.
+  const total = shots.reduce((n, f) => {
+    const p2 = path.join(ROOT, dir, f + ".jpg");
+    return n + (fs.existsSync(p2) ? fs.statSync(p2).size : 0);
+  }, 0);
+  check("the walkthrough images stay under 4 MB in total",
+    total < 4 * 1024 * 1024, `${(total / 1048576).toFixed(1)} MB`);
+}
+
+/* ---------------------------------------------------------------- *
  *  The test suite runs every checker
  * ---------------------------------------------------------------- */
 
