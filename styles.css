@@ -743,10 +743,34 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .google-btn-wrap { display: flex; justify-content: center; min-height: 40px; }
 
-/* Test-account quick-fill panel on the sign-in card */
+/* Test-account quick-fill panel on the sign-in card — collapsed by default so
+   the card leads with the real sign-in rather than a wall of demo rows. */
 .test-accounts { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
-.ta-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 12px; font-weight: 700; color: var(--ink); }
-.ta-head .ta-pw { font-weight: 500; color: var(--muted); font-size: 11px; }
+.ta-summary {
+  display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); transition: border-color 0.14s, background 0.14s;
+  /* a tap on a control should open it, not select its label — without this a
+     slightly-dragged click on a touchscreen highlights the text instead */
+  -webkit-user-select: none; user-select: none;
+}
+/* the default disclosure triangle, in both engines — .ta-chev replaces it */
+.ta-summary::-webkit-details-marker { display: none; }
+.ta-summary::marker { content: ""; }
+.ta-summary:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--hover); }
+.ta-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ta-sum-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.ta-sum-title { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.ta-sum-sub { font-size: 11px; color: var(--muted); }
+.ta-chev { flex: none; width: 18px; height: 18px; color: var(--accent); transition: transform 0.16s; }
+.test-accounts[open] .ta-chev { transform: rotate(180deg); }
+.ta-body { padding-top: 10px; }
+.ta-pw { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.ta-group {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); margin: 10px 0 6px;
+}
+.ta-group:first-child { margin-top: 0; }
 .ta-list { display: flex; flex-direction: column; gap: 6px; }
 .ta-row {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;

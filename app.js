@@ -1119,10 +1119,34 @@ ${walkthroughMarkup()}`;
       testAccounts = S.users()
         .filter((u) => seeded.has(u.id) && /@therachart\.demo$/i.test(u.email || ""))
         .map((u) => ({ name: u.name, email: u.email, role: u.role, password: "1234",
-          status: u.active === false ? "sign-in blocked (voided)" : "" }));
+          status: u.active === false ? "sign-in blocked (voided)" : "",
+          clinic: S.clinicName(u.clinicId) }));
     }
     testAccounts = testAccounts.slice(0, 10); // keep the panel short
     const roleWord = (r) => r === "therapist" ? "Therapist" : r === "frontdesk" ? "Front desk" : "Admin";
+
+    /* The accounts collapse behind one summary so the sign-in card leads with
+       the actual sign-in, not with six demo rows. Grouped by clinic and kept in
+       ONE dropdown: u-fresh lives in its own empty clinic, and a flat list
+       under a single "Demo Clinic" heading would promise the seeded charts and
+       then open a blank EMR. The subheadings only appear when there is more
+       than one group. <details> is deliberate — it opens without JavaScript,
+       is keyboard-operable, and is announced as expandable by screen readers. */
+    const demoGroups = [];
+    for (const a of testAccounts) {
+      const label = a.clinic || "Demo Clinic";
+      const g = demoGroups.find((x) => x.label === label);
+      (g || demoGroups[demoGroups.push({ label, rows: [] }) - 1]).rows.push(a);
+    }
+    // Biggest clinic first. The staffed demo clinic is the one to open on; the
+    // blank single-admin clinic is the sideshow and reads as an odd lead.
+    demoGroups.sort((a, b) => b.rows.length - a.rows.length);
+    const demoRow = (a) => `
+      <button type="button" class="ta-row" data-ta-email="${esc(a.email)}" data-ta-pw="${esc(a.password || "1234")}">
+        <span class="ta-avatar">${esc(initials(a.name))}</span>
+        <span class="ta-main"><span class="ta-name">${esc(a.name)}</span><span class="ta-email">${esc(a.email)}</span></span>
+        <span class="ta-role">${esc(roleWord(a.role))}${a.status ? `<span class="ta-status">${esc(a.status)}</span>` : ""}</span>
+      </button>`;
     // Google sign-in appears only when the server advertises a client id.
     const googleClientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
     app.innerHTML = `
@@ -1152,17 +1176,21 @@ ${walkthroughMarkup()}`;
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
       ${googleClientId ? `<div class="login-or"><span>or</span></div><div id="googleBtnWrap" class="google-btn-wrap"></div>` : ""}
       ${testAccounts.length ? `
-      <div class="test-accounts">
-        <div class="ta-head">Test accounts <span class="ta-pw">tap to fill · password <b>1234</b></span></div>
-        <div class="ta-list">
-          ${testAccounts.map((a) => `
-          <button type="button" class="ta-row" data-ta-email="${esc(a.email)}" data-ta-pw="${esc(a.password || "1234")}">
-            <span class="ta-avatar">${esc(initials(a.name))}</span>
-            <span class="ta-main"><span class="ta-name">${esc(a.name)}</span><span class="ta-email">${esc(a.email)}</span></span>
-            <span class="ta-role">${esc(roleWord(a.role))}${a.status ? `<span class="ta-status">${esc(a.status)}</span>` : ""}</span>
-          </button>`).join("")}
+      <details class="test-accounts" id="demoAccounts">
+        <summary class="ta-summary">
+          <span class="ta-sum-main">
+            <span class="ta-sum-title">Demo Clinic</span>
+            <span class="ta-sum-sub">Try any role — ${testAccounts.length} test ${testAccounts.length === 1 ? "account" : "accounts"}</span>
+          </span>
+          <svg class="ta-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+        <div class="ta-body">
+          <div class="ta-pw">Tap a name to fill it in · password <b>1234</b></div>
+          ${demoGroups.map((g) => `
+          ${demoGroups.length > 1 ? `<div class="ta-group">${esc(g.label)}</div>` : ""}
+          <div class="ta-list">${g.rows.map(demoRow).join("")}</div>`).join("")}
         </div>
-      </div>`
+      </details>`
         : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
   </div>
@@ -4168,9 +4196,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return { text, errors, chunks: chunks.length, billedSeconds };
   }
 
-  /** "6:12" for 372 seconds. */
+  /** "6:12" for 372 seconds. For ONE visit, where seconds are meaningful. */
   function mmssOf(s) {
     return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  }
+
+  /** "21h 40m" / "37 min" — a month's worth, where mm:ss would be unreadable. */
+  function hoursOf(mins) {
+    mins = Math.round(mins);
+    if (mins < 60) return `${mins} min`;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
   }
 
   /* What this visit's dictation actually cost, in the unit that was billed.
@@ -6091,6 +6127,12 @@ ${privacyInfoAccordion(geminiOn)}
     const project = u.daysElapsed >= 5 && u.projectedVisits > u.allowance && !over;
     const month = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
     const tone = over ? "bad" : pct >= 85 ? "warn" : "good";
+    const resets = new Date(u.resetsOn + "T00:00:00")
+      .toLocaleDateString(undefined, { day: "numeric", month: "long" });
+    /* Dictation is fair use, not a second meter to run out of, so it is stated
+       as "X of Y" without a bar and without a tone — a clinic should read it
+       and move on unless it is genuinely an outlier. */
+    const heavy = u.fairUseMinutes && u.minutesUsed > u.fairUseMinutes;
     return `
 <div class="card allowance">
   <div class="allowance-head">
@@ -6101,12 +6143,17 @@ ${privacyInfoAccordion(geminiOn)}
   <div class="allowance-bar"><div class="allowance-fill ${tone}" style="width:${pct}%"></div></div>
   <div class="allowance-stats">
     <div><b>${over ? u.overBy : u.remaining}</b><span>${over ? "visits over" : "visits left"}</span></div>
-    <div><b>${u.dictationSeconds ? mmssOf(u.dictationSeconds) : "—"}</b><span>dictation this month</span></div>
+    <div><b>${hoursOf(u.minutesUsed)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> of ${hoursOf(u.fairUseMinutes)}</span></b><span>dictation · fair use</span></div>
     <div><b>${u.avgSecondsPerVisit ? mmssOf(u.avgSecondsPerVisit) : "—"}</b><span>average per visit</span></div>
   </div>
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included this month. Extra visits bill at the overage rate — if this is your normal month, the next plan up is cheaper than the overage.</div>` : ""}
   ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, which is over your ${u.allowance}. Nothing stops working — the extra visits simply bill as overage.</div>` : ""}
-  <div class="allowance-note">Dictation is billed on <b>speech only</b> — pauses, and a mic left open in a quiet room, cost nothing. ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}</div>
+  ${heavy ? `<div class="banner">Dictation is past the ${hoursOf(u.fairUseMinutes)} of fair use your plan assumes (${u.fairUsePerVisit} min a visit). <b>Nothing is capped and nothing extra is charged</b> — but if this is normal for your clinic, tell us, because the plan was priced for less.</div>` : ""}
+  <div class="allowance-note">
+    <b>Visits reset on ${esc(resets)} and don't roll over</b> — an unused visit this month isn't added to next month's ${u.allowance}.
+    Dictation is counted on <b>speech only</b>: pauses, and a mic left open in a quiet room, cost nothing.
+    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation.` : "No dictation recorded yet this month."}
+  </div>
 </div>`;
   }
 
@@ -6141,8 +6188,9 @@ ${allowanceCard()}
           ${["Solo", "Practice", "Clinic", "Group"].map((p) => `<option value="${p}" ${st.planName === p ? "selected" : ""}>${p}</option>`).join("")}
         </select></div>
       <div class="field"><label>Visits included per month</label><input id="st-allowance" type="number" min="1" max="10000" value="${st.visitAllowance}" /></div>
+      <div class="field"><label>Fair-use dictation (min/visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter above counts against. Change it when you move plans.</div>
+    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter above counts against. Change it when you move plans. Visits reset monthly and don't roll over; fair-use dictation is shown, never enforced.</div>
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
@@ -6213,6 +6261,7 @@ ${allowanceCard()}
         audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
         planName: document.getElementById("st-plan").value,
         visitAllowance: Math.max(1, Number(document.getElementById("st-allowance").value) || 130),
+        fairUseMinutesPerVisit: Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10)),
       }, user);
       render();
     });

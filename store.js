@@ -815,6 +815,97 @@
     return n;
   }
 
+  /* Put the seeded demo logins back on an instance that already has state.
+
+     seed() only runs when storage is EMPTY, so a deployment that has ever been
+     written to will never grow the demo accounts on its own — which is why a
+     long-lived server can advertise a demo clinic it has no logins for. This
+     grafts the missing pieces in, and is safe to run on every boot:
+
+       - only the six ids in SEEDED_DEMO_USER_IDS are ever touched, so a real
+         employee is never created, revived, or given a published password;
+       - the demo clinics are created if absent;
+       - the demo CONTENT (patients/notes/schedule) is grafted only when
+         clinic-demo has no patients at all, so a demo that has been clicked
+         around in keeps its edits instead of being reset under the presenter;
+       - the password is forced back to the published one, because the sign-in
+         panel prints it and a stale password there is just a broken demo.
+
+     The caller decides whether to run this — server.js ties it to
+     THERACHART_DEMO_LOGINS, the same switch that reveals the panel, so a real
+     clinic deployment neither shows nor creates these accounts.
+
+     Returns a summary of what it changed ({users, content, clinics}). */
+  function ensureDemoAccounts() {
+    load();
+    const fresh = seed();
+    const out = { users: 0, content: false, clinics: 0 };
+
+    state.clinics = state.clinics || {};
+    for (const [id, c] of Object.entries(fresh.clinics || {})) {
+      if (!state.clinics[id]) { state.clinics[id] = { ...c }; touch(state.clinics[id]); out.clinics++; }
+    }
+
+    const wanted = new Set(SEEDED_DEMO_USER_IDS);
+    const byId = new Map(state.users.map((u) => [u.id, u]));
+    for (const su of fresh.users) {
+      if (!wanted.has(su.id)) continue;
+      const existing = byId.get(su.id);
+      if (!existing) {
+        state.users.push({ ...su });
+        touch(state.users[state.users.length - 1]);
+        out.users++;
+        continue;
+      }
+      let changed = false;
+
+      /* Restore the seed ADDRESS. An instance old enough to predate email login
+         stored these accounts with no email at all, and ensureEmails() then
+         derived one from the name — "Maria Santos, PT" became
+         maria.santos@therachart.demo. The account still worked, but not at the
+         address the docs, the tests, and every demo script name, which reads
+         exactly like the login being broken. Skipped if another account already
+         holds the address, so this can never hijack someone's login. */
+      const wantEmail = normEmail(su.email);
+      if (wantEmail && normEmail(existing.email) !== wantEmail) {
+        const holder = state.users.find((u) => u.id !== su.id && normEmail(u.email) === wantEmail);
+        if (!holder) { existing.email = su.email; changed = true; }
+      }
+
+      /* Re-publish the demo password. setPassword() is not used — it enforces
+         an 8-character minimum meant for real staff, and the panel advertises
+         the 4-digit seed value. Drop any hash so the authenticator re-derives
+         one from this pin at the hashLegacyPins() step. */
+      if (existing.pin !== su.pin || existing.passwordHash) {
+        existing.pin = su.pin;
+        delete existing.passwordHash;
+        delete existing.mustChangePassword;
+        changed = true;
+      }
+
+      if (changed) { touch(existing); out.users++; }
+    }
+
+    // Demo content, all-or-nothing: an empty demo clinic is a bad first
+    // impression, but a half-grafted one would collide with records a
+    // presenter just created.
+    const demoPatients = state.patients.filter((p) => (p.clinicId || DEFAULT_CLINIC) === "clinic-demo");
+    if (!demoPatients.length) {
+      for (const key of ["patients", "documents", "appointments", "accessRequests"]) {
+        const have = new Set((state[key] || []).map((r) => r.id));
+        for (const rec of fresh[key] || []) if (!have.has(rec.id)) state[key].push({ ...rec });
+      }
+      const haveAudit = new Set(state.audit.map((e) => e.time + (e.userId || "") + e.action));
+      for (const e of fresh.audit || []) {
+        if (!haveAudit.has(e.time + (e.userId || "") + e.action)) state.audit.push({ ...e });
+      }
+      out.content = true;
+    }
+
+    if (out.users || out.content || out.clinics) save();
+    return out;
+  }
+
   /** identifier = email (or a user id for back-compat). null on success, or a
       human-readable reason the login was refused. The refusal message is kept
       generic (never "unknown email") so it can't be used to probe who exists. */
@@ -880,6 +971,13 @@
        empty one; an admin sets their actual plan in Facility Admin. */
     planName: "Solo",
     visitAllowance: 130,
+    /* Dictation is sold as fair use, not as a metered pool: the plan is priced
+       in visits, and this is the per-visit speech budget those visits assume.
+       10 minutes is deliberately generous — the cost model is built on 6 — so a
+       clinic only ever sees this line if it is genuinely an outlier, which is
+       the point. It is shown, never enforced; cutting a therapist off
+       mid-dictation to save a peso would be indefensible. */
+    fairUseMinutesPerVisit: 10,
   };
 
   /** Effective settings for one clinic: its own block over the legacy global
@@ -1170,6 +1268,7 @@
     }
     const st = settings();
     const allowance = Math.max(1, Number(st.visitAllowance) || 130);
+    const fairUsePerVisit = Math.max(1, Number(st.fairUseMinutesPerVisit) || 10);
     // Pace is measured against days ELAPSED, so a projection on the 2nd of the
     // month is honest about being built on one day of data.
     const now = new Date();
@@ -1184,10 +1283,21 @@
       dictationSeconds: Math.round(seconds),
       dictatedVisits: dictated,
       avgSecondsPerVisit: dictated ? Math.round(seconds / dictated) : 0,
+      /* Fair use is sized off the ALLOWANCE, not off visits used — a clinic
+         part-way through the month must see the whole month's budget, or the
+         line would shrink as they work and read like a countdown they were
+         losing. */
+      fairUsePerVisit,
+      fairUseMinutes: allowance * fairUsePerVisit,
+      minutesUsed: Math.round(seconds / 60),
       daysElapsed,
       daysInMonth,
       projectedVisits: Math.round((docs.length / daysElapsed) * daysInMonth),
       monthStart: start.toISOString().slice(0, 10),
+      /* Allowances do NOT roll over. Saying so, with the date, is the whole
+         point of carrying it here: an unstated reset is how a billing dispute
+         starts. */
+      resetsOn: new Date(start.getFullYear(), start.getMonth() + 1, 1).toISOString().slice(0, 10),
     };
   }
 
@@ -1687,7 +1797,7 @@
     clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, addUser, addProvider, upsertGoogleUser, deleteUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, addProvider, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // which accounts are seeded demo logins (never infer this from the email domain)
     SEEDED_DEMO_USER_IDS,

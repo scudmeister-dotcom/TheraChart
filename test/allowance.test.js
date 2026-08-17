@@ -151,6 +151,69 @@ check("the meter counts exactly this clinic's documents for the month",
   store.monthUsage().visits === scoped.length,
   `meter=${store.monthUsage().visits} clinic-scoped docs=${scoped.length}`);
 
+/* ---------------- fair-use dictation, and the monthly reset ----------------
+
+   The plan is sold in VISITS. Dictation is fair use on top of that, sized off
+   the allowance — shown so an owner can see where they stand, never enforced.
+   And the allowance resets: saying so, with a date, is how a billing dispute
+   is avoided rather than argued. */
+
+store.updateSettings({ planName: "Clinic", visitAllowance: 450, fairUseMinutesPerVisit: 10 }, grace);
+const fu = store.monthUsage();
+check("fair use is sized off the ALLOWANCE, not off visits used",
+  fu.fairUseMinutes === 4500,
+  `450 visits x 10 min should be 4500, got ${fu.fairUseMinutes} (a pool that shrinks as you work reads like a countdown)`);
+check("…and follows the configured per-visit budget",
+  fu.fairUsePerVisit === 10);
+
+store.updateSettings({ fairUseMinutesPerVisit: 6 }, grace);
+check("changing the fair-use budget re-sizes the pool",
+  store.monthUsage().fairUseMinutes === 2700,
+  `450 x 6 = 2700, got ${store.monthUsage().fairUseMinutes}`);
+store.updateSettings({ fairUseMinutesPerVisit: 10 }, grace);
+
+check("minutes used are reported alongside the pool",
+  store.monthUsage().minutesUsed === Math.round(store.monthUsage().dictationSeconds / 60),
+  `minutesUsed=${store.monthUsage().minutesUsed} seconds=${store.monthUsage().dictationSeconds}`);
+
+/* The reset date is the 1st of NEXT month — including across a year boundary,
+   where a naive month+1 produces month 12 of the same year. */
+const dec = store.monthUsage(new Date(2026, 11, 1));
+check("the reset date rolls the year over correctly",
+  dec.resetsOn === "2027-01-01", `got ${dec.resetsOn}`);
+const jun = store.monthUsage(new Date(2026, 5, 1));
+check("…and is the 1st of the following month otherwise",
+  jun.resetsOn === "2026-07-01", `got ${jun.resetsOn}`);
+
+/* ---------------- the ladder rewards upgrading ----------------
+
+   A tier that costs MORE per visit than the one above it is a reason to stay
+   put. Pinned here because it is a pricing invariant, not a UI detail: the
+   published ladder must get cheaper per visit at every rung. */
+const LADDER = [["Solo", 2450, 130], ["Practice", 4700, 260], ["Clinic", 7900, 450], ["Group", 24900, 1450]];
+const OVERAGE = 28;
+let prevRate = Infinity, monotonic = true, detail = [];
+for (const [name, price, visits] of LADDER) {
+  const rate = price / visits;
+  detail.push(`${name} ${rate.toFixed(2)}`);
+  if (rate >= prevRate) monotonic = false;
+  prevRate = rate;
+}
+check("every rung is cheaper per visit than the one below it",
+  monotonic, detail.join(" -> ") + "  (a rung that costs more per visit is a reason not to upgrade)");
+
+/* Overage must make the next tier attractive BEFORE a clinic runs out of it,
+   otherwise they sit on overage paying more than a plan would cost. */
+let upgradesInTime = true, ud = [];
+for (let i = 0; i < LADDER.length - 1; i++) {
+  const [, p1, v1] = LADDER[i], [n2, p2, v2] = LADDER[i + 1];
+  const breakEven = v1 + (p2 - p1) / OVERAGE;
+  ud.push(`${n2} wins at ${Math.round(breakEven)} of ${v2}`);
+  if (breakEven >= v2) upgradesInTime = false;
+}
+check("overage pushes an upgrade before the next tier's allowance runs out",
+  upgradesInTime, ud.join(" · "));
+
 /* ---------------- per-patient dictation, for scheduling ----------------
 
    This figure tells a front desk how long to book. It is the one most easily
