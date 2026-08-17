@@ -719,6 +719,13 @@
       req = {
         id: uid("ar"), email, name, source, googleSub: sub,
         status: "pending", note: "", attempts: 1, createdAt: new Date().toISOString(),
+        /* Which clinic's approval queue this lands in. Without it the record is
+           un-stamped, and un-stamped means DEFAULT_CLINIC — the seeded demo
+           clinic — so a real person asking for access showed up only to whoever
+           signed in with the demo password published on the sign-in screen, and
+           never to the operator. The caller passes the clinic Google sign-ins
+           join; the fallback keeps the browser-only build working. */
+        clinicId: (fields && fields.clinicId) || currentClinicId(),
       };
       touch(req);
       state.accessRequests.push(req);
@@ -948,6 +955,82 @@
   const clinicsMap = () => load().clinics || {};
   const clinicName = (id) => (clinicsMap()[id] && clinicsMap()[id].name) || load().settings.facilityName || "TheraChart Clinic";
   const currentClinicName = () => clinicName(currentClinicId());
+
+  /* Onboard a brand-new clinic: the clinic itself plus its first admin, in one
+     step, because a clinic with no way in is not a clinic.
+
+     This is the ONLY path that creates a clinic other than the seeded ones and
+     the single clinic Google sign-ins land in. addUser() cannot do it — it puts
+     the new account in the CALLER's clinic, which is right for a clinic hiring
+     staff and wrong for onboarding, where the whole point is a tenant the
+     caller is not part of.
+
+     The first admin gets a temporary password and `mustChangePassword`, so the
+     operator never learns the credential the clinic ends up using. Caller-side
+     authorisation is deliberately NOT checked here — server.js gates the route
+     to the platform owner, and the browser-only build has no operator at all. */
+  function createClinic(fields, byUser) {
+    load();
+    const clinicNameIn = String((fields && fields.clinicName) || "").trim();
+    const ownerName = String((fields && fields.ownerName) || "").trim();
+    const ownerEmail = normEmail(fields && fields.ownerEmail);
+    const password = String((fields && fields.password) || "");
+
+    if (!clinicNameIn) return { error: "Clinic name is required." };
+    if (!ownerName) return { error: "The first administrator's name is required." };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) return { error: "A valid email is required (it's their login)." };
+    if (getUserByEmail(ownerEmail)) return { error: "That email is already in use by another account." };
+    if (password.length < 8) return { error: "Temporary password must be at least 8 characters." };
+    /* A clinic named the same as an existing one is refused rather than
+       silently allowed: the name is what the operator picks a clinic by, and
+       two identical rows in that list is how records get filed into the wrong
+       tenant. Ids stay unique regardless. */
+    if (Object.values(clinicsMap()).some((c) => c.name.trim().toLowerCase() === clinicNameIn.toLowerCase())) {
+      return { error: "A clinic with that name already exists." };
+    }
+
+    const clinicId = uid("clinic");
+    state.clinics = state.clinics || {};
+    state.clinics[clinicId] = { id: clinicId, name: clinicNameIn };
+    touch(state.clinics[clinicId]);
+
+    const user = {
+      id: uid("u"), name: ownerName, email: ownerEmail, role: "admin", active: true,
+      clinicId,
+      // Left blank on purpose: the admin fills in their own PRC licence from My
+      // Profile. Inventing a number here would put an unverified licence on a
+      // clinical signature.
+      license: { number: "", expires: "" },
+      mustChangePassword: true,
+    };
+    if (authenticator) user.passwordHash = authenticator.hash(password);
+    else user.pin = password;
+    touch(user);
+    state.users.push(user);
+
+    save();
+    audit(byUser ? byUser.id : null, "clinic-created", `${clinicNameIn} — first admin ${ownerName} (${ownerEmail})`);
+    return { clinic: state.clinics[clinicId], user };
+  }
+
+  /* Every clinic on the server with a headcount and patient count — the
+     operator's list. Unscoped by design (it spans tenants), so server.js must
+     keep it behind the platform-owner check. It deliberately carries NO patient
+     names or clinical detail: a count is enough to run onboarding, and anything
+     more would hand one clinic's records to someone outside it. */
+  function clinicSummaries() {
+    load();
+    const rows = Object.values(clinicsMap()).map((c) => ({
+      id: c.id,
+      name: c.name,
+      staff: state.users.filter((u) => recClinic(u) === c.id).length,
+      admins: state.users.filter((u) => recClinic(u) === c.id && u.role === "admin" && u.active !== false).length,
+      patients: state.patients.filter((p) => recClinic(p) === c.id).length,
+      documents: state.documents.filter((d) => recClinic(d) === c.id).length,
+      createdAt: c._mod || null,
+    }));
+    return rows.sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   /* Settings are PER CLINIC. They live in `clinics[id].settings`; the
      top-level `settings` block is the pre-tenancy default, kept only so an
@@ -1871,6 +1954,8 @@
     audit, auditLog: () => load().audit.filter(mine),
     // clinics (tenancy)
     clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,
+    // operator-only (server gates these to the platform owner)
+    createClinic, clinicSummaries,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, addProvider, upsertGoogleUser, deleteUser,

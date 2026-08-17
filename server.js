@@ -341,6 +341,21 @@ function aiRateLimited(res, req, user, purpose) {
     16 kHz, 16-bit, mono = 32000 bytes/second, minus the 44-byte header. */
 const wavBilledSeconds = (buf) => Math.max(1, Math.ceil((buf.length - 44) / 32000));
 
+/* The PLATFORM OWNER — you, the operator — as opposed to a clinic's admin.
+
+   A clinic admin runs their own clinic: staff, settings, their patients. The
+   platform owner onboards clinics, which means creating tenants they are not a
+   member of and seeing that every clinic exists. That is a strictly larger
+   power, so it is a separate check rather than another `role`.
+
+   Identity is the GOOGLE_OWNER_EMAIL address and nothing else. Deliberately NOT
+   `role === "admin"`: every seeded demo login includes two admins whose password
+   is printed on the public sign-in screen, so anything gated on the admin role
+   alone is gated on a published credential. An account also has to be active,
+   so revoking it revokes this too. */
+const isPlatformOwner = (user) =>
+  !!user && user.active !== false && String(user.email || "").trim().toLowerCase() === GOOGLE_OWNER_EMAIL;
+
 const GEMINI_OPTS = (user, purpose) => {
   const onUsage = (u) => meter(clinicOfUser(user), "gemini",
     { model: u.model, in: u.in, out: u.out, thinking: u.thinking },
@@ -1113,7 +1128,7 @@ const server = http.createServer(async (req, res) => {
       loginFails.delete(rlKey);
       const authed = store.findUserByLogin(identifier);
       bumpRev(); // audit entry was added
-      return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, state: scopedState(authed) });
+      return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, isOwner: isPlatformOwner(authed), state: scopedState(authed) });
     }
 
     if (url.pathname === "/api/google-login" && req.method === "POST") {
@@ -1134,7 +1149,9 @@ const server = http.createServer(async (req, res) => {
       if (!role) {
         // Not authorized yet: queue a request for an admin to approve, instead
         // of a dead end. (Deduped by email while pending.)
-        store.requestAccess({ email, name: claims.name, googleSub: claims.sub, source: "google" });
+        // into the clinic an approved Google sign-in would join, so the request
+        // reaches whoever can actually act on it
+        store.requestAccess({ email, name: claims.name, googleSub: claims.sub, source: "google", clinicId: GOOGLE_CLINIC_ID });
         store.audit(null, "login-denied", `google:${email} (awaiting approval)`);
         bumpRev();
         return json(res, 403, { error: "Your access request has been sent to an administrator for approval. You'll be able to sign in once it's approved." });
@@ -1147,7 +1164,7 @@ const server = http.createServer(async (req, res) => {
       store.load().sessionUserId = null; // server holds no session in state
       store.save();
       bumpRev(); // audit entries (login / user-created) were added
-      return json(res, 200, { token: tokenFor(r.user.id), userId: r.user.id, rev, state: scopedState(r.user) });
+      return json(res, 200, { token: tokenFor(r.user.id), userId: r.user.id, rev, isOwner: isPlatformOwner(r.user), state: scopedState(r.user) });
     }
 
     const user = userForReq(req);
@@ -1540,8 +1557,38 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 405, { error: "Method not allowed." });
       }
+      /* ---- operator: onboarding a new clinic ----
+         Platform-owner only. Everything else in this file is scoped so a signed-in
+         user sees their own clinic; these two deliberately span tenants, so the
+         gate is the whole security story. The 403 is identical for "you are a
+         clinic admin" and "you are a demo login", and says nothing about what
+         exists on the other side of it. */
+      if (url.pathname === "/api/clinics") {
+        if (!isPlatformOwner(user)) {
+          store.audit(user.id, "operator-denied", url.pathname);
+          bumpRev();
+          return json(res, 403, { error: "That area is limited to the platform operator." });
+        }
+        if (req.method === "GET") return json(res, 200, { clinics: store.clinicSummaries() });
+        if (req.method === "POST") {
+          const { clinicName, ownerName, ownerEmail, password } = await readBody(req);
+          const r = store.createClinic({ clinicName, ownerName, ownerEmail, password }, user);
+          if (r.error) return json(res, 400, { error: r.error });
+          bumpRev();
+          /* The temporary password goes back so the operator can hand it over
+             once. It is already hashed in storage and is never readable again —
+             a lost one is reset from Facility Admin, not recovered. */
+          return json(res, 200, {
+            clinic: { id: r.clinic.id, name: r.clinic.name },
+            admin: { id: r.user.id, name: r.user.name, email: r.user.email },
+            temporaryPassword: String(password),
+          });
+        }
+        return json(res, 405, { error: "Method not allowed." });
+      }
+
       if (url.pathname === "/api/state" && req.method === "GET") {
-        return json(res, 200, { rev, state: scopedState(user) });
+        return json(res, 200, { rev, isOwner: isPlatformOwner(user), state: scopedState(user) });
       }
       if (url.pathname === "/api/state" && req.method === "PUT") {
         const { baseRev, state } = await readBody(req);

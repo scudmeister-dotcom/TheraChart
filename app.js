@@ -77,6 +77,7 @@
     logo: LOGO_MARK,
     spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg>',
     wrench: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg>',
+    building: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M15 21V10h2a2 2 0 0 1 2 2v9"/><path d="M9 7h2M9 11h2M9 15h2"/></svg>',
   };
 
   /* scroll memory: return to where you were when navigating back */
@@ -296,8 +297,27 @@
     { hash: "#/calendar", label: "Calendar", short: "Calendar", icon: ICON.cal, emr: true },
     { hash: "#/privacy", label: "Privacy & Security", short: "Privacy", icon: ICON.shield, emr: false },
     { hash: "#/facility", label: "Facility Admin", short: "Admin", icon: ICON.gear, emr: true, adminOnly: true },
+    /* Operator-only: onboarding clinics is not something a clinic's own admin
+       does. `emr: false` because it isn't clinical — an expired licence locks
+       the EMR, and it must not lock the operator out of running the platform. */
+    { hash: "#/clinics", label: "Clinics", short: "Clinics", icon: ICON.building, emr: false, ownerOnly: true },
     { hash: "#/profile", label: "My Profile", short: "Profile", icon: ICON.user, emr: false },
   ];
+
+  /* Is this session the platform operator? The server decides and says so on
+     every login and state fetch; in the browser-only build there is no operator
+     at all. This only gates the NAV LINK and the route — /api/clinics checks
+     again server-side, so a hand-typed #/clinics gets an empty page, not data. */
+  const isOwner = () => !!(window.TheraSync && window.TheraSync.isOwner);
+
+  /** A throwaway password for an account whose owner must change it at first
+      login. Crypto-random where available; the Math.random fallback only ever
+      guards a credential that is single-use by construction. */
+  const genTempPassword = () => {
+    const a = new Uint8Array(9);
+    (window.crypto && window.crypto.getRandomValues) ? window.crypto.getRandomValues(a) : a.forEach((_, i) => (a[i] = Math.floor(Math.random() * 256)));
+    return btoa(String.fromCharCode(...a)).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+  };
 
   // A freshly-created draft being watched for accidental back-out: { id, snapshot }.
   // If the user leaves it untouched (see render()), it's auto-discarded.
@@ -348,6 +368,12 @@
     if (route === "facility") {
       if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Facility administration is limited to admin accounts.</div></div>`, user);
       return renderShell(hash, facilityView(user), user, bindFacility);
+    }
+    if (route === "clinics") {
+      // Same refusal whether you're a clinic admin or typed the URL — this page
+      // spans every tenant, so it says nothing at all to anyone but the operator.
+      if (!isOwner()) return renderShell(hash, `<div class="card"><div class="empty-state">This area is limited to the platform operator.</div></div>`, user);
+      return renderShell(hash, clinicsView(user), user, bindClinics);
     }
     if (route === "profile") return renderShell(hash, profileView(user), user, bindProfile);
     location.hash = "#/dashboard";
@@ -425,10 +451,11 @@
     if (assistantFor !== drawerPid) { assistantOpen = false; assistantFor = drawerPid; }
     const groups = [
       { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash)) },
-      { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/profile"].includes(n.hash)) },
+      { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash)) },
     ];
     const linkHtml = (n) => {
       if (n.adminOnly && user.role !== "admin") return "";
+      if (n.ownerOnly && !isOwner()) return "";
       const disabled = n.emr && !emrAllowed;
       const active = hash.startsWith(n.hash) ||
         (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
@@ -458,8 +485,9 @@
 
     // --- account menu: the pages that aren't part of the moment-to-moment
     //     workflow (Privacy, Admin, Profile) live here, opened from the avatar.
-    const acctNav = NAV.filter((n) => ["#/privacy", "#/facility", "#/profile"].includes(n.hash))
+    const acctNav = NAV.filter((n) => ["#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash))
       .filter((n) => !(n.adminOnly && user.role !== "admin"))
+      .filter((n) => !(n.ownerOnly && !isOwner()))
       .filter((n) => !(n.emr && !emrAllowed));
     const acctMenuHtml = `
       <div class="acct-menu" id="acctMenu" role="menu" aria-hidden="true">
@@ -6405,11 +6433,7 @@ ${allowanceCard()}
     );
 
     // ---- employee management (create / reset password / delete) ----
-    const genTempPw = () => {
-      const a = new Uint8Array(9);
-      (window.crypto && window.crypto.getRandomValues) ? window.crypto.getRandomValues(a) : a.forEach((_, i) => (a[i] = Math.floor(Math.random() * 256)));
-      return btoa(String.fromCharCode(...a)).replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
-    };
+    const genTempPw = genTempPassword;
     const T = window.TheraSync || {};
     const roleSel = document.getElementById("nu-role");
     if (roleSel) roleSel.addEventListener("change", () => {
@@ -6485,6 +6509,104 @@ ${allowanceCard()}
         render();
       })
     );
+  }
+
+  /* ================= CLINICS (platform operator only) =================
+
+     Onboarding, which is a different job from Facility Admin. Facility Admin is
+     a clinic running itself; this is the operator standing up a clinic they are
+     not a member of. Note what is deliberately absent: no way to open a
+     clinic's records, rename it, or reach its patients. The operator needs to
+     know a clinic EXISTS and how big it is, and nothing here should quietly
+     become a master key into everyone's charts. */
+
+  function clinicsView(user) {
+    return `
+<div class="page-head"><div><h1>Clinics</h1><div class="sub">Onboard a new clinic, and see every clinic on this server</div></div></div>
+<div class="cards-2">
+  <div class="card">
+    <h2>Onboard a clinic</h2>
+    <p style="font-size:12.5px; color:var(--muted)">Creates the clinic and its first administrator. They sign in with the temporary password, are made to choose their own, and then add their own staff. Their records are separate from every other clinic — including yours.</p>
+    <div class="field"><label>Clinic name</label><input id="nc-clinic" placeholder="e.g. Bayanihan Physical Therapy" /></div>
+    <div class="field"><label>First administrator's name</label><input id="nc-name" placeholder="e.g. Bea Navarro, PT" /></div>
+    <div class="field"><label>Their email (this is their login)</label><input id="nc-email" type="email" autocapitalize="off" spellcheck="false" placeholder="bea@bayanihanpt.ph" /></div>
+    <div class="field"><label>Temporary password (min 8 — they'll change it at first login)</label>
+      <div style="display:flex; gap:8px"><input id="nc-pw" type="text" autocomplete="off" style="flex:1" /><button class="btn small" id="nc-gen" type="button">Generate</button></div></div>
+    <button class="btn primary" id="nc-create">Create clinic</button>
+    <div id="nc-msg" style="font-size:12.5px; min-height:18px; margin-top:8px"></div>
+    <div id="nc-handoff"></div>
+  </div>
+  <div class="card">
+    <h2>All clinics</h2>
+    <p style="font-size:12.5px; color:var(--muted)">Counts only. Opening another clinic's records isn't possible from here — each clinic's charts are visible only to its own staff.</p>
+    <div id="nc-list"><div class="empty-state">Loading…</div></div>
+  </div>
+</div>`;
+  }
+
+  function bindClinics(user) {
+    const T = window.TheraSync || {};
+    const msg = document.getElementById("nc-msg");
+    const list = document.getElementById("nc-list");
+    const say = (text, ok) => { msg.textContent = text; msg.style.color = ok ? "var(--good)" : "var(--danger)"; };
+
+    const refresh = async () => {
+      const r = await T.listClinics();
+      if (r.error) { list.innerHTML = `<div class="empty-state">${esc(r.error)}</div>`; return; }
+      const rows = r.clinics || [];
+      if (!rows.length) { list.innerHTML = `<div class="empty-state">No clinics yet.</div>`; return; }
+      list.innerHTML = `<table class="list"><thead><tr><th>Clinic</th><th>Staff</th><th>Patients</th><th>Notes</th></tr></thead><tbody>
+        ${rows.map((c) => `<tr>
+          <td><b>${esc(c.name)}</b>${c.admins === 0 ? ` <span class="chip bad">no active admin</span>` : ""}</td>
+          <td>${c.staff}</td><td>${c.patients}</td><td>${c.documents}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+    };
+
+    document.getElementById("nc-gen").addEventListener("click", () => {
+      document.getElementById("nc-pw").value = genTempPassword();
+    });
+
+    document.getElementById("nc-create").addEventListener("click", async () => {
+      const btn = document.getElementById("nc-create");
+      const fields = {
+        clinicName: document.getElementById("nc-clinic").value.trim(),
+        ownerName: document.getElementById("nc-name").value.trim(),
+        ownerEmail: document.getElementById("nc-email").value.trim(),
+        password: document.getElementById("nc-pw").value,
+      };
+      say("", true);
+      btn.disabled = true;
+      try {
+        const r = await T.createClinic(fields);
+        if (r.error) { say(r.error, false); return; }
+        say("", true);
+        /* The password is shown ONCE, here. It is stored hashed and cannot be
+           read back — a lost one is reset from the clinic's own Facility Admin,
+           not recovered — so the handoff panel stays put until the operator
+           navigates away, rather than clearing itself on a timer. */
+        document.getElementById("nc-handoff").innerHTML = `
+          <div class="banner good" style="margin-top:10px">
+            <b>${esc(r.clinic.name)} is ready.</b>
+            <div style="margin-top:8px; font-size:13px; line-height:1.7">
+              Sign-in email: <b>${esc(r.admin.email)}</b><br/>
+              Temporary password: <b id="nc-temp">${esc(r.temporaryPassword)}</b>
+            </div>
+            <div style="font-size:12px; color:var(--muted); margin-top:8px">Send these to ${esc(r.admin.name)}. This password is shown once and can't be looked up again — if it's lost, they reset it from their own Facility Admin.</div>
+            <button class="btn small" id="nc-copy" type="button" style="margin-top:8px">Copy details</button>
+          </div>`;
+        const copy = document.getElementById("nc-copy");
+        if (copy) copy.addEventListener("click", async () => {
+          const text = `TheraChart — ${r.clinic.name}\nSign in at: ${location.origin}\nEmail: ${r.admin.email}\nTemporary password: ${r.temporaryPassword}\n\nYou'll be asked to choose your own password when you first sign in.`;
+          try { await navigator.clipboard.writeText(text); copy.textContent = "Copied"; }
+          catch { copy.textContent = "Press ⌘C to copy"; }
+        });
+        ["nc-clinic", "nc-name", "nc-email", "nc-pw"].forEach((id) => { document.getElementById(id).value = ""; });
+        await refresh();
+      } finally { btn.disabled = false; }
+    });
+
+    refresh();
   }
 
   /* ================= PROFILE ================= */

@@ -117,6 +117,10 @@
      password path checked the clinic and the Google path did not, so a Google
      sign-in on a device holding demo-clinic state merged it straight in. */
   async function adoptAfterLogin(payload, uid) {
+    /* Before either branch below: the merge path never reaches adopt(), so
+       setting this only there left the operator signed in with the Clinics page
+       missing until some later background sync happened to refresh it. */
+    noteOwner(payload);
     const localState = S.load();
     const was = clinicOfState(localState, localState.sessionUserId);
     const now = clinicOfState(payload.state, uid);
@@ -134,8 +138,20 @@
   }
 
   /* ---- adopt / merge ---- */
+
+  /* Is this session the platform operator? Decided by the SERVER, on every login
+     and every state fetch — the client never works it out from the roster,
+     because a flag the browser can compute is a flag the browser can set. It
+     only hides or shows the Clinics page; /api/clinics re-checks on every call.
+     Payloads that don't carry the field (an offline replay) leave it alone
+     rather than silently revoking the page. */
+  function noteOwner(payload) {
+    if (payload && "isOwner" in payload) sync.isOwner = !!payload.isOwner;
+  }
+
   function adopt(payload) {
     sync.rev = payload.rev;
+    noteOwner(payload);
     S.importAll(payload.state, { preserveSession: true });
     sync.lastSync = Date.now();
     lsSet(LS_LASTSYNC, String(sync.lastSync));
@@ -385,6 +401,32 @@
     }
     const r = S.addUser(fields, S.currentUser());
     return r.error ? { error: r.error } : { userId: r.user.id };
+  };
+
+  /* Operator: every clinic on the server, and onboarding a new one. Server-only
+     — a new tenant has to be created where the data actually lives, and there is
+     no offline or browser-only equivalent to fall back to. The server re-checks
+     that this session is the platform owner; `sync.isOwner` only decides whether
+     the page is offered. */
+  sync.listClinics = async () => {
+    if (sync.mode !== "server" || !sync.token) {
+      return { error: "Managing clinics needs the clinic server." };
+    }
+    const r = await api("/api/clinics");
+    if (!r.ok) return { error: (r.data && r.data.error) || "Couldn't load the clinic list." };
+    return { clinics: r.data.clinics || [] };
+  };
+
+  sync.createClinic = async (fields) => {
+    if (sync.mode !== "server" || !sync.token) {
+      return { error: "Creating a clinic needs the clinic server." };
+    }
+    const r = await api("/api/clinics", { method: "POST", body: fields });
+    if (!r.ok) return { error: (r.data && r.data.error) || "Couldn't create the clinic." };
+    // the operator's own view is unchanged by this (the new clinic is a separate
+    // tenant), but refresh so the audit entry and rev stay in step
+    const st = await api("/api/state"); if (st.ok) adopt(st.data);
+    return r.data;
   };
 
   /* Admin: remove an employee. */
