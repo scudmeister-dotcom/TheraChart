@@ -18,6 +18,7 @@
      public sign-in screen under "Test accounts · password 1234". server.js and
      app.js both read this rather than keeping their own copies. */
   const SEEDED_DEMO_USER_IDS = ["u-maria", "u-jose", "u-carlo", "u-ana", "u-grace", "u-fresh"];
+  const SEEDED_DEMO_ID_SET = new Set(SEEDED_DEMO_USER_IDS);
 
   let storage;
   if (typeof globalThis !== "undefined" && globalThis.THERACHART_STORAGE) {
@@ -708,12 +709,23 @@
     const name = String((fields && fields.name) || "").trim() || email.split("@")[0];
     const sub = fields && fields.googleSub ? String(fields.googleSub) : null;
     const source = (fields && fields.source) || "google";
+    /* Someone asking for an account by email picks their password up front, so
+       approving is one click and nobody has to hand a secret over out of band.
+       It is hashed here and the account stays inactive until approved, so a
+       pending request is not a usable credential. */
+    const password = fields && fields.password ? String(fields.password) : "";
+    const stashPassword = (r) => {
+      if (!password) return;
+      if (authenticator) r.passwordHash = authenticator.hash(password);
+      else r.pin = password;
+    };
 
     let req = state.accessRequests.find((r) => normEmail(r.email) === email && r.status === "pending");
     if (req) {
       req.attempts = (req.attempts || 1) + 1;
       req.name = req.name || name;
       if (sub) req.googleSub = sub;
+      stashPassword(req);
       touch(req);
     } else {
       req = {
@@ -727,6 +739,7 @@
            join; the fallback keeps the browser-only build working. */
         clinicId: (fields && fields.clinicId) || currentClinicId(),
       };
+      stashPassword(req);
       touch(req);
       state.accessRequests.push(req);
     }
@@ -735,43 +748,76 @@
     return { request: req };
   }
 
-  /** Approve a pending request: provision an active Google account with the
-      chosen role, then mark the request resolved (kept for the audit trail). */
+  /* Find a pending request within the acting admin's own clinic.
+
+     Scoped by `byUser` rather than by accessRequests()'s ambient filter: the
+     server holds no session (it authenticates per request), so the ambient
+     "current clinic" there is the default one and an admin of any other clinic
+     could not find their own queue. Falls back to the ambient scope for the
+     browser-only build, where the acting user IS the session. */
+  function findPendingRequest(id, byUser) {
+    load();
+    if (!Array.isArray(state.accessRequests)) return null;
+    const cid = (byUser && byUser.clinicId) || currentClinicId();
+    return state.accessRequests.find((r) => r.id === id && recClinic(r) === cid) || null;
+  }
+
+  /** Approve a pending request: provision an active account with the chosen
+      role and the credential its source implies, then mark the request
+      resolved (kept for the audit trail). */
   function approveAccessRequest(id, opts, byUser) {
     load();
-    const req = accessRequests().find((r) => r.id === id);
+    const req = findPendingRequest(id, byUser);
     if (!req) return { error: "That request no longer exists." };
     if (req.status !== "pending") return { error: "That request has already been handled." };
     const role = ROLES.includes(opts && opts.role) ? opts.role : "therapist";
     const email = normEmail(req.email);
+    /* Approving decides the role, never the way in: a Google request stays a
+       Google account, and an email request is activated with the password its
+       owner already chose. Provisioning the wrong provider would leave someone
+       approved and still unable to sign in. */
+    const viaGoogle = req.source !== "email";
+    const applyCredential = (u) => {
+      u.authProvider = viaGoogle ? "google" : "password";
+      if (viaGoogle) {
+        if (req.googleSub) u.googleSub = req.googleSub;
+        return;
+      }
+      if (req.passwordHash) u.passwordHash = req.passwordHash;
+      else if (req.pin != null) u.pin = req.pin;
+    };
     let user = getUserByEmail(email);
     if (user) {
       user.active = true;
       user.role = role;
       if (role === "frontdesk") user.license = null;
-      user.authProvider = "google";
-      if (req.googleSub) user.googleSub = req.googleSub;
+      applyCredential(user);
       delete user.mustChangePassword;
       touch(user);
     } else {
       user = {
         id: uid("u"), name: req.name || email.split("@")[0], email, role,
-        active: true, license: null, authProvider: "google",
+        active: true, license: null,
         // an approved person joins the clinic of the admin who approved them —
         // without this they fall back to the demo clinic and see its charts
         clinicId: (byUser && byUser.clinicId) || currentClinicId(),
       };
-      if (req.googleSub) user.googleSub = req.googleSub;
+      applyCredential(user);
       touch(user);
       state.users.push(user);
     }
+    /* The credential now lives on the account, so drop it from the request.
+       The request is kept for the audit trail and does not need to keep a
+       usable password hash in it. */
+    delete req.passwordHash;
+    delete req.pin;
     req.status = "approved";
     req.role = role;
     req.resolvedBy = byUser ? byUser.id : null;
     req.resolvedAt = new Date().toISOString();
     touch(req);
     save();
-    audit(byUser ? byUser.id : null, "user-created", `${user.name} (${role}, google)`);
+    audit(byUser ? byUser.id : null, "user-created", `${user.name} (${role}, ${viaGoogle ? "google" : "password"})`);
     audit(byUser ? byUser.id : null, "access-approved", `${email} (${role})`);
     return { user, request: req };
   }
@@ -779,9 +825,11 @@
   /** Decline a pending request — kept (marked declined) for the audit trail. */
   function declineAccessRequest(id, byUser) {
     load();
-    const req = accessRequests().find((r) => r.id === id);
+    const req = findPendingRequest(id, byUser);
     if (!req) return { error: "That request no longer exists." };
     if (req.status !== "pending") return { error: "That request has already been handled." };
+    delete req.passwordHash;
+    delete req.pin;
     req.status = "declined";
     req.resolvedBy = byUser ? byUser.id : null;
     req.resolvedAt = new Date().toISOString();
@@ -931,6 +979,28 @@
     state.sessionUserId = user.id;
     save();
     audit(user.id, "login", user.role);
+    return null;
+  }
+
+  /** Enter a seeded demo account without a password.
+
+      The authorization question for a demo account is "may this person reach
+      the demo at all", which is answered before this is ever called — by the
+      server's demo gate, or by being in the browser-only build. Once answered,
+      re-asking for a password that is published anyway adds nothing. Restricted
+      to the seeded ids so it can never become a password bypass for real staff. */
+  function loginAsDemo(userId) {
+    load();
+    if (!SEEDED_DEMO_ID_SET.has(userId)) return "That demo account isn't available.";
+    const user = getUser(userId);
+    if (!user) return "That demo account isn't available.";
+    if (!user.active) {
+      audit(user.id, "login-denied", "access voided");
+      return "Access for this account has been voided. Contact your administrator.";
+    }
+    state.sessionUserId = user.id;
+    save();
+    audit(user.id, "login", `${user.role} (demo panel)`);
     return null;
   }
 
@@ -1957,7 +2027,7 @@
     // operator-only (server gates these to the platform owner)
     createClinic, clinicSummaries,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
-    users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, logout, currentUser,
+    users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, addProvider, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // which accounts are seeded demo logins (never infer this from the email domain)

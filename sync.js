@@ -305,6 +305,71 @@
     }
   };
 
+  /* ---- demo sign-in: picking a name, not typing its password.
+
+     Offline has no path: the whole point is that the SERVER decides whether
+     this caller may open a demo account, and an offline device cannot ask. ---- */
+  const localLoginAsDemo = S.loginAsDemo;
+  S.loginAsDemo = async (userId) => {
+    if (sync.mode === "local") return localLoginAsDemo(userId);
+    if (sync.mode === "offline") {
+      return "You're offline. Opening a demo account needs the clinic server.";
+    }
+    try {
+      const res = await api("/api/demo-signin", { method: "POST", body: { userId } });
+      if (!res.ok) return res.data.error || "Couldn't open that demo account.";
+      sync.token = res.data.token;
+      lsSet(LS_TOKEN, sync.token);
+      await adoptAfterLogin(res.data, res.data.userId);
+      return null;
+    } catch (e) {
+      goOffline("server unreachable during demo sign-in");
+      return "Couldn't reach the clinic server.";
+    }
+  };
+
+  /* Ask an administrator for an account. Server-only: the queue an admin
+     approves from lives there, so there is nothing to write offline. */
+  sync.requestAccount = async ({ name, email, password }) => {
+    if (sync.mode !== "server") {
+      return { error: "Creating an account needs the clinic server." };
+    }
+    try {
+      const res = await api("/api/request-account", { method: "POST", body: { name, email, password } });
+      if (!res.ok) return { error: res.data.error || "Couldn't send that request." };
+      return { ok: true, message: res.data.message };
+    } catch (e) {
+      return { error: "Couldn't reach the clinic server." };
+    }
+  };
+
+  /* Approving mints a credential, which only the server can keep: a device
+     push has its password hashes stripped on the way in. So approvals go to
+     the endpoint in server mode, and stay local only in the browser-only
+     build, where there is no server to disagree with. */
+  const localApprove = S.approveAccessRequest;
+  const localDecline = S.declineAccessRequest;
+  const handleRequest = async (id, body, localFn, byUser) => {
+    if (sync.mode === "local") {
+      return body.action === "approve" ? localFn(id, { role: body.role }, byUser) : localFn(id, byUser);
+    }
+    if (sync.mode === "offline") return { error: "You're offline. Handling access requests needs the clinic server." };
+    try {
+      const res = await api("/api/access-requests", { method: "POST", body: { id, ...body } });
+      if (!res.ok) return { error: res.data.error || "Couldn't handle that request." };
+      // the approval happened on the server; adopt the result before re-rendering
+      const st = await api("/api/state");
+      if (st.ok) adopt(st.data);
+      return { ok: true };
+    } catch (e) {
+      return { error: "Couldn't reach the clinic server." };
+    }
+  };
+  S.approveAccessRequest = (id, opts, byUser) =>
+    handleRequest(id, { action: "approve", role: (opts || {}).role }, localApprove, byUser);
+  S.declineAccessRequest = (id, byUser) =>
+    handleRequest(id, { action: "decline" }, localDecline, byUser);
+
   /* Drop the device's credential AND the session behind it.
 
      Clearing localStorage alone would leave a working token on the server for

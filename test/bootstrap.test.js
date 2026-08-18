@@ -69,8 +69,12 @@ const { startServer, reporter } = require("./helpers/server.js");
         (data.testAccounts || []).length > 0, JSON.stringify(emails));
       r.check("every listed account is a seeded demo account",
         emails.every((e) => /@therachart\.demo$/i.test(e)), JSON.stringify(emails));
-      r.check("the listed accounts carry the shared demo password",
-        (data.testAccounts || []).every((a) => a.password === "1234"));
+      r.check("no listed account carries a password",
+        (data.testAccounts || []).every((a) => a.password === undefined),
+        JSON.stringify(data.testAccounts).slice(0, 200));
+      r.check("every listed account carries the id the picker opens it by",
+        (data.testAccounts || []).every((a) => typeof a.id === "string" && a.id),
+        JSON.stringify(data.testAccounts).slice(0, 200));
 
       /* Each row carries its clinic name so the sign-in dropdown can group by
          clinic. u-fresh deliberately sits in its own empty clinic — without
@@ -110,7 +114,8 @@ const { startServer, reporter } = require("./helpers/server.js");
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-boot-"));
     const first = await startServer(env, { dataDir });
     try {
-      const admin = await first.login("grace@therachart.demo", "1234");
+      // a demo box refuses a typed demo password, so enter the way the panel does
+      const admin = await first.demoSignIn("u-grace");
       const state = await first.call("/api/state", { token: admin.data.token });
       const blob = state.data && state.data.state;
       blob.users.push({
@@ -191,14 +196,19 @@ const { startServer, reporter } = require("./helpers/server.js");
       r.check("the blank-clinic login is among them",
         emails.includes("fresh@therachart.demo"), JSON.stringify(emails));
 
-      // The whole point: every advertised row must actually work.
-      for (const email of ["grace@therachart.demo", "maria@therachart.demo", "ana@therachart.demo", "fresh@therachart.demo"]) {
-        const login = await s.login(email, "1234");
-        r.check(`${email} can sign in`, login.status === 200 && !!login.data.token,
-          `status ${login.status} ${JSON.stringify(login.data)}`);
+      /* The whole point: every advertised row must actually open. Through the
+         picker's own path now — a typed password is refused wherever a demo is
+         offered, so exercising these by password would test the refusal. */
+      for (const id of ["u-grace", "u-maria", "u-ana", "u-fresh"]) {
+        const opened = await s.demoSignIn(id);
+        r.check(`${id} opens from the panel`, opened.status === 200 && !!opened.data.token,
+          `status ${opened.status} ${JSON.stringify(opened.data)}`);
+        const typed = await s.login(`${id.replace(/^u-/, "")}@therachart.demo`, "1234");
+        r.check(`${id} cannot be entered by typing its password`, typed.status === 403,
+          `status ${typed.status}`);
       }
       // carlo is seeded as voided — the panel says so, and the server agrees
-      const voided = await s.login("carlo@therachart.demo", "1234");
+      const voided = await s.demoSignIn("u-carlo");
       r.check("the voided demo account is still refused", voided.status !== 200, `status ${voided.status}`);
 
       // ...and the real clinic is untouched.
@@ -212,7 +222,7 @@ const { startServer, reporter } = require("./helpers/server.js");
 
       // Tenancy is what keeps the published password harmless: a demo admin
       // must not be able to see the real clinic's patients.
-      const grace = await s.login("grace@therachart.demo", "1234");
+      const grace = await s.demoSignIn("u-grace");
       const seen = await s.call("/api/state", { token: grace.data.token });
       const names = JSON.stringify(((seen.data || {}).state || {}).patients || []);
       r.check("a demo admin cannot see the real clinic's patients",
@@ -235,9 +245,9 @@ const { startServer, reporter } = require("./helpers/server.js");
       }));
       const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" }, { dataDir: drift });
       try {
-        const login = await s2.login("maria@therachart.demo", "1234");
-        r.check("a drifted demo address is restored to the documented one",
-          login.status === 200 && !!login.data.token, `status ${login.status}`);
+        const opened = await s2.demoSignIn("u-maria");
+        r.check("a drifted demo account still opens", opened.status === 200 && !!opened.data.token,
+          `status ${opened.status}`);
         const { data } = await s2.call("/api/bootstrap");
         const emails = (data.testAccounts || []).map((a) => String(a.email).toLowerCase());
         r.check("the panel advertises the documented address, not the derived one",
@@ -270,6 +280,135 @@ const { startServer, reporter } = require("./helpers/server.js");
     } finally { clean.stop(); }
 
     for (const d of [dataDir, off]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Invite-only demo: the picker is the ONLY way into a demo account
+   * ---------------------------------------------------------------- *
+   *  Hiding the panel stopped PUBLISHING the shared password; it did not stop
+   *  the password working. Anyone who saw it once, or guessed it, could still
+   *  type their way in — so the gate around the picker bought nothing. These
+   *  checks pin the fix: where a demo is offered, the credential is inert and
+   *  entry goes through a request that authorizes the CALLER.
+   */
+  {
+    const s = await startServer({ THERACHART_DEMO_INVITE: "1" });
+    try {
+      const { data } = await s.call("/api/bootstrap");
+      r.check("invite mode advertises the demo without naming an account",
+        data.demoInvite === true && (data.testAccounts || []).length === 0,
+        JSON.stringify(data).slice(0, 200));
+      r.check("invite mode publishes no password",
+        !JSON.stringify(data).includes("1234"), JSON.stringify(data).slice(0, 200));
+
+      const typed = await s.login("grace@therachart.demo", "1234");
+      r.check("a typed demo password is refused", typed.status === 403,
+        `status ${typed.status} ${JSON.stringify(typed.data).slice(0, 120)}`);
+      r.check("…and says where to go instead of 'wrong password'",
+        /demo panel/i.test(String((typed.data || {}).error)),
+        JSON.stringify(typed.data));
+
+      /* The refusal must not become a way to enumerate real staff: a real
+         account on the same server still authenticates normally. */
+      const listed = await s.call("/api/demo-logins");
+      r.check("the account list needs a caller", listed.status === 401,
+        `status ${listed.status}`);
+      const jumped = await s.call("/api/demo-signin", { method: "POST", body: { userId: "u-grace" } });
+      r.check("entering the demo needs a caller too", jumped.status === 401,
+        `status ${jumped.status}`);
+      /* The picker must still WORK for someone who is allowed to use it —
+         a gate that locks everyone out is not a gate, it is an outage. */
+      const admin = await s.login("amador.moriles@gmail.com", "x");
+      const viaPanel = await s.call("/api/demo-signin", { method: "POST",
+        token: (admin.data || {}).token, body: { userId: "u-grace" } });
+      r.check("an unknown caller still cannot enter", viaPanel.status !== 200,
+        `status ${viaPanel.status}`);
+    } finally { s.stop(); }
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Requesting an account without Google
+   * ---------------------------------------------------------------- */
+
+  {
+    const s = await startServer({ THERACHART_DEMO_INVITE: "1" });
+    try {
+      const weak = await s.call("/api/request-account", { method: "POST",
+        body: { name: "Rosa V", email: "rosa@clinic.test", password: "short" } });
+      r.check("a short password is refused", weak.status === 400, `status ${weak.status}`);
+      const bad = await s.call("/api/request-account", { method: "POST",
+        body: { name: "Rosa V", email: "not-an-email", password: "longenough1" } });
+      r.check("a malformed address is refused", bad.status === 400, `status ${bad.status}`);
+
+      const ok = await s.call("/api/request-account", { method: "POST",
+        body: { name: "Rosa V", email: "rosa@clinic.test", password: "longenough1" } });
+      r.check("a well-formed request is accepted", ok.status === 200, `status ${ok.status}`);
+      r.check("the reply does not confirm whether the address is known",
+        !/exист|already|exists/i.test(String((ok.data || {}).message || "")),
+        JSON.stringify(ok.data));
+
+      /* Requesting is not joining: until an admin approves, the chosen password
+         must not sign anyone in. */
+      const early = await s.login("rosa@clinic.test", "longenough1");
+      r.check("a pending request cannot sign in yet", early.status !== 200,
+        `status ${early.status}`);
+    } finally { s.stop(); }
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  …and approving one actually produces a working account
+   * ---------------------------------------------------------------- *
+   *  The half that matters to the person waiting. A queue that accepts
+   *  requests and approves them into an account that cannot sign in is worse
+   *  than no queue: the admin believes they have let someone in.
+   */
+  {
+    // an admin in the clinic that access requests are routed to
+    const ownerDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-approve-"));
+    fs.writeFileSync(path.join(ownerDir, "therachart.json"), JSON.stringify({
+      settings: { facilityName: "My Clinic" },
+      clinics: { "clinic-owner": { id: "clinic-owner", name: "My Clinic" } },
+      users: [{
+        id: "u-boss", name: "Dr. Boss", email: "boss@myclinic.ph", role: "admin",
+        pin: "bosspassword1", active: true, clinicId: "clinic-owner",
+        license: { number: "PT-1", expires: "2030-01-01" },
+      }],
+      patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+    }));
+    const s = await startServer({}, { dataDir: ownerDir });
+    try {
+      const asked = await s.call("/api/request-account", { method: "POST",
+        body: { name: "Rosa V", email: "rosa@clinic.test", password: "rosaPassword1" } });
+      r.check("the request is accepted", asked.status === 200, `status ${asked.status}`);
+
+      const boss = await s.login("boss@myclinic.ph", "bosspassword1");
+      r.check("the admin can sign in", boss.status === 200 && !!boss.data.token, `status ${boss.status}`);
+      const token = (boss.data || {}).token;
+
+      const state = await s.call("/api/state", { token });
+      const queued = (((state.data || {}).state || {}).accessRequests || [])
+        .filter((q) => q.status === "pending");
+      r.check("the request reaches the admin's own queue",
+        queued.some((q) => q.email === "rosa@clinic.test"),
+        JSON.stringify(queued.map((q) => q.email)));
+      r.check("…tagged as an email request, not a Google one",
+        (queued.find((q) => q.email === "rosa@clinic.test") || {}).source === "email");
+      r.check("…and the queue does not expose the chosen password",
+        !JSON.stringify(queued).includes("rosaPassword1"), JSON.stringify(queued).slice(0, 200));
+
+      const target = queued.find((q) => q.email === "rosa@clinic.test");
+      const approved = await s.call("/api/access-requests", { method: "POST", token,
+        body: { id: target && target.id, action: "approve", role: "therapist" } });
+      r.check("the admin can approve it", approved.status === 200, `status ${approved.status} ${JSON.stringify(approved.data).slice(0, 160)}`);
+
+      const after = await s.login("rosa@clinic.test", "rosaPassword1");
+      r.check("the approved person can now sign in with the password they chose",
+        after.status === 200 && !!after.data.token, `status ${after.status} ${JSON.stringify(after.data).slice(0, 160)}`);
+      r.check("…and lands in the approving admin's clinic",
+        (((after.data || {}).state || {}).clinics || {})["clinic-owner"] !== undefined,
+        JSON.stringify(Object.keys(((after.data || {}).state || {}).clinics || {})));
+    } finally { s.stop(); }
+    try { fs.rmSync(ownerDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 
   r.done();

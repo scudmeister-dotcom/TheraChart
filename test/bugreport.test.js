@@ -18,9 +18,9 @@ const PNG_1PX = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfF
   const s = await startServer({ THERACHART_DEMO_LOGINS: "1" });
 
   try {
-    const therapist = (await s.login("maria@therachart.demo", "1234")).data.token;
-    const frontdesk = (await s.login("ana@therachart.demo", "1234")).data.token;
-    const admin = (await s.login("grace@therachart.demo", "1234")).data.token;
+    const therapist = (await s.demoSignIn("u-maria")).data.token;
+    const frontdesk = (await s.demoSignIn("u-ana")).data.token;
+    const admin = (await s.demoSignIn("u-grace")).data.token;
 
     /* ---------------- filing a report ---------------- */
 

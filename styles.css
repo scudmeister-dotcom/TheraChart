@@ -738,6 +738,23 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .login-user .chip { margin-left: auto; }
 .demo-note { font-size: 12px; color: var(--muted); margin-top: 10px; }
 
+/* Requesting an account. Sits under the sign-in controls as a quiet secondary
+   path — it is the exception, not the main way in, so it must not compete with
+   the Sign in button. */
+.signup-cta { margin-top: 14px; font-size: 12.5px; color: var(--muted); text-align: center; }
+.linkish {
+  background: none; border: 0; padding: 0; font: inherit; cursor: pointer;
+  color: var(--accent); font-weight: 600; text-decoration: underline;
+}
+.signup-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.signup-panel[hidden] { display: none; }
+.signup-intro { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+.signup-actions { display: flex; gap: 8px; margin-top: 4px; }
+.signup-actions .btn { flex: 1; justify-content: center; }
+.signup-msg { font-size: 12.5px; min-height: 18px; margin-top: 8px; line-height: 1.45; }
+.signup-msg.bad { color: var(--danger); }
+.signup-msg.good { color: var(--ok, var(--accent)); }
+
 /* "or" divider + Google button on the login card */
 .login-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 12px; color: var(--muted); font-size: 12px; }
 .login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
@@ -779,6 +796,10 @@ textarea:disabled, textarea[readonly] { resize: none; }
   transition: border-color 0.14s, background 0.14s, transform 0.1s;
 }
 .ta-row:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--hover); transform: translateY(-1px); }
+/* The row now signs you in, so it spends a moment in flight — and every other
+   row has to stop being clickable while it does. */
+.ta-row:disabled { opacity: .55; cursor: default; transform: none; }
+.ta-row:disabled:hover { border-color: var(--border); background: var(--panel); transform: none; }
 .ta-avatar {
   flex: none; width: 30px; height: 30px; border-radius: 50%;
   display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff;

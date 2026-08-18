@@ -34,7 +34,7 @@ const OWNER = "owner@therachart.test";
     try {
       // The demo admin: role "admin", and a password anyone can read off the
       // public sign-in screen. The most dangerous caller in the system.
-      const grace = await s.login("grace@therachart.demo", "1234");
+      const grace = await s.demoSignIn("u-grace");
       r.check("the demo admin can sign in at all (precondition)",
         grace.status === 200 && !!grace.data.token, `status ${grace.status}`);
 
@@ -61,7 +61,7 @@ const OWNER = "owner@therachart.test";
         `status ${anon.status}`);
 
       // A therapist, for completeness — no role reaches it.
-      const maria = await s.login("maria@therachart.demo", "1234");
+      const maria = await s.demoSignIn("u-maria");
       const asPt = await s.call("/api/clinics", { token: maria.data.token });
       r.check("a therapist cannot reach it either", asPt.status === 403, `status ${asPt.status}`);
     } finally { s.stop(); }
@@ -81,7 +81,7 @@ const OWNER = "owner@therachart.test";
          exercises the same gate. Created by the demo admin, who may add staff
          to their OWN clinic — which is also why the owner starts out in the
          demo clinic here, and why the new clinic must still come out separate. */
-      const grace = await s.login("grace@therachart.demo", "1234");
+      const grace = await s.demoSignIn("u-grace");
       const mk = await s.call("/api/users", {
         method: "POST", token: grace.data.token,
         body: { name: "Platform Owner", email: OWNER, role: "admin", password: "ownerpassword1" },
@@ -209,7 +209,7 @@ const OWNER = "owner@therachart.test";
         JSON.stringify(demoScoped.request));
 
       // The demo admin must not be the one seeing real access requests.
-      const grace = await s.login("grace@therachart.demo", "1234");
+      const grace = await s.demoSignIn("u-grace");
       const seen = await s.call("/api/state", { token: grace.data.token });
       const queue = JSON.stringify(((seen.data || {}).state || {}).accessRequests || []);
       r.check("the demo clinic's queue does not hold the routed request",

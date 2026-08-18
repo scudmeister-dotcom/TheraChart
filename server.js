@@ -670,7 +670,6 @@ const DEMO_LOGINS_ENABLED = process.env.THERACHART_DEMO_LOGINS === "1";
    INVITE and not LOGINS. */
 const DEMO_INVITE_ENABLED = process.env.THERACHART_DEMO_INVITE === "1";
 const DEMO_ACCOUNTS_AVAILABLE = DEMO_LOGINS_ENABLED || DEMO_INVITE_ENABLED;
-const DEMO_LOGIN_PASSWORD = "1234";
 const SEEDED_DEMO_IDS = new Set(store.SEEDED_DEMO_USER_IDS);
 /** `authed` callers get the list even when it is not published publicly. */
 function demoLogins(authed) {
@@ -693,8 +692,11 @@ function demoLogins(authed) {
          flat under "Demo Clinic" would promise the seeded charts and then open
          a blank EMR. Safe to publish: these are seeded demo clinics, and the
          demo clinic's name is already the public facilityName. */
+      /* No password: the panel opens these accounts through /api/demo-signin,
+         which authorizes the CALLER rather than trusting a shared secret. The
+         id is what that endpoint takes. */
       return {
-        name: u.name, email: u.email, role: u.role, password: DEMO_LOGIN_PASSWORD, status,
+        id: u.id, name: u.name, email: u.email, role: u.role, status,
         clinic: store.clinicName(clinicOfUser(u)),
       };
     });
@@ -1152,6 +1154,23 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const identifier = body.email != null ? body.email : body.userId; // email is the login; userId kept for back-compat
       const secret = body.password != null ? body.password : body.pin;   // password; pin kept for back-compat
+      /* When this server offers the demo through a picker, the picker is the
+         only way into those accounts. They share one password that the picker
+         itself used to print, so treating a typed "1234" as proof of anything
+         would make the gate around the picker pointless — the demo would be
+         exactly as open as the day the password was on the sign-in screen.
+         Opening them goes through /api/demo-signin, which authorizes the
+         CALLER instead. On a server offering no demo at all these are just
+         seeded accounts (and should be deleted before real patients arrive —
+         see the note above DEMO_LOGINS_ENABLED). */
+      if (DEMO_ACCOUNTS_AVAILABLE) {
+        const target = store.findUserByLogin(identifier);
+        if (target && SEEDED_DEMO_IDS.has(target.id)) {
+          store.audit(target.id, "login-denied", "demo account — opened from the demo panel, not by password");
+          bumpRev();
+          return json(res, 403, { error: "Demo accounts are opened from the demo panel, not by typing a password." });
+        }
+      }
       const rlKey = String(identifier || "").trim().toLowerCase();        // rate-limit per identifier
       const lf = loginFails.get(rlKey) || { n: 0, lockUntil: 0 };
       if (lf.lockUntil > Date.now()) {
@@ -1182,6 +1201,71 @@ const server = http.createServer(async (req, res) => {
       const authed = store.findUserByLogin(identifier);
       bumpRev(); // audit entry was added
       return json(res, 200, { token: tokenFor(authed.id), userId: authed.id, rev, isOwner: isPlatformOwner(authed), state: scopedState(authed) });
+    }
+
+    /* Ask for an account without Google.
+
+       Same queue and the same approval as a denied Google sign-in — the only
+       difference is which credential the approval activates. Deliberately says
+       the same thing whether or not the address is already known: a stranger
+       should not be able to use this to learn who has an account here. */
+    if (url.pathname === "/api/request-account" && req.method === "POST") {
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const name = String(body.name || "").trim();
+      const sent = { ok: true, message: "Thanks — your request has been sent to an administrator. You'll be able to sign in once it's approved." };
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: "A valid email address is required." });
+      if (password.length < 8) return json(res, 400, { error: "Choose a password of at least 8 characters." });
+      if (!name) return json(res, 400, { error: "Please give your name." });
+      const rlKey = `req:${email}`;
+      const lf = loginFails.get(rlKey) || { n: 0, lockUntil: 0 };
+      if (lf.lockUntil > Date.now()) return json(res, 429, { error: "Too many requests — wait a minute and try again." });
+      lf.n += 1;
+      if (lf.n >= 5) { lf.n = 0; lf.lockUntil = Date.now() + 60 * 1000; }
+      loginFails.set(rlKey, lf);
+      const r = store.requestAccess({ email, name, password, source: "email", clinicId: GOOGLE_CLINIC_ID });
+      if (r.error) return json(res, 400, { error: r.error });
+      // An address that already has an active account gets the same reply as a
+      // new one — the person is told to sign in, not told an account exists.
+      bumpRev();
+      return json(res, 200, sent);
+    }
+
+    /* Enter a demo account by picking it, not by typing its password.
+
+       Who may do this differs by how the demo is offered, and the endpoint has
+       to say so rather than assume:
+         - INVITE: an approved account must already be signed in. This is the
+           gate — the demo is behind the door, not on it.
+         - LOGINS: the picker is shown to anonymous visitors by design (a
+           throwaway sales box), so this is open to them as well. It publishes
+           nothing that /api/bootstrap did not already.
+       Either way the demo account's own password never enters the exchange,
+       which is what makes a leaked "1234" worthless.
+
+       Restricted to the accounts demoLogins() would list, so it cannot be
+       pointed at real staff by guessing a user id. */
+    if (url.pathname === "/api/demo-signin" && req.method === "POST") {
+      if (!DEMO_ACCOUNTS_AVAILABLE) return json(res, 404, { error: "No demo clinic on this server." });
+      const caller = userForReq(req);
+      if (DEMO_INVITE_ENABLED && !DEMO_LOGINS_ENABLED && !caller) {
+        return json(res, 401, { error: "Sign in first to open the demo clinic." });
+      }
+      const { userId } = await readBody(req);
+      const offered = demoLogins(true).some((a) => a.id === userId);
+      if (!offered) return json(res, 403, { error: "That demo account isn't available." });
+      const fail = store.loginAsDemo(String(userId));
+      store.load().sessionUserId = null; // server holds no session in state
+      store.save();
+      if (fail) return json(res, 403, { error: fail });
+      const demoUser = store.getUser(String(userId));
+      console.log(`[demo] ${caller ? caller.email : "anonymous"} entered the demo as ${demoUser.email}`);
+      bumpRev(); // audit entry was added
+      return json(res, 200, {
+        token: tokenFor(demoUser.id), userId: demoUser.id, rev,
+        isOwner: isPlatformOwner(demoUser), state: scopedState(demoUser),
+      });
     }
 
     if (url.pathname === "/api/google-login" && req.method === "POST") {
@@ -1390,7 +1474,7 @@ const server = http.createServer(async (req, res) => {
         if (!DEMO_INVITE_ENABLED) return json(res, 404, { error: "No demo clinic on this server." });
         const accounts = demoLogins(true);
         console.log(`[demo] ${user.name} <${user.email}> opened the demo clinic (${accounts.length} accounts)`);
-        return json(res, 200, { accounts, password: DEMO_LOGIN_PASSWORD });
+        return json(res, 200, { accounts });
       }
 
       /* Usage, at two different altitudes.
@@ -1496,6 +1580,29 @@ const server = http.createServer(async (req, res) => {
         if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev, userId: result.user.id });
       }
+      /* Approve or decline a request for access.
+
+         An endpoint rather than a state push, because approving MINTS A
+         CREDENTIAL. A device push has its password hashes stripped on the way
+         in (clients can never introduce one — see the graft below), so an
+         approval applied on the device and synced would land a user with no
+         way to sign in: the admin would be told it worked, and the person would
+         be told their password is wrong. Hashing where the hash is kept is the
+         only version of this that works. */
+      if (url.pathname === "/api/access-requests" && req.method === "POST") {
+        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can handle access requests." });
+        const { id, action, role } = await readBody(req);
+        // accessRequests is tenant-scoped, so a request from another clinic is
+        // simply not found here — an admin cannot approve into someone else's.
+        const result = action === "decline"
+          ? store.declineAccessRequest(id, user)
+          : store.approveAccessRequest(id, { role }, user);
+        if (result.error) return json(res, 400, { error: result.error });
+        bumpRev();
+        if (!(await persisted(res, req))) return;
+        return json(res, 200, { ok: true, rev, userId: result.user ? result.user.id : null });
+      }
+
       if (url.pathname === "/api/delete-user" && req.method === "POST") {
         if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can remove employees." });
         const { userId } = await readBody(req);

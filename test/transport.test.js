@@ -41,7 +41,7 @@ function rawGet(base, path, headers) {
   const s = await startServer({ THERACHART_DEMO_LOGINS: "1" });
 
   try {
-    const login = await s.login("grace@therachart.demo", "1234");
+    const login = await s.demoSignIn("u-grace"); // demo box: entered from the panel
     const auth = { authorization: `Bearer ${login.data.token}` };
 
     /* ---------------- large response, client accepts gzip ---------------- */
@@ -111,7 +111,7 @@ function rawGet(base, path, headers) {
   {
     const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" });
     try {
-      const login = await s2.login("maria@therachart.demo", "1234");
+      const login = await s2.demoSignIn("u-maria"); // demo box: entered from the panel
       const token = login.data.token;
 
       /* Tests run with the Google credentials blanked, so STT answers 501

@@ -1221,7 +1221,7 @@ ${walkthroughMarkup()}`;
       const seeded = new Set(S.SEEDED_DEMO_USER_IDS || []);
       testAccounts = S.users()
         .filter((u) => seeded.has(u.id) && /@therachart\.demo$/i.test(u.email || ""))
-        .map((u) => ({ name: u.name, email: u.email, role: u.role, password: "1234",
+        .map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role,
           status: u.active === false ? "sign-in blocked (voided)" : "",
           clinic: S.clinicName(u.clinicId) }));
     }
@@ -1245,13 +1245,15 @@ ${walkthroughMarkup()}`;
     // blank single-admin clinic is the sideshow and reads as an odd lead.
     demoGroups.sort((a, b) => b.rows.length - a.rows.length);
     const demoRow = (a) => `
-      <button type="button" class="ta-row" data-ta-email="${esc(a.email)}" data-ta-pw="${esc(a.password || "1234")}">
+      <button type="button" class="ta-row" data-ta-id="${esc(a.id || "")}">
         <span class="ta-avatar">${esc(initials(a.name))}</span>
         <span class="ta-main"><span class="ta-name">${esc(a.name)}</span><span class="ta-email">${esc(a.email)}</span></span>
         <span class="ta-role">${esc(roleWord(a.role))}${a.status ? `<span class="ta-status">${esc(a.status)}</span>` : ""}</span>
       </button>`;
     // Google sign-in appears only when the server advertises a client id.
     const googleClientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
+    // Requesting an account needs the approval queue, which only the server has.
+    const serverMode = !!(window.TheraSync && window.TheraSync.mode === "server");
     app.innerHTML = `
 <div class="login-wrap">
   <div class="login-box">
@@ -1278,6 +1280,24 @@ ${walkthroughMarkup()}`;
       <button class="btn primary" id="loginBtn" style="width:100%; justify-content:center">Sign in</button>
       <div class="error" id="loginErr" style="color:var(--danger); font-size:13px; min-height:18px; margin-top:8px"></div>
       ${googleClientId ? `<div class="login-or"><span>or</span></div><div id="googleBtnWrap" class="google-btn-wrap"></div>` : ""}
+      ${serverMode ? `
+      <div class="signup-cta">
+        No account yet? <button type="button" class="linkish" id="askAccountBtn">Request an account</button>
+      </div>
+      <div class="signup-panel" id="askAccountPanel" hidden>
+        <div class="signup-intro">An administrator approves every account before it works. Choose your password now — you'll use it once you're approved.</div>
+        <div class="field"><label for="suName">Your name</label>
+          <input id="suName" type="text" autocomplete="name" placeholder="Maria Santos" /></div>
+        <div class="field"><label for="suEmail">Email</label>
+          <input id="suEmail" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@clinic.com" /></div>
+        <div class="field"><label for="suPw">Choose a password</label>
+          <input id="suPw" type="password" autocomplete="new-password" placeholder="At least 8 characters" /></div>
+        <div class="signup-actions">
+          <button class="btn primary" id="suSend" type="button">Send request</button>
+          <button class="btn" id="suCancel" type="button">Cancel</button>
+        </div>
+        <div class="signup-msg" id="suMsg"></div>
+      </div>` : ""}
       ${testAccounts.length ? `
       <details class="test-accounts" id="demoAccounts"${(window.TheraSync && window.TheraSync.demoOpen) ? " open" : ""}>
         <summary class="ta-summary">
@@ -1288,7 +1308,7 @@ ${walkthroughMarkup()}`;
           <svg class="ta-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </summary>
         <div class="ta-body">
-          <div class="ta-pw">Tap a name to fill it in · password <b>1234</b></div>
+          <div class="ta-pw">Tap a name to open that account — no password needed.</div>
           ${demoGroups.map((g) => `
           ${demoGroups.length > 1 ? `<div class="ta-group">${esc(g.label)}</div>` : ""}
           <div class="ta-list">${g.rows.map(demoRow).join("")}</div>`).join("")}
@@ -1313,13 +1333,61 @@ ${walkthroughMarkup()}`;
     };
     document.getElementById("loginBtn").addEventListener("click", doLogin);
     [emailEl, pinEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); }));
-    // Clicking a test account fills the form so a tester can just press Sign in.
-    document.querySelectorAll(".ta-row").forEach((row) => row.addEventListener("click", () => {
-      emailEl.value = row.getAttribute("data-ta-email") || "";
-      pinEl.value = row.getAttribute("data-ta-pw") || "";
-      const err = document.getElementById("loginErr"); if (err) err.textContent = "";
-      document.getElementById("loginBtn").focus();
+    /* Clicking a demo account opens it. It used to fill the password in for
+       you, which meant the demo was only ever as private as a string printed on
+       the screen; now the server decides whether this caller may open it and no
+       password is involved at all. */
+    document.querySelectorAll(".ta-row").forEach((row) => row.addEventListener("click", async () => {
+      const id = row.getAttribute("data-ta-id");
+      const err = document.getElementById("loginErr");
+      if (!id) return;
+      if (err) { err.style.color = "var(--danger)"; err.textContent = ""; }
+      document.querySelectorAll(".ta-row").forEach((r) => { r.disabled = true; });
+      const fail = await Promise.resolve(S.loginAsDemo(id));
+      if (fail) {
+        document.querySelectorAll(".ta-row").forEach((r) => { r.disabled = false; });
+        if (err) err.textContent = fail;
+        return;
+      }
+      showSplash(() => { location.hash = "#/dashboard"; render(); });
     }));
+    /* Request an account. The reply is deliberately the same whether or not the
+       address is already known — the server decides that, and the wording here
+       must not give it away either. */
+    const askBtn = document.getElementById("askAccountBtn");
+    if (askBtn) {
+      const panel = document.getElementById("askAccountPanel");
+      const msg = document.getElementById("suMsg");
+      const send = document.getElementById("suSend");
+      askBtn.addEventListener("click", () => {
+        panel.hidden = false;
+        askBtn.closest(".signup-cta").hidden = true;
+        document.getElementById("suName").focus();
+      });
+      document.getElementById("suCancel").addEventListener("click", () => {
+        panel.hidden = true;
+        askBtn.closest(".signup-cta").hidden = false;
+        msg.textContent = "";
+      });
+      send.addEventListener("click", async () => {
+        const name = document.getElementById("suName").value.trim();
+        const email = document.getElementById("suEmail").value.trim();
+        const password = document.getElementById("suPw").value;
+        msg.className = "signup-msg";
+        if (!name) { msg.classList.add("bad"); msg.textContent = "Please give your name."; return; }
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.classList.add("bad"); msg.textContent = "Enter a valid email address."; return; }
+        if (password.length < 8) { msg.classList.add("bad"); msg.textContent = "Choose a password of at least 8 characters."; return; }
+        send.disabled = true;
+        msg.textContent = "Sending…";
+        const r = await window.TheraSync.requestAccount({ name, email, password });
+        send.disabled = false;
+        if (r.error) { msg.classList.add("bad"); msg.textContent = r.error; return; }
+        msg.classList.add("good");
+        msg.textContent = r.message || "Request sent.";
+        ["suName", "suEmail", "suPw"].forEach((id) => { document.getElementById(id).value = ""; });
+      });
+    }
+
     const back = document.getElementById("backToLanding");
     if (back) back.addEventListener("click", () => { showLogin = false; if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); });
     if (googleClientId) mountGoogleButton(googleClientId);
@@ -6565,21 +6633,22 @@ ${allowanceCard()}
     // sign-in works) and re-renders so the new staffer drops into the list.
     const arMsg = (id, text) => { const el = document.querySelector(`[data-ar-msg="${id}"]`); if (el) { el.style.color = "var(--danger)"; el.textContent = text; } };
     document.querySelectorAll("[data-approve]").forEach((b) =>
-      b.addEventListener("click", () => {
+      b.addEventListener("click", async () => {
         const id = b.dataset.approve;
         const card = b.closest(".access-req");
         const role = card ? card.querySelector(".access-role").value : "therapist";
         b.disabled = true;
-        const res = S.approveAccessRequest(id, { role }, user);
+        // server-backed now: approving mints a credential, so it is awaited
+        const res = await Promise.resolve(S.approveAccessRequest(id, { role }, user));
         if (res.error) { b.disabled = false; return arMsg(id, res.error); }
         render();
       })
     );
     document.querySelectorAll("[data-decline]").forEach((b) =>
-      b.addEventListener("click", () => {
+      b.addEventListener("click", async () => {
         const id = b.dataset.decline;
         b.disabled = true;
-        const res = S.declineAccessRequest(id, user);
+        const res = await Promise.resolve(S.declineAccessRequest(id, user));
         if (res.error) { b.disabled = false; return arMsg(id, res.error); }
         render();
       })

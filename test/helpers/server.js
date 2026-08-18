@@ -68,6 +68,12 @@ async function startServer(env = {}, opts = {}) {
     base, call, dataDir,
     log: () => log,
     login: (email, password) => call("/api/login", { method: "POST", body: { email, password } }),
+    /* Enter a seeded demo account the way the picker does. On a server that
+       offers a demo, typing its password is refused — the account is opened by
+       being chosen, not by presenting a shared secret — so tests that need a
+       demo session go through here. `token` is only needed in invite mode. */
+    demoSignIn: (userId, token) =>
+      call("/api/demo-signin", { method: "POST", token, body: { userId } }),
     stop() {
       child.kill("SIGKILL");
       // only clean up a directory we created — never one handed to us

@@ -42,8 +42,19 @@ check("plaintext pin removed after migration", maria.pin === undefined);
 check("re-running migration is a no-op", store.hashLegacyPins() === 0);
 
 // --- login through the authenticator ------------------------------------
-check("login with migrated password succeeds", store.login("u-maria", "1234") === null);
-check("login with wrong password fails", typeof store.login("u-maria", "nope") === "string");
+/* Password login is exercised on a REAL staff account, not a seeded demo one:
+   demo accounts are deliberately unreachable by password now (they are opened
+   from the demo panel), so using one here would test the refusal instead of the
+   authenticator. */
+const staff = store.addUser(
+  { name: "Rosa Villanueva, PT", email: "rosa@clinic.test", role: "therapist",
+    password: "staffPass12", license: { number: "PT-1234", expires: "2030-01-01" } },
+  store.getUser("u-grace"),
+);
+check("staff fixture created", !staff.error && !!staff.user, staff.error);
+const staffId = staff.user && staff.user.id;
+check("login with migrated password succeeds", store.login(staffId, "staffPass12") === null);
+check("login with wrong password fails", typeof store.login(staffId, "nope") === "string");
 check("verifyPassword true for correct", store.verifyPassword("u-maria", "1234") === true);
 check("verifyPassword false for wrong", store.verifyPassword("u-maria", "xxxx") === false);
 check("verifyPassword does not start a session", true); // (pure check — no session mutation asserted below)
@@ -62,8 +73,19 @@ check("hashes are salted (distinct for same input)", h1 !== h2);
 check("both salted hashes still verify", AUTH.verify({ passwordHash: h1 }, "samePw12") && AUTH.verify({ passwordHash: h2 }, "samePw12"));
 
 // --- email login --------------------------------------------------------
-check("login by email works", store.login("grace@therachart.demo", "1234") === null);
-check("login by email is case-insensitive", store.login("GRACE@therachart.demo", "1234") === null);
+check("login by email works", store.login("rosa@clinic.test", "staffPass12") === null);
+check("login by email is case-insensitive", store.login("ROSA@clinic.test", "staffPass12") === null);
+
+/* Opening a demo account without its password. The REFUSAL of a typed demo
+   password is a server policy (it applies only where a demo is offered), so it
+   is asserted over HTTP in the bootstrap checker — not here, where store.login
+   is just a credential check. */
+check("loginAsDemo opens a seeded demo account without a password",
+  store.loginAsDemo("u-grace") === null);
+check("loginAsDemo refuses a non-demo account",
+  typeof store.loginAsDemo(staffId) === "string");
+check("loginAsDemo refuses an unknown id",
+  typeof store.loginAsDemo("u-nope") === "string");
 check("getUserByEmail resolves", (store.getUserByEmail("maria@therachart.demo") || {}).id === "u-maria");
 check("wrong email is a generic refusal", store.login("nobody@x.com", "1234") === "Incorrect email or password.");
 

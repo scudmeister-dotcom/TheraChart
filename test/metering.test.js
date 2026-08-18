@@ -13,6 +13,9 @@
 
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { startServer, reporter } = require("./helpers/server.js");
 
 /* A 1-second 16kHz/16-bit/mono WAV = 44-byte header + 32000 bytes of samples. */
@@ -241,7 +244,22 @@ function wav(seconds) {
      control is "who was approved", and everything the demo can then do it does
      at full strength. A prospect who hits a wall has been shown a product that
      hits walls. */
-  const inv = await startServer({ THERACHART_DEMO_INVITE: "1" });
+  /* An invite box needs a REAL account to be the first caller: its demo
+     accounts are opened from the panel, and reaching the panel is what being
+     signed in buys you. Seeding one here mirrors a deployment where the
+     operator's own login (Google, normally) is the way in. */
+  const invDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-invite-"));
+  fs.writeFileSync(path.join(invDir, "therachart.json"), JSON.stringify({
+    settings: { facilityName: "Real Clinic" },
+    clinics: { "clinic-owner": { id: "clinic-owner", name: "Real Clinic" } },
+    users: [{
+      id: "u-owner", name: "Dr. Real Owner", email: "owner@realclinic.ph", role: "admin",
+      pin: "supersecret", active: true, clinicId: "clinic-owner",
+      license: { number: "PT-9999999", expires: "2030-01-01" },
+    }],
+    patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+  }));
+  const inv = await startServer({ THERACHART_DEMO_INVITE: "1" }, { dataDir: invDir });
   try {
     const boot = (await inv.call("/api/bootstrap")).data;
     r.check("an invite-only demo publishes no credentials",
@@ -253,7 +271,14 @@ function wav(seconds) {
       (await inv.call("/api/demo-logins")).status === 401,
       "the sign-in is the entire access control here");
 
-    const anyUser = (await inv.login("maria@therachart.demo", "1234")).data.token;
+    r.check("…nor can they open a demo account without signing in",
+      (await inv.demoSignIn("u-maria")).status === 401,
+      "the picker is behind the door, not on it");
+    r.check("…and a demo password is not a way around that",
+      (await inv.login("maria@therachart.demo", "1234")).status === 403,
+      "a published credential must not be a second entrance");
+
+    const anyUser = (await inv.login("owner@realclinic.ph", "supersecret")).data.token;
     const got = await inv.call("/api/demo-logins", { token: anyUser });
     r.check("a signed-in account is handed the demo clinic",
       got.status === 200 && (got.data.accounts || []).length > 0,
@@ -291,7 +316,9 @@ function wav(seconds) {
      public, and unchanged. */
   const d = await startServer({ THERACHART_DEMO_LOGINS: "1" });
   try {
-    const demoAdmin = (await d.login("grace@therachart.demo", "1234")).data.token;
+    // a throwaway box shows the panel to anyone, so anyone may open a row —
+    // but still by picking it, not by typing the password it used to print
+    const demoAdmin = (await d.demoSignIn("u-grace")).data.token;
     r.check("the public panel still lists the seeded logins",
       ((await d.call("/api/bootstrap")).data.testAccounts || []).length > 0,
       "a throwaway box should still be one click from being inside");
