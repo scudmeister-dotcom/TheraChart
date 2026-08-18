@@ -587,21 +587,6 @@
   /** Create a schedule-only provider (a PT column on the calendar) without a
       login. Lets you flesh out the schedule board quickly; an admin can later
       attach an email/password in Facility Admin to make it a full account. */
-  function addProvider(name, licenseNumber, byUser) {
-    load();
-    const nm = String(name || "").trim();
-    if (!nm) return { error: "Name is required." };
-    const user = {
-      id: uid("u"), name: nm, email: "", role: "therapist", active: true, provider: true,
-      clinicId: (byUser && byUser.clinicId) || currentClinicId(),
-      license: { number: String(licenseNumber || "").trim(), expires: daysFromNow(365 * 4) },
-    };
-    touch(user);
-    state.users.push(user);
-    save();
-    audit(byUser ? byUser.id : null, "provider-created", `${nm} (PT)`);
-    return { user };
-  }
 
   /** Find-or-create an account that authenticates via Google (no password).
       The email and role arrive already verified by the server (Google ID-token
@@ -2087,7 +2072,7 @@
     createClinic, clinicSummaries,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, addProvider, upsertGoogleUser, deleteUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // which accounts are seeded demo logins (never infer this from the email domain)
     SEEDED_DEMO_USER_IDS,

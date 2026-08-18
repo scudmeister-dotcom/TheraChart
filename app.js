@@ -5735,7 +5735,12 @@ ${isGoogleAccount(user)
   const calHidden = new Set(); // therapist ids whose column is hidden on the board
 
   function therapists() {
-    return S.staff().filter((u) => u.active && (u.role === "therapist" || u.role === "admin") && u.license);
+    /* No licence requirement: an approved therapist starts with none on file
+       (the clinic adds it in Facility Admin), and a PT you cannot put on the
+       board is a PT you cannot book. The licence still gates what matters —
+       creating and signing clinical documents — which is checked where those
+       happen, not here. */
+    return S.staff().filter((u) => u.active && (u.role === "therapist" || u.role === "admin"));
   }
 
   /* Bookings don't always sit exactly on the generated grid: the facility can
@@ -5778,7 +5783,7 @@ ${isGoogleAccount(user)
     );
 
     const board = !ths.length
-      ? `<div class="empty-state" style="padding:22px">No PTs to schedule yet — use <b>+ Add PT</b> above to add a provider column.</div>`
+      ? `<div class="empty-state" style="padding:22px">No PTs in this clinic yet. Use <b>Request to add someone</b> in Facility Admin — once the operator approves them, they appear here.</div>`
       : !cols.length
       ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their column.</div>`
       : !slots.length
@@ -5885,24 +5890,37 @@ ${isGoogleAccount(user)
   }
 
   // Add a schedule-only PT column straight from the calendar.
+  /* Put an existing colleague on the board.
+
+     This used to CREATE a therapist, which is no longer anybody's to do at a
+     clinic — who joins a clinic is decided once, in the operator's approval
+     queue. So it picks from the people already approved into this clinic and
+     currently hidden from the board. Adding someone genuinely new is a request
+     in Facility Admin, and the copy says so rather than leaving a dead end. */
   function addProviderModal(user, done) {
+    const hidden = therapists().filter((t) => calHidden.has(t.id));
+    const body = hidden.length
+      ? `<div class="pt-pick">${hidden.map((t) => `
+          <button type="button" class="pt-pick-row" data-pick-pt="${t.id}">
+            <span class="ta-avatar">${esc(initials(t.name))}</span>
+            <span class="ta-main"><span class="ta-name">${esc(t.name)}</span>
+              <span class="ta-email">${esc(roleLabel(t))}${t.license && t.license.number ? ` · ${esc(t.license.number)}` : " · no licence on file"}</span></span>
+          </button>`).join("")}</div>`
+      : `<div class="empty-state" style="padding:18px">Everyone in this clinic is already on the board. To bring in someone new, use <b>Request to add someone</b> in Facility Admin — the operator approves them into this clinic and they appear here.</div>`;
     const m = showModal(`
-<h2>Add a PT</h2>
-<p style="font-size:12.5px; color:var(--muted); margin-top:0">Adds a therapist column to the calendar so you can book against them. An admin can attach a login later in Facility Admin.</p>
-<div class="field"><label>Full name *</label><input id="ptName" placeholder="e.g. Alex Cruz, PT" autocomplete="off" /></div>
-<div class="field"><label>License number (optional)</label><input id="ptLic" placeholder="e.g. PT-0012345" autocomplete="off" /></div>
-<div class="error" id="ptErr"></div>
+<h2>Add a PT to the board</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:0">Shows a column for someone already approved into this clinic. ${hidden.length ? "Pick who to show." : ""}</p>
+${body}
 <div class="modal-actions">
-  <button class="btn" id="ptCancel">Cancel</button>
-  <button class="btn primary" id="ptOk">Add PT</button>
+  <button class="btn" id="ptCancel">${hidden.length ? "Cancel" : "Close"}</button>
 </div>`);
     m.querySelector("#ptCancel").addEventListener("click", closeModal);
-    m.querySelector("#ptOk").addEventListener("click", () => {
-      const res = S.addProvider(m.querySelector("#ptName").value, m.querySelector("#ptLic").value, user);
-      if (res.error) { m.querySelector("#ptErr").textContent = res.error; return; }
-      closeModal();
-      if (done) done(); else render();
-    });
+    m.querySelectorAll("[data-pick-pt]").forEach((b) =>
+      b.addEventListener("click", () => {
+        calHidden.delete(b.dataset.pickPt);
+        closeModal();
+        if (done) done(); else render();
+      }));
   }
 
   const shiftDay = (iso, n) => {
