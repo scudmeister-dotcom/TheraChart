@@ -29,16 +29,17 @@ function wav(seconds) {
 
 (async () => {
   const r = reporter("metering checker");
-  /* Demo logins OFF for the bulk of this file, so the seeded admin is treated
-     as an ordinary clinic admin. With the panel on she is a DEMO admin whose
-     password is published on the sign-in screen, and the usage endpoint refuses
-     those outright — that behaviour gets its own server at the end. */
-  const s = await startServer();
+  /* The seeded accounts carry no password at all any more — they are opened
+     through /api/demo-signin, which authorises the CALLER rather than checking
+     a secret. So this file needs the demo present in order to get a session,
+     and reads the seeded admin as what she is: an ordinary clinic admin, not
+     the platform owner. */
+  const s = await startServer({ THERACHART_DEMO_LOGINS: "1" });
 
   try {
-    const maria = (await s.login("maria@therachart.demo", "1234")).data.token;
-    const ana = (await s.login("ana@therachart.demo", "1234")).data.token;
-    const grace = (await s.login("grace@therachart.demo", "1234")).data.token;
+    const maria = (await s.demoSignIn("u-maria")).data.token;
+    const ana = (await s.demoSignIn("u-ana")).data.token;
+    const grace = (await s.demoSignIn("u-grace")).data.token;
 
     /* ---------------- who may read the meter ---------------- */
 
@@ -154,7 +155,7 @@ function wav(seconds) {
     /* ---------------- tenancy ----------------
        u-fresh lives in its own clinic. Its admin must see a meter of its own,
        not the demo clinic's. */
-    const fresh = await s.login("fresh@therachart.demo", "1234");
+    const fresh = await s.demoSignIn("u-fresh");
     if (fresh.status === 200) {
       const other = await s.call("/api/usage", { token: fresh.data.token });
       r.check("another clinic's admin sees only their own usage",
@@ -215,10 +216,10 @@ function wav(seconds) {
      Same endpoint, a strictly larger view: money, and every tenant at once.
      Gated on the owner's email rather than a role, so it cannot be reached by
      an account whose password is printed on a sign-in screen. */
-  const o = await startServer({ GOOGLE_OWNER_EMAIL: "grace@therachart.demo" });
+  const o = await startServer({ GOOGLE_OWNER_EMAIL: "grace@therachart.demo", THERACHART_DEMO_LOGINS: "1" });
   try {
-    const owner = (await o.login("grace@therachart.demo", "1234")).data.token;
-    const staff = (await o.login("maria@therachart.demo", "1234")).data.token;
+    const owner = (await o.demoSignIn("u-grace")).data.token;
+    const staff = (await o.demoSignIn("u-maria")).data.token;
     const view = await o.call("/api/usage", { token: owner });
     r.check("the platform owner sees the money", view.status === 200 && view.data.estimatedUsd,
       `status=${view.status}`);
@@ -321,12 +322,27 @@ function wav(seconds) {
   } finally { inv.stop(); }
 
   /* A server with neither switch has no demo to give out. */
-  const off = await startServer();
+  /* A real account again, for the same reason as above: proving this returns
+     404 rather than 401 needs a caller who IS signed in, and a clinic
+     deployment has no seeded login to borrow. */
+  const offDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-nodemo-"));
+  fs.writeFileSync(path.join(offDir, "therachart.json"), JSON.stringify({
+    settings: { facilityName: "Real Clinic" },
+    clinics: { "clinic-owner": { id: "clinic-owner", name: "Real Clinic" } },
+    users: [{
+      id: "u-owner", name: "Dr. Real Owner", email: "owner@realclinic.ph", role: "admin",
+      pin: "supersecret", active: true, clinicId: "clinic-owner",
+      license: { number: "PT-9999999", expires: "2030-01-01" },
+    }],
+    patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+  }));
+  const off = await startServer({}, { dataDir: offDir });
   try {
-    const t = (await off.login("maria@therachart.demo", "1234")).data.token;
+    const t = (await off.login("owner@realclinic.ph", "supersecret")).data.token;
     const res = await off.call("/api/demo-logins", { token: t });
     r.check("a clinic deployment offers no demo at all",
-      res.status === 404, `got ${res.status} — nothing should hand out seeded logins here`);
+      res.status === 404,
+      `got ${res.status} — a signed-in caller must get "no demo here", not "sign in"`);
     r.check("…and does not advertise one to the app",
       (await off.call("/api/bootstrap")).data.demoInvite === false);
   } finally { off.stop(); }
