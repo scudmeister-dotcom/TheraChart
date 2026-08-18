@@ -77,6 +77,7 @@
     logo: LOGO_MARK,
     spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg>',
     wrench: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg>',
+    flask: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.5L4.8 18a2 2 0 0 0 1.7 3h11a2 2 0 0 0 1.7-3L14 9.5V3"/><path d="M7.2 14h9.6"/></svg>',
     building: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M15 21V10h2a2 2 0 0 1 2 2v9"/><path d="M9 7h2M9 11h2M9 15h2"/></svg>',
   };
 
@@ -497,6 +498,7 @@
         </div>
         ${acctNav.map((n) => `<a class="acct-item" role="menuitem" href="${n.hash}"><span class="acct-ico">${n.icon}</span>${esc(n.label)}</a>`).join("")}
         <button class="acct-item bug-trigger" role="menuitem" type="button"><span class="acct-ico">${ICON.wrench}</span>Report a bug</button>
+        ${demoOffered() ? `<button class="acct-item demo-trigger" role="menuitem" type="button"><span class="acct-ico">${ICON.flask}</span>Demo clinic</button>` : ""}
         <button class="acct-item danger" id="acctLogout" role="menuitem" type="button"><span class="acct-ico">${ICON.signout}</span>Sign out</button>
       </div>`;
 
@@ -527,7 +529,7 @@
       </div>` : ""}</div>
       <div class="spacer"></div>
       <div class="nav nav-utility"><div class="nav-group">
-        <div class="nav-group-label">Help</div>${bugTriggerMarkup()}
+        <div class="nav-group-label">Help</div>${bugTriggerMarkup()}${demoTriggerMarkup()}
       </div></div>
       <div class="userchip">
         <button class="avatar avatar-btn" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Account">${esc(initials(user.name))}</button>
@@ -548,7 +550,7 @@
     </div>
     <div class="asst-card assistant-drawer-body" id="patientAssistant"></div>
   </aside>` : ""}
-  ${demoFabMarkup()}${bugModalMarkup()}
+  ${bugModalMarkup()}
 </div>`;
     document.getElementById("logoutBtn").addEventListener("click", async () => { await signOutFully(); render(); });
     bindBugReporter(user);
@@ -803,17 +805,20 @@ ${walkthroughMarkup()}`;
       <span class="nav-ico">${ICON.wrench}</span><span class="nav-label">Report a bug</span></button>`;
   }
 
-  /* The demo switch stays a floating button rather than following the reporter
-     into the rail: it is an affordance for an evaluator deciding whether to
-     look around, not an app-level action a working clinician reaches for. It
-     only appears when the server offers an invite-only demo, which a real
-     clinic deployment does not. */
-  function demoFabMarkup() {
-    const demoOffered = !!(window.TheraSync && window.TheraSync.demoInvite);
-    if (!demoOffered) return "";
-    return `<button class="demo-fab" id="demoFab" type="button" title="Sign in to the demo clinic to explore any role">
-  <span class="demo-fab-ico" aria-hidden="true">🧪</span><span class="demo-fab-label">Demo clinic</span>
-</button>`;
+  /* The demo switch sits in the rail beside the reporter: both are "about the
+     app" rather than about a patient, and neither should float over the chart
+     it describes. Rendered only when the server offers an invite-only demo,
+     which a real clinic deployment does not — so a clinician never sees it.
+     Like the reporter it is a class, not an id: the rail collapses into the
+     account menu on phones and both places render the same trigger. */
+  function demoOffered() {
+    return !!(window.TheraSync && window.TheraSync.demoInvite);
+  }
+
+  function demoTriggerMarkup() {
+    if (!demoOffered()) return "";
+    return `<button class="nav-link nav-btn demo-trigger" type="button" title="Sign in to the demo clinic to explore any role">
+      <span class="nav-ico">${ICON.flask}</span><span class="nav-label">Demo clinic</span></button>`;
   }
 
   function bugModalMarkup() {
@@ -864,35 +869,42 @@ ${walkthroughMarkup()}`;
      in as a demo account like anyone else, rather than by some parallel
      impersonation path that would need its own permissions story. */
   function bindDemoSwitch() {
-    const fab = document.getElementById("demoFab");
-    if (!fab) return;
-    fab.addEventListener("click", async () => {
-      const sync = window.TheraSync || {};
-      fab.disabled = true;
-      const label = fab.querySelector(".demo-fab-label");
-      const was = label ? label.textContent : "";
-      if (label) label.textContent = "Opening…";
-      try {
-        const r = await fetch("/api/demo-logins", {
-          headers: sync.token ? { authorization: `Bearer ${sync.token}` } : {},
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok || !(data.accounts || []).length) {
-          if (label) label.textContent = "Demo unavailable";
-          setTimeout(() => { if (label) label.textContent = was; fab.disabled = false; }, 2500);
-          return;
+    /* The rail and the phone account menu each render a trigger, so progress
+       and failure have to show on whichever one was actually pressed while
+       both stay disabled — a second click mid-request would sign the evaluator
+       out from under the first. */
+    const triggers = Array.from(document.querySelectorAll(".demo-trigger"));
+    if (!triggers.length) return;
+    const setBusy = (on) => triggers.forEach((t) => { t.disabled = on; });
+    triggers.forEach((trigger) => {
+      trigger.addEventListener("click", async () => {
+        const sync = window.TheraSync || {};
+        setBusy(true);
+        // the rail entry labels its text; the menu row is plain text
+        const label = trigger.querySelector(".nav-label") || trigger;
+        const was = label.textContent;
+        const revert = (msg) => {
+          label.textContent = msg;
+          setTimeout(() => { label.textContent = was; setBusy(false); }, 2500);
+        };
+        label.textContent = "Opening…";
+        try {
+          const r = await fetch("/api/demo-logins", {
+            headers: sync.token ? { authorization: `Bearer ${sync.token}` } : {},
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok || !(data.accounts || []).length) return revert("Demo unavailable");
+          // the sign-in screen reads this; it survives sign-out because nothing reloads
+          sync.testAccounts = data.accounts;
+          sync.demoOpen = true;
+          // a full sign-out, so the evaluator's own session is not left live on
+          // the device while they wander around the demo clinic
+          await signOutFully();
+          render();
+        } catch (_) {
+          revert("Couldn't reach the server");
         }
-        // the sign-in screen reads this; it survives sign-out because nothing reloads
-        sync.testAccounts = data.accounts;
-        sync.demoOpen = true;
-        // a full sign-out, so the evaluator's own session is not left live on
-        // the device while they wander around the demo clinic
-        await signOutFully();
-        render();
-      } catch (_) {
-        if (label) label.textContent = "Couldn't reach the server";
-        setTimeout(() => { if (label) label.textContent = was; fab.disabled = false; }, 2500);
-      }
+      });
     });
   }
 

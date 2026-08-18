@@ -2017,23 +2017,6 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .meter-head b span { font-size: 12.5px; font-weight: 500; color: var(--muted); }
 .meter-foot { margin-top: 5px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* The demo-clinic switch is now the only floating button — the bug reporter it
-   used to sit above has moved into the rail — so it carries its own base style
-   rather than inheriting one. Only rendered when the server offers an
-   invite-only demo, which a real clinic deployment does not. */
-.demo-fab {
-  position: fixed; right: 18px; bottom: 18px; z-index: 70;
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 10px 16px; border-radius: 999px; cursor: pointer;
-  background: var(--panel); color: var(--ink);
-  border: 1px solid var(--border); box-shadow: 0 4px 18px rgba(0,0,0,.16);
-  font-size: 13.5px; font-weight: 600; font-family: inherit;
-}
-.demo-fab:hover { background: var(--hover); transform: translateY(-1px); }
-.demo-fab-ico { font-size: 14px; }
-.demo-fab:disabled { opacity: .6; cursor: default; transform: none; }
-@media (prefers-reduced-motion: reduce) { .demo-fab:hover { transform: none; } }
-@media (max-width: 720px) {
-  /* clears the mobile tab bar, as the reporter's button used to */
-  .demo-fab { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); right: 12px; padding: 9px 13px; }
-}
+/* The demo-clinic switch is a rail entry now (see .nav-utility), so it needs no
+   box of its own — only the disabled state while its request is in flight. */
+.demo-trigger:disabled, .bug-trigger:disabled { opacity: .6; cursor: default; }
