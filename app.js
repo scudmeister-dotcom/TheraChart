@@ -2396,7 +2396,12 @@ ${tabStrip}
     }
   }
 
-  /* ---------- AI chart review (async, once per day) ---------- */
+  /* ---------- AI chart review (async, re-runs when the chart changes) ----------
+
+     The heading said "once per day" for a while after that stopped being true:
+     chartReviewKey() has keyed the cache on the chart's own content since the
+     metering pass. Left uncorrected it reads like a standing cost leak that was
+     in fact already closed — which is exactly how it was misread. */
 
   function aiReviewAvailable() {
     return !!((window.TheraSync && window.TheraSync.getInsights) ||
