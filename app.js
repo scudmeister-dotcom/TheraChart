@@ -860,14 +860,20 @@ ${walkthroughMarkup()}`;
 </div>`;
   }
 
-  /* Hand a signed-in account the demo clinic's logins and drop them at the
-     sign-in screen with the picker open.
+  /* Hand a signed-in account the demo clinic's roster and let them pick a role.
 
-     Fetched rather than shipped with the page, so the credentials only ever
-     leave the server for someone already approved — that request is also the
-     record of who asked. Then a plain sign-out: the demo is entered by signing
-     in as a demo account like anyone else, rather than by some parallel
-     impersonation path that would need its own permissions story. */
+     Fetched rather than shipped with the page, so the list only ever leaves the
+     server for someone already approved — that request is also the record of
+     who asked.
+
+     The picker opens WHILE STILL SIGNED IN. It used to sign out first and drop
+     the evaluator at the sign-in screen, which worked while the demo was
+     entered with a published password: the picker only had to fill a form. Now
+     that entering is a request the server authorizes, signing out first threw
+     away the very token that proves they may open it, and every name in the
+     picker answered "sign in first". The session is retired instead at the
+     moment they step in — by /api/demo-signin, server-side, where the demo
+     token replaces it. */
   function bindDemoSwitch() {
     /* The rail and the phone account menu each render a trigger, so progress
        and failure have to show on whichever one was actually pressed while
@@ -894,18 +900,56 @@ ${walkthroughMarkup()}`;
           });
           const data = await r.json().catch(() => ({}));
           if (!r.ok || !(data.accounts || []).length) return revert("Demo unavailable");
-          // the sign-in screen reads this; it survives sign-out because nothing reloads
-          sync.testAccounts = data.accounts;
-          sync.demoOpen = true;
-          // a full sign-out, so the evaluator's own session is not left live on
-          // the device while they wander around the demo clinic
-          await signOutFully();
-          render();
+          label.textContent = was;
+          setBusy(false);
+          demoPickerModal(data.accounts);
         } catch (_) {
           revert("Couldn't reach the server");
         }
       });
     });
+  }
+
+  /* Choosing which role to look around as. Grouped by clinic for the same
+     reason the sign-in panel groups: the blank clinic is a different promise
+     from the staffed one, and a flat list makes the empty EMR look broken. */
+  function demoPickerModal(accounts) {
+    const roleWord = (r) => (r === "therapist" ? "Therapist" : r === "frontdesk" ? "Front desk" : "Admin");
+    const groups = [];
+    for (const a of accounts) {
+      const label = a.clinic || "Demo Clinic";
+      const g = groups.find((x) => x.label === label);
+      (g || groups[groups.push({ label, rows: [] }) - 1]).rows.push(a);
+    }
+    groups.sort((a, b) => b.rows.length - a.rows.length);
+    const m = showModal(`
+<h2>Open the demo clinic</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:0">Pick a role to look around as. You'll be signed out of your own account and into the demo — sign back in whenever you're done.</p>
+<div class="pt-pick">
+  ${groups.map((g) => `
+    ${groups.length > 1 ? `<div class="ta-group">${esc(g.label)}</div>` : ""}
+    ${g.rows.map((a) => `
+      <button type="button" class="pt-pick-row" data-demo-pick="${esc(a.id)}"${a.status ? " disabled" : ""}>
+        <span class="ta-avatar">${esc(initials(a.name))}</span>
+        <span class="ta-main"><span class="ta-name">${esc(a.name)}</span>
+          <span class="ta-email">${esc(roleWord(a.role))}${a.status ? ` · ${esc(a.status)}` : ""}</span></span>
+      </button>`).join("")}`).join("")}
+</div>
+<div class="error" id="demoPickErr" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
+<div class="modal-actions"><button class="btn" id="demoPickCancel">Cancel</button></div>`);
+    m.querySelector("#demoPickCancel").addEventListener("click", closeModal);
+    m.querySelectorAll("[data-demo-pick]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        m.querySelectorAll("[data-demo-pick]").forEach((x) => { x.disabled = true; });
+        const fail = await Promise.resolve(S.loginAsDemo(b.dataset.demoPick));
+        if (fail) {
+          m.querySelectorAll("[data-demo-pick]").forEach((x) => { x.disabled = false; });
+          m.querySelector("#demoPickErr").textContent = fail;
+          return;
+        }
+        closeModal();
+        showSplash(() => { location.hash = "#/dashboard"; render(); });
+      }));
   }
 
   function bindBugReporter(user) {

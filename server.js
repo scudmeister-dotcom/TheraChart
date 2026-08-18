@@ -1260,6 +1260,15 @@ const server = http.createServer(async (req, res) => {
       store.save();
       if (fail) return json(res, 403, { error: fail });
       const demoUser = store.getUser(String(userId));
+      /* Retire the caller's own session as they step into the demo. The
+         evaluator's real login must not stay live on the device while they
+         wander a demo clinic — and the device is about to hold the demo token
+         in its place, so there is nothing left to return to. Doing it HERE,
+         rather than signing out before the picker, is what keeps the picker
+         usable: the token is still needed to prove who is allowed to open it. */
+      const auth = req.headers.authorization || "";
+      const callerToken = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+      if (callerToken && sessions.delete(callerToken)) saveSessions();
       console.log(`[demo] ${caller ? caller.email : "anonymous"} entered the demo as ${demoUser.email}`);
       bumpRev(); // audit entry was added
       return json(res, 200, {

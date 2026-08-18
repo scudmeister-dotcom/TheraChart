@@ -279,6 +279,8 @@ function wav(seconds) {
       "a published credential must not be a second entrance");
 
     const anyUser = (await inv.login("owner@realclinic.ph", "supersecret")).data.token;
+
+
     const got = await inv.call("/api/demo-logins", { token: anyUser });
     r.check("a signed-in account is handed the demo clinic",
       got.status === 200 && (got.data.accounts || []).length > 0,
@@ -287,13 +289,31 @@ function wav(seconds) {
       (got.data.accounts || []).some((a) => a.role === "admin"),
       "an evaluation that cannot reach the admin screens is not an evaluation");
 
+    /* The path that actually matters, and the one a 401-only test misses: a
+       caller who IS allowed must get in. Signing the evaluator out before the
+       picker once threw away the very token that proves they may open it, and
+       every name answered "sign in first" — green tests, dead feature. */
+    const entered = await inv.demoSignIn("u-maria", anyUser);
+    r.check("an approved caller can actually enter the demo",
+      entered.status === 200 && !!entered.data.token,
+      `status ${entered.status} ${JSON.stringify(entered.data).slice(0, 140)}`);
+    r.check("…and lands in the demo clinic, not their own",
+      ((entered.data.state || {}).patients || []).length > 0,
+      "the demo is worth nothing if it opens empty");
+    /* Their own session is retired as they step in: a real login must not stay
+       live on the device while they wander a demo clinic. */
+    r.check("…and their own session is retired by the step in",
+      (await inv.call("/api/state", { token: anyUser })).status === 401,
+      "the evaluator's real login must not outlive the switch");
+
+
     /* Full strength: the demo shares the ordinary limits. Twelve extract calls
        tripped the real table earlier; the same burst must behave the same here
        rather than stopping sooner. */
     let n = 0, stopped = false;
     for (let i = 0; i < 6 && !stopped; i++) {
       const res = await inv.call("/api/extract-doc",
-        { method: "POST", token: anyUser, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
+        { method: "POST", token: entered.data.token, body: { pdf: "JVBERi0=", mime: "application/pdf" } });
       if (res.status === 429) stopped = true; else n += 1;
     }
     r.check("the demo is not throttled more tightly than a real clinic",
