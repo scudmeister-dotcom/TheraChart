@@ -1572,14 +1572,68 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { reports: list.map(({ screenshot, ...r }) => ({ ...r, hasScreenshot: !!screenshot })) });
       }
 
+      /* Creating an account is the operator's, not a clinic admin's.
+
+         A clinic admin can still REMOVE someone (below) — that is theirs to
+         decide, and leaving a departed employee with a login is the dangerous
+         direction. Adding is the other way round: who joins which clinic is
+         decided in one place, so it goes through the approval queue instead.
+         Clinic admins ask via /api/staff-requests. */
       if (url.pathname === "/api/users" && req.method === "POST") {
-        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can add employees." });
+        if (!isPlatformOwner(user)) {
+          store.audit(user.id, "operator-denied", url.pathname);
+          bumpRev();
+          return json(res, 403, { error: "New accounts are approved by the operator. Use “Request to add someone” and it will come to them." });
+        }
         const result = store.addUser(await readBody(req), user); // password hashed server-side
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
         if (!(await persisted(res, req))) return;
         return json(res, 200, { ok: true, rev, userId: result.user.id });
       }
+      /* A clinic admin asking for an account for their own clinic.
+
+         This is the clinic's way of onboarding staff without each therapist
+         signing themselves up: the admin gives the name, role and a temporary
+         password to hand over, and it arrives in the operator's queue like any
+         other request. The clinic is NOT taken from the request body — it is
+         the requester's own, so an admin cannot file someone into a clinic
+         they do not belong to. */
+      if (url.pathname === "/api/staff-requests" && req.method === "POST") {
+        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can request staff for a clinic." });
+        const body = await readBody(req);
+        const email = String(body.email || "").trim().toLowerCase();
+        const password = String(body.password || "");
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: "A valid email address is required (it's their login)." });
+        if (!String(body.name || "").trim()) return json(res, 400, { error: "Please give their name." });
+        if (password.length < 8) return json(res, 400, { error: "The temporary password must be at least 8 characters." });
+        const r = store.requestAccess({
+          email, name: body.name, password, role: body.role,
+          source: "admin", requestedBy: user.id, clinicId: user.clinicId,
+        });
+        if (r.error) return json(res, 400, { error: r.error });
+        if (r.user) return json(res, 400, { error: "That email already belongs to an active account." });
+        store.audit(user.id, "access-requested", `admin:${email} for ${store.clinicName(user.clinicId)}`);
+        bumpRev();
+        if (!(await persisted(res, req))) return;
+        return json(res, 200, { ok: true, rev, message: "Sent to the operator for approval." });
+      }
+
+      /* The operator's queue: every pending request, across clinics. Scoped
+         state would only ever show this clinic's, and the whole point is that
+         one person sees them all and decides where each lands. */
+      if (url.pathname === "/api/access-requests" && req.method === "GET") {
+        if (!isPlatformOwner(user)) {
+          store.audit(user.id, "operator-denied", url.pathname);
+          bumpRev();
+          return json(res, 403, { error: "That area is limited to the platform operator." });
+        }
+        return json(res, 200, {
+          requests: store.pendingAccessRequestsAllClinics(),
+          clinics: store.clinicSummaries().map((c) => ({ id: c.id, name: c.name })),
+        });
+      }
+
       /* Approve or decline a request for access.
 
          An endpoint rather than a state push, because approving MINTS A
@@ -1590,17 +1644,42 @@ const server = http.createServer(async (req, res) => {
          be told their password is wrong. Hashing where the hash is kept is the
          only version of this that works. */
       if (url.pathname === "/api/access-requests" && req.method === "POST") {
-        if (user.role !== "admin") return json(res, 403, { error: "Only an administrator can handle access requests." });
-        const { id, action, role } = await readBody(req);
-        // accessRequests is tenant-scoped, so a request from another clinic is
-        // simply not found here — an admin cannot approve into someone else's.
-        const result = action === "decline"
-          ? store.declineAccessRequest(id, user)
-          : store.approveAccessRequest(id, { role }, user);
+        /* Operator only, and deliberately not `role === "admin"`: approving
+           decides which clinic a real person joins, and every clinic has an
+           admin. One person holds that, the same person who creates the
+           clinics. */
+        if (!isPlatformOwner(user)) {
+          store.audit(user.id, "operator-denied", url.pathname);
+          bumpRev();
+          return json(res, 403, { error: "Access requests are approved by the platform operator." });
+        }
+        const { id, action, role, clinicId, newClinicName } = await readBody(req);
+        if (action === "decline") {
+          const declined = store.declineAccessRequest(id, user, { anyClinic: true });
+          if (declined.error) return json(res, 400, { error: declined.error });
+          bumpRev();
+          if (!(await persisted(res, req))) return;
+          return json(res, 200, { ok: true, rev });
+        }
+        /* Approving into a brand-new clinic makes the clinic first, so the
+           person lands in something that exists. If the approval then fails,
+           an empty clinic is left behind — visible and removable — which is a
+           better failure than a user pointed at a clinic id that is not there. */
+        let joinClinicId = clinicId || null;
+        if (!joinClinicId && String(newClinicName || "").trim()) {
+          const made = store.addClinic(newClinicName, user);
+          if (made.error) return json(res, 400, { error: made.error });
+          joinClinicId = made.clinic.id;
+        }
+        const result = store.approveAccessRequest(id, { role, clinicId: joinClinicId, anyClinic: true }, user);
         if (result.error) return json(res, 400, { error: result.error });
         bumpRev();
         if (!(await persisted(res, req))) return;
-        return json(res, 200, { ok: true, rev, userId: result.user ? result.user.id : null });
+        return json(res, 200, {
+          ok: true, rev,
+          userId: result.user ? result.user.id : null,
+          clinicId: result.user ? result.user.clinicId : null,
+        });
       }
 
       if (url.pathname === "/api/delete-user" && req.method === "POST") {

@@ -375,7 +375,8 @@ const { startServer, reporter } = require("./helpers/server.js");
       }],
       patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
     }));
-    const s = await startServer({}, { dataDir: ownerDir });
+    // the operator is identified by email — this box's operator is the boss
+    const s = await startServer({ GOOGLE_OWNER_EMAIL: "boss@myclinic.ph" }, { dataDir: ownerDir });
     try {
       const asked = await s.call("/api/request-account", { method: "POST",
         body: { name: "Rosa V", email: "rosa@clinic.test", password: "rosaPassword1" } });
@@ -397,6 +398,25 @@ const { startServer, reporter } = require("./helpers/server.js");
         !JSON.stringify(queued).includes("rosaPassword1"), JSON.stringify(queued).slice(0, 200));
 
       const target = queued.find((q) => q.email === "rosa@clinic.test");
+
+      /* A clinic admin who is NOT the operator must not be able to approve —
+         approving decides which clinic a real person joins, and every clinic
+         has an admin. */
+      const notOwner = await s.call("/api/users", { method: "POST", token,
+        body: { name: "Other Admin", email: "other@myclinic.ph", role: "admin", password: "otherPass12",
+                license: { number: "PT-2", expires: "2030-01-01" } } });
+      r.check("the operator can still add an account directly", notOwner.status === 200, `status ${notOwner.status}`);
+      const other = await s.login("other@myclinic.ph", "otherPass12");
+      const refused = await s.call("/api/access-requests", { method: "POST", token: (other.data || {}).token,
+        body: { id: target && target.id, action: "approve", role: "therapist" } });
+      r.check("a clinic admin who is not the operator cannot approve",
+        refused.status === 403, `status ${refused.status}`);
+      r.check("…and cannot add an account directly either",
+        (await s.call("/api/users", { method: "POST", token: (other.data || {}).token,
+          body: { name: "Sneak", email: "sneak@myclinic.ph", role: "therapist", password: "sneakPass12" } })).status === 403);
+      r.check("…but the operator's queue is not even readable to them",
+        (await s.call("/api/access-requests", { token: (other.data || {}).token })).status === 403);
+
       const approved = await s.call("/api/access-requests", { method: "POST", token,
         body: { id: target && target.id, action: "approve", role: "therapist" } });
       r.check("the admin can approve it", approved.status === 200, `status ${approved.status} ${JSON.stringify(approved.data).slice(0, 160)}`);
@@ -407,6 +427,74 @@ const { startServer, reporter } = require("./helpers/server.js");
       r.check("…and lands in the approving admin's clinic",
         (((after.data || {}).state || {}).clinics || {})["clinic-owner"] !== undefined,
         JSON.stringify(Object.keys(((after.data || {}).state || {}).clinics || {})));
+
+      /* ---- the operator decides WHICH clinic, including a brand-new one ---- */
+      const asked2 = await s.call("/api/request-account", { method: "POST",
+        body: { name: "Bea N", email: "bea@bayanihanpt.ph", password: "beaPassword1" } });
+      r.check("a second person can ask", asked2.status === 200, `status ${asked2.status}`);
+      const q2 = (((await s.call("/api/state", { token })).data || {}).state || {}).accessRequests || [];
+      const bea = q2.find((q) => q.email === "bea@bayanihanpt.ph" && q.status === "pending");
+
+      const intoNew = await s.call("/api/access-requests", { method: "POST", token,
+        body: { id: bea && bea.id, action: "approve", role: "admin", newClinicName: "Bayanihan Physical Therapy" } });
+      r.check("the operator can approve into a brand-new clinic",
+        intoNew.status === 200 && !!intoNew.data.clinicId,
+        `status ${intoNew.status} ${JSON.stringify(intoNew.data).slice(0, 160)}`);
+      r.check("…and it is NOT the operator's own clinic",
+        intoNew.data.clinicId !== "clinic-owner", String(intoNew.data.clinicId));
+
+      const beaIn = await s.login("bea@bayanihanpt.ph", "beaPassword1");
+      r.check("the approved admin signs into their own new clinic",
+        beaIn.status === 200 && Object.keys(((beaIn.data || {}).state || {}).clinics || {})[0] === intoNew.data.clinicId,
+        JSON.stringify(Object.keys(((beaIn.data || {}).state || {}).clinics || {})));
+      r.check("…and cannot see the operator's clinic",
+        (((beaIn.data || {}).state || {}).clinics || {})["clinic-owner"] === undefined);
+
+      r.check("a duplicate clinic name is refused",
+        (await s.call("/api/access-requests", { method: "POST", token,
+          body: { id: bea && bea.id, action: "approve", role: "admin", newClinicName: "Bayanihan Physical Therapy" } })).status === 400);
+      r.check("an unknown clinic id is refused rather than filed anywhere",
+        (await s.call("/api/access-requests", { method: "POST", token,
+          body: { id: bea && bea.id, action: "approve", role: "therapist", clinicId: "clinic-nope" } })).status === 400);
+
+      /* ---- a clinic admin asks for staff instead of adding them ---------- */
+      const beaToken = (beaIn.data || {}).token;
+      r.check("a clinic admin cannot add an account themselves",
+        (await s.call("/api/users", { method: "POST", token: beaToken,
+          body: { name: "Direct Add", email: "direct@bayanihanpt.ph", role: "therapist", password: "directPass1" } })).status === 403);
+
+      const asked3 = await s.call("/api/staff-requests", { method: "POST", token: beaToken,
+        body: { name: "Ramil Torres, PT", email: "ramil@bayanihanpt.ph", role: "therapist", password: "ramilTemp123" } });
+      r.check("…but can request one for their clinic", asked3.status === 200, `status ${asked3.status} ${JSON.stringify(asked3.data).slice(0,140)}`);
+
+      const opQueue = await s.call("/api/access-requests", { token });
+      const ramil = (opQueue.data.requests || []).find((q) => q.email === "ramil@bayanihanpt.ph");
+      r.check("the request reaches the OPERATOR, not the asking admin", !!ramil,
+        JSON.stringify((opQueue.data.requests || []).map((q) => q.email)));
+      r.check("…stamped with the asking clinic, so it lands back there",
+        ramil && ramil.clinicName === "Bayanihan Physical Therapy", ramil && ramil.clinicName);
+      r.check("…and carries the role the clinic asked for",
+        ramil && ramil.wantRole === "therapist", ramil && ramil.wantRole);
+      r.check("…without exposing the temporary password",
+        !JSON.stringify(opQueue.data.requests).includes("ramilTemp123"));
+
+      const okRamil = await s.call("/api/access-requests", { method: "POST", token,
+        body: { id: ramil && ramil.id, action: "approve", role: "therapist", clinicId: intoNew.data.clinicId } });
+      r.check("the operator approves it into that clinic", okRamil.status === 200, `status ${okRamil.status}`);
+      const ramilIn = await s.login("ramil@bayanihanpt.ph", "ramilTemp123");
+      r.check("the requested therapist can sign in with the temporary password",
+        ramilIn.status === 200 && !!ramilIn.data.token, `status ${ramilIn.status}`);
+      const ramilSelf = (((ramilIn.data || {}).state || {}).users || []).find((u) => u.email === "ramil@bayanihanpt.ph");
+      r.check("…is told to set their own password first",
+        ramilSelf && ramilSelf.mustChangePassword === true, JSON.stringify(ramilSelf && ramilSelf.mustChangePassword));
+      r.check("…and is in the clinic that asked for them",
+        ramilSelf && ramilSelf.clinicId === intoNew.data.clinicId, ramilSelf && ramilSelf.clinicId);
+
+      /* Removing is still the clinic's own call — the dangerous direction is
+         leaving a departed employee with a login, not taking one away. */
+      r.check("a clinic admin can still remove someone from their clinic",
+        (await s.call("/api/delete-user", { method: "POST", token: beaToken,
+          body: { userId: ramilSelf && ramilSelf.id } })).status === 200);
     } finally { s.stop(); }
     try { fs.rmSync(ownerDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }

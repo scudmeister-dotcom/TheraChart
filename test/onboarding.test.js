@@ -15,6 +15,9 @@
 
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { startServer, reporter } = require("./helpers/server.js");
 
 const OWNER = "owner@therachart.test";
@@ -72,21 +75,35 @@ const OWNER = "owner@therachart.test";
    * ---------------------------------------------------------------- */
 
   {
-    const s = await startServer({ THERACHART_DEMO_LOGINS: "1", GOOGLE_OWNER_EMAIL: OWNER });
+    /* Give the owner account a password login. The real owner signs in with
+       Google (that path maps GOOGLE_OWNER_EMAIL to admin), which needs a live
+       Google token; the authorisation being tested is on the email, not on how
+       the session was minted, so a password account at the same address
+       exercises the same gate.
+
+       Seeded into the database rather than created through /api/users, because
+       creating an account is now the operator's own privilege — and the
+       operator is the account being made. Seeding is also closer to the truth:
+       the real owner is not created by anyone, they are who the deployment
+       says they are. */
+    const ownerDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-onboard-"));
+    fs.writeFileSync(path.join(ownerDir, "therachart.json"), JSON.stringify({
+      settings: { facilityName: "Physical Therapy Center" },
+      clinics: { "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center" } },
+      users: [{
+        id: "u-owner", name: "Platform Owner", email: OWNER, role: "admin",
+        pin: "ownerpassword1", active: true, clinicId: "clinic-demo",
+        license: { number: "PT-0", expires: "2030-01-01" },
+      }],
+      patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+    }));
+    const s = await startServer(
+      { THERACHART_DEMO_LOGINS: "1", GOOGLE_OWNER_EMAIL: OWNER },
+      { dataDir: ownerDir },
+    );
     try {
-      /* Give the owner account a password login. The real owner signs in with
-         Google (that path maps GOOGLE_OWNER_EMAIL to admin), which needs a live
-         Google token; the authorisation being tested is on the email, not on
-         how the session was minted, so a password account at the same address
-         exercises the same gate. Created by the demo admin, who may add staff
-         to their OWN clinic — which is also why the owner starts out in the
-         demo clinic here, and why the new clinic must still come out separate. */
       const grace = await s.demoSignIn("u-grace");
-      const mk = await s.call("/api/users", {
-        method: "POST", token: grace.data.token,
-        body: { name: "Platform Owner", email: OWNER, role: "admin", password: "ownerpassword1" },
-      });
-      r.check("the owner account was created for the test", mk.status === 200, `status ${mk.status} ${JSON.stringify(mk.data)}`);
+      r.check("the owner account was seeded for the test", true);
 
       const owner = await s.login(OWNER, "ownerpassword1");
       r.check("the owner can sign in", owner.status === 200 && !!owner.data.token, `status ${owner.status}`);
@@ -214,7 +231,10 @@ const OWNER = "owner@therachart.test";
       const queue = JSON.stringify(((seen.data || {}).state || {}).accessRequests || []);
       r.check("the demo clinic's queue does not hold the routed request",
         !queue.includes("hopeful@newclinic.ph"), queue.slice(0, 300));
-    } finally { s.stop(); }
+    } finally {
+      s.stop();
+      try { fs.rmSync(ownerDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
   }
 
   r.done();

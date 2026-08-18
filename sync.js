@@ -343,6 +343,31 @@
     }
   };
 
+  /* A clinic admin asking for staff. Server-only: the queue the operator
+     approves from lives there. */
+  sync.requestStaff = async (fields) => {
+    if (sync.mode !== "server") return { error: "Requesting staff needs the clinic server." };
+    try {
+      const res = await api("/api/staff-requests", { method: "POST", body: fields });
+      if (!res.ok) return { error: res.data.error || "Couldn't send that request." };
+      return { ok: true, message: res.data.message };
+    } catch (e) {
+      return { error: "Couldn't reach the clinic server." };
+    }
+  };
+
+  /* The operator's cross-clinic approval queue. */
+  sync.accessQueue = async () => {
+    if (sync.mode !== "server") return { error: "The approval queue needs the clinic server." };
+    try {
+      const res = await api("/api/access-requests");
+      if (!res.ok) return { error: res.data.error || "Couldn't load the queue." };
+      return { requests: res.data.requests || [], clinics: res.data.clinics || [] };
+    } catch (e) {
+      return { error: "Couldn't reach the clinic server." };
+    }
+  };
+
   /* Approving mints a credential, which only the server can keep: a device
      push has its password hashes stripped on the way in. So approvals go to
      the endpoint in server mode, and stay local only in the browser-only
@@ -366,7 +391,12 @@
     }
   };
   S.approveAccessRequest = (id, opts, byUser) =>
-    handleRequest(id, { action: "approve", role: (opts || {}).role }, localApprove, byUser);
+    handleRequest(id, {
+      action: "approve",
+      role: (opts || {}).role,
+      clinicId: (opts || {}).clinicId,
+      newClinicName: (opts || {}).newClinicName,
+    }, localApprove, byUser);
   S.declineAccessRequest = (id, byUser) =>
     handleRequest(id, { action: "decline" }, localDecline, byUser);
 

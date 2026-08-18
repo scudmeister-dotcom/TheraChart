@@ -725,11 +725,17 @@
       req.attempts = (req.attempts || 1) + 1;
       req.name = req.name || name;
       if (sub) req.googleSub = sub;
+      if (fields && ROLES.includes(fields.role)) req.wantRole = fields.role;
       stashPassword(req);
       touch(req);
     } else {
       req = {
         id: uid("ar"), email, name, source, googleSub: sub,
+        /* An admin raising this on behalf of their own staff already knows the
+           role and the clinic; the operator still decides, but starts from what
+           the clinic asked for rather than from a blank field. */
+        wantRole: (fields && ROLES.includes(fields.role)) ? fields.role : null,
+        requestedBy: (fields && fields.requestedBy) || null,
         status: "pending", note: "", attempts: 1, createdAt: new Date().toISOString(),
         /* Which clinic's approval queue this lands in. Without it the record is
            un-stamped, and un-stamped means DEFAULT_CLINIC — the seeded demo
@@ -755,11 +761,49 @@
      "current clinic" there is the default one and an admin of any other clinic
      could not find their own queue. Falls back to the ambient scope for the
      browser-only build, where the acting user IS the session. */
-  function findPendingRequest(id, byUser) {
+  function findPendingRequest(id, byUser, anyClinic) {
     load();
     if (!Array.isArray(state.accessRequests)) return null;
+    /* The operator approves for every clinic, so their lookup is not scoped —
+       the server proves who they are before passing anyClinic. Everyone else
+       stays inside their own tenant. */
+    if (anyClinic) return state.accessRequests.find((r) => r.id === id) || null;
     const cid = (byUser && byUser.clinicId) || currentClinicId();
     return state.accessRequests.find((r) => r.id === id && recClinic(r) === cid) || null;
+  }
+
+  /** Every pending request, across clinics — for the operator's queue. The
+      caller is responsible for proving it may see other tenants. */
+  function pendingAccessRequestsAllClinics() {
+    load();
+    if (!Array.isArray(state.accessRequests)) return [];
+    return state.accessRequests
+      .filter((r) => r.status === "pending")
+      .map((r) => ({ ...r, clinicName: clinicName(recClinic(r)), passwordHash: undefined, pin: undefined }));
+  }
+
+  /* Create a clinic with no members yet.
+
+     createClinic() insists on a first administrator because a clinic nobody can
+     sign into is not a clinic. That holds when the operator onboards a practice
+     cold — but not when the clinic is being made FOR someone already waiting in
+     the approval queue: they become its administrator a moment later, in the
+     same action. Kept separate rather than loosening createClinic, so the
+     "no clinic without a way in" rule still applies everywhere else. */
+  function addClinic(name, byUser) {
+    load();
+    const clean = String(name || "").trim();
+    if (!clean) return { error: "Clinic name is required." };
+    if (Object.values(clinicsMap()).some((c) => c.name.trim().toLowerCase() === clean.toLowerCase())) {
+      return { error: "A clinic with that name already exists." };
+    }
+    const clinicId = uid("clinic");
+    state.clinics = state.clinics || {};
+    state.clinics[clinicId] = { id: clinicId, name: clean };
+    touch(state.clinics[clinicId]);
+    save();
+    audit(byUser ? byUser.id : null, "clinic-created", `${clean} (awaiting its first administrator)`);
+    return { clinic: state.clinics[clinicId] };
   }
 
   /** Approve a pending request: provision an active account with the chosen
@@ -767,16 +811,28 @@
       resolved (kept for the audit trail). */
   function approveAccessRequest(id, opts, byUser) {
     load();
-    const req = findPendingRequest(id, byUser);
+    const req = findPendingRequest(id, byUser, opts && opts.anyClinic);
     if (!req) return { error: "That request no longer exists." };
     if (req.status !== "pending") return { error: "That request has already been handled." };
     const role = ROLES.includes(opts && opts.role) ? opts.role : "therapist";
+    /* Which clinic they join is the operator's decision, not a side effect of
+       who happened to approve. An explicit id is validated against the clinics
+       that exist — an unknown one would file a real person into a tenant with
+       no records and no colleagues, and look like a working account. */
+    let joinClinic = (opts && opts.clinicId) || null;
+    if (joinClinic && !clinicsMap()[joinClinic]) return { error: "That clinic no longer exists." };
+    if (!joinClinic) joinClinic = recClinic(req) || (byUser && byUser.clinicId) || currentClinicId();
     const email = normEmail(req.email);
     /* Approving decides the role, never the way in: a Google request stays a
        Google account, and an email request is activated with the password its
        owner already chose. Provisioning the wrong provider would leave someone
        approved and still unable to sign in. */
-    const viaGoogle = req.source !== "email";
+    /* Only a Google request provisions a Google account. Anything else — a
+       person choosing their own password, or an admin setting a temporary one
+       for their staff — carries a credential that must actually be applied.
+       Testing for "not email" silently threw the admin case's password away
+       and produced an account nobody could sign into. */
+    const viaGoogle = req.source === "google";
     const applyCredential = (u) => {
       u.authProvider = viaGoogle ? "google" : "password";
       if (viaGoogle) {
@@ -790,19 +846,22 @@
     if (user) {
       user.active = true;
       user.role = role;
+      user.clinicId = joinClinic;
       if (role === "frontdesk") user.license = null;
       applyCredential(user);
-      delete user.mustChangePassword;
+      // an admin-raised request carries a temporary password, so the person
+      // still picks their own the first time they sign in
+      if (req.source === "admin") user.mustChangePassword = true;
+      else delete user.mustChangePassword;
       touch(user);
     } else {
       user = {
         id: uid("u"), name: req.name || email.split("@")[0], email, role,
         active: true, license: null,
-        // an approved person joins the clinic of the admin who approved them —
-        // without this they fall back to the demo clinic and see its charts
-        clinicId: (byUser && byUser.clinicId) || currentClinicId(),
+        clinicId: joinClinic,
       };
       applyCredential(user);
+      if (req.source === "admin") user.mustChangePassword = true;
       touch(user);
       state.users.push(user);
     }
@@ -818,14 +877,14 @@
     touch(req);
     save();
     audit(byUser ? byUser.id : null, "user-created", `${user.name} (${role}, ${viaGoogle ? "google" : "password"})`);
-    audit(byUser ? byUser.id : null, "access-approved", `${email} (${role})`);
+    audit(byUser ? byUser.id : null, "access-approved", `${email} (${role}) → ${clinicName(joinClinic)}`);
     return { user, request: req };
   }
 
   /** Decline a pending request — kept (marked declined) for the audit trail. */
-  function declineAccessRequest(id, byUser) {
+  function declineAccessRequest(id, byUser, opts) {
     load();
-    const req = findPendingRequest(id, byUser);
+    const req = findPendingRequest(id, byUser, opts && opts.anyClinic);
     if (!req) return { error: "That request no longer exists." };
     if (req.status !== "pending") return { error: "That request has already been handled." };
     delete req.passwordHash;
@@ -2052,6 +2111,7 @@
     // settings are per clinic; settingsFor(id) is for server-side lookups by record
     settings, settingsFor, updateSettings, updateUser,
     // access requests (pending-approval queue)
-    accessRequests, requestAccess, approveAccessRequest, declineAccessRequest,
+    accessRequests, pendingAccessRequestsAllClinics, requestAccess, approveAccessRequest, declineAccessRequest,
+    addClinic,
   };
 });

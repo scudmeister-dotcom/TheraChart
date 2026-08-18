@@ -482,7 +482,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .access-note { font-size: 12.5px; color: var(--ink); margin-top: 4px; font-style: italic; }
 .access-meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 .access-actions { flex: none; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
-.access-role { padding: 6px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--ink); font-size: 12.5px; }
+.access-role, .access-clinic, .access-newclinic {
+  padding: 6px 9px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font-size: 12.5px; font-family: inherit;
+}
+/* the clinic is the consequential choice on this row, so it gets the width */
+.access-clinic, .access-newclinic { min-width: 190px; }
+.access-newclinic[hidden] { display: none; }
 .access-msg { font-size: 11.5px; min-height: 14px; text-align: right; }
 @media (max-width: 620px) {
   .access-req { flex-wrap: wrap; }

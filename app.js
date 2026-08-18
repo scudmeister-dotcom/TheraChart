@@ -6343,39 +6343,61 @@ ${privacyInfoAccordion(geminiOn)}
 
   /* ================= FACILITY ADMIN ================= */
 
-  function accessRequestsCard(user) {
-    const pending = S.accessRequests().filter((r) => r.status === "pending")
-      .slice().sort((a, b) => ((a.createdAt || "") < (b.createdAt || "") ? 1 : -1));
+  /* The operator's approval queue.
+
+     It lives here rather than in each clinic's Facility Admin because
+     approving is not a clinic-level act any more: it decides WHICH clinic a
+     real person joins, and every clinic has an admin. One person holds that,
+     and it is the same person who creates the clinics — so the queue sits
+     beside them.
+
+     Requests arrive from three places and the row says which: someone asking
+     for their own account, a denied Google sign-in, and a clinic admin asking
+     for staff. The last already knows the clinic and the role, so those come
+     pre-filled — the operator still decides, but does not retype what the
+     clinic already said. */
+  function accessRequestsCard() {
     return `
 <div class="card access-card">
   <div class="access-head">
-    <div><h2 style="margin:0">Access requests${pending.length ? ` <span class="chip warn">${pending.length} waiting</span>` : ""}</h2>
-      <div class="access-sub">People who tried to sign in with an account that isn't authorized yet. Approve to grant access, or decline.</div></div>
+    <div><h2 style="margin:0">Access requests <span class="chip warn" id="ar-count" hidden></span></h2>
+      <div class="access-sub">Everyone waiting to be let in, across every clinic. Approving decides which clinic they join.</div></div>
   </div>
-  ${pending.length ? `<div class="access-list">${pending.map((r) => `
-    <div class="access-req" data-ar="${esc(r.id)}">
-      <div class="access-avatar">${esc(initials(r.name || r.email))}</div>
+  <div id="ar-list"><div class="empty-state">Loading…</div></div>
+</div>`;
+  }
+
+  function accessRequestRow(q, clinics) {
+    const roleWord = { therapist: "Therapist", frontdesk: "Front desk", admin: "Administrator" };
+    const sel = (v, want) => (v === want ? " selected" : "");
+    const want = q.wantRole || "therapist";
+    return `
+    <div class="access-req" data-ar="${esc(q.id)}">
+      <div class="access-avatar">${esc(initials(q.name || q.email))}</div>
       <div class="access-info">
-        <div class="access-name">${esc(r.name || "—")} <span class="chip muted">${esc(r.source || "google")}</span></div>
-        <div class="access-email">${esc(r.email)}</div>
-        ${r.note ? `<div class="access-note">${esc(r.note)}</div>` : ""}
-        <div class="access-meta">Requested ${esc(fmtDT(r.createdAt))}${r.attempts > 1 ? ` · ${r.attempts} attempts` : ""}</div>
+        <div class="access-name">${esc(q.name || "—")} <span class="chip muted">${esc(q.source || "google")}</span></div>
+        <div class="access-email">${esc(q.email)}</div>
+        ${q.source === "admin" ? `<div class="access-note">Asked for by ${esc(q.clinicName || "their clinic")}</div>` : ""}
+        <div class="access-meta">Requested ${esc(fmtDT(q.createdAt))}${q.attempts > 1 ? ` · ${q.attempts} attempts` : ""}</div>
       </div>
       <div class="access-actions">
-        <select class="access-role" aria-label="Role for ${esc(r.email)}">
-          <option value="therapist">Therapist</option>
-          <option value="frontdesk">Front desk</option>
-          <option value="admin">Administrator</option>
+        <select class="access-role" aria-label="Role for ${esc(q.email)}">
+          ${["therapist", "frontdesk", "admin"].map((rr) =>
+            `<option value="${rr}"${sel(want, rr)}>${roleWord[rr]}</option>`).join("")}
         </select>
+        <select class="access-clinic" aria-label="Clinic for ${esc(q.email)}">
+          ${clinics.map((c) =>
+            `<option value="${esc(c.id)}"${sel(q.clinicName, c.name)}>${esc(c.name)}</option>`).join("")}
+          <option value="__new__">+ New clinic…</option>
+        </select>
+        <input class="access-newclinic" placeholder="New clinic name" hidden />
         <div style="display:flex; gap:6px">
-          <button class="btn small primary" data-approve="${esc(r.id)}">Approve</button>
-          <button class="btn small" data-decline="${esc(r.id)}">Decline</button>
+          <button class="btn small primary" data-approve="${esc(q.id)}">Approve</button>
+          <button class="btn small" data-decline="${esc(q.id)}">Decline</button>
         </div>
-        <div class="access-msg" data-ar-msg="${esc(r.id)}"></div>
+        <div class="access-msg" data-ar-msg="${esc(q.id)}"></div>
       </div>
-    </div>`).join("")}</div>`
-    : `<div class="empty-state">No access requests waiting. New requests appear here when someone tries to sign in with an account that hasn't been authorized yet.</div>`}
-</div>`;
+    </div>`;
   }
 
   /* This month against the plan.
@@ -6444,10 +6466,11 @@ ${privacyInfoAccordion(geminiOn)}
 
   function facilityView(user) {
     const st = S.settings();
+    // the operator creates accounts outright; a clinic admin asks for one
+    const isOwner = !!(window.TheraSync && window.TheraSync.isOwner);
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
 <div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Approvals, settings and staff licenses</div></div></div>
-${accessRequestsCard(user)}
 ${allowanceCard()}
 <div class="cards-2">
   <div class="card">
@@ -6490,7 +6513,8 @@ ${allowanceCard()}
     <h2>Staff &amp; licenses</h2>
     <p style="font-size:12.5px; color:var(--muted)">An expired license or voided access automatically blocks the EMR and document signing for that account. New employees get a temporary password and must set their own at first login.</p>
     <details style="margin:6px 0 14px">
-      <summary style="cursor:pointer; font-weight:600; font-size:13px">+ Add employee</summary>
+      <summary style="cursor:pointer; font-weight:600; font-size:13px">${isOwner ? "+ Add employee" : "+ Request to add someone"}</summary>
+      ${isOwner ? "" : `<div class="banner" style="margin-top:8px; font-size:12.5px">New accounts are approved by the operator, so this asks rather than creates. Give them a temporary password to hand over — the person is made to choose their own the first time they sign in. You can remove anyone from this clinic yourself, below.</div>`}
       <div style="border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:8px">
         <div class="field-row">
           <div class="field"><label>Full name</label><input id="nu-name" placeholder="e.g. Ana Reyes, PT" /></div>
@@ -6505,7 +6529,7 @@ ${allowanceCard()}
         </div>
         <div class="field"><label>Temporary password (min 8 — they'll change it at first login)</label>
           <div style="display:flex; gap:8px"><input id="nu-pw" type="text" autocomplete="off" style="flex:1" /><button class="btn small" id="nu-gen" type="button">Generate</button></div></div>
-        <button class="btn primary small" id="nu-add">Create employee</button>
+        <button class="btn primary small" id="nu-add">${isOwner ? "Create employee" : "Send request"}</button>
         <div id="nu-msg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
       </div>
     </details>
@@ -6599,10 +6623,24 @@ ${allowanceCard()}
       if (!fields.name) return fail("Enter a name.");
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(fields.email)) return fail("Enter a valid login email.");
       if ((fields.password || "").length < 8) return fail("Temporary password must be at least 8 characters (use Generate).");
-      msg.style.color = "var(--muted)"; msg.textContent = "Creating…"; addBtn.disabled = true;
-      const r = T.addUser ? await T.addUser(fields) : S.addUser(fields, user);
+      /* An operator creates the account; a clinic admin asks for it. Same form
+         either way — what differs is whether the result is an account or a
+         request, and the button already says which. */
+      const owner = !!(window.TheraSync && window.TheraSync.isOwner);
+      msg.style.color = "var(--muted)";
+      msg.textContent = owner ? "Creating…" : "Sending…";
+      addBtn.disabled = true;
+      const r = owner
+        ? (T.addUser ? await T.addUser(fields) : S.addUser(fields, user))
+        : await T.requestStaff(fields);
       addBtn.disabled = false;
       if (r.error) return fail(r.error);
+      if (!owner) {
+        msg.style.color = "var(--good)";
+        msg.textContent = r.message || "Sent to the operator for approval.";
+        ["nu-name", "nu-email", "nu-pw"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ""; });
+        return;
+      }
       render();
     });
 
@@ -6629,30 +6667,74 @@ ${allowanceCard()}
       })
     );
 
-    // access-request approvals: approving provisions an account (so the next
-    // sign-in works) and re-renders so the new staffer drops into the list.
-    const arMsg = (id, text) => { const el = document.querySelector(`[data-ar-msg="${id}"]`); if (el) { el.style.color = "var(--danger)"; el.textContent = text; } };
-    document.querySelectorAll("[data-approve]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        const id = b.dataset.approve;
-        const card = b.closest(".access-req");
-        const role = card ? card.querySelector(".access-role").value : "therapist";
-        b.disabled = true;
-        // server-backed now: approving mints a credential, so it is awaited
-        const res = await Promise.resolve(S.approveAccessRequest(id, { role }, user));
-        if (res.error) { b.disabled = false; return arMsg(id, res.error); }
-        render();
-      })
-    );
-    document.querySelectorAll("[data-decline]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        const id = b.dataset.decline;
-        b.disabled = true;
-        const res = await Promise.resolve(S.declineAccessRequest(id, user));
-        if (res.error) { b.disabled = false; return arMsg(id, res.error); }
-        render();
-      })
-    );
+  }
+
+  /* Approve/decline, on the operator's screen. Rendered from the cross-clinic
+     queue endpoint rather than from synced state, because synced state only
+     ever holds this clinic's requests — and the operator is approving for
+     clinics they are not a member of. */
+  async function bindAccessRequests(user, onChanged) {
+    const T = window.TheraSync || {};
+    const list = document.getElementById("ar-list");
+    const count = document.getElementById("ar-count");
+    if (!list) return;
+    const arMsg = (id, text) => {
+      const el = document.querySelector(`[data-ar-msg="${id}"]`);
+      if (el) { el.style.color = "var(--danger)"; el.textContent = text; }
+    };
+
+    const refresh = async () => {
+      const q = await T.accessQueue();
+      if (q.error) { list.innerHTML = `<div class="empty-state">${esc(q.error)}</div>`; return; }
+      const rows = q.requests || [];
+      if (count) { count.hidden = !rows.length; count.textContent = `${rows.length} waiting`; }
+      list.innerHTML = rows.length
+        ? `<div class="access-list">${rows.map((rq) => accessRequestRow(rq, q.clinics || [])).join("")}</div>`
+        : `<div class="empty-state">No access requests waiting. New requests appear here when someone asks for an account, a clinic asks for staff, or a Google sign-in isn't authorized yet.</div>`;
+      wire();
+    };
+
+    const wire = () => {
+      // "+ New clinic…" reveals the name field rather than opening a dialog:
+      // the decision and the name belong to the same glance at the row.
+      document.querySelectorAll(".access-clinic").forEach((selEl) =>
+        selEl.addEventListener("change", () => {
+          const nameEl = selEl.closest(".access-actions").querySelector(".access-newclinic");
+          nameEl.hidden = selEl.value !== "__new__";
+          if (!nameEl.hidden) nameEl.focus();
+        }));
+
+      document.querySelectorAll("[data-approve]").forEach((b) =>
+        b.addEventListener("click", async () => {
+          const id = b.dataset.approve;
+          const card = b.closest(".access-req");
+          const role = card.querySelector(".access-role").value;
+          const clinicSel = card.querySelector(".access-clinic").value;
+          const newName = card.querySelector(".access-newclinic").value.trim();
+          if (clinicSel === "__new__" && !newName) return arMsg(id, "Name the new clinic first.");
+          b.disabled = true;
+          const res = await Promise.resolve(S.approveAccessRequest(id, {
+            role,
+            clinicId: clinicSel === "__new__" ? null : clinicSel,
+            newClinicName: clinicSel === "__new__" ? newName : null,
+          }, user));
+          if (res.error) { b.disabled = false; return arMsg(id, res.error); }
+          await refresh();
+          if (onChanged) await onChanged();
+        }));
+
+      document.querySelectorAll("[data-decline]").forEach((b) =>
+        b.addEventListener("click", async () => {
+          const id = b.dataset.decline;
+          b.disabled = true;
+          const res = await Promise.resolve(S.declineAccessRequest(id, user));
+          if (res.error) { b.disabled = false; return arMsg(id, res.error); }
+          await refresh();
+          if (onChanged) await onChanged();
+        }));
+    };
+
+    await refresh();
   }
 
   /* ================= CLINICS (platform operator only) =================
@@ -6666,7 +6748,8 @@ ${allowanceCard()}
 
   function clinicsView(user) {
     return `
-<div class="page-head"><div><h1>Clinics</h1><div class="sub">Onboard a new clinic, and see every clinic on this server</div></div></div>
+<div class="page-head"><div><h1>Clinics</h1><div class="sub">Approvals, onboarding, and every clinic on this server</div></div></div>
+${accessRequestsCard()}
 <div class="cards-2">
   <div class="card">
     <h2>Onboard a clinic</h2>
@@ -6706,6 +6789,11 @@ ${allowanceCard()}
         </tr>`).join("")}
       </tbody></table>`;
     };
+
+    /* Bound after `refresh` exists and handed it: approving into a new clinic
+       creates one, and a clinics table that still shows the old list makes it
+       look as though nothing happened. */
+    bindAccessRequests(user, refresh);
 
     document.getElementById("nc-gen").addEventListener("click", () => {
       document.getElementById("nc-pw").value = genTempPassword();
