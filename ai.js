@@ -248,8 +248,18 @@
      No local fallback exists for reading documents — without a key this
      feature reports itself unavailable rather than guessing. */
 
+  // Every narrative field is REQUIRED, and the properties are explicitly
+  // ordered. Both matter, and were measured live rather than guessed:
+  // with the narrative fields optional, the model regularly emitted a single
+  // visit carrying nothing but `treatment` — the whole note, subjective and
+  // objective and assessment alike, crammed into that one string — and then
+  // stopped, dropping every later visit. Requiring the fields (and emitting
+  // the narrative BEFORE the measurement arrays) took a 2-page 4-visit scan
+  // from 1-of-3 runs correct to 9-of-9 across both thinking levels.
+  // An absent section is an empty string; see extractSystem().
   const EXTRACT_SCHEMA = {
     type: "object",
+    propertyOrdering: ["patientName", "docDescription", "visits"],
     properties: {
       patientName: { type: "string" },
       docDescription: { type: "string" },
@@ -277,9 +287,11 @@
         special: { type: "array", items: { type: "object", properties: {
           name: { type: "string" }, result: { type: "string", enum: ["positive", "negative"] },
         }, required: ["name", "result"] } },
-      }, required: ["type"] } },
+      }, propertyOrdering: ["date", "type", "therapist", "subjective", "objective", "assessment",
+           "treatment", "findings", "rom", "mmt", "pain", "special"],
+         required: ["date", "type", "subjective", "objective", "assessment", "treatment"] } },
     },
-    required: ["visits"],
+    required: ["visits", "patientName", "docDescription"],
   };
 
   function extractSystem() {
@@ -308,6 +320,12 @@
       "- rom / mmt / pain / special: objective measurements exactly as recorded",
       "  (range of motion in degrees, muscle grades like 4-/5, pain 0-10 ratings,",
       "  special orthopedic tests positive/negative).",
+      "",
+      "Every one of subjective/objective/assessment/treatment must be present on",
+      "every visit. When a visit genuinely has no such section, return an EMPTY",
+      "STRING for it — never a placeholder like 'not documented', and never the",
+      "text of a different section. Each section's text belongs in its own field:",
+      "do not merge a whole note into one field.",
       "",
       "Be conservative and faithful: extract only what the document actually",
       "says; NEVER invent values, dates, or findings; keep the original language",

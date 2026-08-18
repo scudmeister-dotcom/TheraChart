@@ -10,6 +10,10 @@ node_modules/
 # Local Claude Code machine settings (keep launch config, ignore local perms)
 .claude/settings.local.json
 
+# Generated scan fixtures for the extract eval — bitmaps are bulky, and
+# make-scan.py rebuilds them byte-identically on demand
+/test/eval/fixtures/*.pdf
+
 # Playwright: browser binaries live in a shared user cache, but run artifacts
 # (traces, screenshots, HTML report) land here and should not be committed
 /test-results/
