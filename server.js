@@ -1970,6 +1970,12 @@ async function start() {
   // …and equally when the demo is offered behind the sign-in rather than on it:
   // an invite-only demo still needs accounts to invite people into.
   const demo = DEMO_ACCOUNTS_AVAILABLE ? store.ensureDemoAccounts() : null;
+  /* Unconditional, and before the pin migration so there is nothing left to
+     hash: the seeded demo accounts must hold no password even on a deployment
+     that offers no demo — that is exactly where /api/login's demo gate never
+     runs, so an old shared "1234" would still open them. */
+  const demoStripped = store.stripDemoCredentials();
+  if (demoStripped) console.log(`[demo] cleared the password on ${demoStripped} seeded demo account(s)`);
   const migrated = store.hashLegacyPins(); // one-time: plaintext pins -> scrypt hashes
   const emailed = store.ensureEmails();    // one-time: give pre-email-login accounts a login email
   const r = Number(db.get("rev")); if (r) rev = r;

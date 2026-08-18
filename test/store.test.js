@@ -20,9 +20,15 @@ const carlo = store.getUser("u-carlo"); // access voided
 const ana = store.getUser("u-ana"); // front desk
 
 // --- access gating ------------------------------------------------------
-check("voided user cannot log in", store.login("u-carlo", "1234") !== null);
+/* Seeded demo accounts ship with no password, so login() is exercised on an
+   account given one here. The voided check still uses carlo: being blocked
+   must not depend on whether a credential was even offered. */
+store.setPassword("u-maria", "mariaPass123", store.getUser("u-grace"));
+check("voided user cannot log in", store.login("u-carlo", "anything") !== null);
 check("wrong PIN refused", store.login("u-maria", "9999") !== null);
-check("valid login works", store.login("u-maria", "1234") === null);
+check("valid login works", store.login("u-maria", "mariaPass123") === null);
+check("a seeded demo account has no password until one is set",
+  (() => { const j = store.getUser("u-jose"); return j.pin == null && !j.passwordHash; })());
 
 check("expired license: EMR access blocked", store.canAccessEmr(jose) === false);
 check("expired license: cannot document", store.canDocument(jose) === false);

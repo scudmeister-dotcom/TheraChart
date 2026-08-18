@@ -1343,7 +1343,12 @@ ${walkthroughMarkup()}`;
         <div class="signup-msg" id="suMsg"></div>
       </div>` : ""}
       ${testAccounts.length ? `
-      <details class="test-accounts" id="demoAccounts"${(window.TheraSync && window.TheraSync.demoOpen) ? " open" : ""}>
+      <!-- open by default: this panel only renders on a box that publishes its
+           demo logins, where being one click from inside is the entire point.
+           (It used to wait for a demoOpen flag set by the demo switch, which
+           now opens its own picker inside the app — leaving nothing to set it
+           and the panel permanently shut.) -->
+      <details class="test-accounts" id="demoAccounts" open>
         <summary class="ta-summary">
           <span class="ta-sum-main">
             <span class="ta-sum-title">Demo Clinic</span>

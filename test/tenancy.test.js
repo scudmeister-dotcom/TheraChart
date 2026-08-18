@@ -38,6 +38,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function boot(dataDir, port) {
   const child = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
     env: { ...process.env, THERACHART_DATA: dataDir, PORT: String(port), GEMINI_API_KEY: "", GCP_PROJECT: "",
+      // the seeded demo accounts hold no password — they are opened by being
+      // picked, which this flag makes available without a prior sign-in
+      THERACHART_DEMO_LOGINS: "1",
       // a client id so /api/verify-google validates rather than short-circuiting
       // with "Google sign-in isn't configured"
       GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com" },
@@ -60,6 +63,25 @@ async function boot(dataDir, port) {
 
 (async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "therachart-tenancy-"));
+  /* One REAL password account, planted before boot.
+
+     The seeded demo accounts hold no password at all now, so a fresh database
+     has none — and several checks below are specifically about password
+     behaviour (reset, verify, lockout). Planting it here rather than creating
+     it over the API, because creating an account is the operator's privilege
+     and this test has no operator. The demo clinic and its records still
+     arrive: ensureDemoAccounts() grafts them onto a non-empty database, which
+     is the same path the bootstrap checker pins. */
+  fs.writeFileSync(path.join(dataDir, "therachart.json"), JSON.stringify({
+    settings: { facilityName: "Physical Therapy Center" },
+    clinics: { "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center" } },
+    users: [{
+      id: "u-nena", name: "Nena Cruz, PT", email: "nena@therachart.demo", role: "therapist",
+      pin: "nenaPass123", active: true, clinicId: "clinic-demo",
+      license: { number: "PT-777", expires: "2030-01-01" },
+    }],
+    patients: [], documents: [], appointments: [], audit: [], accessRequests: [], sessionUserId: null,
+  }));
   const port = await freePort();
   const BASE = `http://127.0.0.1:${port}`;
   const server = await boot(dataDir, port);
@@ -76,6 +98,8 @@ async function boot(dataDir, port) {
     return { status: res.status, data };
   };
   const login = (email, password) => call("/api/login", { method: "POST", body: { email, password } });
+  // demo actors are entered the way the picker does it: no password is involved
+  const openDemo = (userId) => call("/api/demo-signin", { method: "POST", body: { userId } });
 
   // Against vulnerable code the earlier checks succeed and leave the database in
   // shapes later steps don't expect. Degrade to a named failure rather than
@@ -92,11 +116,11 @@ async function boot(dataDir, port) {
 
   try {
     /* ---- actors -------------------------------------------------------- */
-    const fresh = await login("fresh@therachart.demo", "1234");   // admin of the empty clinic-fresh
-    const maria = await login("maria@therachart.demo", "1234");   // therapist,   clinic-demo
-    const ana = await login("ana@therachart.demo", "1234");       // front desk,  clinic-demo
-    const grace = await login("grace@therachart.demo", "1234");   // admin,       clinic-demo
-    const jose = await login("jose@therachart.demo", "1234");     // expired licence, clinic-demo
+    const fresh = await openDemo("u-fresh");   // admin of the empty clinic-fresh
+    const maria = await openDemo("u-maria");   // therapist,   clinic-demo
+    const ana = await openDemo("u-ana");       // front desk,  clinic-demo
+    const grace = await openDemo("u-grace");   // admin,       clinic-demo
+    const jose = await openDemo("u-jose");     // expired licence, clinic-demo
 
     check("all demo accounts can sign in", [fresh, maria, ana, grace, jose].every((r) => r.data && r.data.token),
       [fresh, maria, ana, grace, jose].map((r) => (r.data && r.data.error) || "ok").join(" | "));
@@ -150,11 +174,20 @@ async function boot(dataDir, port) {
       !(fAfter.state.patients || []).some((p) => p.id === "p-injected"),
       JSON.stringify((fAfter.state.patients || []).map((p) => p.id)));
 
-    /* ---- cross-clinic account control ----------------------------------- */
-    const setPw = await call("/api/set-password", { method: "POST", token: fToken, body: { userId: "u-maria", newPassword: "attacker-chosen-pw" } });
+    /* ---- cross-clinic account control -----------------------------------
+       The target is a REAL password account rather than a seeded demo one:
+       demo accounts hold no password at all now, so "the reset did not take"
+       could not be told apart from "there was nothing to reset". */
+    const pwUserId = "u-nena"; // planted before boot; see the data-dir seed above
+    check("clinic-demo has a real password account to target",
+      !!(await login("nena@therachart.demo", "nenaPass123")).data?.token);
+
+    const setPw = await call("/api/set-password", { method: "POST", token: fToken, body: { userId: pwUserId, newPassword: "attacker-chosen-pw" } });
     check("cross-clinic password reset is refused", setPw.status === 404, `-> ${setPw.status}`);
-    const stillMaria = await login("maria@therachart.demo", "1234");
-    check("the target's password is untouched", !!(stillMaria.data && stillMaria.data.token));
+    check("the attacker's chosen password does not work",
+      (await login("nena@therachart.demo", "attacker-chosen-pw")).status !== 200);
+    const stillNena = await login("nena@therachart.demo", "nenaPass123");
+    check("the target's password is untouched", !!(stillNena.data && stillNena.data.token));
 
     const del = await call("/api/delete-user", { method: "POST", token: fToken, body: { userId: "u-carlo" } });
     check("cross-clinic user deletion is refused", del.status === 404, `-> ${del.status}`);
@@ -330,7 +363,8 @@ async function boot(dataDir, port) {
         `${r.status} ${JSON.stringify(r.data)}`);
     }
     // and a password account is unaffected — it still verifies by password
-    const okPw = await call("/api/verify-password", { method: "POST", token: mToken, body: { password: "1234" } });
+    const nenaToken = (stillNena.data || {}).token;
+    const okPw = await call("/api/verify-password", { method: "POST", token: nenaToken, body: { password: "nenaPass123" } });
     check("a password account still verifies by password", okPw.status === 200 && okPw.data.ok === true, JSON.stringify(okPw.data));
     const badPw = await call("/api/verify-password", { method: "POST", token: mToken, body: { password: "wrong" } });
     check("a wrong password is still refused", badPw.data.ok === false);
@@ -361,12 +395,22 @@ async function boot(dataDir, port) {
     // Trip the lock on one account, then spray >1000 distinct identifiers. The
     // old code called loginFails.clear() to bound memory, which released every
     // live lock and let guessing resume.
-    for (let i = 0; i < 5; i++) await login("grace@therachart.demo", "wrong-password");
-    const lockedNow = await login("grace@therachart.demo", "1234");
+    /* Targets the real password account: a seeded demo address is refused
+       outright before the limiter is ever consulted, so guessing at one could
+       never trip a lock and would prove nothing here. */
+    for (let i = 0; i < 5; i++) await login("nena@therachart.demo", "wrong-password");
+    const lockedNow = await login("nena@therachart.demo", "nenaPass123");
     check("5 bad passwords locks the account", lockedNow.status === 429, `-> ${lockedNow.status}`);
     for (let i = 0; i < 1100; i++) await login(`flood${i}@nowhere.invalid`, "x");
-    const afterFlood = await login("grace@therachart.demo", "1234");
+    const afterFlood = await login("nena@therachart.demo", "nenaPass123");
     check("a flood of junk identifiers does not release the lock", afterFlood.status === 429, `-> ${afterFlood.status}`);
+
+    /* And the demo refusal is not itself a guessing oracle: it answers the
+       same way however many times it is asked, because there is nothing to
+       guess at. */
+    check("a demo address is refused the same way every time",
+      (await login("grace@therachart.demo", "whatever")).status === 403,
+      "the refusal must not decay into a rate-limit signal");
   } finally {
     server.kill("SIGKILL");
     try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }

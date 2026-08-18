@@ -158,9 +158,11 @@ function rawGet(base, path, headers) {
      machine the next person to open the browser was one devtools line from the
      last person's records. */
   {
-    const s3 = await startServer();
+    // sessions are what is under test, and demo accounts hold no password —
+    // the picker is how this box hands out a session
+    const s3 = await startServer({ THERACHART_DEMO_LOGINS: "1" });
     try {
-      const tok = (await s3.login("maria@therachart.demo", "1234")).data.token;
+      const tok = (await s3.demoSignIn("u-maria")).data.token;
       r.check("a fresh token works", (await s3.call("/api/rev", { token: tok })).status === 200);
 
       const out = await s3.call("/api/logout", { method: "POST", token: tok });
@@ -178,8 +180,8 @@ function rawGet(base, path, headers) {
         (await s3.call("/api/logout", { method: "POST" })).status === 200);
 
       // one device signing out must not sign the account out everywhere
-      const a = (await s3.login("maria@therachart.demo", "1234")).data.token;
-      const b = (await s3.login("maria@therachart.demo", "1234")).data.token;
+      const a = (await s3.demoSignIn("u-maria")).data.token;
+      const b = (await s3.demoSignIn("u-maria")).data.token;
       await s3.call("/api/logout", { method: "POST", token: a });
       r.check("signing out one device leaves the other signed in",
         (await s3.call("/api/rev", { token: b })).status === 200,

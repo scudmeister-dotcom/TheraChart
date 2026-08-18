@@ -34,12 +34,29 @@ store.resetAll();
 store.setAuthenticator(AUTH);
 
 // --- migration -----------------------------------------------------------
+/* The legacy-pin fixture is planted rather than borrowed from the seed. It
+   used to be a demo account, which no longer carries a password at all — so
+   the seed has no plaintext pins left to migrate, and borrowing one tested
+   nothing. This is the shape a pre-hash database actually had. */
+const legacy = store.getUser("u-grace");
+legacy.pin = "legacyPass1";
+delete legacy.passwordHash;
+
 const migrated = store.hashLegacyPins();
 check("legacy pins migrated to hashes", migrated >= 1, `migrated=${migrated}`);
 const maria = store.getUser("u-maria");
-check("passwordHash set after migration", !!maria.passwordHash && maria.passwordHash.startsWith("scrypt$"));
-check("plaintext pin removed after migration", maria.pin === undefined);
+check("passwordHash set after migration", !!legacy.passwordHash && legacy.passwordHash.startsWith("scrypt$"));
+check("plaintext pin removed after migration", legacy.pin === undefined);
 check("re-running migration is a no-op", store.hashLegacyPins() === 0);
+
+/* The seed itself ships no demo credential — that is the property that
+   survives a deployment with the demo switched off entirely. */
+check("seeded demo accounts carry no password at all",
+  ["u-maria", "u-jose", "u-carlo", "u-ana", "u-grace", "u-fresh"]
+    .map((id) => store.getUser(id))
+    .filter(Boolean)
+    .every((u) => u.id === "u-grace" || (u.pin == null && !u.passwordHash)),
+  "a seeded demo account still holds a credential");
 
 // --- login through the authenticator ------------------------------------
 /* Password login is exercised on a REAL staff account, not a seeded demo one:
@@ -55,8 +72,8 @@ check("staff fixture created", !staff.error && !!staff.user, staff.error);
 const staffId = staff.user && staff.user.id;
 check("login with migrated password succeeds", store.login(staffId, "staffPass12") === null);
 check("login with wrong password fails", typeof store.login(staffId, "nope") === "string");
-check("verifyPassword true for correct", store.verifyPassword("u-maria", "1234") === true);
-check("verifyPassword false for wrong", store.verifyPassword("u-maria", "xxxx") === false);
+check("verifyPassword true for correct", store.verifyPassword("u-grace", "legacyPass1") === true);
+check("verifyPassword false for wrong", store.verifyPassword("u-grace", "xxxx") === false);
 check("verifyPassword does not start a session", true); // (pure check — no session mutation asserted below)
 
 // --- setPassword rules + effect -----------------------------------------

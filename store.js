@@ -75,26 +75,26 @@
       users: [
         {
           id: "u-maria", name: "Maria Santos, PT", email: "maria@therachart.demo", role: "therapist",
-          pin: "1234", active: true,
+          active: true,
           license: { number: "PT-0012345", expires: daysFromNow(600) },
         },
         {
           id: "u-jose", name: "Jose Ramirez, PT", email: "jose@therachart.demo", role: "therapist",
-          pin: "1234", active: true,
+          active: true,
           license: { number: "PT-0098765", expires: daysFromNow(-40) }, // expired
         },
         {
           id: "u-carlo", name: "Carlo Mendoza, PT", email: "carlo@therachart.demo", role: "therapist",
-          pin: "1234", active: false, // access voided
+          active: false, // access voided
           license: { number: "PT-0055555", expires: daysFromNow(300) },
         },
         {
           id: "u-ana", name: "Ana Dela Cruz", email: "ana@therachart.demo", role: "frontdesk",
-          pin: "1234", active: true, license: null,
+          active: true, license: null,
         },
         {
           id: "u-grace", name: "Grace Lim, PT (Admin)", email: "grace@therachart.demo", role: "admin",
-          pin: "1234", active: true,
+          active: true,
           license: { number: "PT-0000111", expires: daysFromNow(50) }, // expiring soon
         },
       ],
@@ -392,7 +392,7 @@
     // picker (fresh@therachart.demo / 1234) — opens to a completely empty EMR.
     seedState.users.push({
       id: "u-fresh", name: "Sam Rivera, PT (Admin)", email: "fresh@therachart.demo", role: "admin",
-      pin: "1234", active: true, clinicId: "clinic-fresh",
+      active: true, clinicId: "clinic-fresh",
       license: { number: "PT-0002026", expires: daysFromNow(700) },
     });
 
@@ -883,6 +883,31 @@
     return { ok: true, request: req };
   }
 
+  /* The seeded demo accounts hold no password, on every deployment.
+
+     They are entered by picking a name, which authorizes the caller rather
+     than trusting a secret — so a password on them is not a way in, only a way
+     around. Refusing them at /api/login already covers a server that offers a
+     demo; this covers the one that does NOT, where that gate never runs and an
+     old "1234" hash would otherwise sit there working. Unconditional and
+     idempotent for that reason. An admin can still set a real password on one
+     of these addresses later if they ever want it to be a real account. */
+  function stripDemoCredentials() {
+    load();
+    let n = 0;
+    for (const u of state.users) {
+      if (!SEEDED_DEMO_ID_SET.has(u.id)) continue;
+      if (u.pin == null && !u.passwordHash && !u.mustChangePassword) continue;
+      delete u.pin;
+      delete u.passwordHash;
+      delete u.mustChangePassword;
+      touch(u);
+      n += 1;
+    }
+    if (n) { audit(null, "demo-credentials-cleared", `${n} seeded demo account${n === 1 ? "" : "s"}`); save(); }
+    return n;
+  }
+
   /** One-time: hash any legacy plaintext pins into passwordHash (server only). */
   function hashLegacyPins() {
     if (!authenticator) return 0;
@@ -971,12 +996,12 @@
         if (!holder) { existing.email = su.email; changed = true; }
       }
 
-      /* Re-publish the demo password. setPassword() is not used — it enforces
-         an 8-character minimum meant for real staff, and the panel advertises
-         the 4-digit seed value. Drop any hash so the authenticator re-derives
-         one from this pin at the hashLegacyPins() step. */
-      if (existing.pin !== su.pin || existing.passwordHash) {
-        existing.pin = su.pin;
+      /* These accounts hold no password at all — see stripDemoCredentials().
+         The graft used to re-publish a shared 4-digit one because the sign-in
+         panel advertised it; the panel now opens them by picking a name, so a
+         credential here would only be a second, weaker door. */
+      if (existing.pin != null || existing.passwordHash || existing.mustChangePassword) {
+        delete existing.pin;
         delete existing.passwordHash;
         delete existing.mustChangePassword;
         changed = true;
@@ -2072,7 +2097,7 @@
     createClinic, clinicSummaries,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
-    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
+    setAuthenticator, verifyPassword, setPassword, hashLegacyPins, stripDemoCredentials, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
     // which accounts are seeded demo logins (never infer this from the email domain)
     SEEDED_DEMO_USER_IDS,

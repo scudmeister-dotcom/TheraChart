@@ -16,13 +16,15 @@ const { startServer, reporter } = require("./helpers/server.js");
 
 (async () => {
   const R = reporter("workflow checker");
-  const srv = await startServer();
-  const { call, login } = srv;
+  // demo accounts hold no password — a box that offers the picker is how two
+  // devices get a session for the same therapist without one
+  const srv = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+  const { call, demoSignIn } = srv;
 
   try {
     /* ---- two devices, same therapist ---- */
-    const a = await login("maria@therachart.demo", "1234");
-    const b = await login("maria@therachart.demo", "1234");
+    const a = await demoSignIn("u-maria");
+    const b = await demoSignIn("u-maria");
     R.check("both devices sign in", !!(a.data.token && b.data.token));
     const A = a.data.token, B = b.data.token;
 

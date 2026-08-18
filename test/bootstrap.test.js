@@ -48,11 +48,16 @@ const { startServer, reporter } = require("./helpers/server.js");
         data.users === undefined && data.staff === undefined,
         JSON.stringify(Object.keys(data)));
 
-      /* Hiding the panel must not disable the accounts — the demo still needs
-         to be able to sign in, it just isn't advertised. */
+      /* The demo accounts carry NO password, on a server that offers no demo
+         at all. This is the case the /api/login demo gate cannot cover — that
+         gate only runs where a demo is offered — so if the shared "1234" ever
+         still worked anywhere, it would be here. */
       const login = await s.login("grace@therachart.demo", "1234");
-      r.check("a seeded account can still sign in when the panel is hidden",
-        login.status === 200 && !!login.data.token, `status ${login.status}`);
+      r.check("the old shared password opens nothing, even with no demo offered",
+        login.status !== 200, `status ${login.status} ${JSON.stringify(login.data).slice(0, 120)}`);
+      r.check("…and the refusal gives nothing away",
+        /incorrect email or password/i.test(String((login.data || {}).error || "")),
+        JSON.stringify(login.data));
     } finally { s.stop(); }
   }
 
