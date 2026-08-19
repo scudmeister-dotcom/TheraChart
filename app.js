@@ -694,6 +694,25 @@
     });
   }
 
+/* Scroll to the price list rather than link to it.
+
+   An <a href="#pricing"> writes that into location.hash, and this app routes on
+   the hash — so a logged-out visitor who clicked Pricing and then reloaded, or
+   shared the URL they were looking at, got the sign-in screen instead of the
+   prices.
+
+   Delegated from the document rather than bound to the button. The landing is
+   drawn by assigning innerHTML, and it is redrawn once the server's bootstrap
+   lands; a listener attached to the button that existed at first paint is
+   thrown away with that markup, leaving a button that looks fine and does
+   nothing. The document survives every redraw. */
+  document.addEventListener("click", (e) => {
+    const hit = e.target.closest && e.target.closest("#lpPricing");
+    if (!hit) return;
+    const sec = document.getElementById("pricing");
+    if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   function renderLanding() {
     const facility = esc(S.currentClinicName());
     const feature = (icon, title, body) => `
@@ -796,15 +815,6 @@
   </section>
 </div>
 ${walkthroughMarkup()}`;
-    /* Scrolled, not linked. An <a href="#pricing"> writes that into
-       location.hash, and the app routes on the hash — so a logged-out visitor
-       who clicked Pricing and then reloaded, or shared the URL, landed on the
-       sign-in screen instead of the price list. */
-    const pricingBtn = document.getElementById("lpPricing");
-    if (pricingBtn) pricingBtn.addEventListener("click", () => {
-      const sec = document.getElementById("pricing");
-      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
     const go = () => { showLogin = true; render(); };
     ["lpSignIn", "lpStart", "lpStart2"].forEach((id) => {
       const el = document.getElementById(id);
