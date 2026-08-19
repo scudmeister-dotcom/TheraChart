@@ -2155,7 +2155,11 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
    glance — that column is the one a clinic owner checks against their own
    book, and it has to fall at every step or the ladder punishes growing. */
 .lp-nav-actions { display: flex; align-items: center; gap: 16px; }
-.lp-nav-link { font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none; }
+.lp-nav-link {
+  font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none;
+  /* a <button> for routing reasons (see app.js), styled as the link it reads as */
+  background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit;
+}
 .lp-nav-link:hover { color: var(--accent); }
 
 .lp-pricing { padding: 48px 0 8px; }

@@ -724,7 +724,7 @@
       <div><b>TheraChart</b><span class="lp-nav-sub">EMR</span></div>
     </div>
     <div class="lp-nav-actions">
-      <a class="lp-nav-link" href="#pricing">Pricing</a>
+      <button class="lp-nav-link" id="lpPricing" type="button">Pricing</button>
       <button class="btn primary" id="lpSignIn">Sign in</button>
     </div>
   </header>
@@ -796,6 +796,15 @@
   </section>
 </div>
 ${walkthroughMarkup()}`;
+    /* Scrolled, not linked. An <a href="#pricing"> writes that into
+       location.hash, and the app routes on the hash — so a logged-out visitor
+       who clicked Pricing and then reloaded, or shared the URL, landed on the
+       sign-in screen instead of the price list. */
+    const pricingBtn = document.getElementById("lpPricing");
+    if (pricingBtn) pricingBtn.addEventListener("click", () => {
+      const sec = document.getElementById("pricing");
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     const go = () => { showLogin = true; render(); };
     ["lpSignIn", "lpStart", "lpStart2"].forEach((id) => {
       const el = document.getElementById(id);
