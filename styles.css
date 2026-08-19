@@ -365,7 +365,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   box-shadow: var(--shadow);
   padding: 16px 18px;
 }
+/* Stacking margin for cards that follow one another in normal block flow. */
 .card + .card { margin-top: 14px; }
+/* ...but never inside a container that already spaces its cards with `gap`.
+   There the margin lands on every card except the first, so a two-column row
+   starts its second card 14px lower than its first — and under `stretch` that
+   card is also 14px shorter, because the margin eats into the height it is
+   stretched to. Any new gap-spaced card container belongs in this list. */
+:where(.cards-2, .cards-3, .doc-layout) > .card + .card { margin-top: 0; }
 .card h2 { font-size: 15px; margin-bottom: 10px; }
 .card h3 { font-size: 13.5px; margin-bottom: 8px; }
 .cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
@@ -623,7 +630,15 @@ input[readonly], textarea[readonly] {
 }
 /* the drag-handle is an "editable" affordance — drop it when locked */
 textarea:disabled, textarea[readonly] { resize: none; }
-.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* Column gutter only — no row gap. A `.field` already carries its own bottom
+   margin, and that is what separates the row from whatever follows it. Adding
+   a row gap on top is invisible while the row is two columns wide, but once it
+   collapses to a single column on a phone the two fields are pushed apart by
+   the gap *and* the margin — 24px, twice the spacing between any other pair of
+   fields on the same form. Leaving the vertical rhythm to the margin keeps a
+   collapsed row identical to plain stacked fields, and keeps the compact rows
+   that override that margin compact. */
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 @media (max-width: 700px) { .field-row { grid-template-columns: 1fr; } }
 
 /* ---- field-level validation (intake and the patient edit windows) ----
