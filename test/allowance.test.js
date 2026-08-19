@@ -14,6 +14,33 @@
 "use strict";
 
 const store = require("../store.js");
+
+/* Open a counting window that cannot see anything created before it.
+
+   These blocks isolate themselves by date rather than by deleting, because the
+   seed contains signed notes and signed clinical records are not deletable —
+   correctly so. An earlier version opened the window a couple of hundred
+   milliseconds in the PAST, which quietly swept in the last document of the
+   previous block whenever the two ran close together: every figure came out one
+   visit and ten pooled minutes high, and whether it failed depended on how fast
+   the machine was that day. Wait a tick, then start counting from now. */
+function freshWindow(byUser) {
+  const until = Date.now() + 25;
+  while (Date.now() < until) { /* a few ms, so prior writes are strictly older */ }
+  const from = new Date();
+  /* One seeded note is dated LATER TODAY — a progress-report draft at 17:00 —
+     so "everything after now" is not the same as "nothing". Left alone this
+     file passed all morning and failed all afternoon. Clear what is inside the
+     window; the draft is deletable, and anything that is not will still show up
+     in the emptiness check the caller makes next. */
+  if (byUser) {
+    for (const d of store.documents()) {
+      if (new Date(d.createdAt || 0) >= from) store.deleteDoc(d.id, byUser);
+    }
+  }
+  return from;
+}
+
 store.resetAll();
 
 let passed = 0;
@@ -258,7 +285,7 @@ check("the pool is reported so the card can show it",
   store.resetAll();
   const g9 = store.getUser("u-grace"), m9 = store.getUser("u-maria");
   store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g9);
-  const w = new Date(Date.now() - 200);
+  const w = freshWindow(g9);
   const dictate = (min) => { const d = store.createDoc("p-juan", "daily", m9).doc;
     if (min) store.updateDocData(d.id, { _dictationSeconds: Math.round(min * 60) }, m9); return d; };
   for (let i = 0; i < 10; i++) dictate(9.1);          // 10 visits, 91 min, pool 100
@@ -317,7 +344,7 @@ store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g8);
 /* Isolated by WINDOW rather than by deleting: the seed contains signed notes,
    and signed clinical records are not deletable — correctly so. Counting from
    a moment just before these three visits excludes every seeded note. */
-const cutoff = new Date(Date.now() - 500);
+const cutoff = freshWindow(g8);
 check("the window is isolated for the exact-arithmetic checks below",
   store.monthUsage(cutoff).visits === 0, `got ${store.monthUsage(cutoff).visits} leftover visits`);
 
@@ -397,7 +424,7 @@ check("overage pushes an upgrade before the next tier's allowance runs out",
     const g10 = store.getUser("u-grace"), m10 = store.getUser("u-maria");
     store.resetAll();
     store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10, overagePerMinute: 3 }, store.getUser("u-grace"));
-    const w2 = new Date(Date.now() - 200);
+    const w2 = freshWindow(store.getUser("u-grace"));
     const mm = store.getUser("u-maria");
     // 34.83 minutes of excess — deliberately not a whole number
     const d1 = store.createDoc("p-juan", "daily", mm).doc;

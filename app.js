@@ -702,6 +702,20 @@
         <h3>${title}</h3>
         <p>${body}</p>
       </div>`;
+    /* One rung of the ladder. `visits` is what the plan includes; the per-visit
+       figure is shown because it is the thing a clinic owner can actually check
+       against their own book, and because it falls at every rung — the ladder
+       has to reward growing into it. */
+    const peso = (n) => `₱${n.toLocaleString("en-PH")}`;
+    const tier = (name, price, visits, who, featured) => `
+      <div class="lp-tier${featured ? " featured" : ""}">
+        ${featured ? '<div class="lp-tier-flag">Most clinics</div>' : ""}
+        <div class="lp-tier-name">${name}</div>
+        <div class="lp-tier-price">${peso(price)}<span>/month</span></div>
+        <div class="lp-tier-visits"><b>${visits.toLocaleString("en-PH")}</b> documented visits included</div>
+        <div class="lp-tier-rate">${peso(Number((price / visits).toFixed(2)))} a visit</div>
+        <div class="lp-tier-who">${who}</div>
+      </div>`;
     app.innerHTML = `
 <div class="landing">
   <header class="lp-nav">
@@ -709,7 +723,10 @@
       <div class="logo">${LOGO_MARK}</div>
       <div><b>TheraChart</b><span class="lp-nav-sub">EMR</span></div>
     </div>
-    <button class="btn primary" id="lpSignIn">Sign in</button>
+    <div class="lp-nav-actions">
+      <a class="lp-nav-link" href="#pricing">Pricing</a>
+      <button class="btn primary" id="lpSignIn">Sign in</button>
+    </div>
   </header>
 
   <section class="lp-hero">
@@ -743,6 +760,32 @@
   <section class="lp-shots">
     <div class="lp-shot"><img src="marketing-screenshots/walkthrough/02-patient-overview.jpg" alt="Patient chart overview" loading="lazy" /><span>Everything that needs attention on one patient, before you open a single note.</span></div>
     <div class="lp-shot"><img src="marketing-screenshots/walkthrough/01-dashboard.jpg" alt="Clinic dashboard" loading="lazy" /><span>Clinic-wide view: today's schedule, unsigned drafts and progress reports due.</span></div>
+  </section>
+
+
+  <section class="lp-pricing" id="pricing">
+    <h2 class="lp-section-title">Pricing</h2>
+    <p class="lp-pricing-lead">One price per clinic, not per therapist. Every plan includes the AI — dictation, the note it writes, the chart review and the assistant. Add as many staff as you need.</p>
+
+    <div class="lp-tiers">
+      ${tier("Solo", 2450, 130, "One practitioner finding their feet.", false)}
+      ${tier("Practice", 4700, 260, "Two or three therapists sharing a front desk.", true)}
+      ${tier("Clinic", 7900, 450, "A full schedule across several rooms.", false)}
+      ${tier("Group", 24900, 1450, "Multiple sites under one roof.", false)}
+    </div>
+
+    <div class="lp-price-notes">
+      <div class="lp-price-note">
+        <b>A visit is a documented visit.</b> It counts once, whether the note was dictated or typed, and every visit brings <b>10 minutes of dictation</b> into a pool the whole month shares — so a short note's unused minutes pay for a long evaluation.
+      </div>
+      <div class="lp-price-note">
+        <b>Only speech is counted.</b> Pauses cost nothing, and a microphone left open in a quiet room costs nothing. Nothing is ever cut off mid-sentence.
+      </div>
+      <div class="lp-price-note">
+        <b>Past your plan:</b> ₱28 per extra visit, ₱3 per extra dictation minute. Both reset monthly and neither rolls over. If you are regularly over, the next plan up costs less than the overage.
+      </div>
+    </div>
+    <div class="lp-price-foot">Prices in Philippine pesos, per clinic per month. No per-seat fee and no separate charge for AI.</div>
   </section>
 
   <section class="lp-final">
