@@ -2191,5 +2191,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 @media (max-width: 560px) {
   .lp-tiers { grid-template-columns: 1fr; }
-  .lp-nav-link { display: none; }
+  /* The link stays on a phone. Hiding it left the price list reachable only by
+     scrolling past four sections, and a clinic owner checking cost on a phone
+     is the likeliest way this page gets read at all. It fits: measured at
+     375px there is room to spare and the header does not wrap. */
+  .lp-nav-actions { gap: 11px; }
+  .lp-nav-link { font-size: 13.5px; }
 }
