@@ -797,7 +797,7 @@
 
     <div class="lp-price-notes">
       <div class="lp-price-note">
-        <b>A visit is a documented visit.</b> It counts once, whether the note was dictated or typed, and every visit brings <b>10 minutes of dictation</b> into a pool the whole month shares — so a short note's unused minutes pay for a long evaluation.
+        <b>Two things are included, counted separately.</b> A visit counts once, whether the note was dictated or typed. Dictation is a <b>single monthly pool</b> — your visits × 10 minutes, yours in full from the 1st — so it makes no difference whether you do many short visits or a few long evaluations. You are only past your plan on the one you actually exceed.
       </div>
       <div class="lp-price-note">
         <b>Only speech is counted.</b> Pauses cost nothing, and a microphone left open in a quiet room costs nothing. Nothing is ever cut off mid-sentence.
@@ -6555,7 +6555,8 @@ ${privacyInfoAccordion(geminiOn)}
     const over = u.overBy > 0;
     const minsOver = u.excessMinutes > 0;
     const pct = Math.min(100, Math.round((u.visits / u.allowance) * 100));
-    // the minute bar tracks the pool the visits have actually earned
+    // the minute bar tracks the plan's whole pool, which is there from the 1st
+    // — not a denominator that climbs as notes are written
     const mPct = u.includedMinutes ? Math.min(100, Math.round((u.minutesUsed / u.includedMinutes) * 100)) : 0;
     // Only project once there is enough of the month to project from; a pace
     // read off two days is noise dressed up as a forecast.
@@ -6573,7 +6574,7 @@ ${privacyInfoAccordion(geminiOn)}
 <div class="card allowance">
   <div class="allowance-head">
     <div><h2>Plan usage — ${esc(month)}</h2>
-      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits, each including ${u.fairUsePerVisit} min of dictation</div></div>
+      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits and ${hoursOf(u.fairUseMinutes)} of dictation</div></div>
     ${u.estimatedOverage ? `<div class="allowance-count bad"><b>${peso(u.estimatedOverage)}</b><span>overage so far</span></div>` : ""}
   </div>
 
@@ -6590,14 +6591,17 @@ ${privacyInfoAccordion(geminiOn)}
     <div class="allowance-bar"><div class="allowance-fill ${mTone}" style="width:${mPct}%"></div></div>
     <div class="meter-foot">${minsOver
       ? `${hoursOf(u.excessMinutes)} over · ${peso(u.excessMinutes * u.overagePerMinute)} at ${peso(u.overagePerMinute)}/min`
-      : `${hoursOf(u.spareMinutes)} left · pooled across every visit`}</div>
+      : `${hoursOf(u.spareMinutes)} left · one pool for the whole month`}</div>
   </div>
 
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included. If this is your normal month, the next plan up costs less than the overage.</div>` : ""}
   ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, over your ${u.allowance}. Nothing stops working — the extra visits bill at ${peso(u.overagePerVisit)} each.</div>` : ""}
   <div class="allowance-note">
     <b>Both reset on ${esc(resets)} and neither rolls over</b> — nothing unused this month is added to next month's.
-    Every visit adds <b>${u.fairUsePerVisit} minutes</b> to a shared dictation pool, so a short note's leftovers pay for a long evaluation and finishing early is never wasted. Nothing is reserved when you open a note — a new visit <b>adds</b> its minutes and only spends what is actually said.
+    ${over
+      ? `Dictation is <b>one pool for the month</b>, now <b>${hoursOf(u.includedMinutes)}</b> — visits past your plan add their ${u.fairUsePerVisit} minutes to it as well, so an extra visit is never charged twice.`
+      : `Dictation is <b>one pool for the month</b> — ${u.allowance} visits × ${u.fairUsePerVisit} minutes — and all of it is available from the first day, so a few long evaluations draw on it exactly as freely as many short notes.`}
+    Nothing is reserved when you open a note; only what is actually said comes out of the pool.
     Only <b>speech</b> counts: pauses, and a mic left open in a quiet room, cost nothing.
     ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation, averaging ${mmssOf(u.avgSecondsPerVisit)}.` : "No dictation recorded yet this month."}
   </div>
@@ -6636,10 +6640,10 @@ ${allowanceCard()}
           ${["Solo", "Practice", "Clinic", "Group"].map((p) => `<option value="${p}" ${st.planName === p ? "selected" : ""}>${p}</option>`).join("")}
         </select></div>
       <div class="field"><label>Visits included per month</label><input id="st-allowance" type="number" min="1" max="10000" value="${st.visitAllowance}" /></div>
-      <div class="field"><label>Dictation included per visit (min)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
+      <div class="field"><label>Dictation pool rate (min per visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
       <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter counts against. Visits reset monthly and don't roll over. A visit that dictates past the included minutes uses more than one visit of allowance. The hard stop is a runaway-microphone backstop — set well above any real visit.</div>
+    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter counts against. Both reset monthly and neither rolls over. Dictation is a single monthly pool sized at visits × included minutes, available in full from the 1st — minutes past it bill per minute, not as extra visits. The hard stop is a runaway-microphone backstop — set well above any real visit.</div>
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>

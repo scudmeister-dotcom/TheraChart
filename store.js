@@ -1193,12 +1193,14 @@
        empty one; an admin sets their actual plan in Facility Admin. */
     planName: "Solo",
     visitAllowance: 130,
-    /* Dictation is sold as fair use, not as a metered pool: the plan is priced
-       in visits, and this is the per-visit speech budget those visits assume.
-       10 minutes is deliberately generous — the cost model is built on 6 — so a
-       clinic only ever sees this line if it is genuinely an outlier, which is
-       the point. It is shown, never enforced; cutting a therapist off
-       mid-dictation to save a peso would be indefensible. */
+    /* The RATE the monthly dictation pool is sized at — `visitAllowance` x
+       this — not a per-visit cap. The pool is the plan's and is there in full
+       from the 1st; see monthUsage(). 10 minutes is deliberately generous —
+       the cost model is built on 6 — so a clinic only ever sees the overage
+       line if it is genuinely an outlier, which is the point. It is shown,
+       never enforced; cutting a therapist off mid-dictation to save a peso
+       would be indefensible. Break-even is ~18 minutes a visit, so this rate
+       is the one number here that must not drift upward. */
     fairUseMinutesPerVisit: 10,
     /* Overage, quoted per unit rather than blended. P28 a visit over a
        10-minute budget works out at P2.80 a minute, so P3 keeps the two rates
@@ -1505,7 +1507,10 @@
        Speech-to-Text is a third of revenue and the only cost that scales with
        how a clinic works rather than how much it works, so an uncapped minute
        is the one number that can take a tier underwater: on the Clinic rung,
-       past ~16 minutes a visit we lose money on every visit.
+       past ~16 minutes a visit we lose money on every visit. The pool below is
+       what caps it — at the 10-minute rate a full burn lands around 40% margin
+       on every rung, so the ceiling is affordable. It is the RATE that cannot
+       move, not the moment the pool becomes available.
 
        TWO METERS, BOTH SAID PLAINLY, because the plan has two dimensions and
        collapsing them hid one of them.
@@ -1515,8 +1520,9 @@
                    all its notes still has to be bounded. A minutes-only plan
                    leaves this open: 2,000 typed notes is zero minutes and
                    nearly P2,000 of Gemini.
-         minutes — every visit brings a budget of included minutes into a
-                   shared monthly pool, and dictation is drawn from it.
+         minutes — the plan carries a whole month of dictation as ONE pool,
+                   `allowance x fairUsePerVisit`, available in full on the 1st.
+                   All dictation is drawn from it.
 
        An earlier version converted excess minutes into fractional "visit
        units" so there was a single number. The arithmetic was identical —
@@ -1525,19 +1531,35 @@
        reverse-engineer to check. Overage is now quoted in the unit it was
        incurred in: minutes over, at a peso rate per minute.
 
-       Pooling is what makes the minute side fair. Charging each visit
+       THE POOL IS THE PLAN'S, NOT THE VISITS'. It is there in full on the 1st
+       rather than accruing 10 minutes at a time as notes are written. Accrual
+       measured the minute side against work done SO FAR, which quietly
+       penalised the clinic doing fewer, longer visits: 40 long evaluations
+       earned 400 minutes and spent 800, so a practice already paying for 130
+       visits it never used got an overage bill on top of it. Cost does not
+       work that way. Speech-to-Text bills total minutes, and a capped pool
+       burned across 40 visits costs LESS than the same pool burned across 130,
+       because it carries 90 fewer Gemini calls. Exposure is bounded by the
+       pool either way, so accrual was defending nothing.
+
+       `max(allowance, visits)` rather than a frozen `allowance`, because a
+       visit past the plan has to bring its minutes with it. P28 IS a visit
+       with its 10 minutes priced in (see `overagePerVisit`) — freezing the
+       pool would bill those same minutes twice, once at P28 and again at P3.
+
+       Pooling at all is what makes the minute side fair. Charging each visit
        max(1, minutes/budget) would floor a 4-minute note at a whole visit and
        discard the 6 minutes it did not use, so a clinic writing mostly short
        notes would pay for a long-visit allowance it never received. Pooled,
-       those minutes carry to the long evaluations instead. It also tracks OUR
-       cost more honestly, since Speech-to-Text bills total minutes and is
+       those minutes carry to the long evaluations instead — which also tracks
+       OUR cost more honestly, since Speech-to-Text bills total minutes and is
        indifferent to how they were split across visits. */
     let seconds = 0, dictated = 0;
     for (const d of docs) {
       const s = Number((d.data || {})._dictationSeconds) || 0;
       if (s > 0) { seconds += s; dictated += 1; }
     }
-    const includedMinutes = docs.length * fairUsePerVisit;
+    const includedMinutes = Math.max(allowance, docs.length) * fairUsePerVisit;
     const usedMinutes = seconds / 60;
     /* Rounded BEFORE it is priced, not after. The card shows whole minutes, and
        a clinic checking "35 minutes over x P3" against the total must get the
@@ -1565,9 +1587,10 @@
       avgSecondsPerVisit: dictated ? Math.round(seconds / dictated) : 0,
       // ---- meter 2: dictation minutes ----
       fairUsePerVisit,
-      // the whole plan's dictation budget, if every included visit were used
+      // the plan's headline pool — the figure the price page quotes
       fairUseMinutes: allowance * fairUsePerVisit,
-      // what the visits documented SO FAR have earned — the pool actually in play
+      // the pool actually in play: the plan's, plus fairUsePerVisit more for
+      // every visit past the allowance, so an extra visit is never billed twice
       includedMinutes: Math.round(includedMinutes),
       excessMinutes,
       /* Overage is quoted in the unit it was incurred in. Two separate figures
@@ -1580,10 +1603,9 @@
       estimatedOverage: Math.round(excessMinutes * perMinute + visitsOver * perVisit),
       /* Minutes still in the pool. Negative once the pool is spent, so the view
          can say "6 min over" rather than clamping to zero and implying there is
-         nothing to see. Nothing is ever RESERVED against this — a visit adds
-         its minutes to the pool when the note is created and only spends what
-         is actually dictated, so starting a long evaluation with 9 minutes
-         spare leaves 19, not −1. */
+         nothing to see. Nothing is ever RESERVED against it either — a visit
+         spends only what is actually dictated, so opening a long evaluation
+         costs nothing at all until words are spoken. */
       spareMinutes: Math.round(includedMinutes - seconds / 60),
       minutesUsed: Math.round(seconds / 60),
       daysElapsed,

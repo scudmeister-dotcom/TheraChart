@@ -268,49 +268,55 @@ check("unused minutes from short visits pay for a long one",
   `5 visits totalling 46 min against 50 pooled minutes must incur no overage, got ${pooled.excessMinutes} min over`);
 check("…so nothing is 'lost' by finishing a note early",
   pooled.estimatedOverage === 0, `charged ${pooled.estimatedOverage} while the pool still covers it`);
-check("the pool is reported so the card can show it",
-  pooled.includedMinutes === pooled.visits * 10 && pooled.excessMinutes === 0,
-  `included=${pooled.includedMinutes} for ${pooled.visits} visits, excess=${pooled.excessMinutes}`);
+check("the pool is the PLAN's, not what the visits so far have earned",
+  pooled.includedMinutes === 450 * 10 && pooled.excessMinutes === 0,
+  `included=${pooled.includedMinutes} after only ${pooled.visits} visits — should be the full 4500`);
 
-/* ---- nothing is reserved when a note is opened ----
+/* ---- the pool is fixed, and nothing is reserved against it ----
 
-   The intuition to disprove: "9 minutes spare, I start an evaluation, so I'm
-   1 minute overdrawn before anyone speaks." Accounting is retrospective — the
-   pool is (visits x budget) and spend is what was actually dictated, so opening
-   a note ADDS to the pool rather than drawing on it, and a short note leaves it
-   better off than it found it. */
+   Two intuitions to disprove, and they pull in opposite directions:
+
+     "9 minutes spare, I start an evaluation, so I am 1 minute overdrawn
+      before anyone speaks."   — no: nothing is reserved when a note opens.
+     "…so opening a note ADDS 10 minutes and leaves me better off."
+                               — no longer true, and it should not be. The pool
+                                 is the PLAN's and does not move as notes are
+                                 written; a visit only ever spends.
+
+   Sized so the allowance is not in play (10 visits against 20) — the
+   max(allowance, visits) growth rule has its own block further down. */
 {
   // reset first: earlier blocks in this file created documents moments ago,
   // and they would otherwise fall inside the window opened below
   store.resetAll();
   const g9 = store.getUser("u-grace"), m9 = store.getUser("u-maria");
-  store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g9);
+  store.updateSettings({ visitAllowance: 20, fairUseMinutesPerVisit: 10 }, g9);
   const w = freshWindow(g9);
   const dictate = (min) => { const d = store.createDoc("p-juan", "daily", m9).doc;
     if (min) store.updateDocData(d.id, { _dictationSeconds: Math.round(min * 60) }, m9); return d; };
-  for (let i = 0; i < 10; i++) dictate(9.1);          // 10 visits, 91 min, pool 100
+  for (let i = 0; i < 10; i++) dictate(18.1);         // 10 visits, 181 min, pool 200
   const before = store.monthUsage(w);
-  check("the window starts on exactly 9 spare minutes",
-    before.spareMinutes === 9, `got ${before.spareMinutes}`);
+  check("the pool is the plan's 200 minutes however few visits have run",
+    before.includedMinutes === 200 && before.visits === 10,
+    `included=${before.includedMinutes} after ${before.visits} visits`);
+  check("the window starts on exactly 19 spare minutes",
+    before.spareMinutes === 19, `got ${before.spareMinutes}`);
 
   const ev = store.createDoc("p-liza", "eval", m9).doc;
   const opened = store.monthUsage(w);
-  check("opening a note ADDS its minutes to the pool rather than reserving them",
-    opened.spareMinutes === 19,
-    `9 spare + a new visit's 10 should be 19, got ${opened.spareMinutes} — nothing is deducted up front`);
+  check("opening a note reserves nothing — the spare minutes do not move",
+    opened.spareMinutes === 19 && opened.includedMinutes === 200,
+    `spare ${before.spareMinutes} -> ${opened.spareMinutes}, pool ${opened.includedMinutes}`);
   check("…and it costs one visit and no minutes before anything is said",
-    opened.excessMinutes === 0 && opened.estimatedOverage === 0,
-    `excess=${opened.excessMinutes} overage=${opened.estimatedOverage}`);
+    opened.visits === 11 && opened.excessMinutes === 0 && opened.estimatedOverage === 0,
+    `visits=${opened.visits} excess=${opened.excessMinutes} overage=${opened.estimatedOverage}`);
 
   store.updateDocData(ev.id, { _dictationSeconds: 5 * 60 }, m9);
   const short = store.monthUsage(w);
-  check("a 5-minute evaluation spends 5, not the 10 it brought",
+  check("a 5-minute evaluation spends exactly 5",
     short.spareMinutes === 14,
     `19 - 5 = 14, got ${short.spareMinutes}`);
-  check("…leaving the clinic BETTER off than before the evaluation",
-    short.spareMinutes > before.spareMinutes,
-    `${before.spareMinutes} -> ${short.spareMinutes}: a short note must never cost spare minutes`);
-  check("…and still costing nothing in overage",
+  check("…and still costs nothing in overage",
     short.estimatedOverage === 0, `charged ${short.estimatedOverage}`);
 
   store.updateDocData(ev.id, { _dictationSeconds: 25 * 60 }, m9);
@@ -323,16 +329,90 @@ check("the pool is reported so the card can show it",
     `6 min x P${long.overagePerMinute} should be P${6 * long.overagePerMinute}, got P${long.estimatedOverage}`);
 }
 
-/* The pool is drawn from EVERY visit, including notes that were typed rather
-   than dictated. That is deliberate and not a leak: an undictated visit is
-   revenue at almost no cost, so a clinic that types most of its notes has
-   genuinely paid for dictation it never used. Verified across the range —
-   the tightest case (every visit at the ceiling) still clears 40%. */
-const pre7 = store.monthUsage();
-const untouchedPool = pre7.includedMinutes - pre7.minutesUsed;
-check("visits that were typed rather than dictated still contribute their minutes",
-  untouchedPool > 0 && pre7.estimatedOverage === 0,
-  `pool has ${untouchedPool} unused minutes and nothing extra is charged`);
+/* ---- the case accrual got wrong: fewer visits, longer notes ----
+
+   A clinic on the 130-visit rung that does 40 long evaluations has bought
+   1300 minutes and used 800 of them. Under the old per-visit accrual it had
+   "earned" only 400 and was billed P1200 on top of a plan it was already
+   underusing. It costs us LESS than a clinic burning the same pool across 130
+   visits — same speech minutes, 90 fewer Gemini calls — so there was never
+   anything to recover. */
+{
+  store.resetAll();
+  const gA = store.getUser("u-grace"), mA = store.getUser("u-maria");
+  store.updateSettings({ visitAllowance: 130, fairUseMinutesPerVisit: 10 }, gA);
+  const wA = freshWindow(gA);
+  for (let i = 0; i < 40; i++) {
+    const d = store.createDoc("p-juan", "daily", mA).doc;
+    store.updateDocData(d.id, { _dictationSeconds: 20 * 60 }, mA);
+  }
+  const lowVol = store.monthUsage(wA);
+  check("40 long evaluations draw on the whole plan's pool, not on 40 visits' worth",
+    lowVol.visits === 40 && lowVol.includedMinutes === 1300 && lowVol.minutesUsed === 800,
+    `visits=${lowVol.visits} pool=${lowVol.includedMinutes} used=${lowVol.minutesUsed}`);
+  check("…so a clinic well inside its visit allowance is charged nothing",
+    lowVol.excessMinutes === 0 && lowVol.estimatedOverage === 0,
+    `excess=${lowVol.excessMinutes} min, charged P${lowVol.estimatedOverage} (accrual billed P1200 here)`);
+  check("…and it still has the balance of the pool to spend",
+    lowVol.spareMinutes === 500, `got ${lowVol.spareMinutes}`);
+}
+
+/* ---- a visit past the allowance brings its minutes with it ----
+
+   max(allowance, visits), not a frozen allowance. P28 is priced as a visit
+   WITH its 10 minutes (P2.80/min, which is where the P3 rate comes from), so a
+   pool that stayed at allowance x 10 would bill those minutes twice — once in
+   the P28 and again at P3. */
+{
+  store.resetAll();
+  const gB = store.getUser("u-grace"), mB = store.getUser("u-maria");
+  store.updateSettings({ visitAllowance: 3, fairUseMinutesPerVisit: 10 }, gB);
+  const wB = freshWindow(gB);
+  const say = (min) => { const d = store.createDoc("p-juan", "daily", mB).doc;
+    store.updateDocData(d.id, { _dictationSeconds: Math.round(min * 60) }, mB); };
+  for (let i = 0; i < 3; i++) say(10);
+  const atCap = store.monthUsage(wB);
+  check("at the visit cap the pool is exactly the plan's",
+    atCap.includedMinutes === 30 && atCap.excessMinutes === 0 && atCap.estimatedOverage === 0,
+    `pool=${atCap.includedMinutes} excess=${atCap.excessMinutes} charged=${atCap.estimatedOverage}`);
+
+  say(10);                                            // a 4th visit on a 3-visit plan
+  const over = store.monthUsage(wB);
+  check("the 4th visit grows the pool by its own 10 minutes",
+    over.includedMinutes === 40 && over.minutesUsed === 40,
+    `pool=${over.includedMinutes} used=${over.minutesUsed}`);
+  check("…so it is billed as ONE extra visit and not as minutes as well",
+    over.overBy === 1 && over.excessMinutes === 0 && over.estimatedOverage === 28,
+    `visits over=${over.overBy} minutes over=${over.excessMinutes} charged=P${over.estimatedOverage} (a frozen pool double-bills to P58)`);
+
+  say(25);                                            // a 5th, well past its own budget
+  const both = store.monthUsage(wB);
+  check("a 5th visit that also overruns bills on both meters, each in its own unit",
+    both.overBy === 2 && both.excessMinutes === 15 && both.estimatedOverage === 2 * 28 + 15 * 3,
+    `visits over=${both.overBy} minutes over=${both.excessMinutes} charged=P${both.estimatedOverage}`);
+}
+
+/* A month of TYPED notes leaves the pool untouched and costs nothing extra.
+   Not a leak: an undictated visit is revenue at almost no cost (a Gemini call,
+   ~P0.97, and no speech at all), so a clinic that types most of its notes has
+   genuinely paid for dictation it never used — and the visit meter is what
+   bounds it, which is the whole reason there are two meters and not one.
+   Verified across the range — the tightest case (every visit at the ceiling)
+   still clears 40%. */
+{
+  store.resetAll();
+  const g7 = store.getUser("u-grace"), m7 = store.getUser("u-maria");
+  store.updateSettings({ visitAllowance: 130, fairUseMinutesPerVisit: 10 }, g7);
+  const w7 = freshWindow(g7);
+  for (let i = 0; i < 12; i++) store.createDoc("p-juan", "daily", m7);   // typed, no audio
+  const pre7 = store.monthUsage(w7);
+  check("visits that were typed rather than dictated leave the pool whole",
+    pre7.visits === 12 && pre7.minutesUsed === 0 && pre7.includedMinutes === 1300,
+    `visits=${pre7.visits} used=${pre7.minutesUsed} pool=${pre7.includedMinutes}`);
+  check("…and cost nothing extra on either meter",
+    pre7.spareMinutes === 1300 && pre7.estimatedOverage === 0,
+    `spare=${pre7.spareMinutes} charged=P${pre7.estimatedOverage}`);
+}
 
 /* Uniform-heavy is the case pooling must NOT discount — it is a concession on
    mixed months, never a loophole on consistently long ones. Isolated from the
@@ -340,7 +420,10 @@ check("visits that were typed rather than dictated still contribute their minute
    three times the budget cost nine. */
 store.resetAll();
 const g8 = store.getUser("u-grace"), m8 = store.getUser("u-maria");
-store.updateSettings({ visitAllowance: 450, fairUseMinutesPerVisit: 10 }, g8);
+/* A 3-visit allowance so the pool is exactly the three visits' worth and the
+   arithmetic below is the excess itself rather than a dent in a 4500-minute
+   plan. Consistently-long months are what pooling must not discount. */
+store.updateSettings({ visitAllowance: 3, fairUseMinutesPerVisit: 10 }, g8);
 /* Isolated by WINDOW rather than by deleting: the seed contains signed notes,
    and signed clinical records are not deletable — correctly so. Counting from
    a moment just before these three visits excludes every seeded note. */
