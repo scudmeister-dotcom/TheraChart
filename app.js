@@ -701,11 +701,13 @@
    shared the URL they were looking at, got the sign-in screen instead of the
    prices.
 
-   Delegated from the document rather than bound to the button. The landing is
-   drawn by assigning innerHTML, and it is redrawn once the server's bootstrap
-   lands; a listener attached to the button that existed at first paint is
-   thrown away with that markup, leaving a button that looks fine and does
-   nothing. The document survives every redraw. */
+   Delegated from the document rather than bound to the button, because the
+   landing is drawn by assigning innerHTML and any redraw would take a
+   button-bound listener with it. Defensive rather than a fix for something
+   observed: the failure that prompted this turned out to be an automated
+   browser that does not animate behavior:"smooth" at all, so the handler was
+   running and the scroll simply never rendered. Kept because delegation costs
+   nothing here and removes the whole class of problem. */
   document.addEventListener("click", (e) => {
     const hit = e.target.closest && e.target.closest("#lpPricing");
     if (!hit) return;
