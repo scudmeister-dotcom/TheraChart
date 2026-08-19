@@ -50,8 +50,10 @@ Sign in with any demo account (PIN **1234**):
 ## The core feature: talk → chart
 
 Open a patient, start a **Daily note / Evaluation / Progress report**, press
-**🎤 Listen**, and speak — in **English, Tagalog, or Cebuano** (code-switching
-works; the body-part lexicon understands all three at once):
+**🎤 Listen**, and speak — in **English & Tagalog** or **English & Cebuano**,
+whichever pairing the dictation bar is set to (both languages of the pairing are
+transcribed together, code-switching included; the body-part lexicon understands
+all three languages at once):
 
 - *"masakit ang kaliwang balikat ko"* → pins the **left shoulder** with a
   summarized note ("Pain")

@@ -56,8 +56,11 @@ through the visit the way they naturally would. As they speak, TheraChart:
 3. **Files the details into the right sections** — subjective complaints,
    objective measurements (range of motion, strength, special tests, pain
    ratings), assessment — automatically.
-4. Understands **English, Tagalog, and Cebuano at the same time**, including
-   the natural code-switching real patients use.
+4. Understands **two languages at the same time** — you set the dictation to
+   **English & Tagalog** or **English & Cebuano**, and either pairing is
+   transcribed together, including the natural code-switching real patients
+   use mid-sentence. The clinical lexicon behind it recognizes English,
+   Tagalog and Cebuano body-part and pain terms regardless of the pairing.
 
 When the visit is done, an optional **AI review pass** re-reads the whole
 transcript, separates what the *patient* said from what the *therapist* said,
@@ -73,8 +76,9 @@ typing or handwriting.**
 ## What it provides — features
 
 ### The talk-to-chart core
-- **Live voice dictation** in English, Tagalog, and Cebuano (code-switching
-  supported).
+- **Live voice dictation** in **English & Tagalog** or **English & Cebuano**
+  — both languages of the chosen pairing transcribed at once, code-switching
+  included.
 - **Body-map pinning** across 60+ regions, front and back, with left/right
   detection — findings appear as numbered markers *outside* the figure with
   leader lines to the exact spot, colored by severity.
@@ -131,7 +135,7 @@ typing or handwriting.**
 | **Creating a note** | 10–15 min of handwriting after each visit | Spoken during the visit; done when the visit is |
 | **What gets captured** | Whatever the pen has time for | Every word, plus structured findings and measurements |
 | **The patient's own words** | Summarized and translated by hand | Kept verbatim, in the patient's language, linked to each finding |
-| **Language** | Tagalog/Cebuano flattened to written notes | Understood natively, including Taglish |
+| **Language** | Tagalog/Cebuano flattened to written notes | English paired with Tagalog or Cebuano, understood natively — Taglish included |
 | **Where pain is** | A sketch, if there's time | Precise, severity-colored markers on a body map |
 | **Legibility** | Depends on handwriting | Always clean, typed, structured |
 | **Finding old information** | Flip through the folder | Searchable; findings link to their source |
