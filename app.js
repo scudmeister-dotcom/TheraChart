@@ -754,12 +754,12 @@
     <div class="lp-hero-copy">
       <div class="lp-eyebrow">Physical therapy EMR · built for the clinic floor</div>
       <h1>Chart by voice.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
-      <p class="lp-lead">Press listen and just talk. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English, Tagalog, and Cebuano</b>. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
+      <p class="lp-lead">Press <b>Listen</b> and speak the way you normally would. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English and Tagalog together, or English and Cebuano together</b>, both languages understood in the same sentence. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
       <div class="lp-cta">
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
         <button class="btn ghost lp-cta-btn" data-open-walkthrough type="button">See how it works</button>
       </div>
-      <div class="lp-trust">🔒 Records live in your clinic's own cloud project — not a shared vendor database. Dictation audio is transcribed and discarded, and Google's Vertex AI terms bar using your data to train its models.</div>
+      <div class="lp-trust">🔒 Records live in your clinic's own cloud project — not a shared vendor database. By default, dictation audio is transcribed and discarded, and Google's Vertex AI terms bar using your data to train its models.</div>
     </div>
     <div class="lp-hero-shot">
       <img src="marketing-screenshots/walkthrough/05-dictation-body-map.jpg" alt="TheraChart dictation and body map" loading="lazy" />
@@ -771,7 +771,7 @@
     <div class="lp-feature-grid">
       ${feature("🎤", "Voice-first dictation", "Speak naturally. Findings pin to the body map and measurements sort themselves into ROM, MMT, special tests and pain — no typing between patients.")}
       ${feature("🗺️", "Body-mapped findings", "Every symptom lands on a front/back body map with severity, so the whole picture is visible at a glance — and carries onto the printed chart as a labelled list of findings.")}
-      ${feature("🌐", "Multilingual", "Understands English, Tagalog and Cebuano — including the Taglish code-switching real patients actually use.")}
+      ${feature("🌐", "Bilingual dictation", "Choose <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — whichever pairing you set, both languages are understood at once, including the code-switching clinicians and patients use mid-sentence.")}
       ${feature("✦", "Grounded AI assistant", "Ask about a patient's history, trends or precautions. Answers are drawn strictly from that patient's records — it cites its sources and says so when something isn't documented.")}
       ${feature("📈", "Clinical insights", "Cross-visit connections, ROM/pain trends and red flags surfaced as decision support for a licensed PT — never a diagnosis.")}
       ${feature("🛡️", "Privacy by design", "Your own database, walled off per clinic. E-signed notes that lock, amendments that are authorised and audited, and a plain-English page naming exactly which data leaves the clinic and where it goes.")}
@@ -789,10 +789,10 @@
     <p class="lp-pricing-lead">One price per clinic, not per therapist. Every plan includes the AI — dictation, the note it writes, the chart review and the assistant. Add as many staff as you need.</p>
 
     <div class="lp-tiers">
-      ${tier("Solo", 2450, 130, "One practitioner finding their feet.", false)}
+      ${tier("Solo", 2450, 130, "A single practitioner starting out.", false)}
       ${tier("Practice", 4700, 260, "Two or three therapists sharing a front desk.", true)}
       ${tier("Clinic", 7900, 450, "A full schedule across several rooms.", false)}
-      ${tier("Group", 24900, 1450, "Multiple sites under one roof.", false)}
+      ${tier("Group", 24900, 1450, "Several branches under one organisation.", false)}
     </div>
 
     <div class="lp-price-notes">
@@ -1159,7 +1159,7 @@ ${walkthroughMarkup()}`;
       shot: "05-dictation-body-map",
       title: "Talk through the visit. It writes the note.",
       now: "You finish the session, then type the note up afterwards — usually after hours, usually from memory.",
-      here: "Press <b>Listen</b> and speak the way you already speak, in English, Tagalog or Taglish. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
+      here: "Press <b>Listen</b> and speak the way you already speak. Set the pairing once — <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — and both languages are understood together, including switching between them mid-sentence. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
       where: "Inside any note · <b>Dictation &amp; body map</b>, top left",
     },
     {
@@ -1172,7 +1172,7 @@ ${walkthroughMarkup()}`;
     {
       shot: "07-ai-review",
       title: "A second read before you sign.",
-      now: "Nobody checks the note. Whatever you typed at 8pm is what the payer sees.",
+      now: "No one reviews the note before it is filed. Whatever was typed at the end of a long day is what the payer sees.",
       here: "Ask for a clean-up and it reorganises the transcript, proposes the findings, and tidies the wording. <b>You approve every line</b> — speaker labels, findings, section text. Nothing enters the chart until you accept it and sign.",
       where: "Inside any note · <b>✦ Review &amp; clean up with AI</b>",
     },
@@ -1193,15 +1193,15 @@ ${walkthroughMarkup()}`;
     {
       shot: "04-patient-info",
       title: "Authorisation you can see before the visit, not after.",
-      now: "Nobody notices the HMO approval ran out until the claim is rejected — months later, when the money is already spent.",
+      now: "The HMO approval runs out unnoticed until the claim is rejected — months later, when the money is already spent.",
       here: "Visits authorised, visits used and the expiry date sit on the patient's chart and count down as they attend. Provider, member ID and approval reference are all in one place when the claim has to be filed.",
       where: "Any patient · <b>Info</b> tab · Insurance &amp; authorisation",
     },
     {
       shot: "10-intake-guardrails",
-      title: "Front desk can't fat-finger a patient in.",
-      now: "A mistyped mobile number isn't found until someone tries to phone about a cancelled slot.",
-      here: "Phone numbers format themselves as Philippine numbers as they're typed. Birth dates can't be in the future. A patient who already exists is flagged before a duplicate chart is made. Real mistakes are blocked; judgement calls are only warned about.",
+      title: "Intake errors are caught before the chart exists.",
+      now: "A mistyped mobile number isn't discovered until someone tries to phone about a cancelled slot.",
+      here: "Phone numbers format themselves as Philippine numbers as they're typed. Birth dates can't be in the future. A patient who already exists is flagged before a duplicate chart is made. Genuine errors are blocked; judgement calls are flagged as warnings, not refused.",
       where: "<b>Patients → New patient intake</b>",
     },
     {
@@ -3450,16 +3450,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     </div>
     <div class="dict-bar">
       <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen</span></button>
-      <select id="langSel" title="Speech language" ${editable ? "" : "disabled"}>
-        <option value="en-US">English</option>
-        <option value="fil-PH">Tagalog / Filipino</option>
-        <option value="ceb-PH">Cebuano</option>
-      </select>
-      <select id="engineSel" title="Dictation engine" ${editable ? "" : "disabled"}>
-        <option value="browser">Dictation: Browser — on this device</option>
-        <option value="cloud:standard">Dictation: Google Cloud — Standard</option>
-        <option value="cloud:chirp">Dictation: Google Cloud — Chirp</option>
-        <option value="cloud:chirp2">Dictation: Google Cloud — Chirp 2 (best for Taglish)</option>
+      <select id="langSel" title="What you'll be speaking" ${editable ? "" : "disabled"}>
+        <option value="fil-PH">English &amp; Tagalog</option>
+        <option value="ceb-PH">English &amp; Cebuano</option>
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
     </div>
@@ -3469,7 +3462,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <button class="btn rec-btn" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
         <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
         <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
-        <span class="rec-meta" id="recMeta">Record straight through, then process once — cheaper than live, and you don't have to watch the screen.</span>
+        <span class="rec-meta" id="recMeta">Record straight through, then process once.</span>
       </div>
       <div class="rec-progress" id="recProgress" hidden></div>
     </div>` : ""}
@@ -4122,13 +4115,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   const TREAT_RE = /\b(performed|completed|exercis\w*|therex|sets?|reps?|ultrasound|massage|stretch\w*|mobilizat\w*|manual therapy|gait|ice|heat|e-?stim\w*|modalit\w*|educat\w*|hep|home program|tens)\b/i;
 
-  /* Two interchangeable dictation engines the clinician switches between:
-     - "browser": the Web Speech API (fast, streams audio to the browser
-       vendor's servers — on Chrome, Google's consumer service). The current
-       default; no BAA, so not for real PHI once live.
-     - "cloud":   records short WAV segments in the page and POSTs them to the
-       server's /api/stt, which proxies to Google Cloud Speech-to-Text under the
-       clinic's BAA (model "standard" or "chirp"). See cloudEngine below. */
+  /* Dictation runs on Google Cloud Speech-to-Text (Chirp 2) under the clinic's
+     BAA. There is no engine picker: the choice was never a clinical one, and
+     the cheap-looking option was the one without a healthcare agreement behind
+     it. See cloudEngine below.
+
+     browserEngine (the Web Speech API) survives only as the automatic fallback
+     for a server with no Google Cloud credentials — the preview and local demo.
+     It streams audio to the browser vendor's consumer service, so it is never
+     used where Cloud STT is configured, and the dictation bar says so. */
 
   function browserEngine({ lang, onText, onInterim, onStatus }) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -4192,8 +4187,37 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return buf;
   }
 
-  // BCP-47 codes Google Cloud Speech-to-Text expects for each UI language
-  const STT_LANG = { "en-US": "en-US", "fil-PH": "fil-PH", "ceb-PH": "ceb-PH" };
+  /* BCP-47 code Google Cloud Speech-to-Text is asked for, per UI choice.
+
+     ONE code per choice, not two, even though the choices read "English &
+     Tagalog" / "English & Cebuano": Chirp 2 refuses a list of language codes
+     ("Multiple language recognition is only available in the following
+     locations: eu, global, us" — and Chirp 2 does not exist in any of those),
+     so a pair would fail the request outright. It does not need the list —
+     Chirp 2 is a universal model and the code is a hint, not a filter. English
+     spoken under fil-PH comes back as English; the hint tilts the ambiguous
+     words towards Tagalog/Cebuano, which is the whole point of the pairs.
+
+     NO ENGLISH-ONLY CHOICE, deliberately. Measured live against this project
+     on a 148-word clinical script, word error rate by language code:
+
+       American-accented English   en-US 8.8% / 13.5%  ← the only case it wins
+       Filipino-accented English   en-US 27.7% / 20.3% · fil-PH 27.0% / 20.3%
+                                   · ceb-PH 26.4% / 19.6%
+
+     So en-US buys nothing for the people who will use this, and the failure is
+     one-sided: Tagalog spoken while the code sits on en-US loses WHOLE
+     utterances (a 4s segment came back as "oppo") and is still billed for
+     them. English spoken under fil-PH costs a word or two at most. An option
+     whose only effect is a cliff in one direction is not worth offering. */
+  const STT_LANG = { "fil-PH": "fil-PH", "ceb-PH": "ceb-PH" };
+  // Tagalog is the lingua franca; a Visayas/Mindanao clinic switches once and
+  // the choice sticks. Also the fallback for a stored "en-US" from before the
+  // English-only option was withdrawn.
+  const STT_LANG_DEFAULT = "fil-PH";
+  // The one dictation model. Chirp 2 is GA for both languages above, and it is
+  // what the per-visit cost model is priced on.
+  const STT_MODEL = "chirp2";
 
   /* ---- side-by-side review after processing ----
 
@@ -4530,13 +4554,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   /* Send every chunk to /api/stt in parallel and stitch the transcript back in
      order. Each chunk is inside the sync limit, so each returns on its own. */
-  async function processRecording(docId, lang, model, chunks, onProgress) {
+  async function processRecording(docId, lang, chunks, onProgress) {
     const done = new Array(chunks.length).fill(null);
     let finished = 0, billedSeconds = 0;
     await Promise.all(chunks.map(async (c, i) => {
       const wav = encodeWav(c.pcm, c.rate);
       try {
-        const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || "en-US")}&model=${encodeURIComponent(model)}&docId=${encodeURIComponent(docId)}`, {
+        const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
           method: "POST",
           headers: Object.assign({ "content-type": "audio/wav" },
             (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
@@ -4595,11 +4619,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   /* Google Cloud Speech-to-Text engine. Records short WAV segments in the page
-     and POSTs each straight to /api/stt (model = "standard" | "chirp"), which
-     proxies to Google Cloud under the clinic's BAA. Segments are held only in
-     memory and sent immediately — no audio is written to the device — and are
-     delivered in order via a promise chain. */
-  function cloudEngine({ docId, lang, model, onText, onInterim, onStatus, onAutoStop, onBilled, billedSoFar, ceilingSeconds }) {
+     and POSTs each straight to /api/stt, which proxies to Google Cloud Chirp 2
+     under the clinic's BAA. Segments are held only in memory and sent
+     immediately — no audio is written to the device — and are delivered in
+     order via a promise chain. */
+  function cloudEngine({ docId, lang, onText, onInterim, onStatus, onAutoStop, onBilled, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
     const gate = voiceGate();
@@ -4616,7 +4640,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     let pending = 0;               // segments in flight
     let chain = Promise.resolve(); // keeps segments transcribing in order
 
-    const label = model === "chirp" ? "Google Cloud · Chirp" : "Google Cloud · Standard";
+    const label = "Google Cloud · Chirp 2";
     const status = () => {
       const q = pending ? ` — transcribing ${pending} segment${pending > 1 ? "s" : ""}…` : "";
       if (listening) onStatus(`Listening (${label})${q}`, true);
@@ -4629,7 +4653,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       chain = chain.then(async () => {
         const sync = window.TheraSync || {};
         try {
-          const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang()] || "en-US")}&model=${encodeURIComponent(model)}&docId=${encodeURIComponent(docId)}`, {
+          const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang()] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
             method: "POST",
             headers: Object.assign({ "content-type": "audio/wav" }, sync.token ? { authorization: `Bearer ${sync.token}` } : {}),
             body: wav,
@@ -4784,20 +4808,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const statusEl = document.getElementById("dictStatus");
     const interimEl = document.getElementById("interim");
     const langSel = document.getElementById("langSel");
-    const engineSel = document.getElementById("engineSel");
-    langSel.value = localStorage.getItem("therachart-lang") || "en-US";
+    // a device that still has "en-US" stored from the three-option bar lands on
+    // the default rather than on a value the select no longer has
+    const stored = localStorage.getItem("therachart-lang");
+    langSel.value = STT_LANG[stored] ? stored : STT_LANG_DEFAULT;
 
-    // Google Cloud dictation is offered whenever the server reports it's set up.
-    // Until then (e.g. this preview), the cloud options stay disabled and the
-    // browser engine remains the working default.
+    /* Dictation is Google Cloud Chirp 2 wherever the server has credentials for
+       it. Where it hasn't — this preview, a local demo — the browser engine is
+       the only thing left, and that is said out loud rather than left to look
+       like the real product: it streams audio to the browser vendor's consumer
+       service, which is fine for demo data and for nothing else. */
     const stt = (window.TheraSync && window.TheraSync.stt) || { available: false };
-    if (!stt.available) {
-      engineSel.querySelectorAll('option[value^="cloud:"]').forEach((o) => {
-        o.disabled = true;
-        // drop any trailing "(…)" qualifier, then say why the option is greyed
-        o.textContent = o.textContent.replace(/\s*\([^)]*\)\s*$/, "") + " · needs Google Cloud setup";
-      });
-    }
     /* ---- record-then-process ----
        A second way to dictate that costs less and asks less of the therapist's
        attention: record straight through, process once, then read what the AI
@@ -4863,10 +4884,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         processBtn.disabled = true; btn.disabled = true;
         prog.hidden = false;
         prog.textContent = `Transcribing ${captured.length} chunk${captured.length > 1 ? "s" : ""}…`;
-        const engine = (localStorage.getItem("therachart-engine") || "").startsWith("cloud:")
-          ? localStorage.getItem("therachart-engine").split(":")[1] : "chirp2";
         try {
-          const out = await processRecording(doc.id, langSel.value, engine, captured,
+          const out = await processRecording(doc.id, langSel.value, captured,
             (n, total) => { prog.textContent = `Transcribing… ${n} of ${total}`; });
           if (!out.text) {
             prog.textContent = out.errors.length
@@ -4912,9 +4931,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       showIdle();
     })();
 
-    let engineChoice = localStorage.getItem("therachart-engine") || "browser";
-    if (engineChoice.startsWith("cloud:") && !stt.available) engineChoice = "browser";
-    engineSel.value = engineChoice;
+    const useCloud = !!stt.available;
 
     let listening = false;
     // deliver a finished utterance, but only draw into the note if it's still
@@ -4942,19 +4959,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // on the visit the same way — otherwise the chart would show a cost of
       // zero for a note dictated the other way round.
       onBilled: (secs) => recordDictationSeconds(doc.id, secs, user),
-      // the ceiling counts everything already billed on this visit, so neither
-      // switching engines nor starting a second run walks around it
+      // the ceiling counts everything already billed on this visit, so
+      // starting a second run doesn't walk around it
       billedSoFar: Number(doc.data._dictationSeconds) || 0,
       ceilingSeconds: (S.settings().maxDictationMinutesPerVisit || 30) * 60,
     };
 
     let engine = null;
     function makeEngine() {
-      if (engineChoice.startsWith("cloud:")) {
-        engine = cloudEngine(Object.assign({}, callbacks, { model: engineChoice.split(":")[1] || "standard" }));
+      if (useCloud) {
+        engine = cloudEngine(callbacks);
       } else {
         engine = browserEngine(callbacks);
         if (!engine) statusEl.textContent = "Speech not supported in this browser — type into the dictation box instead.";
+        else statusEl.textContent = "Mic off · browser dictation — Google Cloud isn't set up here";
       }
       window.__theraDict = engine; // test hook
     }
@@ -4966,7 +4984,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (!listening && engine && engine.pending() === 0) statusEl.textContent = "Mic off";
       // the cloud engine writes its own richer status (model + queue); only the
       // browser engine needs setUI to set the "Listening…" line
-      if (listening && !engineChoice.startsWith("cloud:")) {
+      if (listening && !useCloud) {
         statusEl.textContent = `Listening… (${langSel.selectedOptions[0].text})`;
       }
     };
@@ -4987,20 +5005,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     langSel.addEventListener("change", () => {
       localStorage.setItem("therachart-lang", langSel.value);
       if (engine) engine.setLang(langSel.value);
-      setUI();
-    });
-
-    engineSel.addEventListener("change", () => {
-      const wasListening = listening;
-      if (engine) engine.stop();
-      listening = false;
-      engineChoice = engineSel.value;
-      localStorage.setItem("therachart-engine", engineChoice);
-      makeEngine();
-      if (wasListening && engine) {
-        listening = true;
-        Promise.resolve(engine.start()).then((ok) => { if (ok === false) { listening = false; setUI(); } });
-      }
       setUI();
     });
 

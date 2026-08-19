@@ -107,22 +107,33 @@ works; the body-part lexicon understands all three at once):
 
 ## Two dictation engines — switch in the app
 
-Every note's dictation bar has an engine selector:
+Dictation is **Google Cloud Speech-to-Text — Chirp 2**, and there is no engine
+picker: the page records short WAV segments and posts them to the server's
+`/api/stt`, which proxies to Google under your **Google Cloud BAA**. Audio is
+held only in memory and sent immediately — never written to the device.
 
-- **Browser (current)** — the Web Speech API. Fast and streams live, but audio
-  goes to the browser vendor's servers (on Chrome, Google's **consumer**
-  service) with **no healthcare data agreement** (HIPAA BAA / RA 10173). Fine
-  for demos and testing; **not for real PHI**.
-- **Google Cloud — Standard / Chirp** — the page records short WAV segments and
-  posts them to the server's `/api/stt`, which proxies to **Google Cloud
-  Speech-to-Text under your Google Cloud BAA**. Audio is held only in memory and
-  sent immediately — never written to the device. Two models: **Standard**
-  (`latest_long`, lower cost) and **Chirp** (best multilingual, incl.
-  Tagalog/Cebuano).
+The dictation bar's one choice is what you'll be **speaking**: **English &
+Tagalog** (the default) or **English & Cebuano**. Each sends a single language
+code (`fil-PH` / `ceb-PH`) — Chirp 2 refuses a list of codes, and doesn't need
+one: it's a universal model that transcribes code-switched Taglish under the PH
+code, which is the point of the pairs.
 
-The Google Cloud options stay **disabled until the server is configured** — set
-`GCP_PROJECT` and Google credentials and they light up automatically. Full
-step-by-step (account, BAA, APIs, Cloud Run hosting): see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
+**There is no English-only choice**, and that's measured rather than assumed. On
+a 148-word clinical script, `en-US` beats the PH codes only on *American*-accented
+English (8.8% vs 10.8% word error). On **Filipino-accented** English the PH codes
+are level or ahead (`en-US` 27.7% / 20.3% against `fil-PH` 27.0% / 20.3% and
+`ceb-PH` 26.4% / 19.6%). The failure is one-sided: Tagalog spoken while the code
+sat on `en-US` lost **whole utterances** — a four-second segment came back as
+"oppo" — and was billed for them regardless. English spoken under `fil-PH` costs
+a word or two. The server therefore treats `en-US` as the default `fil-PH`, which
+also covers a device still sending it from a cached copy of the app.
+
+Where the server has **no Google credentials** (the preview, a local demo) the
+bar falls back to the browser's own Web Speech API and says so. That streams
+audio to the browser vendor's **consumer** service with **no healthcare data
+agreement** (HIPAA BAA / RA 10173) — fine for demo data, **never for real PHI**.
+Set `GCP_PROJECT` and Google credentials and Chirp 2 takes over automatically.
+Full step-by-step (account, BAA, APIs, Cloud Run hosting): see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
 ### Optional: temporary session-audio review
 

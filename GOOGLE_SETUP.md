@@ -7,7 +7,7 @@ No prior Google Cloud experience assumed. Do the parts in order.
 **What you'll end up with**
 
 - The app hosted on **Cloud Run** (Google runs the server; you pay per use).
-- Voice dictation switched to **Google Cloud Speech-to-Text** (Standard + Chirp)
+- Voice dictation switched to **Google Cloud Speech-to-Text** (Chirp 2)
   **under a signed BAA** — so spoken patient info is covered.
 - One vendor, one bill, one agreement.
 
@@ -212,16 +212,17 @@ in depth you can add a bucket **lifecycle rule** to hard-delete anything under
 Once Part 5's env vars are set and the service account has access:
 
 1. Open your Cloud Run URL, sign in, open any note.
-2. In the dictation bar, the **"Google Cloud — Standard"** and **"— Chirp"**
-   options are now **enabled** (they were greyed out as "needs Google Cloud
-   setup" before). Pick one and dictate.
+2. In the dictation bar, dictate. The status line reads
+   **"Listening (Google Cloud · Chirp 2)"** — before the credentials were set it
+   said the browser engine was standing in.
 3. If something's off, check the logs: **Cloud Run → your service → Logs**. The
    startup line shows `dictation: Google Cloud Speech-to-Text (project …)` when
    it's wired correctly.
 
-To change models later, just re-deploy with a different `STT_LOCATION` or pick
-Standard vs Chirp per note in the dictation bar. **Chirp** needs a regional
-location (e.g. `us-central1`), not `global`.
+There is no model picker: everything runs on **Chirp 2**, which is GA for both
+offered languages (`fil-PH`, `ceb-PH`) and bills the same as the older models. It needs a **regional** location (e.g.
+`us-central1`), not `global` — change it by re-deploying with a different
+`STT_LOCATION`.
 
 ## Testing STT locally (optional)
 
@@ -311,9 +312,10 @@ Key points:
   gcloud run services describe therachart --region asia-southeast1 \
     --project therachart-prod --format='value(status.url)'
   ```
-- **Dictation model region.** STT follows the deploy region. If **Chirp** isn't
-  offered in `asia-southeast1`, either use the Standard model, or pin STT to a
-  Chirp region:  `STT_REGION=us-central1 ./deploy-gcp.sh asia`.
+- **Dictation model region.** STT follows the deploy region. Chirp 2 is GA in
+  `asia-southeast1` for both offered languages (verified against the locations
+  API), so nothing needs pinning; to pin it anyway:
+  `STT_REGION=us-central1 ./deploy-gcp.sh asia`.
 - **Gemini stays `global`** for both stacks (the 3.x models live only there).
 - **Data residency.** Storing PH patient data in the US (or routing AI through
   the `global` Gemini endpoint) may bump into the **Philippines Data Privacy Act
@@ -335,12 +337,19 @@ gcloud storage rm -r gs://therachart-prod-files-asia
 | Piece | Estimate |
 |---|---|
 | Cloud Run + (later) Cloud SQL | ~$50–150 |
-| Speech-to-Text (Standard ~$0.024/min · Chirp ~$0.064/min) | ~$210–420 |
+| Speech-to-Text (Chirp 2, $0.016/min of speech sent) | ~$100–200 |
 | Gemini cleanup (once on Vertex) | a few dollars |
 | **BAA** | **$0** |
 
-Speech-to-text is the dominant cost — use the **Standard** model to roughly
-halve it, or **Chirp** when you need the best Tagalog/Cebuano accuracy.
+(The Speech-to-Text row assumes roughly 6,000–12,000 minutes of *speech* a
+month — silence never leaves the device, so this is well under the hours the
+clinic is open.)
+
+Speech-to-text is the dominant cost, and in Speech-to-Text **v2** every model
+bills at the same $0.016/min — so there is nothing to save by transcribing on a
+worse one. What actually moves the number is how much audio is sent: the voice
+gate drops silence before upload, and the per-visit minute ceiling caps a note
+that runs away. Both are in the app already.
 
 ## Before you store real patient data — checklist
 

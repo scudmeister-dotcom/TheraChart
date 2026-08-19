@@ -21,9 +21,10 @@
 # On its FIRST run, `asia` provisions a new Cloud SQL instance (~5–10 min) that
 # bills ~US$8–10/mo until deleted — see the teardown note at the bottom.
 #
-# STT region: follows the deploy region by default. If the Chirp model isn't
-# offered in that region, either use the "standard" model in-app, or pin STT to
-# a region that has Chirp:   STT_REGION=us-central1 ./deploy-gcp.sh asia
+# STT region: follows the deploy region by default. Dictation runs on Chirp 2,
+# which is GA for fil-PH and ceb-PH in both us-central1 and asia-southeast1, so
+# neither stack needs pinning. To pin it anyway:
+#   STT_REGION=us-central1 ./deploy-gcp.sh asia
 set -euo pipefail
 
 ENVIRONMENT="${1:-us}"

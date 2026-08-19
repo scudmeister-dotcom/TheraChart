@@ -706,14 +706,11 @@ function demoLogins(authed) {
    The browser records speech, encodes 16 kHz WAV in the page, and POSTs each
    short segment here. This proxies the audio to Google Cloud Speech-to-Text, so
    the audio travels only from your own server to Google under your Google Cloud
-   BAA — never to a free/consumer speech service. Two models are offered:
-     - "standard" → Google's latest_long model (lower cost)
-     - "chirp"    → Google's Chirp universal model (multilingual, incl. fil-PH/ceb-PH)
-     - "chirp2"   → Google's Chirp 2, the newer generation of the same family
+   BAA — never to a free/consumer speech service. One model is used, Chirp 2.
 
    Configure with environment variables (see GOOGLE_SETUP.md):
      GCP_PROJECT   your Google Cloud project id           (required)
-     STT_LOCATION  recognition region (default us-central1; chirp needs a region, not "global")
+     STT_LOCATION  recognition region (default us-central1; Chirp 2 needs a region, not "global")
    Credentials — first one found wins:
      GCP_ACCESS_TOKEN                a short-lived OAuth token (quick tests: `gcloud auth print-access-token`)
      GOOGLE_APPLICATION_CREDENTIALS  path to a service-account key JSON (local dev)
@@ -729,22 +726,40 @@ function demoLogins(authed) {
 
 const GCP_PROJECT = process.env.GCP_PROJECT || "";
 const STT_LOCATION = process.env.STT_LOCATION || "us-central1";
-/* Which Google Speech-to-Text v2 model each engine choice maps to.
+/* Dictation runs on ONE model, Google Speech-to-Text v2 chirp_2.
 
-   chirp_2 is Google's newer universal model and is the one to use for Filipino
-   clinics: verified against the live locations API, fil-PH and ceb-PH are both
-   GA on chirp AND chirp_2 in us-central1 and asia-southeast1. chirp_3 is
-   advertised in the docs but the API refuses it for this project ("no longer
-   generally available"), so it is deliberately not offered.
+   Verified against the live locations API for this project: en-US, fil-PH and
+   ceb-PH are all GA on chirp_2 in us-central1 and asia-southeast1. The older
+   models are gone from the product rather than left as a cheaper-looking menu
+   entry — latest_long refuses fil-PH/ceb-PH outright, chirp transcribes Taglish
+   worse, and in Speech-to-Text v2 they all bill at the same $0.016/min, so the
+   choice cost a clinic accuracy and saved it nothing. chirp_3 is advertised in
+   the docs but the API refuses it for this project ("no longer generally
+   available").
 
-   Keep "chirp" as its own option rather than silently upgrading everyone: the
-   two models transcribe Taglish differently, and a clinic should be able to
-   A/B them on their own accents rather than take our word for it. */
-const STT_MODELS = { standard: "latest_long", chirp: "chirp", chirp2: "chirp_2" };
-// Models Google will only run on English, and what to use instead. Verified
-// against the live locations API: fil-PH and ceb-PH are GA on chirp and chirp_2.
-const ENGLISH_ONLY_MODELS = new Set(["latest_long"]);
-const MULTILINGUAL_MODEL = "chirp_2";
+   STT_MODELS is still a map keyed by what the client asks for: the client only
+   ever asks for "chirp2", and anything else — an old tab, a stale cache —
+   falls through to the same model rather than to a worse one. */
+const STT_MODELS = { chirp2: "chirp_2" };
+const STT_MODEL = "chirp_2";
+/* Languages the dictation bar offers, as one code each. Chirp 2 rejects a LIST
+   of language codes ("Multiple language recognition is only available in the
+   following locations: eu, global, us", none of which have chirp_2), so the
+   "English & Tagalog" / "English & Cebuano" choices send fil-PH / ceb-PH alone.
+   Chirp 2 is universal and treats the code as a hint, not a filter: English
+   spoken under either code comes back as English.
+
+   en-US is deliberately NOT in the set, so it lands on the default below.
+   Measured live on a 148-word clinical script, en-US only wins on
+   AMERICAN-accented English (8.8% vs 10.8% word error); on Filipino-accented
+   English the PH codes are level or ahead (27.7/20.3% for en-US against
+   27.0/20.3% fil-PH and 26.4/19.6% ceb-PH). It loses badly in the other
+   direction — a 4-second Tagalog segment under en-US came back as "oppo",
+   the whole utterance gone and still billed. The service worker caches app.js,
+   so a device can keep sending en-US long after the option was withdrawn from
+   the bar; falling through here is what stops that becoming a silent cliff. */
+const STT_LANGS = new Set(["fil-PH", "ceb-PH"]);
+const STT_LANG_DEFAULT = "fil-PH";
 
 function sttCredentialSource() {
   if (process.env.GCP_ACCESS_TOKEN) return "token";
@@ -832,22 +847,13 @@ async function transcribe(wavBuffer, lang, modelKey) {
     throw Object.assign(new Error(
       "Google Cloud Speech-to-Text isn't set up on this server yet. Set GCP_PROJECT and a Google credential (see GOOGLE_SETUP.md), then restart."), { code: 501 });
   }
-  let model = STT_MODELS[modelKey] || STT_MODELS.standard;
-
-  /* latest_long is English-centric. Google refuses it outright for fil-PH and
-     ceb-PH ("language not supported by the model"), so a therapist who picked
-     Tagalog while the engine sat on Standard lost the whole segment with only
-     a generic failure to show for it — on the one feature the product is sold
-     on. Rather than fail, move to the multilingual model and report which one
-     actually ran, so the UI can say so instead of pretending nothing changed. */
-  if (ENGLISH_ONLY_MODELS.has(model) && !/^en\b|^en[-_]/i.test(String(lang || ""))) {
-    model = MULTILINGUAL_MODEL;
-  }
+  const model = STT_MODELS[modelKey] || STT_MODEL;
+  const language = STT_LANGS.has(lang) ? lang : STT_LANG_DEFAULT;
   const token = await gcpAccessToken();
   const host = STT_LOCATION === "global" ? "speech.googleapis.com" : `${STT_LOCATION}-speech.googleapis.com`;
   const url = `https://${host}/v2/projects/${GCP_PROJECT}/locations/${STT_LOCATION}/recognizers/_:recognize`;
   const body = {
-    config: { autoDecodingConfig: {}, model, languageCodes: [lang && lang !== "auto" ? lang : "en-US"] },
+    config: { autoDecodingConfig: {}, model, languageCodes: [language] },
     content: wavBuffer.toString("base64"),
   };
   const r = await fetch(url, {
@@ -1793,11 +1799,12 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (url.pathname === "/api/stt" && req.method === "POST") {
-        const lang = (url.searchParams.get("lang") || "en-US").replace(/[^a-z-]/gi, "");
-        // digits must survive the scrub or "chirp2" silently becomes "chirp" —
-        // a wrong-but-valid model key, so the request succeeds and the clinic
-        // gets the older engine without any sign that it happened
-        const model = (url.searchParams.get("model") || "standard").replace(/[^a-z0-9_]/gi, "");
+        const lang = (url.searchParams.get("lang") || STT_LANG_DEFAULT).replace(/[^a-z-]/gi, "");
+        // digits must survive the scrub or "chirp2" arrives as "chirp" — an
+        // unknown key, so the clinic would get the fallback model with no sign
+        // that it happened. Kept as a scrub rather than a whitelist because the
+        // key is metered and logged, not just resolved.
+        const model = (url.searchParams.get("model") || "chirp2").replace(/[^a-z0-9_]/gi, "");
         const docId = url.searchParams.get("docId") || "";
         /* Checked before the body is read: a runaway recorder posting megabytes
            of audio should be turned away at the door, not after we have taken

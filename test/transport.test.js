@@ -102,12 +102,12 @@ function rawGet(base, path, headers) {
       `${(plain.body.length / gz.body.length).toFixed(1)}x`);
   } finally { s.stop(); }
 
-  /* ---------------- dictation engine keys ----------------
-     The engine the browser asks for has to survive the query-string scrub and
-     resolve to the model the clinic chose. "chirp2" is the case that bites: a
-     scrub of [^a-z_] silently turns it into "chirp", which is a VALID key, so
-     the request succeeds and quietly transcribes on the older engine — the
-     clinic sees no error, just worse Taglish. */
+  /* ---------------- dictation model + languages ----------------
+     Dictation is Chirp 2 and nothing else, so what matters is that the key the
+     browser sends survives the query-string scrub and resolves to chirp_2, and
+     that all three offered languages reach the model. "chirp2" is the case that
+     bites: a scrub of [^a-z_] turns it into "chirp", and a clinic transcribing
+     on a fallback model sees no error, just worse Taglish. */
   {
     const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" });
     try {
@@ -117,11 +117,11 @@ function rawGet(base, path, headers) {
       /* Tests run with the Google credentials blanked, so STT answers 501
          "not set up here" — which is what proves the key was accepted and
          routed rather than rejected before it got that far. */
-      for (const model of ["standard", "chirp", "chirp2"]) {
-        const res = await s2.call(`/api/stt?lang=fil-PH&model=${model}`, {
+      for (const lang of ["fil-PH", "ceb-PH"]) {
+        const res = await s2.call(`/api/stt?lang=${lang}&model=chirp2`, {
           method: "POST", token, body: { x: 1 },
         });
-        r.check(`engine "${model}" is a routable dictation key`,
+        r.check(`"${lang}" is a routable dictation language`,
           [200, 400, 501].indexOf(res.status) >= 0,
           `status ${res.status} ${JSON.stringify(res.data).slice(0, 120)}`);
       }
@@ -130,22 +130,34 @@ function rawGet(base, path, headers) {
       const src = fs2.readFileSync(path2.join(__dirname, "..", "server.js"), "utf8");
       const map = (src.match(/const STT_MODELS = \{([^}]*)\}/) || [])[1] || "";
       r.check("chirp2 maps to Google's chirp_2 model", /chirp2:\s*"chirp_2"/.test(map), map.trim());
-      r.check("standard and chirp are still offered separately",
-        /standard:\s*"latest_long"/.test(map) && /chirp:\s*"chirp"/.test(map), map.trim());
-      /* latest_long is English-only — Google rejects fil-PH/ceb-PH on it. The
-         server swaps to the multilingual model rather than losing the segment.
-         Verified live against Google (all 9 engine x language combinations
-         succeed); asserted here at the source level because tests run without
-         Google credentials and never reach the model call. */
-      r.check("an English-only model is defined with a multilingual fallback",
-        /ENGLISH_ONLY_MODELS = new Set\(\["latest_long"\]\)/.test(src)
-          && /MULTILINGUAL_MODEL = "chirp_2"/.test(src),
-        "the fil-PH fallback in transcribe() is what stops Tagalog dictation failing outright");
+      r.check("no model other than chirp_2 is reachable",
+        !/latest_long|"chirp"/.test(map) && /const STT_MODEL = "chirp_2"/.test(src),
+        "an older model left in the map is one a stale client can still ask for");
+      /* Chirp 2 refuses a LIST of language codes (multi-language recognition is
+         only offered in eu/global/us, where chirp_2 does not exist), so each UI
+         choice sends exactly one code. Verified live against Google for this
+         project: en-US, fil-PH and ceb-PH are all GA on chirp_2 in us-central1.
+         Asserted at the source level because tests run without Google
+         credentials and never reach the model call. */
+      r.check("exactly the two offered languages are accepted, one code each",
+        /const STT_LANGS = new Set\(\["fil-PH", "ceb-PH"\]\)/.test(src)
+          && /languageCodes: \[language\]/.test(src),
+        "a pair of codes is refused by Chirp 2 outright — the request would fail, not degrade");
+      /* en-US must fall through to Tagalog rather than be honoured. The service
+         worker caches app.js, so a device can still be asking for English long
+         after the option left the bar — and English-only on Taglish speech
+         drops whole billed utterances. Measured: a 4s Tagalog segment came back
+         from en-US as "oppo", and complete under fil-PH. */
+      r.check("en-US falls through to the Tagalog default instead of being honoured",
+        !/STT_LANGS = new Set\(\[[^\]]*en-US/.test(src)
+          && /const STT_LANG_DEFAULT = "fil-PH"/.test(src)
+          && /STT_LANGS\.has\(lang\) \? lang : STT_LANG_DEFAULT/.test(src),
+        "a stale cached client asking for en-US is the exact case this protects");
       r.check("the transcriber reports which model actually ran",
         /return \{ text, model \}/.test(src) && /model: out\.model/.test(src),
         "a silent model swap would leave the clinic unable to tell what transcribed their audio");
-      r.check("the model scrub keeps digits, so chirp2 cannot degrade to chirp",
-        src.indexOf("[^a-z0-9_]") >= 0 && src.indexOf('("model") || "standard").replace(/[^a-z_]/gi') < 0,
+      r.check("the model scrub keeps digits, so chirp2 arrives intact",
+        src.indexOf("[^a-z0-9_]") >= 0 && src.indexOf('("model") || "chirp2").replace(/[^a-z_]/gi') < 0,
         "server.js must not strip digits from the model query parameter");
     } finally { s2.stop(); }
   }

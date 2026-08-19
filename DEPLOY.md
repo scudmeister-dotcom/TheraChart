@@ -76,8 +76,8 @@ By default the database is a flat file under `data/`. For durable, restart-safe
 storage (required on Cloud Run), set **`DATABASE_URL`** to a Postgres instance —
 the app persists there automatically. See **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
-Voice dictation uses the browser engine out of the box; to enable **Google
-Cloud Speech-to-Text** (Standard/Chirp, under a BAA) set `GCP_PROJECT` +
+Voice dictation falls back to the browser engine out of the box; to run it on
+**Google Cloud Speech-to-Text** (Chirp 2, under a BAA) set `GCP_PROJECT` +
 credentials — see **[GOOGLE_SETUP.md](GOOGLE_SETUP.md)**.
 
 For **real PHI**, run Gemini through **Vertex AI** (BAA-covered) instead of the
