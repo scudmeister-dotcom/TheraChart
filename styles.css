@@ -126,8 +126,18 @@
 
   /* Solid-fill brand gradient for primary buttons. Same teal ramp as the rail
      and --brand-grad, but starting one step darker so white label text keeps
-     its contrast on a small surface. Theme-independent, like --brand-grad. */
-  --btn-grad: linear-gradient(145deg, #14939a, #0e7c86 46%, #0a5b63);
+     its contrast on a small surface. Theme-independent, like --brand-grad.
+
+     Vertical on purpose. A diagonal ramp is measured across the whole box, so
+     on a wide control the horizontal leg dominates and the fill reads as a
+     left-to-right wipe — a full-width Sign in button ended up visibly lighter
+     on its left than its right, and no two buttons of different widths shaded
+     alike. Top-to-bottom is uniform across the width at every size. */
+  --btn-grad: linear-gradient(180deg, #14939a, #0e7c86 46%, #0a5b63);
+  /* --brand-grad's ramp, turned vertical for the same reason, for the wide
+     filled surfaces (mic pill, chat bubble). Square brand marks keep the
+     diagonal --brand-grad: on a square it reads as a true diagonal. */
+  --brand-grad-v: linear-gradient(180deg, #3ec6d0, #0e7c86 62%, #0a5b63);
   /* the pale end of the same ramp — headers and other large tinted surfaces.
      Runs teal → violet like --brand-grad-tv, but at wash strength so dark body
      text stays readable on top of it. */
@@ -402,7 +412,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   padding: 10px 18px; border-bottom: 1px solid var(--border);
 }
 .datenav-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dn-arrow { font-size: 16px; line-height: 1; padding: 4px 10px; font-weight: 700; }
+.dn-arrow { font-size: 16px; line-height: 1; --pad-y: 4px; --pad-x: 10px; font-weight: 700; }
 .datenav-label { font-size: 13px; font-weight: 600; color: var(--ink); margin-left: 4px; }
 .rangeseg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); }
 .segbtn {
@@ -499,8 +509,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    same variants read correctly in both the light and dark themes. */
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
-  padding: 9px 15px;
-  border: 1.5px solid var(--border);
+  /* --ring is the drawn border, --pad-* the padding inside it. Filled variants
+     set --ring to 0 and the padding grows by the same 1.5px, so a filled and an
+     outline button with the same label still measure the same. They cannot just
+     keep a transparent border: Chrome paints the border ring even when its
+     colour is fully transparent, and the antialiased ring reads as a dark line
+     down the left and right edges of a filled button. */
+  --ring: 1.5px; --pad-y: 9px; --pad-x: 15px;
+  padding: calc(var(--pad-y) + 1.5px - var(--ring)) calc(var(--pad-x) + 1.5px - var(--ring));
+  border: var(--ring) solid var(--border);
   border-radius: 10px;
   background: var(--panel);
   color: var(--ink);
@@ -512,37 +529,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 /* primary: the brand teal gradient, so CTAs match the rail and the logo mark */
 .btn.primary {
-  background: var(--btn-grad); border-color: transparent; color: #fff;
+  background: var(--btn-grad); --ring: 0px; color: #fff;
   box-shadow: 0 1px 2px rgba(11, 79, 74, .25), inset 0 1px 0 rgba(255, 255, 255, .14);
 }
 .btn.primary:hover {
-  color: #fff; border-color: transparent; filter: brightness(0.94);
+  color: #fff; filter: brightness(0.94);
   box-shadow: 0 3px 12px rgba(14, 124, 134, .32), inset 0 1px 0 rgba(255, 255, 255, .16);
 }
 /* secondary soft */
-.btn.soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.btn.soft { background: var(--accent-soft); --ring: 0px; color: var(--accent); }
 .btn.soft:hover { color: var(--accent); filter: brightness(0.97); }
 /* AI action (primary): teal→cyan pill-gradient with a lift on hover */
 .btn.ai, #refineBtn {
-  background: linear-gradient(120deg, #0F8A80, #0E7490); border-color: transparent; color: #fff;
+  background: linear-gradient(180deg, #0F8A80, #0E7490); --ring: 0px; color: #fff;
   box-shadow: 0 2px 10px rgba(14, 116, 144, .28);
 }
-.btn.ai:hover, #refineBtn:hover { color: #fff; border-color: transparent; box-shadow: 0 3px 14px rgba(14, 116, 144, .4); }
+.btn.ai:hover, #refineBtn:hover { color: #fff; box-shadow: 0 3px 14px rgba(14, 116, 144, .4); }
 /* AI action (outline) */
-.btn.ai-outline { background: var(--panel); border: 1.5px solid #A5DCE4; color: #0E7490; }
+.btn.ai-outline { background: var(--panel); border-color: #A5DCE4; color: #0E7490; }
 .btn.ai-outline:hover { color: #0E7490; border-color: #A5DCE4; background: color-mix(in srgb, #A5DCE4 16%, var(--panel)); }
 /* destructive soft (default) + solid modifier */
-.btn.danger { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
-.btn.danger:hover { color: var(--danger); border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 14%, var(--panel)); }
-.btn.danger.solid { background: #C2453A; border-color: transparent; color: #fff; }
+.btn.danger { background: var(--danger-soft); --ring: 0px; color: var(--danger); }
+.btn.danger:hover { color: var(--danger); --ring: 1.5px; border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 14%, var(--panel)); }
+.btn.danger.solid { background: #C2453A; --ring: 0px; color: #fff; }
 .btn.danger.solid:hover { color: #fff; background: #A93A30; }
-.btn.small { padding: 6px 11px; font-size: 12.5px; border-radius: 8px; }
+.btn.small { --pad-y: 6px; --pad-x: 11px; font-size: 12.5px; border-radius: 8px; }
 /* positive (accept / done) soft green + low-emphasis ghost that reddens on hover */
-.btn.good { background: var(--good-soft); border-color: transparent; color: var(--good); }
-.btn.good:hover { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: color-mix(in srgb, var(--good) 14%, var(--panel)); }
-.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
-.btn.ghost:hover { color: var(--danger); border-color: transparent; background: var(--danger-soft); }
-.btn[disabled], .btn:disabled { color: #8FA6A3; background: var(--border); border-color: transparent; box-shadow: none; filter: none; cursor: not-allowed; }
+.btn.good { background: var(--good-soft); --ring: 0px; color: var(--good); }
+.btn.good:hover { color: var(--good); --ring: 1.5px; border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: color-mix(in srgb, var(--good) 14%, var(--panel)); }
+.btn.ghost { background: transparent; --ring: 0px; color: var(--muted); }
+.btn.ghost:hover { color: var(--danger); background: var(--danger-soft); }
+.btn[disabled], .btn:disabled { color: #8FA6A3; background: var(--border); --ring: 0px; box-shadow: none; filter: none; cursor: not-allowed; }
 
 .chip {
   display: inline-block; padding: 2px 9px; border-radius: 999px;
@@ -885,7 +902,7 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 .mic-btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 9px 16px; font-size: 14px; font-weight: 700;
-  color: #fff; background: var(--brand-grad);
+  color: #fff; background: var(--brand-grad-v);
   border: none; border-radius: 999px;
   box-shadow: 0 2px 10px rgba(14, 124, 134, 0.35);
 }
@@ -1530,7 +1547,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .ins-flag b { color: var(--danger); font-size: 13.5px; }
 
 /* ---------------- ghost button ---------------- */
-.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost { background: transparent; --ring: 0px; color: var(--muted); }
 .btn.ghost:hover { background: var(--hover); color: var(--ink); }
 
 /* ---------------- typed dictation (manual entry under the transcript) ---------------- */
@@ -1564,7 +1581,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .asst-starter { cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--ink); }
 .asst-starter:hover { background: var(--accent-soft); border-color: var(--accent); }
 .asst-msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
-.asst-msg.user { align-self: flex-end; background: var(--brand-grad); color: #fff; border-bottom-right-radius: 4px; }
+.asst-msg.user { align-self: flex-end; background: var(--brand-grad-v); color: #fff; border-bottom-right-radius: 4px; }
 .asst-msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .asst-msg.assistant.unanswered { border-color: var(--review); background: var(--review-soft); }
 .asst-msg.thinking { color: var(--muted); }
@@ -1594,7 +1611,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .lp-accent { color: var(--accent); }
 .lp-lead { font-size: 16px; line-height: 1.6; color: var(--muted); max-width: 560px; margin-bottom: 26px; }
 .lp-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-.lp-cta-btn { padding: 12px 22px; font-size: 15px; }
+.lp-cta-btn { --pad-y: 12px; --pad-x: 22px; font-size: 15px; }
 .lp-trust { font-size: 12.5px; color: var(--muted); background: var(--accent-soft); padding: 10px 14px; border-radius: 10px; display: inline-block; }
 .lp-hero-shot img {
   width: 100%; border-radius: 16px; border: 1px solid var(--border);
@@ -1622,9 +1639,14 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .bug-sev b { font-size: 13px; font-weight: 650; }
 .bug-sev small { font-size: 11px; color: var(--muted); line-height: 1.35; }
-.bug-sev:hover { background: var(--hover); }
+.bug-sev:not(.on):hover { background: var(--hover); }
 .bug-sev.on { border-color: var(--accent); background: var(--accent-soft); }
-.bug-sev.on small { color: var(--accent-ink, var(--accent)); }
+/* The hint stays --ink on a selected card, dimmed rather than recolored. It
+   used to take --accent-ink, which is the label colour for a SOLID --accent
+   fill; over the tinted --accent-soft card that is near-invisible in both
+   themes — white on the pale wash, near-black on the dark one. Muted grey is
+   no better here, so the hierarchy comes from opacity instead of hue. */
+.bug-sev.on small { color: var(--ink); opacity: .75; }
 
 .bug-shot-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .bug-shot-warn {
@@ -1854,7 +1876,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
     left: 10px;
     width: calc((100% - 20px) / var(--tab-count));
     transform: translateX(calc(var(--tab-index) * 100%));
-    background: linear-gradient(145deg, #3ec6d0, #0e7c86);
+    background: linear-gradient(180deg, #3ec6d0, #0e7c86);
     border-radius: 13px;
     box-shadow: 0 4px 12px rgba(14, 124, 134, 0.5);
     transition: transform 0.28s cubic-bezier(0.4, 0.9, 0.3, 1);
@@ -1927,8 +1949,8 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   .login-box h1 { font-size: 19px; }
   .login-box > .card { padding: 18px; }
   /* roomier tap targets */
-  .btn { padding: 10px 15px; }
-  .btn.small { padding: 7px 12px; }
+  .btn { --pad-y: 10px; --pad-x: 15px; }
+  .btn.small { --pad-y: 7px; --pad-x: 12px; }
   .login-user { padding: 12px 14px; }
 
   /* wide tables scroll horizontally instead of crushing their columns.
