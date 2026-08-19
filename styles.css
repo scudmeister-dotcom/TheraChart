@@ -145,6 +145,15 @@
     color-mix(in srgb, var(--brand-1) 30%, var(--panel)),
     color-mix(in srgb, var(--brand-2) 15%, var(--panel)) 46%,
     color-mix(in srgb, var(--brand-3) 9%, var(--panel)) 100%);
+
+  /* One height for every small control that can share a toolbar row — buttons,
+     chips, selects, date fields. A row is what the eye actually reads, so a
+     40px date input next to a 34px button looks like a mistake even though
+     each control is defensible on its own. Each keeps its own font and
+     horizontal padding; only the height is common. Matched to `.btn.small`,
+     which is the app-wide small control, and re-stated at the phone
+     breakpoint where that button is padded out to a roomier tap target. */
+  --control-h: 34px;
 }
 
 /* Keep iOS Safari from silently rescaling: never auto-adjust text on rotate,
@@ -421,7 +430,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .datenav-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dn-arrow { font-size: 16px; line-height: 1; --pad-y: 4px; --pad-x: 10px; font-weight: 700; }
 .datenav-label { font-size: 13px; font-weight: 600; color: var(--ink); margin-left: 4px; }
-.rangeseg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); }
+/* The track takes the shared height and its segments stretch to fill it, so
+   the whole control matches the arrows and the Today button it shares a row
+   with, rather than standing a hair proud of them on its own padding. */
+.rangeseg {
+  display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px;
+  height: var(--control-h); box-sizing: border-box;
+  background: var(--bg); border: 1px solid var(--border);
+}
 .segbtn {
   appearance: none; cursor: pointer; border: none; background: none; color: var(--muted);
   padding: 5px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
@@ -560,7 +576,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .btn.danger:hover { color: var(--danger); --ring: 1.5px; border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 14%, var(--panel)); }
 .btn.danger.solid { background: #C2453A; --ring: 0px; color: #fff; }
 .btn.danger.solid:hover { color: #fff; background: #A93A30; }
-.btn.small { --pad-y: 6px; --pad-x: 11px; font-size: 12.5px; border-radius: 8px; }
+/* min-height, not height: a button that wraps to two lines should grow rather
+   than spill its label. The padding above already lands within a rounding
+   error of --control-h, so this only bites on variants that shrink it — the
+   date-nav arrows, whose `line-height: 1` would otherwise leave them 6px
+   shorter than the "Today" button sitting right beside them. */
+.btn.small { --pad-y: 6px; --pad-x: 11px; font-size: 12.5px; border-radius: 8px; min-height: var(--control-h); }
 /* positive (accept / done) soft green + low-emphasis ghost that reddens on hover */
 .btn.good { background: var(--good-soft); --ring: 0px; color: var(--good); }
 .btn.good:hover { color: var(--good); --ring: 1.5px; border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: color-mix(in srgb, var(--good) 14%, var(--panel)); }
@@ -1200,6 +1221,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .fchip {
   appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  min-height: var(--control-h);
   background: var(--panel); border: 1px solid var(--border); color: var(--muted);
   transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
@@ -1216,6 +1238,12 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .fchip.fs-draft.on { background: color-mix(in srgb, var(--review) 16%, var(--panel)); border-color: var(--review); color: var(--ink); }
 .fchip.fs-signed.on { background: var(--good-soft); border-color: var(--good); color: var(--ink); }
 .fchip.fs-all.on, .fchip.ft-all.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+/* Single-line controls take the height outright — they can never wrap, and the
+   date field in particular has to be pulled *down* to the shared height: a
+   bare date input carries a couple of extra pixels for its picker indicator,
+   which is what made this row's two date fields sit a pixel proud of the
+   Clear button and its whole filter group ride 3px above its neighbours. */
+.fdate, .fsel { height: var(--control-h); box-sizing: border-box; }
 .fdate {
   padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel); color: var(--ink); font-size: 12.5px;
@@ -1313,7 +1341,14 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 /* ---------------- calendar ---------------- */
 
 .cal-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-.cal-toolbar input[type="date"] { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+/* The date field sat 6px taller than the buttons flanking it, on body-sized
+   text while they run at 12.5px. Matching the font as well as the height is
+   what makes it read as one control strip rather than an input someone
+   dropped in. */
+.cal-toolbar input[type="date"] {
+  height: var(--control-h); box-sizing: border-box; font-size: 12.5px;
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+}
 .cal-grid { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .cal-grid .cal-cell { background: var(--panel); padding: 7px 9px; min-height: 44px; font-size: 12.5px; }
 .cal-grid .cal-head { background: var(--hover); font-weight: 700; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1449,9 +1484,13 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 /* provider show/hide bar */
 .cal-ptbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .cal-ptbar-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; color: var(--muted); margin-right: 2px; }
+/* Same height as the toolbar directly above it, and as the filter chips on the
+   drafts page — these two chip components are the same control wearing
+   different colours, so they should not be two different sizes. */
 .calpt-chip {
   appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
   padding: 4px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  min-height: var(--control-h);
   border: 1px solid var(--border); background: var(--panel); color: var(--ink);
   transition: background .14s, color .14s, border-color .14s, opacity .14s;
 }
@@ -1966,6 +2005,15 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   /* roomier tap targets */
   .btn { --pad-y: 10px; --pad-x: 15px; }
   .btn.small { --pad-y: 7px; --pad-x: 12px; }
+  /* ...and the shared control height follows them up, so the selects and date
+     fields sharing those rows stay level with the buttons here too. 36px is
+     what the padding above works out to, and it is also exactly what a 16px
+     input needs — see the anti-zoom rule above. */
+  :root { --control-h: 36px; }
+  /* that rule is `input, select, textarea`, which loses to the id-free class
+     selector this input is styled by, so restate it: below 16px iOS zooms the
+     whole page in when the field takes focus. */
+  .cal-toolbar input[type="date"] { font-size: 16px; }
   .login-user { padding: 12px 14px; }
 
   /* wide tables scroll horizontally instead of crushing their columns.
