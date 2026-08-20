@@ -223,6 +223,10 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
   check("…and the filler gone", neck && !/\blike\b/i.test(neck.text), neck && neck.text);
   check("…and the neck finding still recorded", keys.includes("Neck|"), JSON.stringify(keys));
 
+  const arm = (r.corrections || []).find((c) => c.key === "Arm|right");
+  check("…and the live pass's arm pin is offered for removal",
+    !!arm && arm.kind === "hypothetical", JSON.stringify(r.corrections));
+
   check("'the back of my left leg' is the left hamstring, on the back view",
     keys.includes("Hamstring|left"), JSON.stringify(keys));
   check("…and not a generic front-view leg", !keys.some((k) => k.startsWith("Leg|")), JSON.stringify(keys));
@@ -237,6 +241,32 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
     JSON.stringify(r.corrections));
   check("tl: the real complaint survives",
     r.findings.some((f) => f.key === "Knee|" && !f.corrected), JSON.stringify(r.findings.map((f) => f.key)));
+}
+
+{
+  // the commonest live-pass error of all: the CLINICIAN names a region, and
+  // the map pins it as though the patient had complained of it
+  const r = PR.refineTranscript([
+    "okay let me check your right shoulder now",
+    "my left knee is what actually hurts",
+  ]);
+  const t = (r.corrections || []).find((c) => c.key === "Shoulder|right");
+  check("a region only the clinician named is offered for removal",
+    !!t && t.kind === "not-the-patient", JSON.stringify(r.corrections));
+  check("…and the patient's own complaint is untouched",
+    r.findings.some((f) => f.key === "Knee|left" && !f.corrected),
+    JSON.stringify(r.findings.map((f) => f.key)));
+}
+{
+  // but a region the clinician ASKS about and the patient confirms is real
+  const r = PR.refineTranscript([
+    "does your right shoulder hurt",
+    "yes my right shoulder is sore when I reach up",
+  ]);
+  check("a region the clinician asks about and the patient confirms is kept",
+    r.findings.some((f) => f.key === "Shoulder|right" && !f.corrected)
+      && !(r.corrections || []).some((c) => c.key === "Shoulder|right"),
+    JSON.stringify({ f: r.findings.map((x) => x.key), c: r.corrections }));
 }
 
 /* ---- Tagalog and Cebuano carry their own weight ---- */

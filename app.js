@@ -5420,9 +5420,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const filedTo = [];
     let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
-      const field = fieldForSentence(doc.type, sentence, clinician ? "clinician" : "patient");
+      /* A sentence can be half small talk and half complaint. File the half
+         that is documentation and leave the wedding in the transcript. */
+      const clinical = PR.trimToClinical(sentence);
+      if (!clinical) { heldBack += 1; continue; }
+      const field = fieldForSentence(doc.type, clinical, clinician ? "clinician" : "patient");
       if (!field) { heldBack += 1; continue; }
-      appendField(doc, field, cap(sentence), silent);
+      appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);

@@ -206,6 +206,11 @@
        clinical at all. */
     ["difficulty with daily activity", /\b(?:can'?t|cannot|couldn'?t|unable to|no longer able to)\s+(?:\w+\s+){0,2}?(?:sleep|walk|stand|sit|climb|reach|carry|drive|work|dress|shower|bathe|kneel|squat|run|write|type|cook|garden|put)\b|\b(?:trouble|difficulty|problems?)\s+(?:with\s+)?(?:\w+ing|stairs|sleep|walking|standing|sitting|dressing|driving|work)\b|\bhirap\s+(?:matulog|maglakad|tumayo|umupo|umakyat|magbihis)\b/i],
     ["warmth", /\b(?:warm to the touch|hot to the touch|nag-?init|mainit|init-?init|nag-?ka-?init)\b/i],
+    /* What the therapist SEES. Posture and gait are half of an objective
+       exam and none of this vocabulary registered as clinical, so "the right
+       shoulder sits higher than the left" read as a region named and nothing
+       said about it — the same verdict as "point to your shoulder". */
+    ["asymmetry", /\b(?:sits?(?: \w+)? (?:higher|lower)|(?:is|are|looks?|appears?)(?: \w+)? (?:higher|lower) than|elevated|depressed shoulder|asymmetr\w*|uneven|drop(?:ped)? shoulder|winging|winged|hik(?:e|ed|ing)|lateral shift|forward head|rounded shoulders|kyphotic|lordotic|scoliotic|antalgic|guard(?:ed|ing)|atroph\w*|wasting)\b/i],
     // Reassurance — "my knee is fine" must never read as a complaint.
     ["feeling fine", /\b(?:fine|feels? (?:good|great|normal|okay)|no (?:issues|problems|complaints)|back to normal|maayos(?: ra)?|ayos(?: lang)?|okay lang)\b/i],
   ];
@@ -958,7 +963,7 @@
 
   // Marks a turn as the clinician speaking: a question, an instruction, or a
   // called-out objective measurement.
-  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
+  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|(?:take|takes|taking) a (?:deep )?breath|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
 
   function guessSpeaker(raw) {
     const t = String(raw || "").trim();
@@ -1191,10 +1196,19 @@
        measured value. Nothing below can talk this out of the note. */
     if (hasMeasurement || hasRegion) return { file: true, reason: "" };
 
+    /* The vetoes come first. A therapist's cue is full of section keywords —
+       "DO NOT let me move you" reads as a precaution — and a rule written to
+       catch a precaution will happily catch a cue that sounds like one. */
+    if (SMALLTALK_RE.test(text)) return { file: false, reason: "small talk, not clinical content" };
+    /* A question or a cue is how the clinician got the answer, not the answer.
+       It stays in the transcript, where it gives the reply its meaning. */
+    if (CLINICIAN_RE.test(text)) return { file: false, reason: "a question or instruction, not a finding" };
+    if (LOGISTICS_RE.test(text)) return { file: false, reason: "not about the patient's condition" };
+
     /* A referral, a precaution or a history line often names no region and
        describes no symptom — "Dr. Santos referred me for the shoulder" reads
-       as a bare mention — so this has to be asked before the substance veto
-       gets to call it empty. */
+       as a bare mention — so this is asked before the substance veto gets to
+       call it empty. */
     if (SECTION_RULES.some(([, re]) => re.test(text))) return { file: true, reason: "" };
 
     /* The vetoes run BEFORE the weaker signals below, because a loose symptom
@@ -1205,15 +1219,6 @@
        patient. */
     const sub = turnSubstance(text);
     if (!sub.keep) return { file: false, reason: sub.reason };
-    if (SMALLTALK_RE.test(text)) return { file: false, reason: "small talk, not clinical content" };
-    /* A question or a cue is how the clinician got the answer, not the answer.
-       It stays in the transcript, where it gives the reply its meaning. */
-    if (CLINICIAN_RE.test(text)) return { file: false, reason: "a question or instruction, not a finding" };
-    /* Asked directly, rather than trusting `turnSubstance` to have reached
-       it: that function accepts a loose signal before it ever looks at
-       logistics, so "reschedule you for next week" survived it on the
-       strength of reading "for next week" as a duration. */
-    if (LOGISTICS_RE.test(text)) return { file: false, reason: "not about the patient's condition" };
 
     /* A loose signal is one word doing all the work — a trigger ("after
        ten"), a duration ("for next week"), a comparative. On its own that is
@@ -1229,6 +1234,35 @@
     return { file: false, reason: "nothing about the patient's condition in this line" };
   }
 
+  /* Sentences are the unit the router files, and a patient will happily put
+     the wedding and the back pain in the same one: "my daughter is getting
+     married next month, but my low back is killing me". Filing that whole
+     sentence puts a wedding in a medical record; refusing it loses the
+     complaint.
+
+     So the sentence is reconsidered a clause at a time, but only when doing
+     so actually removes something — if every clause is clinical the sentence
+     is filed whole, because a note a therapist has to read should not be
+     chopped into fragments for no gain. */
+  const CLAUSE_JOIN_RE = /\s*,\s*(?=(?:but|and|though|although|however|pero|kaso|tapos|ug|apan)\s)/i;
+
+  /**
+   * The part of `sentence` that belongs in the note. Returns "" when none of
+   * it does, and the sentence unchanged when all of it does.
+   */
+  function trimToClinical(sentence) {
+    const text = String(sentence || "").trim();
+    if (!text) return "";
+    const clauses = text.split(CLAUSE_JOIN_RE).map((c) => c.trim()).filter(Boolean);
+    if (clauses.length < 2) return noteWorthy(text).file ? text : "";
+    const keep = clauses.filter((c) => noteWorthy(c).file);
+    if (keep.length === clauses.length) return text;
+    if (!keep.length) return "";
+    /* Strip a leading conjunction left dangling by the clause that went
+       ("but my low back is killing me" → "my low back is killing me"). */
+    return keep.map((c, i) => (i === 0 ? c.replace(/^(?:but|and|though|although|however|pero|kaso|tapos|ug|apan)\s+/i, "") : c)).join(", ");
+  }
+
   function refineTranscript(utterances) {
     const dialogue = [];
     const findingsMap = new Map();
@@ -1236,6 +1270,7 @@
     const treatmentSentences = [];
     const corrections = new Map(); // key -> why it should come off the chart
     const illustrative = new Map(); // key -> the example sentence that produced it
+    const unreported = new Map();   // key -> named, but never by the patient
     let lastKey = null;
 
     (utterances || []).forEach((raw) => {
@@ -1251,6 +1286,26 @@
       dialogue.push({ speaker, text, keep: substance.keep, dropReason: substance.reason });
 
       if (TREATMENT_RE.test(text)) treatmentSentences.push(text);
+
+      /* A region named by anyone OTHER than the patient reporting a symptom.
+         The live pass cannot tell the difference — it pins whatever region
+         word it hears, so "let's check your right arm" and "you could say, oh,
+         my right arm is in a lot of pain" both put an arm on the body map.
+         Remember them here; at the end, any of these the patient never
+         actually complained about becomes a correction the therapist can see
+         and undo. */
+      if (speaker !== "patient" || HYPOTHETICAL_RE.test(text) || META_RE.test(text)) {
+        const kind = HYPOTHETICAL_RE.test(text) ? "hypothetical" : "not-the-patient";
+        const reason = HYPOTHETICAL_RE.test(text)
+          ? "Said as an example, not reported by the patient"
+          : META_RE.test(text)
+            ? "Said while talking about the app, not about the patient"
+            : "The clinician said this — it is not the patient's report";
+        for (const m of parseUtterance(text).mentions) {
+          const k = mentionKey(m);
+          if (!unreported.has(k)) unreported.set(k, { key: k, part: m.partName, side: m.side, kind, reason, quote: text });
+        }
+      }
       if (speaker !== "patient") return;
       // "Okay." and "Mm-hmm." are not Subjective content either. Each kept
       // sentence remembers which regions it spoke about, so a sentence that
@@ -1326,6 +1381,14 @@
       });
     }
 
+    /* Regions the live pass will have pinned from somebody else's words. They
+       are not findings here — nobody reported them — so they only exist as
+       something for the review screen to offer to remove. */
+    for (const [key, u] of unreported) {
+      if (findingsMap.has(key) || corrections.has(key)) continue;
+      corrections.set(key, { ...u, supersededBy: "" });
+    }
+
     const findings = [...findingsMap.values()].map((f) => ({
       key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
       summary: uniqueJoin(f.summaries), quote: f.quotes[0] || "", turns: f.turns,
@@ -1371,6 +1434,7 @@
     classifyUtterance,
     guessSpeaker,
     noteWorthy,
+    trimToClinical,
     refineTranscript,
     turnSubstance,
     isBareMention,

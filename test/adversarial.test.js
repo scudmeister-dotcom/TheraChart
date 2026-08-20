@@ -66,8 +66,10 @@ const check = (name, cond, detail) => {
 function filed(type, text, speaker) {
   const out = [];
   for (const sentence of ROUTER.splitSentences(text)) {
-    const field = ROUTER.fieldForSentence(type, sentence, speaker);
-    if (field) out.push([field, sentence.trim()]);
+    const clinical = PR.trimToClinical(sentence);
+    if (!clinical) continue;
+    const field = ROUTER.fieldForSentence(type, clinical, speaker);
+    if (field) out.push([field, clinical.trim()]);
   }
   return out;
 }
@@ -243,11 +245,24 @@ for (const [label, text] of NOISE) {
   check("the wedding never became a finding",
     !r.findings.some((f) => /married|wedding/i.test(f.summary)),
     JSON.stringify(r.findings.map((f) => f.summary)));
-  check("the correction is offered as a correction",
-    (r.corrections || []).some((t) => t.key === "Shoulder|right"),
+  check("cleanup offers something the patient took back",
+    (r.corrections || []).length > 0,
     JSON.stringify((r.corrections || []).map((t) => t.key)));
   check("the clinician's ROM read-out became a measurement, not a symptom",
     r.measurements.rom.some((m) => m.degrees === 95), JSON.stringify(r.measurements.rom));
+}
+{
+  // the correction directly after the region it corrects
+  const r = PR.refineTranscript([
+    "my right shoulder has been really painful for about two weeks",
+    "actually I meant my left shoulder not the right one",
+  ]);
+  check("the corrected region is offered for removal",
+    (r.corrections || []).some((t) => t.key === "Shoulder|right"),
+    JSON.stringify((r.corrections || []).map((t) => t.key)));
+  check("the corrected-to region survives as a finding",
+    r.findings.some((f) => f.key === "Shoulder|left"),
+    JSON.stringify(r.findings.map((f) => f.key)));
 }
 
 const total = passed + failures.length;
