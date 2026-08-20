@@ -835,7 +835,7 @@
 
   <section class="lp-privacy" id="privacy">
     <h2 class="lp-section-title">What happens to your patients' data</h2>
-    <p class="lp-privacy-lead">The questions a Data Protection Officer asks, answered before they ask them.
+    <p class="lp-privacy-lead">The questions worth asking any system that holds patient records, answered before you ask them.
       Nothing here is a promise about intentions — it is a description of how the software is built, and you can check every line of it from inside the app.</p>
     <div class="lp-privacy-grid">
       ${privacyPoint("📜", "Google is under contract, not just terms of service", `
@@ -857,11 +857,10 @@
         that customer prompts and responses are <b>not used to train Google's models</b> and are not sold.
         The AI only ever suggests — nothing enters a chart until a licensed clinician approves and signs it.`)}
       ${privacyPoint("⚖️", "The records stay yours", `
-        Under the <b>Data Privacy Act of 2012 (RA 10173)</b> your clinic is the personal information controller
-        for these records; we hold them for you and act on your instructions. The servers sit in a
-        <b>United States</b> region unless your clinic asks for a closer one, which is a cross-border transfer
-        the Act permits and expects you to be able to describe — so the app states it plainly rather than
-        burying it, and your administrator can read the exact region live.`)}
+        They are your clinic's records, not ours. We hold them for you and act on your instructions, and you
+        can take them back or wipe them at any time without asking. The servers sit in a <b>United States</b>
+        region unless your clinic asks for a closer one — stated here rather than buried, and your
+        administrator can read the exact region live from inside the app.`)}
       ${privacyPoint("📤", "Leaving is a button, not a negotiation", `
         <b>Export backup</b> takes the entire record set in an open format, and <b>Erase all data</b> removes it.
         Neither needs our permission or our help. A clinic that can only leave by asking nicely was never
@@ -1396,7 +1395,7 @@ ${walkthroughMarkup()}`;
       shot: "11-privacy",
       title: "Who saw what, in plain language.",
       now: "Records sit in a filing cabinet or a shared folder, and there's no way to answer \"who opened this chart?\"",
-      here: "Every sign-in, chart opened, note signed and amendment is recorded and searchable. The same page states plainly which company processes what data and where — the disclosure the Data Privacy Act expects you to be able to make.",
+      here: "Every sign-in, chart opened, note signed and amendment is recorded and searchable. The same page states plainly which company processes what data and where, so when a patient asks where their records are, you can answer without going looking.",
       where: "<b>Privacy &amp; Security</b> in the sidebar",
     },
   ];
@@ -7312,9 +7311,10 @@ ${ths.map((t) => {
   // The collapsed "how it works" accordion: each protection topic behind its own
   // disclosure so the page leads with the activity log instead of a wall of text.
   //
-  // This copy is a compliance document, not marketing. Under RA 10173 a clinic
-  // is the personal information controller and has to be able to tell a patient
-  // — and the National Privacy Commission — which processors touch their health
+  // This copy is a plain description of where the records go, not marketing and
+  // not legal advice — the regulatory conversation is had with the clinic
+  // directly rather than through this panel. What it owes the reader is an
+  // accurate list of which processors touch their health
   // data and where. So it names them, and it names the regions, rather than
   // reaching for a comforting absolute.
   //
@@ -7340,8 +7340,8 @@ ${ths.map((t) => {
         <p>TheraChart runs on <b>Google Cloud under a data protection agreement we have signed and hold</b>, covering every service your records touch — Cloud Run, Cloud SQL, Speech-to-Text and Vertex AI. It binds Google as a processor: how your patients' data may be handled, and what it may never be used for. You are not asked to negotiate it, and it is in place before your first patient is entered.</p>
         <p>Your clinic's records are <b>not</b> in one pile with everyone else's. Every record carries the clinic it belongs to, and every read is filtered by the signed-in user's clinic <b>on the server</b> — not hidden in the screen, where a determined browser could go round it. No account can reach another clinic's charts, including ours.</p>
         <p>Records are kept in an <b>encrypted managed database</b> (Cloud SQL for PostgreSQL). Encrypted in transit and at rest, backed up by Google, and reachable only by this application — never over the open internet.</p>
-        <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region. For a Philippine clinic that is a <b>cross-border transfer of sensitive personal information</b>, which RA 10173 permits but requires you to disclose and remain accountable for. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
-        <p><b>Who is who, under RA 10173.</b> Your clinic is the <b>personal information controller</b> for these records — they are yours, and the decisions about them are yours. TheraChart is your <b>personal information processor</b>, holding them on your instruction, and Google is ours.</p>
+        <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region, which means your records leave the Philippines to be stored and processed. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
+        <p><b>Whose records they are.</b> Your clinic's. We hold them for you and act on your instructions; Google holds them for us under the agreement above. No account outside your clinic can open them, including ours.</p>
         <p style="margin-bottom:0">You stay in control: <b>Export backup</b> takes the whole record set with you in an open format, and <b>Erase all data</b> removes it. Neither needs our permission — there is no lock-in.</p>` },
       { emoji: "🎤", title: "Voice dictation", body: `
         <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b> in ${where(sttLoc)}, which turns it into text and sends it straight back. It is a paid Google Cloud service under your own project — <b>not</b> a free consumer speech service, and not a phone's built-in dictation.</p>
@@ -7360,15 +7360,6 @@ ${ths.map((t) => {
           <li>Signed documents lock — later changes need a signed, authorised amendment, and the original stays readable</li>
           <li>Every notable action is recorded in the activity log below, including who read what</li>
         </ul>` },
-      { emoji: "🏛", title: "What your clinic still has to do", body: `
-        <p>Software cannot make a clinic compliant on its own. Under the <b>Data Privacy Act of 2012 (RA 10173)</b> your clinic is the <b>personal information controller</b> for these records, and that carries obligations this app can support but not discharge for you:</p>
-        <ul style="margin:0 0 10px; padding-left:18px; line-height:1.9">
-          <li>Appoint a <b>Data Protection Officer</b> and register your data processing system with the <b>National Privacy Commission</b> if you meet the thresholds</li>
-          <li>Obtain and record <b>patient consent</b> covering the cross-border processing described above</li>
-          <li>Keep a record of processing activities, and notify the NPC and affected patients of a breach within the required period</li>
-          <li>Retain records for the period required of a Philippine health facility</li>
-        </ul>
-        <p style="margin-bottom:0"><b>Have your own counsel or DPO confirm all of this.</b> Everything above describes what the software does and where your records sit; none of it is legal advice, and the obligations under RA 10173 remain your clinic's to discharge.</p>` },
     ];
     return `<div class="info-acc">${items.map((it) => `
       <details class="info-acc-item">

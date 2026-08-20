@@ -8,9 +8,11 @@ ship*, or a decision that has been made and not yet carried out.
 
 ## Legal documents a clinic may ask for
 
-**Status:** not written. Nothing in the product currently promises them, and
-that is deliberate — see "What the app says today" below before changing any
-of this copy.
+**Status:** not written, and **the product now says nothing about any of this**.
+The compliance conversation is had with the clinic directly, by Amador, rather
+than through the app — so the landing page and the Privacy panel describe only
+where records go and what the software does, and make no legal claims at all.
+Read "What the app says today" before touching any of that copy.
 
 Because clinics are tenants on our Google Cloud project rather than each
 running their own, TheraChart holds their patients' records. That makes us a
@@ -60,13 +62,22 @@ Deliberately worded so nothing promises a document that does not exist yet:
   relationship and the cross-border transfer. Promises no paperwork.
 - **Privacy panel → "Where your data lives"** — states controller / processor /
   sub-processor. Promises no paperwork.
-- **Privacy panel → "What your clinic still has to do"** — RA 10173 obligations
-  and a "confirm this with your own counsel" disclaimer. **HIPAA is not
-  mentioned anywhere in the product**, by decision: the market is Philippine
-  clinics, HIPAA does not bind them, and naming it invented a compliance
-  obstacle in front of clinics that do not have one. If a US-billing clinic ever
-  turns up, that is the moment to say the words — in conversation, not on the
-  page.
+- **Privacy panel → "What your clinic still has to do"** — **removed entirely.**
+  It listed RA 10173 obligations (appoint a DPO, register with the NPC, record
+  consent, retention) and closed with a "confirm this with your own counsel"
+  disclaimer.
+
+**No legal or regulatory language appears anywhere in the product**, by
+decision on both counts:
+
+- **HIPAA** — US law, does not bind a Philippine clinic, and naming it invented
+  a compliance obstacle in front of clinics that do not have one.
+- **RA 10173 / NPC / DPO / "confirm with your counsel"** — real and relevant,
+  but the conversation belongs with the client in person, not on a splash page
+  where it reads as a hurdle before signing up.
+
+Both are decisions, not oversights. Do not helpfully restore either. The words
+come back in a conversation, or in the documents above once they exist.
 
 If either document gets written, that copy is where to mention it — and the
 screenshots covering both surfaces need recapturing:
