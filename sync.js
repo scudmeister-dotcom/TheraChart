@@ -650,21 +650,22 @@
      an AI backend and it did not produce the answer, that is a failure and
      the caller is told. If it has none, local is the engine, not a fallback. */
   sync.refineTranscript = async (utterances) => {
-    if (sync.ai) {
-      let detail = "";
-      try {
-        const r = await api("/api/refine", { method: "POST", body: { transcript: utterances } });
-        if (r.ok) return r.data;
-        detail = (r.data && r.data.error) || `The server responded ${r.status}.`;
-      } catch (e) {
-        detail = e && e.message ? `Couldn't reach the server: ${e.message}` : "Couldn't reach the server.";
-      }
-      return {
-        ...window.TheraParser.refineTranscript(utterances),
-        source: "local (ai failed)", aiFailed: true, error: detail,
-      };
+    const refused = (error, unavailable) => ({
+      dialogue: [], findings: [], corrections: [],
+      measurements: { rom: [], mmt: [], special: [], pain: [] },
+      subjective: "", treatment: "", reason: "", precautions: "", pmh: "", objective: "", assessment: "",
+      source: unavailable ? "unavailable" : "failed", aiFailed: true, unavailable: !!unavailable, error,
+    });
+    if (!sync.ai || sync.refine !== "gemini") {
+      return refused("AI review is not configured on this server.", true);
     }
-    return { ...window.TheraParser.refineTranscript(utterances), source: "local", aiFailed: false };
+    try {
+      const r = await api("/api/refine", { method: "POST", body: { transcript: utterances } });
+      if (r.ok) return r.data;
+      return refused((r.data && r.data.error) || `The server responded ${r.status}.`, !!(r.data && r.data.unavailable));
+    } catch (e) {
+      return refused(e && e.message ? `Couldn't reach the server: ${e.message}` : "Couldn't reach the server.", false);
+    }
   };
 
   // Read a scanned/uploaded document (base64) into structured visit records.

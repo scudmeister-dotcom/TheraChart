@@ -2698,7 +2698,7 @@ ${tabStrip}
     }
     if (!aiReviewAvailable()) {
       el.innerHTML = `<div class="ins-head"><h2>✦ AI chart review</h2></div>
-        <div class="banner warn" style="margin-top:6px">AI review is unavailable — configure Google Gemini / Vertex AI on the server, or use the on-device reviewer inside a note.</div>`;
+        <div class="banner warn" style="margin-top:6px">AI review is unavailable on this server. Dictation, the body map and the measurement table all work as normal — the note is written and signed the usual way.</div>`;
       return;
     }
     if (aiReviewRuns[p.id]) return renderAiReviewCard(el, p, user, "running");
@@ -3292,7 +3292,7 @@ ${tabStrip}
   async function importPdfFlow(p, user, f) {
     const sync = window.TheraSync || {};
     if (!sync.ai) {
-      return alertBanner("Reading scanned documents needs the Gemini AI backend — set GEMINI_API_KEY where the app is hosted. There is no offline reader for scans.");
+      return alertBanner("Reading scanned documents needs the AI, which isn't configured on this server. Past visits can still be entered by hand.");
     }
     // Vercel serverless caps request bodies at ~4.5 MB; the clinic server allows 8 MB
     const maxMb = sync.mode === "server" ? 8 : 3;
@@ -3310,7 +3310,7 @@ ${tabStrip}
     } catch (e) { return alertBanner("Couldn't read the file: " + e.message); }
 
     showModal(`<h2>⇪ Reading ${esc(f.name)}…</h2>
-      <p style="font-size:13px">Gemini is reading the document and pulling out each visit — dates, note types, findings, and measurements. You'll review everything before anything is saved to the chart.</p>
+      <p style="font-size:13px">The AI is reading the document and pulling out each visit — dates, note types, findings, and measurements. You'll review everything before anything is saved to the chart.</p>
       <div class="empty-state">Working…</div>`);
     let result;
     try {
@@ -3387,7 +3387,7 @@ ${tabStrip}
       </div>`;
 
     const m = showModal(`
-<h2>⇪ Review imported visits <span class="chip info">Gemini</span></h2>
+<h2>⇪ Review imported visits <span class="chip info">AI</span></h2>
 <p style="font-size:12.5px; color:var(--muted); margin-top:-4px">
   Read from <b>${esc(f.name)}</b>${result.docDescription ? ` — ${esc(result.docDescription)}` : ""}.
   Check the dates and values against the scan; edit anything. Only checked visits are saved — each becomes a locked
@@ -3864,7 +3864,18 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div id="cleanupSummary"></div>
     <div class="transcript-head" style="margin-top:12px">
       <h3>Transcript <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? "click a line to edit · click the speaker tag to relabel" : "click a finding to see its source"}</span></h3>
-      ${editable ? `<button class="btn small" id="refineBtn" title="AI re-reads the whole conversation, splits patient vs clinician, and cleans up the findings">✦ Review &amp; clean up with AI</button>` : ""}
+      ${editable ? (() => {
+        /* Disabled rather than hidden when there is no AI. A button that
+           vanishes reads as a bug or a permission the therapist has lost; one
+           that is visibly off, with a reason on hover, tells them the feature
+           exists and is not switched on here. The dialog behind it is still
+           wired as the backstop, for a server that goes unavailable between
+           the page loading and the click. */
+        const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
+        return `<button class="btn small" id="refineBtn"${aiOn ? "" : " disabled"} title="${aiOn
+          ? "AI re-reads the whole conversation, splits patient vs clinician, and cleans up the findings"
+          : "AI review isn't configured on this server — write and sign the note as usual"}">✦ Review &amp; clean up with AI</button>`;
+      })() : ""}
     </div>
     <div class="transcript-log" id="docTranscript"></div>
     <div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>
@@ -6119,12 +6130,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <div class="empty-state">Working… this can take up to a minute or two on a long visit.</div>`);
     let result;
     try {
+      /* No offline branch. A build with no sync layer has no AI either, and
+         the parser's heuristic is not a smaller version of this feature — it
+         is a different one, and not the one the button offers. */
       result = sync.refineTranscript
         ? await sync.refineTranscript(utterances)
-        : { ...PR.refineTranscript(utterances), source: "local" };
+        : { aiFailed: true, unavailable: true, error: "AI review is not configured on this server." };
     } catch (e) {
       closeModal();
-      return refineFailed(doc, user, dstate, e.message);
+      return refineFailed(doc, user, dstate, e.message, false);
     }
     /* The AI was asked and could not answer. Everything below this point
        presents a reviewed note; presenting the offline keyword pass there
@@ -6133,7 +6147,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        Refuse it, say so, and let them decide. */
     if (result.aiFailed) {
       closeModal();
-      return refineFailed(doc, user, dstate, result.error);
+      return refineFailed(doc, user, dstate, result.error, result.unavailable);
     }
     // counted the moment it runs, not when it is accepted: the call was made
     // and billed whether or not the therapist keeps the result. A failed call
@@ -6151,21 +6165,37 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      work was lost; and offer the way forward rather than a dead end. Retry is
      first because the failures this recovers from are transient by nature —
      a busy shared model, a slow draw — and a second attempt usually lands. */
-  function refineFailed(doc, user, dstate, detail) {
-    const m = showModal(`<h2>AI review didn't complete</h2>
-      <p style="font-size:14px">The AI wasn't able to process this note. <b>Nothing has changed</b> — your transcript and everything you've written are exactly as you left them.</p>
-      <p style="font-size:13px; color:var(--muted)">This is usually temporary. Trying again in a moment normally works. If it keeps failing, you can carry on writing the note yourself — dictation and the body map are unaffected.</p>
-      ${detail ? `<details style="margin-top:8px"><summary style="font-size:12px; color:var(--muted); cursor:pointer">Technical detail</summary>
-        <div style="font-size:12px; color:var(--muted); margin-top:6px; word-break:break-word">${esc(String(detail).slice(0, 300))}</div></details>` : ""}
-      <div class="modal-actions">
-        <button class="btn" id="refineCancel">Cancel</button>
-        <button class="btn primary" id="refineRetry">Try again</button>
-      </div>`);
+  function refineFailed(doc, user, dstate, detail, unavailable) {
+    /* Two different sentences, because they are two different situations and
+       the clinician's next move differs. A call that FAILED is worth trying
+       again — these failures are transient by nature. A server with no AI
+       configured will fail identically forever, and telling that clinician to
+       "try again" wastes their time and their trust; what they need is to
+       know it is not coming and who to ask.
+
+       Neither offers a lesser review as a consolation. Reviewing a visit is
+       the model's work — splitting who spoke, catching a correction three
+       sentences later, telling a screening question from a symptom — and a
+       keyword pass wearing the same name would be a worse artifact under a
+       label the therapist has learned to trust. The note stays theirs to
+       write, which they are qualified to do. */
+    const m = showModal(unavailable
+      ? `<h2>AI review isn't available</h2>
+        <p style="font-size:14px">This server doesn't have the AI review configured, so the transcript can't be cleaned up automatically. <b>Nothing has changed</b> — your transcript and everything you've written are exactly as you left them.</p>
+        <p style="font-size:13px; color:var(--muted)">Dictation, the body map and the measurement table all work as normal. You can write the note yourself and sign it in the usual way. If you expected this to be switched on, your clinic administrator can enable it.</p>
+        <div class="modal-actions"><button class="btn primary" id="refineCancel">Close</button></div>`
+      : `<h2>AI review didn't complete</h2>
+        <p style="font-size:14px">The AI wasn't able to process this note. <b>Nothing has changed</b> — your transcript and everything you've written are exactly as you left them.</p>
+        <p style="font-size:13px; color:var(--muted)">This is usually temporary. Trying again in a moment normally works. If it keeps failing, you can carry on writing the note yourself — dictation and the body map are unaffected.</p>
+        ${detail ? `<details style="margin-top:8px"><summary style="font-size:12px; color:var(--muted); cursor:pointer">Technical detail</summary>
+          <div style="font-size:12px; color:var(--muted); margin-top:6px; word-break:break-word">${esc(String(detail).slice(0, 300))}</div></details>` : ""}
+        <div class="modal-actions">
+          <button class="btn" id="refineCancel">Cancel</button>
+          <button class="btn primary" id="refineRetry">Try again</button>
+        </div>`);
     m.querySelector("#refineCancel").addEventListener("click", closeModal);
-    m.querySelector("#refineRetry").addEventListener("click", () => {
-      closeModal();
-      runRefine(doc, user, dstate);
-    });
+    const retry = m.querySelector("#refineRetry");
+    if (retry) retry.addEventListener("click", () => { closeModal(); runRefine(doc, user, dstate); });
   }
 
   function openReviewModal(doc, user, dstate, result) {
@@ -6208,12 +6238,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         origin: t ? t.kind || "corrected" : bare ? "empty" : "live-only" });
     }
 
-    /* Only two things can reach this modal now: a successful AI review, or a
-       deployment with no AI configured at all, where the offline reviewer is
-       the advertised engine rather than a fallback. A failed call is turned
-       away in runRefine, so this chip no longer has to carry bad news. */
-    const engineChip = result.source && result.source.startsWith("gemini")
-      ? `<span class="chip info">AI</span>` : `<span class="chip muted">offline reviewer</span>`;
+    /* Only ONE thing can reach this modal now. A failed call and an
+       unconfigured server are both turned away in runRefine, and there is no
+       longer a second engine that could have produced this, so the chip has
+       nothing left to disambiguate. */
+    const engineChip = `<span class="chip info">AI</span>`;
 
     // which note field the cleaned subjective / treatment text writes into
 
@@ -6620,7 +6649,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!assistantAvailable()) {
       container.innerHTML = `
         <div class="asst-head"><h2>✦ Ask about this patient</h2></div>
-        <div class="banner warn" style="margin-top:6px">The AI assistant needs Google Gemini / Vertex AI configured on the server. It's currently unavailable — clinical notes and dictation still work as normal.</div>`;
+        <div class="banner warn" style="margin-top:6px">The AI assistant isn't configured on this server, so it's unavailable. Clinical notes and dictation still work as normal.</div>`;
       return;
     }
     // when a persistKey is given, reuse the stored conversation so it survives
@@ -6698,7 +6727,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const editable = doc.status !== "signed" && S.canDocument(user);
     const ins = doc.data.insights;
     const engineChip = ins
-      ? `<span class="chip ${ins.source && ins.source.startsWith("gemini") ? "info" : "muted"}">${ins.source && ins.source.startsWith("gemini") ? "Gemini" : "local AI"}</span>` : "";
+      ? `<span class="chip info">AI</span>` : "";
 
     card.innerHTML = `
       <div class="ins-head">
@@ -7351,8 +7380,15 @@ ${ths.map((t) => {
         ? `<p>When you press <b>✦ Review &amp; clean up</b>, ask for <b>insights</b>, or use the <b>patient assistant</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, served from ${where(geminiLoc)}. <b>Importing a scanned PDF</b> of past visits sends that document the same way.</p>
         <p>That text can include the patient's name and clinical detail, so treat it as what it is: <b>health information leaving your clinic's region for processing</b>. Google's Vertex AI service terms state that customer prompts and responses are <b>not used to train Google's models</b> and are not sold. Your administrator should keep a copy of those terms with your clinic's records of processing.</p>
         <p style="margin-bottom:0">The AI only ever suggests. Every result is shown for your review, and <b>nothing enters the chart until a licensed clinician approves and signs it</b>.</p>`
-        : `<p>Cleanup and insights run on a built-in reviewer <b>right on this device</b> — no clinical text leaves the clinic at all.</p>
-        <p style="margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> for stronger results and scanned-PDF import; this installation has not. That would send note text out for processing — the page above would then say so. Either way, a licensed clinician reviews and signs everything.</p>` },
+        /* This branch used to promise "a built-in reviewer right on this
+           device", which was true when a keyword pass stood in for the model.
+           It no longer does, and a privacy page that describes a feature the
+           installation does not have is the worst place in the product to be
+           out of date. The honest version is the short one: nothing is sent
+           anywhere, because none of it runs. */
+        : `<p>This installation has <b>no AI connected</b>, so <b>no clinical text leaves the clinic</b> for AI processing at all — there is nothing to send and nothing to disclose.</p>
+        <p>It also means the AI features are switched off rather than approximated: <b>✦ Review &amp; clean up</b>, <b>insights</b>, the <b>patient assistant</b> and <b>scanned-PDF import</b> are unavailable. Dictation, the body map, measurements and signing all work normally, and the note is written the usual way.</p>
+        <p style="margin-bottom:0">A clinic can connect <b>Google Gemini on Vertex AI</b> to turn those on. That would send note text out for processing, and this page would then say so, in detail. Either way, a licensed clinician reviews and signs everything.</p>` },
       { emoji: "🛡", title: "Who can see what", body: `
         <ul style="margin:0; padding-left:18px; line-height:1.9">
           <li>Everyone signs in with their own account and sees only what their role needs (therapist / front desk / admin)</li>

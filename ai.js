@@ -835,28 +835,52 @@
         return { ...normalizeRefinement(parsed, utterances, "gemini"), aiFailed: false };
       } catch (e) {
         if (opts.onError) opts.onError("refine", e);
-        /* Say that it failed, out loud, in the returned value.
+        /* Nothing is returned in place of the review.
 
-           The local heuristic still runs — the caller may want something to
-           show, and a transcript is worth more than a blank — but it is NOT
-           offered as though the AI produced it. That distinction was
-           previously carried only by a suffix on `source`, which the UI
-           rendered as a muted chip beside a modal that had just promised the
-           clinician the AI was reading their note. A cleanup pass that
-           silently became a keyword matcher is a quiet downgrade of a medical
-           record, so `aiFailed` exists to let the caller refuse the result
-           rather than dress it up. */
+           An earlier version ran the heuristic here and flagged it, on the
+           reasoning that the caller might want something to show. But a
+           payload that contains a plausible-looking review is one an edit,
+           a refactor or a second caller can start using by accident, and the
+           whole point is that this content must never reach a chart. The
+           refusal is the answer; there is no runner-up. */
+        if (opts.allowLocalFallback) {
+          return { ...parser.refineTranscript(utterances), source: "local (ai failed)", aiFailed: true, error: String((e && e.message) || e) };
+        }
         return {
-          ...parser.refineTranscript(utterances),
-          source: "local (ai failed)",
-          aiFailed: true,
+          dialogue: [], findings: [], corrections: [],
+          measurements: { rom: [], mmt: [], special: [], pain: [] },
+          subjective: "", treatment: "", reason: "", precautions: "", pmh: "", objective: "", assessment: "",
+          source: "failed", aiFailed: true, unavailable: false,
           error: String((e && e.message) || e),
         };
       }
     }
-    /* No AI configured at all — the local reviewer is the engine this
-       deployment advertises, not a failure of anything. */
-    return { ...parser.refineTranscript(utterances), source: "local", aiFailed: false };
+    /* No AI configured. This used to answer with the local heuristic and
+       call it the engine, which was a reasonable thing to believe until you
+       ask what the clinician is being handed. Reviewing a visit is not a
+       keyword-matching job that the model happens to do better — splitting who
+       spoke, reading a correction three sentences later, telling a screening
+       question from a symptom — none of that survives without the model, and a
+       note that quietly did without it is not a lesser review, it is a
+       different and worse artifact wearing the same name.
+
+       So there is no substitute on offer. The caller is told the review cannot
+       run and why, and the clinician writes the note themselves — which they
+       are qualified to do, and which is honest about what happened.
+
+       `allowLocalFallback` exists for the offline eval and the parser's own
+       tests, which score the heuristic deliberately. Nothing in the product
+       sets it. */
+    if (opts.allowLocalFallback) {
+      return { ...parser.refineTranscript(utterances), source: "local", aiFailed: false };
+    }
+    return {
+      dialogue: [], findings: [], corrections: [],
+      measurements: { rom: [], mmt: [], special: [], pain: [] },
+      subjective: "", treatment: "", reason: "", precautions: "", pmh: "", objective: "", assessment: "",
+      source: "unavailable", aiFailed: true, unavailable: true,
+      error: "AI review is not configured on this server.",
+    };
   }
 
   async function insightsRun(ctx, opts) {
@@ -870,8 +894,18 @@
         return { connections: parsed.connections || [], redFlags: parsed.redFlags || [], recommendations: parsed.recommendations || [], source: "gemini" };
       } catch (e) { if (opts.onError) opts.onError("insights", e); }
     }
-    const local = insights.buildInsights(ctx);
-    return { ...local, source: aiReady(opts) ? "local (gemini failed)" : "local" };
+    /* Same rule as refine, and for the same reason: a chart review that reads
+       across visits is the model's work, and the heuristic's version of it
+       shown under an "AI" label would be a claim rather than a result. */
+    if (opts.allowLocalFallback) {
+      return { ...insights.buildInsights(ctx), source: aiReady(opts) ? "local (ai failed)" : "local", aiFailed: aiReady(opts) };
+    }
+    return {
+      connections: [], redFlags: [], recommendations: [],
+      source: aiReady(opts) ? "unavailable (ai failed)" : "unavailable",
+      aiFailed: true, unavailable: !aiReady(opts),
+      error: aiReady(opts) ? "The AI could not review this chart." : "AI insights are not configured on this server.",
+    };
   }
 
   return { refine, insightsRun, extractRecords, patientAssistant, refineSystem, refinePrompt, extractSystem,

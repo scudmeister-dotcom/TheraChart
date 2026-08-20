@@ -317,8 +317,18 @@ async function boot(dataDir, port) {
     check("front desk cannot drive /api/insights", anaInsights.status === 403, `-> ${anaInsights.status}`);
     const joseRefine = await call("/api/refine", { method: "POST", token: jose.data.token, body: { transcript: ["left shoulder pain"] } });
     check("an expired licence cannot drive /api/refine", joseRefine.status === 403, `-> ${joseRefine.status}`);
+    /* A licensed therapist is not blocked by PERMISSION — which is what this
+       block is about. What they get instead is 503: this harness boots the
+       server with the AI credentials blanked, and the review is an AI-only
+       feature now rather than one that quietly falls back to a keyword pass.
+       403 and 503 are the distinction that matters here — "you may not" versus
+       "it is not switched on" — and the checks above prove the 403s still fire
+       first, so an unauthorised caller never learns whether the AI is up. */
     const mariaRefine = await call("/api/refine", { method: "POST", token: mToken, body: { transcript: ["left shoulder pain"] } });
-    check("a licensed therapist still can", mariaRefine.status === 200, `-> ${mariaRefine.status}`);
+    check("a licensed therapist is not forbidden", mariaRefine.status !== 403, `-> ${mariaRefine.status}`);
+    check("…and with no AI configured the answer is 'unavailable', not a local review",
+      mariaRefine.status === 503 && mariaRefine.data && mariaRefine.data.unavailable === true,
+      `-> ${mariaRefine.status} ${JSON.stringify(mariaRefine.data)}`);
 
     /* ---- object ids from another clinic must not resolve ---------------- */
     const foreignDoc = (mAfter.state.documents || [])[0];

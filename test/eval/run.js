@@ -48,7 +48,15 @@ const opts = VERTEX
         insightsModel: process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL,
         base: process.env.GEMINI_BASE_URL || ai.DEFAULT_BASE,
         onError: (w, e) => console.error(`  ! ${w}: ${e.message}`) }
-    : {};
+    /* The local engine is the OFFLINE HEURISTIC being scored on purpose. The
+       product no longer offers it — a review the model did not do is not a
+       smaller version of this feature — so ai.refine refuses it by default and
+       this harness has to ask for it explicitly. Keeping the score is still
+       worth it: the heuristic supplies per-field fallbacks inside
+       normalizeRefinement whenever the model omits a section, so its quality
+       still reaches real notes even though it can no longer stand in for a
+       whole review. */
+    : { allowLocalFallback: true };
 
 // Optional override so thinking levels can be A/B'd against the scored cases:
 //   GEMINI_THINKING_LEVEL=low|medium|high npm run eval
@@ -82,10 +90,17 @@ async function scoreCase(c, run) {
     result = null;
   }
 
-  // Guard against silently grading the local fallback as if it were the model:
-  // ai.refine/insightsRun fall back on error and label the result's `source`.
+  /* Guard against grading something the model did not produce.
+
+     This used to sniff for "local" in `source`, because a failed call answered
+     with the heuristic. It no longer does — a refusal comes back empty — so the
+     honest signal is the flag the result now carries. The old test is kept
+     alongside it: a run with `allowLocalFallback` set, or an older recorded
+     result, still says "local" in `source`, and grading either as if it were
+     the model is the mistake this line exists to prevent. */
   const sourceUsed = (result && result.source) || "error";
-  const fellBack = engineName !== "local" && /local/.test(sourceUsed);
+  const fellBack = engineName !== "local"
+    && (/local|unavailable|^failed$/.test(sourceUsed) || (result && result.aiFailed === true));
 
   const graded = [];
   for (const a of c.assertions) {

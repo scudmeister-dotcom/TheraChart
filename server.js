@@ -1140,7 +1140,7 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
-      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: geminiActive() ? "gemini" : "local" });
+      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: geminiActive() ? "gemini" : "unavailable" });
     }
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
@@ -1166,7 +1166,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { prompt: refineSystem(), model: GEMINI_MODEL, active: geminiActive() ? "gemini" : "local" });
     }
     if (url.pathname === "/api/ai-status") {
-      const mode = geminiActive() ? "gemini" : "local";
+      const mode = geminiActive() ? "gemini" : "unavailable";
       // assistant is model-only (no local fallback): available only when Gemini/Vertex is configured
       return json(res, 200, { refine: mode, insights: mode, assistant: geminiActive() ? mode : "unavailable", model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
     }
@@ -1745,6 +1745,12 @@ const server = http.createServer(async (req, res) => {
         // uses) — canAccessEmr would let front desk through, and this ships
         // transcript PHI off-box to Gemini.
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        /* There is no non-AI answer to this. The route used to fall through
+           to the local heuristic when no model was configured, which meant a
+           server with no credentials still served something that looked like
+           a review. Reviewing a visit is the model's work; without it the
+           honest response is that the feature is unavailable. */
+        if (!geminiActive()) return json(res, 503, { error: "AI review is not configured on this server.", unavailable: true });
         if (aiRateLimited(res, req, user, "refine")) return;
         const { transcript } = await readBody(req);
         if (!Array.isArray(transcript) || !transcript.length) return json(res, 400, { error: "No transcript to refine." });
@@ -1793,6 +1799,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/insights" && req.method === "POST") {
         // decision support for a licensed clinician — same gate as /api/refine
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
+        if (!geminiActive()) return json(res, 503, { error: "AI insights are not configured on this server.", unavailable: true });
         if (aiRateLimited(res, req, user, "insights")) return;
         const ctx = await readBody(req);
         const result = await clinicalInsights(ctx || {}, user);

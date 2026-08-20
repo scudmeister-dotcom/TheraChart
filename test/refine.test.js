@@ -475,9 +475,11 @@ for (const t of [
      transport layer, which used to answer with a plain `source: "local"`. */
   const st = SYNC.slice(SYNC.indexOf("sync.refineTranscript ="), SYNC.indexOf("sync.extractRecords ="));
   check("sync flags a refine that never reached the AI", /aiFailed: true/.test(st), st.slice(0, 300));
-  check("…and still reports local as the engine when none is configured",
-    /aiFailed: false/.test(st), st.slice(-260));
-  check("…and carries a reason back for the dialog to show", /error: detail/.test(st));
+  check("…and offers no substitute review when there is no AI",
+    !/TheraParser\.refineTranscript/.test(st), st);
+  check("…and separates 'not configured' from 'the call failed'",
+    /unavailable: !!unavailable/.test(st) && /sync\.refine !== "gemini"/.test(st), st.slice(0, 400));
+  check("…and carries a reason back for the dialog to show", /error,?\s*\}\)/.test(st) || /error \)/.test(st) || /error,/.test(st));
 }
 
 /* ---- a call that fails must not come back looking like a review ---- *
@@ -497,15 +499,34 @@ for (const t of [
   }, extra || {}));
 
   (async () => {
+    /* There is no second engine. Reviewing a visit is the model's work —
+       splitting who spoke, catching a correction three sentences later,
+       telling a screening question from a symptom — and the keyword pass
+       under the same name would be a different, worse artifact that a
+       clinician has no way to tell apart. */
     const off = await noAi();
-    check("no AI configured: the offline reviewer is the engine, not a failure",
-      off.source === "local" && off.aiFailed === false, JSON.stringify({ s: off.source, f: off.aiFailed }));
-    check("no AI configured: it still produces a usable review",
-      Array.isArray(off.dialogue) && off.dialogue.length > 0);
+    check("no AI configured: the review is refused, not substituted",
+      off.aiFailed === true && off.unavailable === true, JSON.stringify({ s: off.source, f: off.aiFailed, u: off.unavailable }));
+    check("no AI configured: no review content comes back at all",
+      off.dialogue.length === 0 && off.findings.length === 0 && off.subjective === "",
+      JSON.stringify({ d: off.dialogue.length, f: off.findings.length }));
+    check("no AI configured: …and it says why, in words a dialog can show",
+      typeof off.error === "string" && /not configured/i.test(off.error), off.error);
+
+    /* The heuristic is still reachable, but only where it is being scored on
+       purpose — the offline eval and the parser's own tests. Nothing in the
+       product sets this. */
+    const optedIn = await AI.refine(utt, { allowLocalFallback: true });
+    check("the offline eval can still opt in to score the heuristic",
+      optedIn.source === "local" && optedIn.dialogue.length > 0, JSON.stringify({ s: optedIn.source }));
 
     const bad = await brokenAi();
     check("AI configured but failing: the failure is stated in the result",
       bad.aiFailed === true, JSON.stringify({ s: bad.source, f: bad.aiFailed }));
+    check("AI configured but failing: no runner-up review is returned either",
+      bad.dialogue.length === 0 && bad.findings.length === 0, JSON.stringify({ d: bad.dialogue.length }));
+    check("AI configured but failing: it is a failure, not an unconfigured server",
+      bad.unavailable === false, JSON.stringify({ u: bad.unavailable }));
     check("AI configured but failing: …with a reason the caller can show",
       typeof bad.error === "string" && bad.error.length > 0, JSON.stringify(bad.error));
     check("AI configured but failing: the source no longer claims the model",
