@@ -86,8 +86,10 @@ const REFINE_FIXTURE = path.join(ROOT, "test", "eval", "fixtures", "refine-respo
 
 function startAiStub() {
   const body = fs.readFileSync(REFINE_FIXTURE, "utf8");
+  let hits = 0;
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
+      hits += 1;
       req.resume(); // drain the prompt; we answer the same way regardless
       req.on("end", () => {
         res.writeHead(200, { "content-type": "application/json" });
@@ -96,6 +98,7 @@ function startAiStub() {
     });
     srv.listen(0, "127.0.0.1", () => resolve({
       port: srv.address().port,
+      hits: () => hits,
       stop: () => new Promise((r) => srv.close(r)),
     }));
   });
@@ -110,6 +113,8 @@ function startAiStub() {
 
 // the note built for shots 05-07, shared so the parser only runs once
 let builtDocId = null;
+// set once the run starts, so shot 07 can prove its review came from the stub
+let aiStub = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -263,7 +268,22 @@ const SHOTS = [
     async act(page, base) {
       if (!builtDocId) await buildDictatedNote(page, base);
       else await goHash(page, `#/doc/${builtDocId}`);
+      const before = aiStub ? aiStub.hits() : 0;
       await page.click("#refineBtn");
+      /* Check the stub was reached BEFORE waiting on the modal. If the stub has
+         been bypassed the modal never opens at all, so waiting first turns a
+         precise cause into a thirty-second timeout on a selector — which is
+         what it looked like the first time, and sent me looking at the wrong
+         thing entirely. */
+      if (aiStub) {
+        for (let i = 0; i < 40 && aiStub.hits() === before; i++) await sleep(150);
+        if (aiStub.hits() === before) {
+          throw new Error(
+            "the AI call never reached the stub — the review in this shot would not be the fixture. " +
+            "Most likely GEMINI_VERTEX is set: server.js checks vertexConfigured() before GEMINI_BASE_URL, " +
+            "so Vertex silently wins. See the comment on the env block below.");
+        }
+      }
       /* Wait for the REVIEW modal specifically. `.modal` alone matches the bug
          reporter, which is always in the DOM (hidden), and the progress modal
          that runRefine shows first — so the wait passed before there was
@@ -502,11 +522,23 @@ function toJpeg(src, dest, w, h) {
      the stub on loopback, and nothing in a headless capture opens a microphone,
      so no Speech-to-Text request is ever made. GCS stays blank — nothing here
      photographs an attachment. */
-  const stub = await startAiStub();
+  const stub = aiStub = await startAiStub();
   const server = await startServer({
     THERACHART_DEMO_LOGINS: "1",
     GEMINI_API_KEY: "screenshot-stub-key-not-a-real-credential",
     GEMINI_BASE_URL: `http://127.0.0.1:${stub.port}/v1beta`,
+    /* These two exist ONLY to make Speech-to-Text report as configured.
+
+       DO NOT add GEMINI_VERTEX=1 here. server.js builds its Gemini options as
+       `vertexConfigured() ? {vertex...} : {base: GEMINI_BASE...}` — Vertex is
+       checked FIRST, and GEMINI_BASE_URL only reaches the client on the else
+       branch. vertexConfigured() is GEMINI_VERTEX && GCP_PROJECT &&
+       sttCredentialSource(), and GCP_ACCESS_TOKEN below already satisfies the
+       third. So GEMINI_VERTEX is the single variable standing between this
+       harness and silently bypassing the stub to call real Vertex with a fake
+       token — which fails, falls to the unavailable dialog, and photographs
+       the wrong screen with nothing in the output to say why. The assertion in
+       shot 07 is there to make that loud rather than silent. */
     GCP_PROJECT: "therachart-screenshot-harness",
     GCP_ACCESS_TOKEN: "screenshot-stub-token-not-a-real-credential",
   });
