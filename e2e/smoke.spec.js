@@ -89,8 +89,8 @@ test.describe("TheraChart", () => {
     await page.getByRole("link", { name: /^patients$/i }).first().click();
 
     // the three seeded demo patients, by name, on screen
-    await expect(page.getByText("Reyes, Juan")).toBeVisible();
-    await expect(page.getByText("Mercado, Liza")).toBeVisible();
+    await expect(page.getByText("Bautista, Mark Anthony")).toBeVisible();
+    await expect(page.getByText("Gonzales, Marilou")).toBeVisible();
     await expect(page.getByText("Villanueva, Mateo")).toBeVisible();
 
     // and the app is talking to the server, not silently in on-device mode
@@ -107,11 +107,11 @@ test.describe("TheraChart", () => {
     // The API test proves the payload is scoped. This proves nothing leaked
     // into the rendered page or the device's own storage either.
     const html = await page.content();
-    for (const name of ["Reyes", "Mercado", "Villanueva"]) {
+    for (const name of ["Bautista", "Gonzales", "Villanueva"]) {
       expect(html, `"${name}" must not appear anywhere in another clinic's page`).not.toContain(name);
     }
     const cached = await page.evaluate(() => localStorage.getItem("therachart-emr-v1") || "");
-    for (const name of ["Reyes", "Mercado", "Villanueva"]) {
+    for (const name of ["Bautista", "Gonzales", "Villanueva"]) {
       expect(cached, `"${name}" must not sit in another clinic's localStorage`).not.toContain(name);
     }
   });
@@ -148,6 +148,14 @@ test.describe("TheraChart", () => {
 
     // the patient's own words are kept verbatim
     await expect(page.locator("body")).toContainText("reach overhead");
+
+    /* …and the Objective step's fill count notices. The count is the only
+       thing telling a therapist that a COLLAPSED group filled itself, and it
+       was counting `data.measurements` — a key dictation never writes, since
+       it sorts them into rom / mmt / special / pain. So the group read 0 with
+       measurements sitting under it. */
+    const objective = page.locator("details.doc-group", { hasText: "Objective" }).first();
+    await expect(objective.locator(".doc-group-count")).toHaveText(/^1\/\d+$/);
   });
 
   /* A therapist reads measurements out in a run — the joint once, then the

@@ -66,7 +66,7 @@ check("amendment appends with e-signature", !amended.error && amended.doc.amendm
 check("amendment keeps original intact", amended.doc.data.summary === "TherEx and manual therapy.");
 
 // --- progress report trigger ---------------------------------------------
-// Seed has 4 signed dailies for Juan; the one created above makes 5.
+// Seed has 4 signed dailies for Bautista; the one created above makes 5.
 check("progress due after 5th visit", store.progressDue("p-juan") === true);
 const prog = store.createDoc("p-juan", "progress", maria);
 check("progress report carries over eval subjective",

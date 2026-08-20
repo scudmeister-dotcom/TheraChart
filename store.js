@@ -101,13 +101,17 @@
       patients: [
         {
           id: "p-juan",
-          firstName: "Juan", lastName: "Reyes",
+          /* Record ids are historical and deliberately stable — `p-juan` and
+             `p-liza` predate a rename of the demo patients and are referenced
+             by tests, the screenshot harness and seeded document ids. The id is
+             opaque; the name is what anyone reads. */
+          firstName: "Mark Anthony", lastName: "Bautista",
           dob: "1988-04-12", sex: "M",
           address: "12 Mabini St, Cebu City",
           phone: "+63 917 555 0101", email: "juan.reyes@example.com",
           referringPhysician: "Dr. R. Cruz (Ortho)",
           allergies: "Penicillin — rash. Latex sensitivity (use nitrile gloves).",
-          emergencyContact: { name: "Marites Reyes", relationship: "Spouse", phone: "+63 917 555 0111" },
+          emergencyContact: { name: "Marites Bautista", relationship: "Spouse", phone: "+63 917 555 0111" },
           insurance: { provider: "PhilHealth", memberId: "PH-4451-2231", notes: "Co-pay ₱150/visit" },
           authorization: { visitsAuthorized: 18, expiresOn: t(46, 12, 0).slice(0, 10), reference: "AUTH-88213" },
           goals: [
@@ -127,20 +131,20 @@
           ],
           attachments: [
             { id: "a-1", name: "Referral - Dr. Cruz.txt", type: "text/plain",
-              dataUrl: "data:text/plain;base64," + b64("Referral: Juan Reyes\nDx: Right rotator cuff strain\nPT eval and treat 2-3x/week for 6 weeks.\n- Dr. R. Cruz"),
+              dataUrl: "data:text/plain;base64," + b64("Referral: Mark Anthony Bautista\nDx: Right rotator cuff strain\nPT eval and treat 2-3x/week for 6 weeks.\n- Dr. R. Cruz"),
               uploadedBy: "u-ana", uploadedAt: t(-14, 9, 0) },
           ],
           createdBy: "u-ana", createdAt: t(-14, 8, 30),
         },
         {
           id: "p-liza",
-          firstName: "Liza", lastName: "Mercado",
+          firstName: "Marilou", lastName: "Gonzales",
           dob: "1975-11-02", sex: "F",
           address: "88 Osmeña Blvd, Cebu City",
           phone: "+63 917 555 0202", email: "liza.mercado@example.com",
           referringPhysician: "Dr. A. Tan (Family Med)",
           allergies: "",
-          emergencyContact: { name: "Ramon Mercado", relationship: "Son", phone: "+63 917 555 0222" },
+          emergencyContact: { name: "Ramon Gonzales", relationship: "Son", phone: "+63 917 555 0222" },
           insurance: { provider: "Maxicare", memberId: "MX-99-887766", notes: "" },
           // deliberately near the end of the authorisation, so the warning shows
           authorization: { visitsAuthorized: 8, expiresOn: t(12, 12, 0).slice(0, 10), reference: "MX-AUTH-5512" },
@@ -349,18 +353,18 @@
       // A little activity history so the Privacy &amp; Security log reads like a
       // living feed (varied actions/people) the moment the demo opens.
       audit: [
-        { time: t(-14, 8, 30), userId: "u-ana", action: "patient-created", detail: "Juan Reyes" },
-        { time: t(-14, 9, 0), userId: "u-ana", action: "attachment-added", detail: "Referral - Dr. Cruz.txt · Juan Reyes" },
-        { time: t(-13, 10, 0), userId: "u-maria", action: "doc-created", detail: "Initial Evaluation for Juan Reyes" },
-        { time: t(-13, 11, 0), userId: "u-maria", action: "doc-signed", detail: "Initial Evaluation for Juan Reyes" },
-        { time: t(-12, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 1 for Juan Reyes" },
-        { time: t(-10, 10, 0), userId: "u-ana", action: "patient-created", detail: "Liza Mercado" },
-        { time: t(-9, 9, 20), userId: "u-maria", action: "transcript-refined", detail: "Initial Evaluation · Liza Mercado" },
-        { time: t(-7, 15, 0), userId: "u-maria", action: "ai-chart-review", detail: "Juan Reyes" },
-        { time: t(-5, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 4 for Juan Reyes" },
-        { time: t(-4, 11, 0), userId: "u-ana", action: "appointment-created", detail: "Juan Reyes · 9:00 AM" },
+        { time: t(-14, 8, 30), userId: "u-ana", action: "patient-created", detail: "Mark Anthony Bautista" },
+        { time: t(-14, 9, 0), userId: "u-ana", action: "attachment-added", detail: "Referral - Dr. Cruz.txt · Mark Anthony Bautista" },
+        { time: t(-13, 10, 0), userId: "u-maria", action: "doc-created", detail: "Initial Evaluation for Mark Anthony Bautista" },
+        { time: t(-13, 11, 0), userId: "u-maria", action: "doc-signed", detail: "Initial Evaluation for Mark Anthony Bautista" },
+        { time: t(-12, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 1 for Mark Anthony Bautista" },
+        { time: t(-10, 10, 0), userId: "u-ana", action: "patient-created", detail: "Marilou Gonzales" },
+        { time: t(-9, 9, 20), userId: "u-maria", action: "transcript-refined", detail: "Initial Evaluation · Marilou Gonzales" },
+        { time: t(-7, 15, 0), userId: "u-maria", action: "ai-chart-review", detail: "Mark Anthony Bautista" },
+        { time: t(-5, 14, 40), userId: "u-maria", action: "doc-signed", detail: "Daily Treatment Note — Visit 4 for Mark Anthony Bautista" },
+        { time: t(-4, 11, 0), userId: "u-ana", action: "appointment-created", detail: "Mark Anthony Bautista · 9:00 AM" },
         { time: t(-3, 16, 20), userId: "u-grace", action: "settings-updated", detail: "progress report every 5 visits" },
-        { time: t(-2, 7, 5), userId: null, action: "reminder-sent", detail: "Liza Mercado · SMS (simulated)" },
+        { time: t(-2, 7, 5), userId: null, action: "reminder-sent", detail: "Marilou Gonzales · SMS (simulated)" },
         { time: t(-1, 8, 15), userId: null, action: "access-requested", detail: "google:ramil.torres@gmail.com" },
         { time: t(0, 7, 50), userId: null, action: "access-requested", detail: "google:bea.n@bayanihanpt.ph" },
       ],

@@ -1309,7 +1309,7 @@ ${walkthroughMarkup()}`;
       title: "Measurements sort themselves into the right rows.",
       now: "ROM and strength go on a paper form, then get copied into the note, then copied again into the progress report.",
       here: 'Say <i>"right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5"</i> and all three land as separate, labelled measurements — joint, motion, side and value — without you naming the joint twice.',
-      where: "Inside any note · <b>Objective measurements</b>, right column",
+      where: "Inside any note · step <b>Objective</b>, in the note column",
     },
     {
       shot: "07-ai-review",
@@ -1330,7 +1330,7 @@ ${walkthroughMarkup()}`;
       title: "The units are counted for you.",
       now: "Someone works out timed units by hand against the 8-minute rule, and a miscount is either lost revenue or a claim problem.",
       here: "Enter the interventions and minutes. TheraChart computes what the units <i>should</i> be and flags a mismatch instead of silently billing whatever was typed. The signature, licence number and timestamp lock to the note.",
-      where: "Inside any note · <b>Billing — CPT codes, minutes and units</b>",
+      where: "Inside any note · the last step, <b>Billing</b>",
     },
     {
       shot: "04-patient-info",
@@ -5801,6 +5801,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
     refreshMeasTable(doc);
+    /* The note's own header summary and the per-group fill counts both describe
+       what is in the document, and dictation is the main thing that puts
+       anything there — without this a group filled itself while its count sat
+       at 0, which is precisely the case the count exists for. */
+    renderFieldGuide(doc);
     const log = document.getElementById("routeLog");
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
   }
@@ -5822,6 +5827,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     temp.innerHTML = measurementEditor(doc, doc.status !== "signed" && S.canDocument(S.currentUser()));
     holder.replaceWith(temp.firstElementChild);
     bindMeasurementEditor(doc, S.currentUser());
+    renderFieldGuide(doc);
   }
 
   function addDocMapPoint(doc, m, uttId, time) {
@@ -5905,9 +5911,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      "@measurements" / "@goals". Both answer the same question — has this part
      of the note got anything in it — which is what the group's fill count on
      the header is counting. */
-  const docPartCount = (doc, id) => (id === "goals"
-    ? S.goalsFor(doc.patientId).length
-    : ((doc.data || {})[id] || []).length);
+  /* Measurements are not one array — dictation sorts them into rom / mmt /
+     special / pain as it files them, and the editor renders the four as one
+     table. Counting `data.measurements` counted a key nothing ever writes, so
+     the Objective group read 0 with four measurements sitting under it. */
+  const MEASUREMENT_KEYS = ["rom", "mmt", "special", "pain"];
+  const docPartCount = (doc, id) => {
+    const data = doc.data || {};
+    if (id === "goals") return S.goalsFor(doc.patientId).length;
+    if (id === "measurements") return MEASUREMENT_KEYS.reduce((n, k) => n + ((data[k] || []).length), 0);
+    return (data[id] || []).length;
+  };
   const docItemDone = (doc, it) => (it.charAt(0) === "@"
     ? docPartCount(doc, it.slice(1)) > 0
     : !!String((doc.data || {})[it] || "").trim());
@@ -5953,9 +5967,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     for (const [key, def] of Object.entries(SECTION_SOURCES)) {
       if (def.source !== "yours" || !def.types.includes(doc.type)) continue;
-      // goals belong to the episode of care, not to one note
-      const have = key === "goals" ? S.goalsFor(doc.patientId).length : (doc.data[key] || []).length;
-      if (have) continue;
+      // goals belong to the episode of care, not to one note; measurements are
+      // spread across four arrays — docPartCount knows both
+      if (docPartCount(doc, key)) continue;
       out.push({ label: def.label, source: "yours", field: key });
     }
     return out;
@@ -7666,7 +7680,7 @@ ${privacyInfoAccordion(geminiOn)}
       ${isOwner ? "" : `<div class="banner" style="margin-top:8px; font-size:12.5px">New accounts are approved by the operator, so this asks rather than creates. Give them a temporary password to hand over — the person is made to choose their own the first time they sign in. You can remove anyone from this clinic yourself, below.</div>`}
       <div style="border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:8px">
         <div class="field-row">
-          <div class="field"><label>Full name</label><input id="nu-name" placeholder="e.g. Ana Reyes, PT" /></div>
+          <div class="field"><label>Full name</label><input id="nu-name" placeholder="e.g. Ana Bautista, PT" /></div>
           <div class="field"><label>Role</label><select id="nu-role">
             <option value="therapist">Therapist</option><option value="admin">Administrator</option><option value="frontdesk">Front desk</option>
           </select></div>

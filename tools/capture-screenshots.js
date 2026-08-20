@@ -98,6 +98,30 @@ async function signInAs(page, base, userId) {
   await sleep(400);
 }
 
+const toTop = async (page) => { await page.evaluate(() => window.scrollTo(0, 0)); await sleep(250); };
+
+/** Frame the note column on one workflow group by name.
+
+    "top" puts the group's header just under the fold — right for a group whose
+    content is the subject. "bottom" lands the group's END near the bottom of
+    the frame, which is what a LAST group needs: anchoring it to the top instead
+    scrolled the whole note off and left half the picture empty above the cards
+    that follow the note. Anchored to the group, not to a pixel offset, so a
+    copy change doesn't slide the subject out of frame. */
+async function frameGroup(page, name, align = "top") {
+  await page.evaluate(({ name, align }) => {
+    const g = [...document.querySelectorAll("details.doc-group")]
+      .find((x) => new RegExp(name, "i").test(x.querySelector(".doc-group-title").textContent));
+    if (!g) return;
+    const r = g.getBoundingClientRect();
+    const top = r.top + window.scrollY;
+    window.scrollTo(0, Math.max(0, align === "bottom"
+      ? top + r.height - window.innerHeight + 78
+      : top - 90));
+  }, { name, align });
+  await sleep(400);
+}
+
 async function goHash(page, hash) {
   await page.evaluate((h) => { location.hash = "#/dashboard"; }, hash);
   await sleep(120);
@@ -126,17 +150,25 @@ async function buildDictatedNote(page, base) {
   });
   builtDocId = id;
   await goHash(page, `#/doc/${id}`);
+  /* Ordered the way a visit is actually spoken, and chosen because the parser
+     files all four somewhere visible: the complaint pins the body map and fills
+     Subjective, the measurement run splits into three rows, the treatment
+     sentence fills Treatment summary and the last line drafts the Assessment.
+     Sentences that file nowhere make a picture of an empty form. */
   const lines = [
     "patient reports right shoulder pain seven out of ten, worse reaching overhead",
     "right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 out of 5",
-    "performed scapular retraction and rotator cuff isometrics, reviewed home programme",
+    "we did therapeutic exercise with the theraband and manual therapy to the posterior capsule",
+    "patient tolerated treatment well and reported less pain afterwards",
   ];
   for (const line of lines) {
     await page.fill("#typedDictation", line);
     await page.press("#typedDictation", "Enter");
     await sleep(350);
   }
-  await sleep(500);
+  // typing scrolls the box into view; the shot wants the top of the note
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await sleep(600);
   return id;
 }
 
@@ -160,7 +192,7 @@ const SHOTS = [
   },
   {
     file: "walkthrough/02-patient-overview.jpg", theme: "light", as: "u-maria",
-    async act(page) { await goHash(page, "#/patient/p-juan"); await patientTab(page, "Overview"); },
+    async act(page) { await goHash(page, "#/patient/p-juan"); await patientTab(page, "Overview"); await toTop(page); },
   },
   {
     file: "walkthrough/03-documents.jpg", theme: "light", as: "u-maria",
@@ -186,12 +218,7 @@ const SHOTS = [
     async act(page, base) {
       if (!builtDocId) await buildDictatedNote(page, base);
       else await goHash(page, `#/doc/${builtDocId}`);
-      await page.evaluate(() => {
-        const g = [...document.querySelectorAll("details.doc-group")]
-          .find((x) => /Objective/.test(x.querySelector(".doc-group-title").textContent));
-        if (g) window.scrollTo(0, g.getBoundingClientRect().top + window.scrollY - 90);
-      });
-      await sleep(400);
+      await frameGroup(page, "Objective");
     },
   },
   {
@@ -211,17 +238,53 @@ const SHOTS = [
     },
   },
   {
-    /* A signed note, framed on its Billing group — the units are the point, and
-       the signature block underneath is what makes them a claim. */
+    /* The units are the point, and the signature under them is what makes them
+       a claim — so this is the note built above, charged from its own treatment
+       summary and then actually signed. A seeded note would have been less work
+       and a worse picture: those carry no transcript, so half the frame was an
+       empty left column. */
     file: "walkthrough/08-billing.jpg", theme: "light", as: "u-maria",
-    async act(page) {
-      await goHash(page, "#/doc/d-daily-juan-1");
+    async act(page, base) {
+      if (!builtDocId) await buildDictatedNote(page, base);
+      else await goHash(page, `#/doc/${builtDocId}`);
+
+      /* The charge sheet a therapist would have typed for what was dictated —
+         therapeutic exercise and manual therapy. 97110 is deliberately left
+         claiming one unit against 23 minutes: the claim this slide makes is
+         that the app works out what the units SHOULD be and flags the
+         disagreement, and a sheet that already adds up demonstrates nothing. */
+      await page.evaluate((id) => {
+        const S = window.TheraStore;
+        const d = S.getDoc(id);
+        d.data.charges = [
+          { code: "97110", desc: "Therapeutic exercise", minutes: 23, units: 1 },
+          { code: "97140", desc: "Manual therapy", minutes: 15, units: 1 },
+        ];
+        S.updateDocData(id, d.data, S.currentUser());
+      }, builtDocId);
+      await goHash(page, `#/doc/${builtDocId}`);
+
+      // e-sign. A demo account holds no password, so the modal re-auths on the
+      // typed name alone — see store.signDoc.
+      await page.click("#signBtn");
+      await page.waitForSelector("#sigName", { timeout: 10000 });
+      await page.fill("#sigName", "Maria Santos, PT");
+      await page.click("#sigOk");
+      await page.waitForFunction(() => !!document.querySelector(".lock-banner"), null, { timeout: 10000 });
+      await sleep(500);
+
+      /* Collapse the steps that aren't the subject. This is a real action a
+         real therapist takes — the groups exist to be shut — and it is what
+         makes the picture: the charge sheet and the signature sit high in the
+         column beside the body map, instead of a screenful below it with half
+         the frame left empty. */
       await page.evaluate(() => {
-        const g = [...document.querySelectorAll("details.doc-group")]
-          .find((x) => /Billing/.test(x.querySelector(".doc-group-title").textContent));
-        if (g) window.scrollTo(0, g.getBoundingClientRect().top + window.scrollY - 90);
+        document.querySelectorAll("details.doc-group").forEach((g) => {
+          if (!/Billing/i.test(g.querySelector(".doc-group-title").textContent)) g.open = false;
+        });
       });
       await sleep(400);
+      await toTop(page);
     },
   },
   {
@@ -236,8 +299,8 @@ const SHOTS = [
     file: "walkthrough/10-intake-guardrails.jpg", theme: "light", as: "u-maria",
     async act(page) {
       await goHash(page, "#/intake");
-      await page.fill("#in-first", "Juan");
-      await page.fill("#in-last", "Reyes");
+      await page.fill("#in-first", "Mark Anthony");
+      await page.fill("#in-last", "Bautista");
       await page.fill("#in-dob", "1988-04-12");
       await page.fill("#in-phone", "0917555");
       await page.click("#intakeSave");
@@ -303,6 +366,13 @@ async function capture(page, base, shot, session) {
 
   // re-assert after the act: a full re-render can replace <html>'s attributes
   await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), shot.theme);
+
+  /* The demo banner is honest and must stay in the app — but these captures
+     are pictures of the product a clinic buys, and that clinic never sees it.
+     Leaving it in would put "nothing you do is saved to a real chart" across
+     the top of our own marketing. Removed from the frame, not from the app. */
+  await page.evaluate(() => document.querySelector(".demo-banner")?.remove());
+  await sleep(150);
 
   const raw = path.join(TMP, `raw-${Math.random().toString(36).slice(2)}.png`);
 

@@ -29,6 +29,7 @@ test/
 
 # Local tooling and design source material
 .claude/
+tools/
 design_handoff_therachart_branding/
 _testsheet-preview.html
 
