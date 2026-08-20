@@ -6058,11 +6058,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const utterances = (doc.data.transcript || []).map((u) => u.text).filter(Boolean);
     if (!utterances.length) return alertBanner("There's no transcript to review yet — dictate or type something first.");
     const sync = window.TheraSync || {};
-    const engineName = sync.refine === "gemini" ? "Google Gemini" : "the local AI reviewer";
 
+    /* The clinician is told what is reading their note, not who makes it. The
+       model behind this has changed twice already and the name in front of a
+       therapist mid-visit should not have to change with it. */
     const m = showModal(`<h2>✦ Reviewing with AI…</h2>
-      <p style="font-size:13px">Sending the transcript to <b>${esc(engineName)}</b> to split patient vs clinician speech, clean up wording, and re-check the findings.</p>
-      <div class="empty-state">Working…</div>`);
+      <p style="font-size:13px">Reading the transcript to split patient vs clinician speech, clean up wording, and re-check the findings.</p>
+      <div class="empty-state">Working… this can take up to a minute or two on a long visit.</div>`);
     let result;
     try {
       result = sync.refineTranscript
@@ -6070,12 +6072,48 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         : { ...PR.refineTranscript(utterances), source: "local" };
     } catch (e) {
       closeModal();
-      return alertBanner("AI review failed: " + e.message + ". Your transcript is unchanged.");
+      return refineFailed(doc, user, dstate, e.message);
+    }
+    /* The AI was asked and could not answer. Everything below this point
+       presents a reviewed note; presenting the offline keyword pass there
+       instead — which is what happened before, behind a muted chip — hands
+       the therapist a quietly downgraded note that looks like a reviewed one.
+       Refuse it, say so, and let them decide. */
+    if (result.aiFailed) {
+      closeModal();
+      return refineFailed(doc, user, dstate, result.error);
     }
     // counted the moment it runs, not when it is accepted: the call was made
-    // and billed whether or not the therapist keeps the result
+    // and billed whether or not the therapist keeps the result. A failed call
+    // is not counted — a throttled request is rejected before it costs
+    // anything, and this meter is the clinician's own usage.
     S.recordDocAiCall(doc.id);
     openReviewModal(doc, user, dstate, result);
+  }
+
+  /* What the therapist sees when the AI could not read the note.
+
+     It has to do three things: say plainly that the note was NOT reviewed, so
+     nobody signs something believing it was; leave the transcript and the
+     note exactly as they were, and say so, because the first fear is that the
+     work was lost; and offer the way forward rather than a dead end. Retry is
+     first because the failures this recovers from are transient by nature —
+     a busy shared model, a slow draw — and a second attempt usually lands. */
+  function refineFailed(doc, user, dstate, detail) {
+    const m = showModal(`<h2>AI review didn't complete</h2>
+      <p style="font-size:14px">The AI wasn't able to process this note. <b>Nothing has changed</b> — your transcript and everything you've written are exactly as you left them.</p>
+      <p style="font-size:13px; color:var(--muted)">This is usually temporary. Trying again in a moment normally works. If it keeps failing, you can carry on writing the note yourself — dictation and the body map are unaffected.</p>
+      ${detail ? `<details style="margin-top:8px"><summary style="font-size:12px; color:var(--muted); cursor:pointer">Technical detail</summary>
+        <div style="font-size:12px; color:var(--muted); margin-top:6px; word-break:break-word">${esc(String(detail).slice(0, 300))}</div></details>` : ""}
+      <div class="modal-actions">
+        <button class="btn" id="refineCancel">Cancel</button>
+        <button class="btn primary" id="refineRetry">Try again</button>
+      </div>`);
+    m.querySelector("#refineCancel").addEventListener("click", closeModal);
+    m.querySelector("#refineRetry").addEventListener("click", () => {
+      closeModal();
+      runRefine(doc, user, dstate);
+    });
   }
 
   function openReviewModal(doc, user, dstate, result) {
@@ -6118,8 +6156,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         origin: t ? t.kind || "corrected" : bare ? "empty" : "live-only" });
     }
 
+    /* Only two things can reach this modal now: a successful AI review, or a
+       deployment with no AI configured at all, where the offline reviewer is
+       the advertised engine rather than a fallback. A failed call is turned
+       away in runRefine, so this chip no longer has to carry bad news. */
     const engineChip = result.source && result.source.startsWith("gemini")
-      ? `<span class="chip info">Gemini</span>` : `<span class="chip muted">local AI</span>`;
+      ? `<span class="chip info">AI</span>` : `<span class="chip muted">offline reviewer</span>`;
 
     // which note field the cleaned subjective / treatment text writes into
 

@@ -420,6 +420,120 @@ for (const t of [
   check("import: 'none' normalizes to no side", none.visits[0].mmt[0].side === null, JSON.stringify(none.visits[0].mmt));
 }
 
+
+/* ---- the two places a failure could still go quiet ---- */
+{
+  const fs2 = require("fs"), path2 = require("path");
+  const APP = fs2.readFileSync(path2.join(__dirname, "..", "app.js"), "utf8");
+  const SYNC = fs2.readFileSync(path2.join(__dirname, "..", "sync.js"), "utf8");
+
+  const runRefine = APP.slice(APP.indexOf("async function runRefine("), APP.indexOf("function refineFailed("));
+  check("runRefine turns away a failed review instead of showing it",
+    /if \(result\.aiFailed\)\s*\{[\s\S]{0,120}refineFailed\(/.test(runRefine), runRefine.slice(-400));
+  check("…and does not meter a call that never produced anything",
+    runRefine.indexOf("recordDocAiCall") > runRefine.indexOf("result.aiFailed"),
+    "the AI-pass meter must be below the aiFailed guard");
+
+  const dialog = APP.slice(APP.indexOf("function refineFailed("), APP.indexOf("function openReviewModal("));
+  check("the failure dialog offers a retry", /id="refineRetry"/.test(dialog));
+  check("…and a cancel", /id="refineCancel"/.test(dialog));
+  check("…and the retry actually re-runs the review", /runRefine\(doc, user, dstate\)/.test(dialog));
+  check("…and it says the note was left alone",
+    /Nothing has changed/i.test(dialog), dialog.slice(0, 200));
+
+  /* The model behind this has changed twice already. A clinician mid-visit
+     should not have to learn a vendor's name to understand what happened. */
+  const flow = APP.slice(APP.indexOf("async function runRefine("), APP.indexOf("const REVIEW_SECTIONS"))
+    /* `source.startsWith("gemini")` is the API's own value being tested, not
+       copy — the sentinel has to keep matching what ai.js returns. Only text
+       the clinician can actually read is in scope here. */
+    .replace(/\.startsWith\("gemini"\)/g, "");
+  check("the review flow names no model vendor to the clinician",
+    !/Gemini|Google/i.test(flow),
+    (flow.match(/.{0,70}(Gemini|Google).{0,70}/i) || [""])[0]);
+
+  /* ai.js only covers the call it makes itself. A request that never reached
+     it — server down, session expired, our own rate limiter — failed in the
+     transport layer, which used to answer with a plain `source: "local"`. */
+  const st = SYNC.slice(SYNC.indexOf("sync.refineTranscript ="), SYNC.indexOf("sync.extractRecords ="));
+  check("sync flags a refine that never reached the AI", /aiFailed: true/.test(st), st.slice(0, 300));
+  check("…and still reports local as the engine when none is configured",
+    /aiFailed: false/.test(st), st.slice(-260));
+  check("…and carries a reason back for the dialog to show", /error: detail/.test(st));
+}
+
+/* ---- a call that fails must not come back looking like a review ---- *
+   Every entry point in ai.js catches a failed call and answers with the local
+   heuristic. The heuristic is good — it scores 97.6% on the eval — which is
+   exactly what made this dangerous: a note that was never read by the model
+   looked, to the therapist, almost identical to one that was, and the only
+   thing distinguishing them was a muted chip beside a modal that had just
+   promised them an AI review. */
+{
+  const AI = require("../ai.js");
+  const utt = ["my left knee has been sore for two weeks", "about a six out of ten"];
+
+  const noAi = () => AI.refine(utt, {});
+  const brokenAi = (extra) => AI.refine(utt, Object.assign({
+    key: "not-a-real-key", base: "http://127.0.0.1:9/unreachable", retries: 1,
+  }, extra || {}));
+
+  (async () => {
+    const off = await noAi();
+    check("no AI configured: the offline reviewer is the engine, not a failure",
+      off.source === "local" && off.aiFailed === false, JSON.stringify({ s: off.source, f: off.aiFailed }));
+    check("no AI configured: it still produces a usable review",
+      Array.isArray(off.dialogue) && off.dialogue.length > 0);
+
+    const bad = await brokenAi();
+    check("AI configured but failing: the failure is stated in the result",
+      bad.aiFailed === true, JSON.stringify({ s: bad.source, f: bad.aiFailed }));
+    check("AI configured but failing: …with a reason the caller can show",
+      typeof bad.error === "string" && bad.error.length > 0, JSON.stringify(bad.error));
+    check("AI configured but failing: the source no longer claims the model",
+      !/^gemini/.test(bad.source || ""), bad.source);
+
+    /* Retry, and only for the failures worth retrying. A 429 from Vertex means
+       the shared pool was busy, not that the request was wrong — Google's own
+       documented handling is to back off and try again, and we did neither. */
+    let calls = 0;
+    const flaky = (status, n) => {
+      calls = 0;
+      const realFetch = global.fetch;
+      global.fetch = async () => {
+        calls += 1;
+        if (calls <= n) return { ok: false, status, text: async () => "busy" };
+        return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"dialogue":[],"findings":[]}' }] } }] }) };
+      };
+      return () => { global.fetch = realFetch; };
+    };
+
+    let restore = flaky(429, 2);
+    const recovered = await AI.refine(utt, { key: "k", base: "http://x", retries: 4 });
+    restore();
+    check("a 429 is retried until it succeeds", recovered.source === "gemini" && calls === 3,
+      JSON.stringify({ source: recovered.source, calls }));
+
+    restore = flaky(429, 99);
+    const exhausted = await AI.refine(utt, { key: "k", base: "http://x", retries: 3 });
+    restore();
+    check("retries are bounded, and exhausting them is a stated failure",
+      exhausted.aiFailed === true && calls === 3, JSON.stringify({ f: exhausted.aiFailed, calls }));
+
+    /* A 400 says the REQUEST was wrong — a bad model name, a malformed
+       schema. Retrying spends the same money to be told the same thing. */
+    restore = flaky(400, 99);
+    const notRetried = await AI.refine(utt, { key: "k", base: "http://x", retries: 4 });
+    restore();
+    check("a 400 is not retried — the request itself was wrong",
+      notRetried.aiFailed === true && calls === 1, JSON.stringify({ calls }));
+
+    report();
+  })();
+}
+
+function report() {
 const total = passed + failures.length;
 console.log(`\nTheraChart refiner checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }
+}

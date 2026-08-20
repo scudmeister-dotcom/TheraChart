@@ -637,14 +637,34 @@
      "Review & clean up" pass always works. */
   // These call the AI endpoints when they exist (clinic server OR a Vercel
   // deployment with GEMINI_API_KEY set), else the in-browser local fallback.
+  /* The second place a failed review could turn into a quiet one.
+
+     ai.js now says so when the model could not answer, but that only covers
+     the call it makes itself. A request that never reached it — the server
+     down, the session expired, our own rate limiter, a dropped connection —
+     failed here instead, and this used to answer with the offline keyword
+     pass labelled `source: "local"`, which is indistinguishable from a
+     deployment that has no AI configured and is meant to run that way.
+
+     So the flag is set on the same rule as in ai.js: if this deployment HAS
+     an AI backend and it did not produce the answer, that is a failure and
+     the caller is told. If it has none, local is the engine, not a fallback. */
   sync.refineTranscript = async (utterances) => {
     if (sync.ai) {
+      let detail = "";
       try {
         const r = await api("/api/refine", { method: "POST", body: { transcript: utterances } });
         if (r.ok) return r.data;
-      } catch (_) { /* fall through to local */ }
+        detail = (r.data && r.data.error) || `The server responded ${r.status}.`;
+      } catch (e) {
+        detail = e && e.message ? `Couldn't reach the server: ${e.message}` : "Couldn't reach the server.";
+      }
+      return {
+        ...window.TheraParser.refineTranscript(utterances),
+        source: "local (ai failed)", aiFailed: true, error: detail,
+      };
     }
-    return { ...window.TheraParser.refineTranscript(utterances), source: "local" };
+    return { ...window.TheraParser.refineTranscript(utterances), source: "local", aiFailed: false };
   };
 
   // Read a scanned/uploaded document (base64) into structured visit records.

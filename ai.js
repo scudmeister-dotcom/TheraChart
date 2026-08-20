@@ -384,7 +384,59 @@
   // Thinking is always on (thinkingConfig.thinkingLevel); callers raise it to
   // THINKING_DEEP for the reasoning-heavy paths. includeThoughts stays off —
   // we only want the JSON answer, not the model's scratchpad.
+  /* Which failures are worth trying again.
+
+     Vertex serves 3.x models from DYNAMIC SHARED QUOTA — capacity pooled
+     across customers rather than reserved per project. Our own project limits
+     are nowhere near binding (50M input tokens/minute for this model, and no
+     per-project request cap at all), so a 429 here does not mean "you have
+     used your allowance": it means the shared pool was busy for a moment.
+     Google's documented handling for it is to back off and retry.
+
+     We did neither. One 429 threw straight through to the caller, which
+     answered with the local heuristic — measured at 1.0 seconds, so the
+     clinician got the offline reviewer faster than the real one would ever
+     have returned, with nothing but a chip to tell them apart.
+
+     5xx and a timed-out socket get the same treatment for the same reason:
+     none of them says the request was wrong, only that this attempt failed. A
+     4xx that is NOT 429 does say the request was wrong — a bad model name, a
+     malformed schema, an expired token — and retrying it just spends the same
+     money to be told the same thing. */
+  const RETRYABLE = (e) => {
+    const m = String((e && e.message) || e);
+    if (/^Gemini (?:429|500|502|503|504)\b/.test(m)) return true;
+    // AbortSignal.timeout() surfaces as a TimeoutError / "aborted"
+    return /\b(?:timeout|timed out|aborted|abort)\b/i.test(m) || /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed/i.test(m);
+  };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /* Exponential, with jitter. The jitter is not decoration: every therapist in
+     a clinic finishes their notes at roughly the same times of day, so a fixed
+     backoff would line their retries up and re-create the burst that caused
+     the throttle. */
+  async function withRetry(fn, opts) {
+    const tries = Math.max(1, opts.retries == null ? 3 : opts.retries);
+    let last;
+    for (let i = 0; i < tries; i++) {
+      try { return await fn(i); } catch (e) {
+        last = e;
+        if (i === tries - 1 || !RETRYABLE(e)) throw e;
+        const backoff = Math.min(8000, 600 * Math.pow(2, i));
+        const wait = backoff / 2 + Math.random() * (backoff / 2);
+        if (opts.onRetry) opts.onRetry(i + 1, tries, wait, e);
+        await sleep(wait);
+      }
+    }
+    throw last;
+  }
+
   async function geminiJson(prompt, schema, opts) {
+    return withRetry(() => geminiJsonOnce(prompt, schema, opts), opts);
+  }
+
+  async function geminiJsonOnce(prompt, schema, opts) {
     const model = opts.model || DEFAULT_MODEL;
     const parts = typeof prompt === "string" ? [{ text: prompt }] : prompt;
     const { url, headers } = await geminiTarget(model, opts);
@@ -769,16 +821,42 @@
     opts = opts || {};
     if (aiReady(opts)) {
       try {
-        // Thinking costs wall-clock (~19s for a 73-line transcript, and it grows
-        // with session length), so this path gets more than the 40s default —
-        // a timeout here silently demotes the note to the local heuristic.
+        /* Thinking costs wall-clock and it grows with the length of the visit.
+           Measured against Vertex: ~26s for a two-minute visit, ~33s for a
+           ten-minute one, ~53s at the recorder's twenty-minute ceiling. 180s
+           is not sized for those medians — it is sized for the tail, which has
+           been seen to exceed 90s on a SEVENTEEN line transcript. Length is
+           not what runs this clock out; a slow draw is, and the longest visits
+           have the least room left when they get one. */
         const parsed = await geminiJson(refinePrompt(utterances), REFINE_SCHEMA,
-          { ...opts, timeout: opts.timeout || 90000 });
-        return normalizeRefinement(parsed, utterances, "gemini");
-      } catch (e) { if (opts.onError) opts.onError("refine", e); }
+          { ...opts, timeout: opts.timeout || 180000 });
+        // explicit on every path, so a caller never has to read `undefined`
+        // as "fine" — the flag is the contract, not the absence of one
+        return { ...normalizeRefinement(parsed, utterances, "gemini"), aiFailed: false };
+      } catch (e) {
+        if (opts.onError) opts.onError("refine", e);
+        /* Say that it failed, out loud, in the returned value.
+
+           The local heuristic still runs — the caller may want something to
+           show, and a transcript is worth more than a blank — but it is NOT
+           offered as though the AI produced it. That distinction was
+           previously carried only by a suffix on `source`, which the UI
+           rendered as a muted chip beside a modal that had just promised the
+           clinician the AI was reading their note. A cleanup pass that
+           silently became a keyword matcher is a quiet downgrade of a medical
+           record, so `aiFailed` exists to let the caller refuse the result
+           rather than dress it up. */
+        return {
+          ...parser.refineTranscript(utterances),
+          source: "local (ai failed)",
+          aiFailed: true,
+          error: String((e && e.message) || e),
+        };
+      }
     }
-    const local = parser.refineTranscript(utterances);
-    return { ...local, source: aiReady(opts) ? "local (gemini failed)" : "local" };
+    /* No AI configured at all — the local reviewer is the engine this
+       deployment advertises, not a failure of anything. */
+    return { ...parser.refineTranscript(utterances), source: "local", aiFailed: false };
   }
 
   async function insightsRun(ctx, opts) {
