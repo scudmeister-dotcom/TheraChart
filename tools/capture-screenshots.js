@@ -37,6 +37,7 @@
 
 const { execFileSync } = require("child_process");
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 const { chromium } = require("@playwright/test");
 const { startServer } = require("../test/helpers/server.js");
@@ -63,6 +64,42 @@ const CAPTION_CSS = `
   #shot-caption b { font-weight: 800; font-size: 15px; }
   #shot-caption span { font-weight: 500; opacity: 0.92; }
 `;
+
+/* A stand-in for the Gemini endpoint.
+
+   Shot 07 photographs the AI review modal, and there is no longer an offline
+   reviewer to produce one — if the AI is unavailable the app now says so and
+   refuses, which is the right behaviour and makes the old capture impossible.
+   Blanking the credentials would photograph the refusal.
+
+   So the harness serves a REAL captured Vertex reply instead. Everything but
+   the model runs for real: /api/refine, ai.js, its retry wrapper, an actual
+   HTTP round trip, and normalizeRefinement. Only the model's answer is canned,
+   and it is canned from a genuine one — see the fixture's README. A response
+   written by hand would drift from what the model returns, and the picture
+   would then be of something that never happened.
+
+   It also puts the whole capture into the state a paying clinic is actually
+   in. Production has Gemini configured; a run with the credentials blanked was
+   photographing a deployment we do not sell. */
+const REFINE_FIXTURE = path.join(ROOT, "test", "eval", "fixtures", "refine-response-shoulder.json");
+
+function startAiStub() {
+  const body = fs.readFileSync(REFINE_FIXTURE, "utf8");
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      req.resume(); // drain the prompt; we answer the same way regardless
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(body);
+      });
+    });
+    srv.listen(0, "127.0.0.1", () => resolve({
+      port: srv.address().port,
+      stop: () => new Promise((r) => srv.close(r)),
+    }));
+  });
+}
 
 /* ---------------------------------------------------------------- *
  *  What each image is a picture of.
@@ -453,9 +490,26 @@ function toJpeg(src, dest, w, h) {
 
   console.log(`Recapturing ${todo.length} frame(s) at ${W}x${H} @${SCALE}x…\n`);
 
-  // The demo logins are what lets this script pick a role without a password;
-  // AI/cloud credentials stay blanked by the helper so no capture bills a call.
-  const server = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+  /* The demo logins are what lets this script pick a role without a password.
+
+     The AI is pointed at the local stub rather than blanked, and Speech-to-Text
+     is told it is configured, so the app is in the state a paying clinic is in
+     rather than a credential-less one. Production has both; a capture with them
+     off was photographing a deployment we do not sell — the dictation bar read
+     "Google Cloud isn't set up here" across the middle of the landing hero.
+
+     Neither credential is real and neither is ever used: the AI call goes to
+     the stub on loopback, and nothing in a headless capture opens a microphone,
+     so no Speech-to-Text request is ever made. GCS stays blank — nothing here
+     photographs an attachment. */
+  const stub = await startAiStub();
+  const server = await startServer({
+    THERACHART_DEMO_LOGINS: "1",
+    GEMINI_API_KEY: "screenshot-stub-key-not-a-real-credential",
+    GEMINI_BASE_URL: `http://127.0.0.1:${stub.port}/v1beta`,
+    GCP_PROJECT: "therachart-screenshot-harness",
+    GCP_ACCESS_TOKEN: "screenshot-stub-token-not-a-real-credential",
+  });
   const browser = await chromium.launch();
   const context = await browser.newContext({
     viewport: { width: W, height: H },
@@ -482,6 +536,7 @@ function toJpeg(src, dest, w, h) {
   } finally {
     await browser.close();
     server.stop();
+    await stub.stop();
     fs.rmSync(TMP, { recursive: true, force: true });
   }
 
