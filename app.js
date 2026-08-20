@@ -856,11 +856,12 @@
         Note text sent to Gemini for cleanup or insights is covered by Google's Vertex AI terms, which state
         that customer prompts and responses are <b>not used to train Google's models</b> and are not sold.
         The AI only ever suggests — nothing enters a chart until a licensed clinician approves and signs it.`)}
-      ${privacyPoint("⚖️", "You stay the controller, in writing", `
+      ${privacyPoint("⚖️", "The records stay yours", `
         Under the <b>Data Privacy Act of 2012 (RA 10173)</b> your clinic is the personal information controller
-        for these records and we are your processor, which is a relationship the law expects to be written down.
-        You get that agreement from us on day one, alongside the disclosure you need for the cross-border
-        transfer, since the servers sit in a United States region unless your clinic asks for a closer one.`)}
+        for these records; we hold them for you and act on your instructions. The servers sit in a
+        <b>United States</b> region unless your clinic asks for a closer one, which is a cross-border transfer
+        the Act permits and expects you to be able to describe — so the app states it plainly rather than
+        burying it, and your administrator can read the exact region live.`)}
       ${privacyPoint("📤", "Leaving is a button, not a negotiation", `
         <b>Export backup</b> takes the entire record set in an open format, and <b>Erase all data</b> removes it.
         Neither needs our permission or our help. A clinic that can only leave by asking nicely was never
@@ -7340,7 +7341,7 @@ ${ths.map((t) => {
         <p>Your clinic's records are <b>not</b> in one pile with everyone else's. Every record carries the clinic it belongs to, and every read is filtered by the signed-in user's clinic <b>on the server</b> — not hidden in the screen, where a determined browser could go round it. No account can reach another clinic's charts, including ours.</p>
         <p>Records are kept in an <b>encrypted managed database</b> (Cloud SQL for PostgreSQL). Encrypted in transit and at rest, backed up by Google, and reachable only by this application — never over the open internet.</p>
         <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region. For a Philippine clinic that is a <b>cross-border transfer of sensitive personal information</b>, which RA 10173 permits but requires you to disclose and remain accountable for. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
-        <p><b>Who is who, under RA 10173.</b> Your clinic is the <b>personal information controller</b> for these records. TheraChart is your <b>personal information processor</b>, and Google is ours. The law expects that relationship to be written down, so a data processing agreement covering it comes with your account — ask for it if you have not been sent one.</p>
+        <p><b>Who is who, under RA 10173.</b> Your clinic is the <b>personal information controller</b> for these records — they are yours, and the decisions about them are yours. TheraChart is your <b>personal information processor</b>, holding them on your instruction, and Google is ours.</p>
         <p style="margin-bottom:0">You stay in control: <b>Export backup</b> takes the whole record set with you in an open format, and <b>Erase all data</b> removes it. Neither needs our permission — there is no lock-in.</p>` },
       { emoji: "🎤", title: "Voice dictation", body: `
         <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b> in ${where(sttLoc)}, which turns it into text and sends it straight back. It is a paid Google Cloud service under your own project — <b>not</b> a free consumer speech service, and not a phone's built-in dictation.</p>
@@ -7367,7 +7368,7 @@ ${ths.map((t) => {
           <li>Keep a record of processing activities, and notify the NPC and affected patients of a breach within the required period</li>
           <li>Retain records for the period required of a Philippine health facility</li>
         </ul>
-        <p style="margin-bottom:0">If your clinic also serves US patients or bills a US payer, <b>HIPAA</b> applies to you as well. The Google side of that is already covered by the BAA we hold; what it additionally needs is a <b>Business Associate Agreement between your clinic and TheraChart</b>, since we process protected health information on your behalf. Ask us for it — it is a routine document and there is no charge for it. <b>Have your own counsel or DPO confirm all of this</b>; the descriptions here are of what the software does, not legal advice.</p>` },
+        <p style="margin-bottom:0"><b>HIPAA is United States law</b> and does not bind a Philippine clinic treating Philippine patients and billing PhilHealth or an HMO — RA 10173 is the law that governs you, and it is the one this page is written against. A clinic whose care is billed to a <i>US health plan</i> is in a different position; if that is you, raise it with us. <b>Have your own counsel or DPO confirm all of this</b>; the descriptions here are of what the software does, not legal advice.</p>` },
     ];
     return `<div class="info-acc">${items.map((it) => `
       <details class="info-acc-item">

@@ -1,0 +1,88 @@
+# Open items
+
+Things known to be outstanding, with enough context to pick them up cold.
+Not a backlog of ideas — only work that is *already implied by something we
+ship*, or a decision that has been made and not yet carried out.
+
+---
+
+## Legal documents a clinic may ask for
+
+**Status:** not written. Nothing in the product currently promises them, and
+that is deliberate — see "What the app says today" below before changing any
+of this copy.
+
+Because clinics are tenants on our Google Cloud project rather than each
+running their own, TheraChart holds their patients' records. That makes us a
+**personal information processor** under RA 10173, with the clinic as the
+**personal information controller**. Two documents follow from that:
+
+### 1. Data processing agreement (RA 10173) — the one that actually matters
+
+The Data Privacy Act expects the controller/processor relationship to be
+written down. Every Philippine clinic on the platform is in this relationship
+with us, so this document applies to all of them, not to a subset.
+
+Should cover, at minimum:
+- what we process and why (clinical records, on the clinic's instruction only)
+- the sub-processor: Google Cloud, and which services
+- the **cross-border transfer** — servers are in a US region by default, which
+  RA 10173 permits but requires the clinic to disclose and remain accountable for
+- security measures, breach notification timing, and what happens on termination
+  (the clinic can already Export backup / Erase all data unaided, which is most
+  of the answer)
+
+### 2. HIPAA Business Associate Agreement — only if a clinic raises it
+
+**Almost certainly not needed.** HIPAA is US law binding US covered entities.
+A Philippine clinic treating Philippine patients and billing PhilHealth or an
+HMO is not a covered entity, so no BAA between that clinic and TheraChart is
+required. Who *we* bill for the subscription has no bearing on this — HIPAA
+follows the patient data and the clinic's status, not our invoice.
+
+It would only arise for a clinic whose care is billed to a **US health plan**.
+Have a template ready for that conversation, but do not lead with it.
+
+> Note the separate, unrelated BAA that *does* exist: **ours with Google**,
+> signed and active on the account running production, covering Cloud Run,
+> Cloud SQL, Speech-to-Text and Vertex AI. That one is a live fact and the
+> landing page and Privacy panel both state it.
+
+### What the app says today
+
+Deliberately worded so nothing promises a document that does not exist yet:
+
+- **Landing page → "The records stay yours"** — states the controller
+  relationship and the cross-border transfer. Promises no paperwork.
+- **Privacy panel → "Where your data lives"** — states controller / processor /
+  sub-processor. Promises no paperwork.
+- **Privacy panel → "What your clinic still has to do"** — says plainly that
+  HIPAA is US law and does not bind a Philippine clinic billing PhilHealth or an
+  HMO, and invites the conversation only from a clinic billed to a US plan.
+
+If either document gets written, that copy is where to mention it — and the
+screenshots covering both surfaces need recapturing:
+
+```bash
+node tools/capture-screenshots.js 00 11
+```
+
+---
+
+## Deploy
+
+Production is on `057ca2e` (revision `therachart-00055-w6n`). `main` is well
+ahead of both prod and `origin/main`, and **nothing has been pushed**.
+
+Unshipped work on `main` includes a behaviour change to the AI paths — the
+extraction schema gained a `side` field on `mmt` and `pain`, the refine prompt
+changed, and a failed AI call now shows a failure dialog instead of quietly
+presenting the offline reviewer's output as the AI's. That is worth a look
+before it reaches a clinic, rather than after.
+
+Reminders for whoever runs it:
+- `deploy-gcp.sh` ships the **working directory**, not a commit — make sure the
+  tree is clean and is what you mean to send
+- it reads the live service's settings and carries them forward, so scrub
+  `THERACHART_DEMO_LOGINS` from your shell first; production is INVITE-only
+- `./verify-prod.sh` afterwards — 19 read-only checks, non-zero exit on failure

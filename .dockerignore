@@ -32,6 +32,9 @@ _testsheet-preview.html
 pricing-model.js
 PRICING.md
 
+# Internal notes — commercial and legal planning, not for the image
+NOTES.md
+
 *.log
 .DS_Store
 **/.DS_Store
