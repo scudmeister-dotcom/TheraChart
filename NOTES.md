@@ -34,7 +34,8 @@ Should cover, at minimum:
 
 ### 2. HIPAA Business Associate Agreement — only if a clinic raises it
 
-**Almost certainly not needed.** HIPAA is US law binding US covered entities.
+**Almost certainly not needed, and deliberately not mentioned in the product.**
+HIPAA is US law binding US covered entities.
 A Philippine clinic treating Philippine patients and billing PhilHealth or an
 HMO is not a covered entity, so no BAA between that clinic and TheraChart is
 required. Who *we* bill for the subscription has no bearing on this — HIPAA
@@ -45,8 +46,11 @@ Have a template ready for that conversation, but do not lead with it.
 
 > Note the separate, unrelated BAA that *does* exist: **ours with Google**,
 > signed and active on the account running production, covering Cloud Run,
-> Cloud SQL, Speech-to-Text and Vertex AI. That one is a live fact and the
-> landing page and Privacy panel both state it.
+> Cloud SQL, Speech-to-Text and Vertex AI. That one is a live fact and both the
+> landing page and the Privacy panel state it — but they now describe it as a
+> "data protection agreement" rather than by its HIPAA name, since HIPAA
+> terminology means nothing to a Philippine clinic and reads as a US-market
+> artifact. The contract is unchanged; only how we describe it is.
 
 ### What the app says today
 
@@ -56,9 +60,13 @@ Deliberately worded so nothing promises a document that does not exist yet:
   relationship and the cross-border transfer. Promises no paperwork.
 - **Privacy panel → "Where your data lives"** — states controller / processor /
   sub-processor. Promises no paperwork.
-- **Privacy panel → "What your clinic still has to do"** — says plainly that
-  HIPAA is US law and does not bind a Philippine clinic billing PhilHealth or an
-  HMO, and invites the conversation only from a clinic billed to a US plan.
+- **Privacy panel → "What your clinic still has to do"** — RA 10173 obligations
+  and a "confirm this with your own counsel" disclaimer. **HIPAA is not
+  mentioned anywhere in the product**, by decision: the market is Philippine
+  clinics, HIPAA does not bind them, and naming it invented a compliance
+  obstacle in front of clinics that do not have one. If a US-billing clinic ever
+  turns up, that is the moment to say the words — in conversation, not on the
+  page.
 
 If either document gets written, that copy is where to mention it — and the
 screenshots covering both surfaces need recapturing:

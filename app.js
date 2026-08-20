@@ -808,7 +808,7 @@
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
         <button class="btn ghost lp-cta-btn" data-open-walkthrough type="button">See how it works</button>
       </div>
-      <div class="lp-trust">🔒 Records live in an encrypted Google Cloud database under a signed <b>Business Associate Agreement</b>, with your clinic's charts walled off from every other clinic's by a check on the server. Dictation audio is transcribed and discarded by default, and Google's Vertex AI terms bar your patients' data from training its models.</div>
+      <div class="lp-trust">🔒 Records live in an <b>encrypted Google Cloud database</b> under a signed data protection agreement, with your clinic's charts walled off from every other clinic's by a check on the server. Dictation audio is transcribed and discarded by default, and Google's Vertex AI terms bar your patients' data from training its models.</div>
     </div>
     <div class="lp-hero-shot">
       <img src="marketing-screenshots/walkthrough/05-dictation-body-map.jpg" alt="TheraChart dictation and body map" loading="lazy" />
@@ -838,11 +838,11 @@
     <p class="lp-privacy-lead">The questions a Data Protection Officer asks, answered before they ask them.
       Nothing here is a promise about intentions — it is a description of how the software is built, and you can check every line of it from inside the app.</p>
     <div class="lp-privacy-grid">
-      ${privacyPoint("📜", "A signed BAA is already in place", `
-        TheraChart runs on Google Cloud under an executed <b>Business Associate Agreement</b>, covering every
-        HIPAA-eligible service your records touch — Cloud Run, Cloud SQL, Speech-to-Text and Vertex AI.
-        That contract is signed and active on our account. You do not have to negotiate it, and you do not
-        have to take our word for what it covers: Google publishes the list.`)}
+      ${privacyPoint("📜", "Google is under contract, not just terms of service", `
+        TheraChart runs on Google Cloud under a signed agreement covering every service your records
+        touch — Cloud Run, Cloud SQL, Speech-to-Text and Vertex AI. It binds Google on how your patients'
+        data may be handled and what it may never be used for, and it is already active on our account:
+        nothing for your clinic to negotiate, and nothing to arrange before your first patient.`)}
       ${privacyPoint("🧱", "One clinic cannot see another", `
         Every record carries the clinic it belongs to, and every read is filtered by the signed-in user's clinic
         <b>on the server</b> — not hidden in the screen, where a determined browser could go round it.
@@ -7337,7 +7337,7 @@ ${ths.map((t) => {
 
     const items = [
       { emoji: "🔐", title: "Where your data lives & your controls", body: `
-        <p>TheraChart runs on <b>Google Cloud, under a Business Associate Agreement we have signed and hold</b>, covering every HIPAA-eligible service your records touch — Cloud Run, Cloud SQL, Speech-to-Text and Vertex AI. You are not asked to negotiate that contract; it is already in place before your first patient is entered.</p>
+        <p>TheraChart runs on <b>Google Cloud under a data protection agreement we have signed and hold</b>, covering every service your records touch — Cloud Run, Cloud SQL, Speech-to-Text and Vertex AI. It binds Google as a processor: how your patients' data may be handled, and what it may never be used for. You are not asked to negotiate it, and it is in place before your first patient is entered.</p>
         <p>Your clinic's records are <b>not</b> in one pile with everyone else's. Every record carries the clinic it belongs to, and every read is filtered by the signed-in user's clinic <b>on the server</b> — not hidden in the screen, where a determined browser could go round it. No account can reach another clinic's charts, including ours.</p>
         <p>Records are kept in an <b>encrypted managed database</b> (Cloud SQL for PostgreSQL). Encrypted in transit and at rest, backed up by Google, and reachable only by this application — never over the open internet.</p>
         <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region. For a Philippine clinic that is a <b>cross-border transfer of sensitive personal information</b>, which RA 10173 permits but requires you to disclose and remain accountable for. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
@@ -7368,7 +7368,7 @@ ${ths.map((t) => {
           <li>Keep a record of processing activities, and notify the NPC and affected patients of a breach within the required period</li>
           <li>Retain records for the period required of a Philippine health facility</li>
         </ul>
-        <p style="margin-bottom:0"><b>HIPAA is United States law</b> and does not bind a Philippine clinic treating Philippine patients and billing PhilHealth or an HMO — RA 10173 is the law that governs you, and it is the one this page is written against. A clinic whose care is billed to a <i>US health plan</i> is in a different position; if that is you, raise it with us. <b>Have your own counsel or DPO confirm all of this</b>; the descriptions here are of what the software does, not legal advice.</p>` },
+        <p style="margin-bottom:0"><b>Have your own counsel or DPO confirm all of this.</b> Everything above describes what the software does and where your records sit; none of it is legal advice, and the obligations under RA 10173 remain your clinic's to discharge.</p>` },
     ];
     return `<div class="info-acc">${items.map((it) => `
       <details class="info-acc-item">
