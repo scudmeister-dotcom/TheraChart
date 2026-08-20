@@ -377,8 +377,8 @@
       ],
       sessionUserId: null,
       clinics: {
-        "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center" },
-        "clinic-fresh": { id: "clinic-fresh", name: "New Clinic" },
+        "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center", createdAt: t(-120, 9, 0), active: true },
+        "clinic-fresh": { id: "clinic-fresh", name: "New Clinic", createdAt: t(-1, 9, 0), active: true },
       },
     };
 
@@ -1041,6 +1041,14 @@
       audit(user.id, "login-denied", "access voided");
       return "Access for this account has been voided. Contact your administrator.";
     }
+    /* A suspended clinic is a paused subscription, not a security event: the
+       records are all still there, so the message says the account is on hold
+       rather than implying it was revoked. Checked before the password so a
+       suspended clinic never hands back a "wrong password" to chase. */
+    if (!clinicActive(recClinic(user))) {
+      audit(user.id, "login-denied", "clinic suspended");
+      return "This clinic's subscription is on hold. Your records are safe — contact TheraChart to reactivate.";
+    }
     if (!verifyCredential(user, secret)) {
       audit(user.id, "login-denied", "wrong password");
       return "Incorrect email or password.";
@@ -1066,6 +1074,10 @@
     if (!user.active) {
       audit(user.id, "login-denied", "access voided");
       return "Access for this account has been voided. Contact your administrator.";
+    }
+    if (!clinicActive(recClinic(user))) {
+      audit(user.id, "login-denied", "clinic suspended");
+      return "That demo clinic is on hold.";
     }
     state.sessionUserId = user.id;
     save();
@@ -1130,7 +1142,10 @@
 
     const clinicId = uid("clinic");
     state.clinics = state.clinics || {};
-    state.clinics[clinicId] = { id: clinicId, name: clinicNameIn };
+    /* `createdAt` is the day the clinic signed on and never moves again —
+       distinct from `_mod`, which any rename or settings save rewrites. The
+       plan card quotes it back to the clinic, so it has to be the real date. */
+    state.clinics[clinicId] = { id: clinicId, name: clinicNameIn, createdAt: new Date().toISOString(), active: true };
     touch(state.clinics[clinicId]);
 
     const user = {
@@ -1166,9 +1181,83 @@
       admins: state.users.filter((u) => recClinic(u) === c.id && u.role === "admin" && u.active !== false).length,
       patients: state.patients.filter((p) => recClinic(p) === c.id).length,
       documents: state.documents.filter((d) => recClinic(d) === c.id).length,
-      createdAt: c._mod || null,
+      createdAt: c.createdAt || c._mod || null,
+      active: c.active !== false,
     }));
     return rows.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** The signed-in user's own clinic record — name, the day it signed on, and
+      whether its subscription is live. Read by the plan card, which quotes the
+      sign-on date back to the clinic. */
+  function clinicMeta(id) {
+    load();
+    const c = clinicsMap()[id || currentClinicId()];
+    if (!c) return null;
+    return { id: c.id, name: c.name, createdAt: c.createdAt || c._mod || null, active: c.active !== false };
+  }
+
+  const clinicActive = (id) => {
+    const c = clinicsMap()[id || DEFAULT_CLINIC];
+    // an unknown clinic id is not a suspended one — legacy records have none
+    return !c || c.active !== false;
+  };
+
+  /* Put a clinic's subscription on hold, or take it off hold.
+
+     Nothing is deleted and nothing is exported: every patient, note and
+     appointment stays exactly where it is, and the whole clinic simply cannot
+     sign in until it is reactivated. This is the answer to "we're pausing for
+     a few months" — the alternative used to be deleteClinic(), which is not a
+     pause, and a clinic that came back would find nothing to come back to. */
+  function setClinicActive(clinicId, active, byUser) {
+    load();
+    const c = clinicsMap()[clinicId];
+    if (!c) return { error: "Clinic not found." };
+    if (byUser && recClinic(byUser) === clinicId) return { error: "You can't suspend the clinic you're signed in to." };
+    c.active = !!active;
+    touch(c);
+    save();
+    audit(byUser ? byUser.id : null, active ? "clinic-reactivated" : "clinic-suspended", c.name);
+    return { clinic: { id: c.id, name: c.name, active: c.active } };
+  }
+
+  /* Erase a clinic and everything filed under it — staff accounts, patients,
+     documents, appointments, activity log and access requests.
+
+     Irreversible, and deliberately so: it exists because a clinic that leaves
+     is entitled to have its patients' records actually removed, not merely
+     hidden. `expectName` must match the clinic's name exactly, which is the
+     only thing standing between a mis-click and a hundred charts. Suspending
+     is the reversible option and is what a pause should use. */
+  function deleteClinic(clinicId, byUser, expectName) {
+    load();
+    const c = clinicsMap()[clinicId];
+    if (!c) return { error: "Clinic not found." };
+    if (byUser && recClinic(byUser) === clinicId) return { error: "You can't delete the clinic you're signed in to." };
+    if (String(expectName || "").trim().toLowerCase() !== c.name.trim().toLowerCase()) {
+      return { error: "Type the clinic's name exactly to confirm." };
+    }
+    const removed = {
+      name: c.name,
+      users: state.users.filter((u) => recClinic(u) === clinicId).length,
+      patients: state.patients.filter((x) => recClinic(x) === clinicId).length,
+      documents: state.documents.filter((d) => recClinic(d) === clinicId).length,
+    };
+    const notMine = (rec) => recClinic(rec) !== clinicId;
+    state.users = state.users.filter(notMine);
+    state.patients = state.patients.filter(notMine);
+    state.documents = state.documents.filter(notMine);
+    state.appointments = (state.appointments || []).filter(notMine);
+    state.accessRequests = (state.accessRequests || []).filter((q) => q.clinicId !== clinicId);
+    // the deleted clinic's own log goes with it; the operator's record of the
+    // deletion is written below, into the operator's clinic
+    state.audit = (state.audit || []).filter(notMine);
+    delete state.clinics[clinicId];
+    save();
+    audit(byUser ? byUser.id : null, "clinic-deleted",
+      `${removed.name} — ${removed.users} account(s), ${removed.patients} patient(s), ${removed.documents} document(s)`);
+    return { ok: true, removed };
   }
 
   /* Settings are PER CLINIC. They live in `clinics[id].settings`; the
@@ -1236,7 +1325,7 @@
     if (!id) return null;
     state.clinics = state.clinics || {};
     if (!state.clinics[id]) {
-      state.clinics[id] = { id, name: String(name || "").trim() || "TheraChart Clinic" };
+      state.clinics[id] = { id, name: String(name || "").trim() || "TheraChart Clinic", createdAt: new Date().toISOString(), active: true };
       touch(state.clinics[id]);
       save();
     }
@@ -1393,11 +1482,46 @@
    *  Documents: create, sign/lock, amend
    * ---------------------------------------------------------------- */
 
+  /* Trashed drafts are hidden from every list a clinician reads, but they are
+     still in `state.documents` — that is what makes them recoverable, and what
+     keeps a deleted note's dictation minutes on the month's bill. Anything that
+     wants them asks for them by name: deletedDocsFor(). */
+  const isTrashed = (d) => !!(d && d.deletedAt);
+
   const docsFor = (patientId) =>
-    load().documents.filter((d) => d.patientId === patientId)
+    load().documents.filter((d) => d.patientId === patientId && !isTrashed(d))
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 
+  const deletedDocsFor = (patientId) =>
+    load().documents.filter((d) => d.patientId === patientId && isTrashed(d))
+      .sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : -1)); // most recently deleted first
+
   const getDoc = (id) => load().documents.find((d) => d.id === id) || null;
+
+  /* What a document has actually spent, whether or not it is still in the
+     chart. Dictation seconds are billed by Google the moment they are spoken
+     and an AI pass is billed the moment it runs, so deleting the note does not
+     unspend either — the delete dialog quotes these numbers back before the
+     therapist confirms, and monthUsage() keeps counting a trashed note that
+     has any of them. */
+  function docConsumption(doc) {
+    const data = (doc && doc.data) || {};
+    const seconds = Number(data._dictationSeconds) || 0;
+    const aiCalls = Number(data._aiCalls) || 0;
+    return { seconds, minutes: Math.round(seconds / 60), aiCalls, billed: seconds > 0 || aiCalls > 0 };
+  }
+
+  /** Count one AI pass against a document (cleanup, insights). Metered per
+      document so a deleted draft can still say what it cost. */
+  function recordDocAiCall(docId) {
+    const doc = getDoc(docId);
+    if (!doc) return { error: "Document not found." };
+    doc.data = doc.data || {};
+    doc.data._aiCalls = (Number(doc.data._aiCalls) || 0) + 1;
+    touch(doc);
+    save();
+    return { aiCalls: doc.data._aiCalls };
+  }
 
   const DOC_TITLES = {
     daily: "Daily Treatment Note",
@@ -1496,8 +1620,15 @@
     load();
     const start = monthStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const startMs = start.getTime();
+    /* A deleted draft still counts if it spent anything. Google billed the
+       dictation minutes when they were spoken and the Gemini call when it ran;
+       deleting the note afterwards does not refund either, so the meter keeps
+       it. A draft that spent nothing leaves no trace on the bill — there is no
+       cost to recover, and charging a visit for an abandoned empty form would
+       be inventing one. */
     const docs = load().documents.filter(mine)
-      .filter((d) => new Date(d.createdAt || 0).getTime() >= startMs);
+      .filter((d) => new Date(d.createdAt || 0).getTime() >= startMs)
+      .filter((d) => !isTrashed(d) || docConsumption(d).billed);
     const st = settings();
     const allowance = Math.max(1, Number(st.visitAllowance) || 130);
     const fairUsePerVisit = Math.max(1, Number(st.fairUseMinutesPerVisit) || 10);
@@ -1723,6 +1854,46 @@
     save();
     if (byUser) audit(byUser.id, "doc-discarded", `${doc.title} (empty draft) for ${patientName(getPatient(doc.patientId))}`);
     return { ok: true };
+  }
+
+  /* Move an unsigned draft to the trash. Signed notes are never deletable —
+     they are a clinical record, and the amendment trail exists precisely so
+     they don't have to be.
+
+     Soft, not hard: the draft keeps its row so it can be restored, and so the
+     dictation minutes and AI passes it already spent stay on the month's
+     usage. A note deleted after a 12-minute dictation still cost Google those
+     12 minutes; billing that is honest, and hiding it would not be. */
+  function trashDoc(docId, byUser) {
+    load();
+    const doc = getDoc(docId);
+    if (!doc) return { error: "Document not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t delete clinical documents." };
+    if (doc.status === "signed") return { error: "Signed documents can't be deleted. Add an amendment instead." };
+    if (isTrashed(doc)) return { doc };
+    const spent = docConsumption(doc);
+    doc.deletedAt = new Date().toISOString();
+    doc.deletedBy = byUser ? byUser.id : null;
+    touch(doc);
+    save();
+    audit(byUser ? byUser.id : null, "doc-deleted",
+      `${doc.title} for ${patientName(getPatient(doc.patientId))}${spent.billed ? ` — ${spent.minutes} dictated min, ${spent.aiCalls} AI pass(es), still billed` : ""}`);
+    return { doc };
+  }
+
+  /** Put a trashed draft back in the chart exactly as it was. */
+  function restoreDoc(docId, byUser) {
+    load();
+    const doc = getDoc(docId);
+    if (!doc) return { error: "Document not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t edit clinical documents." };
+    if (!isTrashed(doc)) return { doc };
+    delete doc.deletedAt;
+    delete doc.deletedBy;
+    touch(doc);
+    save();
+    audit(byUser ? byUser.id : null, "doc-restored", `${doc.title} for ${patientName(getPatient(doc.patientId))}`);
+    return { doc };
   }
 
   /** Lock + e-sign. typedName must match the signing user's name. */
@@ -2115,8 +2286,9 @@
     audit, auditLog: () => load().audit.filter(mine),
     // clinics (tenancy)
     clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,
+    clinicMeta, clinicActive,
     // operator-only (server gates these to the platform owner)
-    createClinic, clinicSummaries,
+    createClinic, clinicSummaries, setClinicActive, deleteClinic,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, stripDemoCredentials, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
@@ -2131,7 +2303,9 @@
     // plan-of-care goals, outcome-measure history, insurance authorisation
     goalsFor, addGoal, updateGoal, deleteGoal, outcomeSeries, authStatus,
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
-    documents: () => load().documents.filter(mine), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
+    documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
+    // trashed drafts: recoverable, hidden from the chart, still on the bill
+    deletedDocsFor, deletedDocs: () => load().documents.filter((d) => mine(d) && isTrashed(d)), trashDoc, restoreDoc, docConsumption, recordDocAiCall,
     visitCount, progressDue,
     // plan allowance vs. what has actually been consumed this month
     monthUsage,

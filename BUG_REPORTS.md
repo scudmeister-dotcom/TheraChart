@@ -17,7 +17,9 @@ Written by the tester:
 - **What they expected instead**
 - **What they were doing just before**
 - **How much it gets in their way** — blocks me / annoying / looks wrong / idea
-- **An optional picture** — captured from the screen, or attached from a file
+- **Up to four optional pictures** — captured from the screen, attached from a
+  file, or pasted straight in (Win + Shift + S / ⌘ + Shift + 4 leave the crop on
+  the clipboard, and Ctrl/⌘ + V drops it into the form)
 
 Collected automatically, so the tester doesn't have to describe it:
 
@@ -45,7 +47,7 @@ option uses your own Google account, costs nothing, and needs no API key:
 2. Replace everything in the editor with this:
 
 ```javascript
-// Emails each TheraChart bug report to you, with the screenshot attached.
+// Emails each TheraChart bug report to you, with its pictures attached.
 const TO = "amador.moriles@gmail.com";
 
 function doPost(e) {
@@ -69,14 +71,15 @@ function doPost(e) {
   ].filter(String).join("\n");
 
   const opts = { name: "TheraChart testing" };
-  if (r.screenshot) {
-    const m = /^data:(image\/\w+);base64,(.*)$/.exec(r.screenshot);
-    if (m) {
-      opts.attachments = [
-        Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], r.id + ".jpg"),
-      ];
-    }
-  }
+  // `screenshots` is the list; `screenshot` is the first one, kept so an older
+  // forwarder written against a single picture still works.
+  const shots = r.screenshots || (r.screenshot ? [r.screenshot] : []);
+  const files = [];
+  shots.forEach(function (shot, i) {
+    const m = /^data:(image\/\w+);base64,(.*)$/.exec(shot);
+    if (m) files.push(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], r.id + "-" + (i + 1) + ".jpg"));
+  });
+  if (files.length) opts.attachments = files;
 
   MailApp.sendEmail(TO, "[TheraChart " + r.severity + "] " + r.summary.slice(0, 70), body, opts);
   return ContentService.createTextOutput("ok");

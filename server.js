@@ -1450,16 +1450,34 @@ const server = http.createServer(async (req, res) => {
         };
         if (!report.summary) return json(res, 400, { error: "Tell us what happened, in a sentence or two." });
 
-        // A screenshot is a data: URL; cap it so one report can't fill the row.
-        const shot = String(body.screenshot || "");
-        const shotOk = /^data:image\/(png|jpeg|webp);base64,/.test(shot) && shot.length <= 4 * 1024 * 1024;
-        if (shot && !shotOk) return json(res, 400, { error: "That screenshot is too large or not an image. Keep it under 4 MB." });
+        /* Pictures are data: URLs. One bug is often several screens — the
+           thing before, the thing after, the error — so the form takes a
+           handful rather than one, and each is capped so a report can't fill
+           the row. `screenshot` (singular) is still accepted: an older client
+           in a browser cache is still a client. */
+        const MAX_SHOTS = 4;
+        const MAX_SHOT_BYTES = 4 * 1024 * 1024;
+        const incoming = Array.isArray(body.screenshots) ? body.screenshots
+          : body.screenshot ? [body.screenshot] : [];
+        if (incoming.length > MAX_SHOTS) return json(res, 400, { error: `Please attach at most ${MAX_SHOTS} pictures.` });
+        const shots = [];
+        for (const raw of incoming) {
+          const shot = String(raw || "");
+          if (!shot) continue;
+          if (!/^data:image\/(png|jpeg|webp);base64,/.test(shot) || shot.length > MAX_SHOT_BYTES) {
+            return json(res, 400, { error: "One of those pictures is too large or isn't an image. Keep each under 4 MB." });
+          }
+          shots.push(shot);
+        }
 
         let stored = false;
+        // the singular field stays on the record so the mail forwarder and the
+        // existing report list keep working unchanged
+        const withShots = { ...report, screenshot: shots[0] || null, screenshots: shots };
         try {
           const prior = JSON.parse(db.get("bugReports") || "[]");
           // newest first, capped — the webhook is the real inbox
-          prior.unshift({ ...report, screenshot: shotOk ? shot : null });
+          prior.unshift(withShots);
           db.set("bugReports", JSON.stringify(prior.slice(0, 200)));
           await db.flushNow();
           stored = true;
@@ -1471,7 +1489,7 @@ const server = http.createServer(async (req, res) => {
             const r = await fetch(process.env.BUG_REPORT_WEBHOOK, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ ...report, screenshot: shotOk ? shot : null }),
+              body: JSON.stringify(withShots),
               signal: AbortSignal.timeout(20000),
             });
             delivered = r.ok;
@@ -1593,7 +1611,8 @@ const server = http.createServer(async (req, res) => {
         let list = [];
         try { list = JSON.parse(db.get("bugReports") || "[]"); } catch { /* none yet */ }
         // strip screenshots from the list view; they are large and rarely needed in bulk
-        return json(res, 200, { reports: list.map(({ screenshot, ...r }) => ({ ...r, hasScreenshot: !!screenshot })) });
+        return json(res, 200, { reports: list.map(({ screenshot, screenshots, ...r }) =>
+          ({ ...r, hasScreenshot: !!screenshot, screenshotCount: (screenshots || (screenshot ? [screenshot] : [])).length })) });
       }
 
       /* Creating an account is the operator's, not a clinic admin's.
@@ -1903,6 +1922,43 @@ const server = http.createServer(async (req, res) => {
             admin: { id: r.user.id, name: r.user.name, email: r.user.email },
             temporaryPassword: String(password),
           });
+        }
+        /* Suspend / reactivate. A paused subscription, not a security action:
+           nothing is removed, and the clinic signs back in the moment it is
+           switched on again. */
+        if (req.method === "PATCH") {
+          const { clinicId, active } = await readBody(req);
+          const r = store.setClinicActive(String(clinicId || ""), !!active, user);
+          if (r.error) return json(res, 400, { error: r.error });
+          /* Everyone from that clinic loses their session immediately —
+             otherwise a suspension only takes effect the next time someone
+             happens to sign out, which is not a suspension. Reactivating does
+             not restore sessions; they sign in again. */
+          if (!active) {
+            let dropped = false;
+            for (const [tok, sess] of sessions) {
+              const u = store.getUser(sess && sess.userId);
+              if (u && (u.clinicId || "clinic-demo") === clinicId) { sessions.delete(tok); dropped = true; }
+            }
+            if (dropped) saveSessions();
+          }
+          bumpRev();
+          return json(res, 200, r);
+        }
+        /* Erase. `confirmName` must match the clinic's name — the store checks
+           it too, so a caller that skips the dialog still cannot delete by id
+           alone. */
+        if (req.method === "DELETE") {
+          const { clinicId, confirmName } = await readBody(req);
+          const r = store.deleteClinic(String(clinicId || ""), user, confirmName);
+          if (r.error) return json(res, 400, { error: r.error });
+          let dropped = false;
+          for (const [tok, sess] of sessions) {
+            if (!store.getUser(sess && sess.userId)) { sessions.delete(tok); dropped = true; }
+          }
+          if (dropped) saveSessions();
+          bumpRev();
+          return json(res, 200, r);
         }
         return json(res, 405, { error: "Method not allowed." });
       }

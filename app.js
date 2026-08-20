@@ -306,6 +306,25 @@
   const knowsAnAccount = () => { try { return localStorage.getItem(LS_KNOWN) === "1"; } catch { return false; } };
   const rememberAccount = () => { try { localStorage.setItem(LS_KNOWN, "1"); } catch { } };
 
+  /* Who was signed in when they stepped into the demo — the EMAIL only, never
+     the token. Entering the demo retires the real session server-side on
+     purpose (see /api/demo-signin), so leaving cannot silently restore it; what
+     this buys is a sign-in screen that already knows who is coming back,
+     instead of a blank form and a "wait, which account was I on?". */
+  const LS_DEMO_RETURN = "therachart-demo-return";
+  const demoReturnEmail = () => { try { return localStorage.getItem(LS_DEMO_RETURN) || ""; } catch { return ""; } };
+  const rememberDemoReturn = (email) => { try { if (email) localStorage.setItem(LS_DEMO_RETURN, email); } catch { } };
+  const clearDemoReturn = () => { try { localStorage.removeItem(LS_DEMO_RETURN); } catch { } };
+
+  /* Is this session a seeded demo account? Matched on the seeded ids, never on
+     the email domain — a therapist added through Calendar gets an
+     @therachart.demo address and is real staff. */
+  const isDemoSession = (user) => !!(user && new Set(S.SEEDED_DEMO_USER_IDS || []).has(user.id));
+
+  // prefilled into the sign-in form on the next render (leaving the demo)
+  let pendingLoginEmail = "";
+  let pendingLoginNote = "";
+
   /* A hash that names an actual app screen — a bookmark or a shared link that
      genuinely wants the app, so it still opens the sign-in form for a stranger.
      Deliberately a list of routes rather than "any hash": a leftover #pricing
@@ -368,7 +387,7 @@
       const goingToDoc = location.hash.startsWith("#/doc/") ? location.hash.split("/")[2] : null;
       if (goingToDoc !== pristineDraft.id) {
         const d = S.getDoc(pristineDraft.id);
-        if (d && d.status === "draft" && JSON.stringify(d.data) === pristineDraft.snapshot) S.deleteDoc(pristineDraft.id, user);
+        if (d && d.status === "draft" && !d.deletedAt && JSON.stringify(d.data) === pristineDraft.snapshot) S.deleteDoc(pristineDraft.id, user);
         pristineDraft = null;
       }
     }
@@ -561,7 +580,7 @@
       ${acctMenuHtml}
     </div>
   </aside>
-  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view">${crumbBar}<div id="viewBody">${content}</div></main>
+  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view">${demoBannerMarkup(user)}${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
   ${drawerPid ? `
   <div class="assistant-backdrop" id="asstBackdrop"></div>
@@ -577,6 +596,8 @@
     document.getElementById("logoutBtn").addEventListener("click", async () => { await signOutFully(); render(); });
     bindBugReporter(user);
     bindDemoSwitch();
+    const demoExit = document.getElementById("demoExit");
+    if (demoExit) demoExit.addEventListener("click", () => { demoExit.disabled = true; exitDemo(); });
 
     // account menu (Privacy / Admin / Profile / Sign out), opened from the avatar
     const acctBtn = document.getElementById("acctBtn");
@@ -907,6 +928,51 @@ ${walkthroughMarkup()}`;
       <span class="nav-ico">${ICON.flask}</span><span class="nav-label">Demo clinic</span></button>`;
   }
 
+  /* A standing marker on every screen of a demo session.
+
+     The demo is a byte-for-byte copy of the real app pointed at seeded charts,
+     which is exactly what makes it useful and exactly what makes it dangerous:
+     without a permanent banner it is genuinely possible to write a note into
+     the demo believing it is your own clinic. It sits above the breadcrumb, in
+     the flow rather than floating, so it never covers the screen it describes. */
+  function demoBannerMarkup(user) {
+    if (!isDemoSession(user)) return "";
+    const back = demoReturnEmail();
+    return `
+<div class="demo-banner" role="status">
+  <span class="demo-badge">Demo</span>
+  <span class="demo-banner-text">You're in the demo clinic — every patient here is made up. Nothing you do is saved to a real chart.</span>
+  <button class="btn small" id="demoExit" type="button">${back ? `Leave the demo` : `Leave the demo`}</button>
+</div>`;
+  }
+
+  /* Leaving hands back the sign-in screen, not the previous session: stepping
+     into the demo deliberately retires the real token server-side, so there is
+     nothing left on this device to return to. The email is remembered so the
+     way back is one password rather than a blank form. */
+  async function exitDemo() {
+    const back = demoReturnEmail();
+    clearDemoReturn();
+    await signOutFully();
+    showLogin = true;
+    pendingLoginEmail = back;
+    pendingLoginNote = back
+      ? `You've left the demo. Sign back in as ${back} to return to your own clinic.`
+      : "You've left the demo clinic.";
+    /* Exactly one repaint. Changing the hash renders on its own, and calling
+       render() as well painted the sign-in card twice — the second pass ran
+       after the one-shot note had already been consumed, so the "you've left
+       the demo" line and the remembered email flashed and vanished. */
+    if (location.hash && location.hash !== "#/") location.hash = "#/";
+    else render();
+  }
+
+  /* Kept in step with the server's own cap in /api/bug-report. */
+  const BUG_MAX_SHOTS = 4;
+  // one document-level paste listener, replaced rather than stacked: the modal
+  // markup is re-inserted on every shell render
+  let bugPasteHandler = null;
+
   function bugModalMarkup() {
     return `
 <div class="modal-backdrop bug-backdrop" id="bugBackdrop" role="dialog" aria-modal="true" aria-label="Report a bug" hidden>
@@ -925,13 +991,17 @@ ${walkthroughMarkup()}`;
       <div class="bug-sevs" id="bugSevs">${BUG_SEVERITIES.map((sv, i) =>
         `<button class="bug-sev ${i === 1 ? "on" : ""}" data-sev="${sv.id}" type="button"><b>${sv.label}</b><small>${sv.hint}</small></button>`).join("")}</div></div>
 
-    <div class="field"><label>Picture of the problem (optional)</label>
+    <div class="field"><label>Pictures of the problem (optional)</label>
       <div class="bug-shot-actions">
         <button class="btn small" id="bugCapture" type="button">Capture this screen</button>
-        <label class="btn small" for="bugFile" style="cursor:pointer">Attach an image</label>
-        <input type="file" id="bugFile" accept="image/*" hidden />
-        <button class="btn small" id="bugShotClear" type="button" hidden>Remove</button>
+        <label class="btn small" for="bugFile" style="cursor:pointer">Attach images</label>
+        <input type="file" id="bugFile" accept="image/*" multiple hidden />
+        <button class="btn small" id="bugShotClear" type="button" hidden>Remove all</button>
+        <span class="bug-shot-count" id="bugShotCount"></span>
       </div>
+      <div class="hint">Up to ${BUG_MAX_SHOTS} — the screen before and after is often what makes a bug obvious.
+        You can also snip part of the screen the way you already do (<b>Windows: Win + Shift + S</b>, <b>Mac: ⌘ + Shift + 4</b>)
+        and paste it straight in here with <b>Ctrl/⌘ + V</b>.</div>
       <div class="bug-shot-warn">⚠ A picture of an open chart will include patient details. Only attach one when you're on demo data, or blank out anything real first.</div>
       <div class="bug-shot-preview" id="bugShotPreview" hidden></div>
     </div>
@@ -1027,6 +1097,9 @@ ${walkthroughMarkup()}`;
     m.querySelectorAll("[data-demo-pick]").forEach((b) =>
       b.addEventListener("click", async () => {
         m.querySelectorAll("[data-demo-pick]").forEach((x) => { x.disabled = true; });
+        // captured before the swap: after it, the signed-in user IS the demo one
+        const leaving = S.currentUser();
+        if (leaving && !isDemoSession(leaving)) rememberDemoReturn(leaving.email || "");
         const fail = await Promise.resolve(S.loginAsDemo(b.dataset.demoPick));
         if (fail) {
           m.querySelectorAll("[data-demo-pick]").forEach((x) => { x.disabled = false; });
@@ -1044,7 +1117,7 @@ ${walkthroughMarkup()}`;
     if (!triggers.length || !back) return;
     const $ = (id) => document.getElementById(id);
     let severity = "annoying";
-    let screenshot = null;
+    let screenshots = [];
 
     const context = () => ({
       route: location.hash || "#/",
@@ -1059,17 +1132,42 @@ ${walkthroughMarkup()}`;
         <span>Screen: <span class="mono">${esc(c.route)}</span> · ${esc(c.screen)} · signed in as ${esc(user.name)} (${esc(roleLabel(user))})${c.online ? "" : " · offline"}</span>`;
     };
 
-    const setShot = (dataUrl) => {
-      screenshot = dataUrl;
+    const drawShots = () => {
       const prev = $("bugShotPreview");
-      prev.hidden = !dataUrl;
-      prev.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="Attached screenshot" />` : "";
-      $("bugShotClear").hidden = !dataUrl;
+      prev.hidden = !screenshots.length;
+      prev.innerHTML = screenshots.map((src, i) => `
+        <figure class="bug-shot">
+          <img src="${src}" alt="Attached picture ${i + 1}" />
+          <button class="bug-shot-drop" type="button" data-drop="${i}" title="Remove this picture" aria-label="Remove picture ${i + 1}">✕</button>
+        </figure>`).join("");
+      prev.querySelectorAll("[data-drop]").forEach((b) => b.addEventListener("click", () => {
+        screenshots.splice(Number(b.dataset.drop), 1);
+        drawShots();
+      }));
+      $("bugShotClear").hidden = !screenshots.length;
+      $("bugShotCount").textContent = screenshots.length
+        ? `${screenshots.length} of ${BUG_MAX_SHOTS} attached`
+        : "";
+    };
+
+    /* Refuses silently-dropping the extras: someone who pastes a fifth picture
+       has to be told the fifth is not going, or they will assume it did. */
+    const addShot = async (srcUrl) => {
+      if (!srcUrl) return;
+      if (screenshots.length >= BUG_MAX_SHOTS) {
+        $("bugErr").textContent = `That's the most we can send at once — remove one to add another (${BUG_MAX_SHOTS} max).`;
+        return;
+      }
+      const small = await shrink(srcUrl);
+      if (!small) { $("bugErr").textContent = "That file didn't look like an image."; return; }
+      screenshots.push(small);
+      $("bugErr").textContent = "";
+      drawShots();
     };
 
     const open = () => {
       $("bugSummary").value = ""; $("bugExpected").value = ""; $("bugSteps").value = "";
-      $("bugErr").textContent = ""; setShot(null); severity = "annoying";
+      $("bugErr").textContent = ""; screenshots = []; drawShots(); severity = "annoying";
       back.querySelectorAll("[data-sev]").forEach((b) => b.classList.toggle("on", b.dataset.sev === severity));
       showCtx();
       back.hidden = false;
@@ -1123,8 +1221,7 @@ ${walkthroughMarkup()}`;
         c.width = video.videoWidth; c.height = video.videoHeight;
         c.getContext("2d").drawImage(video, 0, 0);
         track.stop(); stream.getTracks().forEach((t) => t.stop());
-        setShot(await shrink(c.toDataURL("image/png")));
-        $("bugErr").textContent = "";
+        await addShot(c.toDataURL("image/png"));
       } catch (e) {
         // the user cancelling the picker is not an error worth shouting about
         if (e && e.name !== "NotAllowedError") $("bugErr").textContent = "Couldn't capture the screen — try “Attach an image”.";
@@ -1133,14 +1230,37 @@ ${walkthroughMarkup()}`;
       }
     });
 
-    $("bugFile").addEventListener("change", async (e) => {
-      const f = e.target.files && e.target.files[0];
-      if (!f) return;
+    const readFile = (f) => new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = async () => setShot(await shrink(String(reader.result)));
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => resolve(null);
       reader.readAsDataURL(f);
     });
-    $("bugShotClear").addEventListener("click", () => { setShot(null); $("bugFile").value = ""; });
+
+    $("bugFile").addEventListener("change", async (e) => {
+      for (const f of Array.from(e.target.files || [])) await addShot(await readFile(f));
+      e.target.value = ""; // so re-picking the same file still fires a change
+    });
+    $("bugShotClear").addEventListener("click", () => { screenshots = []; drawShots(); $("bugFile").value = ""; });
+
+    /* Paste. This is how the OS snipping tools actually hand a picture over —
+       Win+Shift+S and ⌘+Shift+4 both leave the crop on the clipboard — so
+       supporting Ctrl/⌘+V is what makes "drag a box round the problem" work,
+       without this app needing to be able to launch anything.
+
+       On `document` because the paste lands wherever focus is, and replaced
+       rather than added: the modal markup is re-inserted on every shell
+       render, and stacking listeners would attach the same picture N times. */
+    if (bugPasteHandler) document.removeEventListener("paste", bugPasteHandler);
+    bugPasteHandler = async (e) => {
+      if (back.hidden) return;
+      const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+      const files = items.filter((i) => i.kind === "file" && /^image\//.test(i.type)).map((i) => i.getAsFile()).filter(Boolean);
+      if (!files.length) return;
+      e.preventDefault();
+      for (const f of files) await addShot(await readFile(f));
+    };
+    document.addEventListener("paste", bugPasteHandler);
 
     $("bugSend").addEventListener("click", async () => {
       const summary = $("bugSummary").value.trim();
@@ -1151,7 +1271,7 @@ ${walkthroughMarkup()}`;
         const sync = window.TheraSync || {};
         const fail = await (sync.sendBugReport ? sync.sendBugReport({
           summary, expected: $("bugExpected").value.trim(), steps: $("bugSteps").value.trim(),
-          severity, screenshot, context: context(),
+          severity, screenshots, context: context(),
         }) : Promise.resolve("Bug reporting needs the clinic server — you appear to be offline."));
         if (fail) { $("bugErr").textContent = fail; return; }
         close();
@@ -1399,9 +1519,10 @@ ${walkthroughMarkup()}`;
         <h2>Sign in</h2>
         <button class="btn small ghost" id="backToLanding" type="button">← Back</button>
       </div>
+      ${pendingLoginNote ? `<div class="banner" style="margin-top:4px">${esc(pendingLoginNote)}</div>` : ""}
       <div class="field" style="margin-top:4px">
         <label for="emailInput">Email</label>
-        <input id="emailInput" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@clinic.com" />
+        <input id="emailInput" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@clinic.com" value="${esc(pendingLoginEmail)}" />
       </div>
       <div class="field">
         <label for="pinInput">Password</label>
@@ -1453,8 +1574,12 @@ ${walkthroughMarkup()}`;
     </div>
   </div>
 </div>`;
+    // one-shot: the "you've left the demo" note belongs to this render only
+    pendingLoginNote = "";
+    pendingLoginEmail = "";
     const emailEl = document.getElementById("emailInput");
     const pinEl = document.getElementById("pinInput");
+    if (emailEl.value) pinEl.focus();
     const doLogin = async () => {
       const err = document.getElementById("loginErr");
       const email = emailEl.value.trim();
@@ -2644,12 +2769,16 @@ ${tabStrip}
           </div>
           <div class="newdoc-picker" id="newdocPicker" hidden></div>
         </div>` : `<div class="banner warn" style="margin-bottom:12px">Your account can view this chart but cannot create or edit clinical documents.</div>`}
-        ${docFilterBar()}
+        ${docFilterBar(p)}
         <div class="table-scroll" id="docListWrap">${docListHtml(p)}</div>
       </div>`;
   }
 
-  function docFilterBar() {
+  function docFilterBar(p) {
+    /* Deleted drafts are a status, not a separate screen. A therapist looking
+       for a note they binned looks in the same list they binned it from, so
+       the trash is one more chip beside Draft and Signed. */
+    const trashed = p ? S.deletedDocsFor(p.id).length : 0;
     // per-type / per-status classes let each chip carry its own accent colour
     // so the groups read as colour-coded sets instead of one blob of pills.
     const typeChip = (val, label) => `<button class="fchip ft-type ft-${val} ${docFilter.type === val ? "on" : ""}" data-ftype="${val}">${val === "all" ? "" : '<i class="fdot"></i>'}${label}</button>`;
@@ -2659,7 +2788,7 @@ ${tabStrip}
         <div class="fgroup"><span class="fglabel">Type</span>
           <div class="fchips">${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div></div>
         <div class="fgroup"><span class="fglabel">Status</span>
-          <div class="fchips">${statChip("all", "All")}${statChip("draft", "Draft")}${statChip("signed", "Signed")}</div></div>
+          <div class="fchips">${statChip("all", "All")}${statChip("draft", "Draft")}${statChip("signed", "Signed")}${statChip("deleted", `Deleted${trashed ? ` (${trashed})` : ""}`)}</div></div>
         <div class="fgroup fgroup-date"><span class="fglabel">Date</span>
           <input type="date" class="fdate" id="fFrom" value="${docFilter.from}" aria-label="From date" />
           <span class="fgsep">–</span>
@@ -2669,6 +2798,13 @@ ${tabStrip}
   }
 
   function filteredDocs(p) {
+    if (docFilter.status === "deleted") {
+      let gone = S.deletedDocsFor(p.id); // already most-recently-deleted first
+      if (docFilter.type !== "all") gone = gone.filter((d) => d.type === docFilter.type);
+      if (docFilter.from) gone = gone.filter((d) => d.createdAt.slice(0, 10) >= docFilter.from);
+      if (docFilter.to) gone = gone.filter((d) => d.createdAt.slice(0, 10) <= docFilter.to);
+      return gone;
+    }
     let docs = S.docsFor(p.id).slice().reverse(); // newest first
     if (docFilter.type !== "all") docs = docs.filter((d) => d.type === docFilter.type);
     if (docFilter.status !== "all") docs = docs.filter((d) => d.status === docFilter.status);
@@ -2679,6 +2815,20 @@ ${tabStrip}
 
   function docListHtml(p) {
     const docs = filteredDocs(p);
+    if (docFilter.status === "deleted") {
+      if (!docs.length) return `<div class="empty-state">Nothing deleted. Drafts you delete land here and can be put back.</div>`;
+      return `<table class="list"><thead><tr><th>Document</th><th>Deleted</th><th>Started</th><th></th></tr></thead>
+        <tbody>${docs.map((d) => {
+          const spent = S.docConsumption(d);
+          return `<tr>
+            <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b>
+              ${spent.billed ? `<div class="hint">${spent.minutes} dictated min · ${spent.aiCalls} AI pass${spent.aiCalls === 1 ? "" : "es"} — still on this month's usage</div>` : `<div class="hint">Nothing was spent on this one.</div>`}</td>
+            <td>${fmtDT(d.deletedAt)}<div class="hint">by ${esc((S.getUser(d.deletedBy) || {}).name || "—")}</div></td>
+            <td class="num">${fmtDate(d.createdAt)}</td>
+            <td><button class="btn small" data-restore-doc="${d.id}">Put back</button></td>
+          </tr>`;
+        }).join("")}</tbody></table>`;
+    }
     const anyDocs = S.docsFor(p.id).length;
     if (!docs.length) {
       return `<div class="empty-state">${anyDocs ? "No documents match these filters." : `No documents yet.${S.canDocument(S.currentUser()) ? " Start with an <b>Evaluation</b> above." : ""}`}</div>`;
@@ -2983,7 +3133,24 @@ ${tabStrip}
   }
 
   function bindDocFilters(p, user) {
-    const refresh = () => { const w = document.getElementById("docListWrap"); if (w) { w.innerHTML = docListHtml(p); bindRowLinks(); } };
+    /* Also run once against the markup the view arrived with: the Deleted
+       filter survives a tab switch, so the list can already be on screen
+       before any filter chip is pressed. */
+    const wireRestore = () => {
+      document.querySelectorAll("[data-restore-doc]").forEach((b) => b.addEventListener("click", () => {
+        const r = S.restoreDoc(b.dataset.restoreDoc, user);
+        if (r && r.error) { alertBanner(r.error); return; }
+        renderShell(location.hash, patientView(user), user, bindPatient);
+      }));
+    };
+    wireRestore();
+    const refresh = () => {
+      const w = document.getElementById("docListWrap");
+      if (!w) return;
+      w.innerHTML = docListHtml(p);
+      bindRowLinks();
+      wireRestore();
+    };
     document.querySelectorAll("[data-ftype]").forEach((b) =>
       b.addEventListener("click", () => {
         docFilter.type = b.dataset.ftype;
@@ -3428,6 +3595,27 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     const doc = S.getDoc(docId);
     const view = document.getElementById("viewBody");
     if (!doc) { view.innerHTML = `<div class="card"><div class="empty-state">Document not found.</div></div>`; return; }
+    /* A deleted draft opened by a stale link or a back button: show it as
+       deleted rather than as an editable note, so nobody spends ten minutes
+       writing into something that isn't in the chart. */
+    if (doc.deletedAt) {
+      view.innerHTML = `
+        <div class="card">
+          <h2>${esc(doc.title)}</h2>
+          <div class="banner warn">This draft was deleted ${fmtDT(doc.deletedAt)} by ${esc((S.getUser(doc.deletedBy) || {}).name || "—")}. It isn't part of the chart until you put it back.</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+            ${S.canDocument(user) ? `<button class="btn primary" id="undeleteDocBtn">Put it back</button>` : ""}
+            <a class="btn" href="#/patient/${doc.patientId}">Back to the chart</a>
+          </div>
+        </div>`;
+      const un = document.getElementById("undeleteDocBtn");
+      if (un) un.addEventListener("click", () => {
+        const r = S.restoreDoc(doc.id, user);
+        if (r && r.error) return alertBanner(r.error);
+        render();
+      });
+      return;
+    }
     const meta = docMeta(doc.type);
     const p = S.getPatient(doc.patientId);
     const locked = doc.status === "signed";
@@ -3446,44 +3634,114 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
     };
 
+    /* The note column is a stack of workflow groups rather than one long form.
+       A note is always written in the same order — what you were told, what you
+       found, what you make of it, what happens next, what it bills — and every
+       document type follows that spine under the same headings, so the sequence
+       is learned once and recognised in all four. Each group carries its own
+       fill count and collapses, so a therapist can shut the parts they are not
+       in yet instead of scrolling past them. */
+    let step = 0;
+    const group = (title, hint, items, body) => {
+      step += 1;
+      const key = `${doc.type}:${items.join(",") || title}`;
+      const done = items.filter((it) => docItemDone(doc, it)).length;
+      return `
+      <details class="card doc-group" data-group="${esc(key)}" data-items="${esc(items.join(","))}" ${groupCollapsed(key) ? "" : "open"}>
+        <summary class="doc-group-head">
+          <span class="doc-group-step">${step}</span>
+          <span class="doc-group-title">${title}<small>${hint}</small></span>
+          ${items.length ? `<span class="chip ${groupTone(done, items.length)} doc-group-count">${done}/${items.length}</span>` : ""}
+          <span class="doc-group-chev">›</span>
+        </summary>
+        <div class="doc-group-body">${body}</div>
+      </details>`;
+    };
+
     let sections = "";
     if (doc.type === "eval") {
-      sections = ta("reason", "Reason for referral", "Why was the patient referred?") +
-        ta("precautions", "Precautions", "Contraindications, restrictions…") +
-        ta("pmh", "Past medical history", "Relevant conditions, surgeries…") +
-        ta("subjective", "Subjective", "What the patient reports — dictation files here automatically") +
-        ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
-        measurementEditor(doc, editable) +
-        outcomeEditor(doc, editable) +
-        ta("assessment", "Assessment", "Clinical impression") +
-        ta("plan", "Plan", "Frequency, duration, interventions") +
-        goalsEditor(doc, editable) +
-        billingEditor(doc, editable);
+      sections =
+        group("Referral &amp; history", "Why they were sent, and what to work around",
+          ["reason", "precautions", "pmh"],
+          ta("reason", "Reason for referral", "Why was the patient referred?") +
+          ta("precautions", "Precautions", "Contraindications, restrictions…") +
+          ta("pmh", "Past medical history", "Relevant conditions, surgeries…")) +
+        group("Subjective", "What the patient reports",
+          ["subjective"],
+          ta("subjective", "Subjective", "What the patient reports — dictation files here automatically")) +
+        group("Objective", "What you observed and measured",
+          ["objectiveText", "@measurements", "@outcomes"],
+          ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
+          measurementEditor(doc, editable) +
+          outcomeEditor(doc, editable)) +
+        group("Assessment", "Your clinical impression",
+          ["assessment"],
+          ta("assessment", "Assessment", "Clinical impression")) +
+        group("Plan &amp; goals", "Where care goes from here",
+          ["plan", "@goals"],
+          ta("plan", "Plan", "Frequency, duration, interventions") +
+          goalsEditor(doc, editable)) +
+        group("Billing", "Codes, minutes and units",
+          ["@charges"],
+          billingEditor(doc, editable));
     } else if (doc.type === "daily") {
-      sections = ta("subjective", "Subjective", "Patient-reported status today") +
-        ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
-        measurementEditor(doc, editable) +
-        ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2) +
-        ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2) +
-        billingEditor(doc, editable);
+      sections =
+        group("Subjective", "How the patient reports they are today",
+          ["subjective"],
+          ta("subjective", "Subjective", "Patient-reported status today")) +
+        group("Objective", "What you did, and what you measured",
+          ["summary", "@measurements"],
+          ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
+          measurementEditor(doc, editable)) +
+        group("Assessment", "How they responded to treatment",
+          ["assessment"],
+          ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2)) +
+        group("Plan", "Next visit and home programme",
+          ["plan"],
+          ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2)) +
+        group("Billing", "Codes, minutes and units",
+          ["@charges"],
+          billingEditor(doc, editable));
     } else if (doc.type === "progress") {
-      sections = `<div class="field"><label>Baseline subjective — carried over from the evaluation</label>
-          <textarea rows="2" disabled>${esc(doc.data.baselineSubjective || "(no signed evaluation found)")}</textarea></div>` +
-        ta("currentStatus", "Current status", "How the patient presents now") +
-        ta("updatedFindings", "Updated findings", "New objective findings — measured values go to the tables below") +
-        measurementEditor(doc, editable) +
-        outcomeEditor(doc, editable) +
-        goalsEditor(doc, editable) +
-        ta("goalsProgress", "Progress toward goals — narrative", "") +
-        ta("assessment", "Assessment", "") +
-        billingEditor(doc, editable);
+      sections =
+        group("Since the evaluation", "Where they started, and where they are now",
+          ["currentStatus"],
+          `<div class="field"><label>Baseline subjective — carried over from the evaluation</label>
+            <textarea rows="2" disabled>${esc(doc.data.baselineSubjective || "(no signed evaluation found)")}</textarea></div>` +
+          ta("currentStatus", "Current status", "How the patient presents now")) +
+        group("Objective", "What you observed and measured",
+          ["updatedFindings", "@measurements", "@outcomes"],
+          ta("updatedFindings", "Updated findings", "New objective findings — measured values go to the tables below") +
+          measurementEditor(doc, editable) +
+          outcomeEditor(doc, editable)) +
+        group("Assessment", "Your clinical impression",
+          ["assessment"],
+          ta("assessment", "Assessment", "")) +
+        group("Goals &amp; progress", "Where care goes from here",
+          ["@goals", "goalsProgress"],
+          goalsEditor(doc, editable) +
+          ta("goalsProgress", "Progress toward goals — narrative", "")) +
+        group("Billing", "Codes, minutes and units",
+          ["@charges"],
+          billingEditor(doc, editable));
     } else if (doc.type === "discharge") {
-      sections = ta("summary", "Summary of care", "") +
-        outcomeEditor(doc, editable) +
-        goalsEditor(doc, editable) +
-        ta("outcome", "Outcome", "") +
-        ta("recommendations", "Recommendations", "") +
-        billingEditor(doc, editable);
+      sections =
+        group("Summary of care", "What happened across the episode",
+          ["summary"],
+          ta("summary", "Summary of care", "")) +
+        group("Objective", "Final measures and where the goals ended",
+          ["@outcomes", "@goals"],
+          outcomeEditor(doc, editable) +
+          goalsEditor(doc, editable)) +
+        group("Outcome", "How the episode finished",
+          ["outcome"],
+          ta("outcome", "Outcome", "")) +
+        group("Recommendations", "What happens after discharge",
+          ["recommendations"],
+          ta("recommendations", "Recommendations", "")) +
+        group("Billing", "Codes, minutes and units",
+          ["@charges"],
+          billingEditor(doc, editable));
     }
 
     const sigBlock = `
@@ -3502,7 +3760,8 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     <button class="btn" id="printDocBtn">Print / PDF</button>
     ${locked
       ? (canDoc ? `<button class="btn" id="amendBtn">Add amendment</button>` : "")
-      : (canDoc ? `<button class="btn primary" id="signBtn">✒ Sign &amp; lock</button>` : "")}
+      : (canDoc ? `<button class="btn danger" id="deleteDocBtn">Delete draft</button>
+                   <button class="btn primary" id="signBtn">✒ Sign &amp; lock</button>` : "")}
   </div>
 </div>
 
@@ -3564,10 +3823,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="route-log" id="routeLog"></div>
   </div>
-  <div class="card doc-fields ${meta.cls}">
-    <div id="fieldGuide"></div>
+  <div class="doc-fields ${meta.cls}">
+    <div class="card doc-guide-card" id="fieldGuide"></div>
     ${sections}
-    ${sigBlock}
+    ${doc.signatures.length || doc.amendments.length ? `<div class="card doc-sig-card"><h2>Signatures &amp; amendments</h2>${sigBlock}</div>` : ""}
   </div>
 </div>
 <div class="card" id="insightsCard"></div>
@@ -3581,6 +3840,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
     renderFieldGuide(doc);
+    view.querySelectorAll("details.doc-group").forEach((g) =>
+      g.addEventListener("toggle", () => setGroupCollapsed(g.dataset.group, !g.open)));
     renderInsightsCard(doc, user);
     renderAssistant(document.getElementById("docAssistant"), doc.patientId, user, { compact: true });
     if (S.settings().audioReview) bindAudioReview(doc, user, editable);
@@ -3621,6 +3882,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (signBtn) signBtn.addEventListener("click", () => signModal(doc, user));
     const amendBtn = document.getElementById("amendBtn");
     if (amendBtn) amendBtn.addEventListener("click", () => amendModal(doc, user));
+    const delBtn = document.getElementById("deleteDocBtn");
+    if (delBtn) delBtn.addEventListener("click", () => deleteDraftModal(doc, user));
 
     // ------- speech -------
     if (editable) {
@@ -5614,6 +5877,50 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   const fieldSourceOf = (type, field) => (FIELD_SOURCES[type] || {})[field] || "yours";
 
+  /* ---- note workflow groups (the right-hand column of a document) ----
+
+     An item is either a text field by name, or a non-textarea section written
+     "@measurements" / "@goals". Both answer the same question — has this part
+     of the note got anything in it — which is what the group's fill count on
+     the header is counting. */
+  const docPartCount = (doc, id) => (id === "goals"
+    ? S.goalsFor(doc.patientId).length
+    : ((doc.data || {})[id] || []).length);
+  const docItemDone = (doc, it) => (it.charAt(0) === "@"
+    ? docPartCount(doc, it.slice(1)) > 0
+    : !!String((doc.data || {})[it] || "").trim());
+  const groupTone = (done, total) => (done >= total ? "good" : done ? "warn" : "muted");
+
+  /* Which groups a therapist keeps shut, remembered across notes and reloads.
+     Keyed by document type, so collapsing Billing on daily notes doesn't also
+     collapse it on the evaluation where they do fill it in. */
+  const LS_DOC_GROUPS = "therachart-doc-groups";
+  const collapsedGroups = () => {
+    try { return JSON.parse(localStorage.getItem(LS_DOC_GROUPS) || "{}") || {}; } catch { return {}; }
+  };
+  const groupCollapsed = (key) => !!collapsedGroups()[key];
+  function setGroupCollapsed(key, on) {
+    try {
+      const m = collapsedGroups();
+      if (on) m[key] = 1; else delete m[key];
+      localStorage.setItem(LS_DOC_GROUPS, JSON.stringify(m));
+    } catch { /* private browsing — the preference just doesn't stick */ }
+  }
+
+  /** Repaint every group's "2/3" chip in place. Called from renderFieldGuide so
+      the headers track what has actually been filled without a re-render — a
+      dictated sentence lands in a collapsed group and the count still moves. */
+  function refreshGroupCounts(doc) {
+    document.querySelectorAll("details.doc-group[data-items]").forEach((el) => {
+      const items = (el.dataset.items || "").split(",").filter(Boolean);
+      const chip = el.querySelector(".doc-group-count");
+      if (!items.length || !chip) return;
+      const done = items.filter((it) => docItemDone(doc, it)).length;
+      chip.textContent = `${done}/${items.length}`;
+      chip.className = `chip ${groupTone(done, items.length)} doc-group-count`;
+    });
+  }
+
   /** Sections of `doc` that nothing will fill on its own and that are empty. */
   function outstandingWork(doc) {
     const out = [];
@@ -5660,6 +5967,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           <span><i class="src-dot src-yours"></i>you write it</span>
         </div>
       </div>`;
+    refreshGroupCounts(doc);
   }
 
   /* ================= AI review & clean-up (second pass) ================= */
@@ -5716,6 +6024,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       closeModal();
       return alertBanner("AI review failed: " + e.message + ". Your transcript is unchanged.");
     }
+    // counted the moment it runs, not when it is accepted: the call was made
+    // and billed whether or not the therapist keeps the result
+    S.recordDocAiCall(doc.id);
     openReviewModal(doc, user, dstate, result);
   }
 
@@ -6166,7 +6477,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const p = S.getPatient(patientId);
     if (!assistantAvailable()) {
       container.innerHTML = `
-        <div class="asst-head"><h2>✦ Ask about this patient <span class="chip muted">grounded in this chart</span></h2></div>
+        <div class="asst-head"><h2>✦ Ask about this patient</h2></div>
         <div class="banner warn" style="margin-top:6px">The AI assistant needs Google Gemini / Vertex AI configured on the server. It's currently unavailable — clinical notes and dictation still work as normal.</div>`;
       return;
     }
@@ -6175,7 +6486,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const turns = opts.persistKey ? (assistantConvos[opts.persistKey] || (assistantConvos[opts.persistKey] = [])) : [];
     container.innerHTML = `
       <div class="asst-head">
-        <h2>✦ Ask about this patient <span class="chip info">Gemini</span><span class="chip muted">grounded in this chart</span></h2>
+        <h2>✦ Ask about this patient</h2>
       </div>
       ${opts.compact ? "" : `<p class="asst-disclaimer">Answers come <b>only</b> from ${esc(p ? S.patientName(p) : "this patient")}'s own records — notes, visits, and imported history. If something isn't documented, it will say so. Decision support for a licensed PT — <b>verify before acting</b>.</p>`}
       <div class="asst-log" id="asstLog">
@@ -6332,6 +6643,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     doc.data.insights = { ...result, ranAt: new Date().toISOString() };
     S.updateDocData(doc.id, doc.data, user);
+    S.recordDocAiCall(doc.id);
     S.audit(user.id, "insights-generated", `${doc.title}: ${result.source} · ${(result.connections || []).length} connections, ${(result.recommendations || []).length} recs`);
     renderInsightsCard(doc, user);
   }
@@ -6352,6 +6664,45 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     (REQUIRED_SECTIONS[doc.type] || [])
       .filter(([field]) => !String(doc.data[field] || "").trim())
       .map(([, label]) => label);
+
+  /* Deleting a draft.
+
+     Only drafts, ever: a signed note is a clinical record and the amendment
+     trail exists so it never has to be removed. The dialog's real job is the
+     billing sentence — dictation minutes are charged by Google as they are
+     spoken and a Gemini pass as it runs, so a note deleted afterwards has
+     already cost what it cost. Saying that here, before the click, is the
+     difference between a clear invoice and an argument at the end of the
+     month. */
+  function deleteDraftModal(doc, user) {
+    const spent = S.docConsumption(doc);
+    const m = showModal(`
+<h2>Delete this draft?</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:0">
+  <b>${esc(doc.title)}</b> moves to <b>Deleted</b> on this patient's Documents tab. You can put it back from there at any time.</p>
+${spent.billed
+  ? `<div class="banner warn">
+      <b>What it has already spent stays on your bill.</b>
+      This draft used <b>${minutesOf(spent.minutes)}</b> of dictation and <b>${spent.aiCalls}</b> AI pass${spent.aiCalls === 1 ? "" : "es"}.
+      Both were charged the moment they ran, so deleting the note doesn't refund them — this month's Plan usage keeps counting them,
+      and it still counts as one documented visit.
+    </div>`
+  : `<div class="banner good">Nothing has been spent on this draft — no dictation, no AI. Deleting it costs you nothing and it won't count as a visit.</div>`}
+<div class="modal-actions">
+  <button class="btn" id="delDocCancel">Keep it</button>
+  <button class="btn danger" id="delDocGo">Delete draft</button>
+</div>`);
+    m.querySelector("#delDocCancel").addEventListener("click", closeModal);
+    m.querySelector("#delDocGo").addEventListener("click", () => {
+      const r = S.trashDoc(doc.id, user);
+      if (r && r.error) { closeModal(); return alertBanner(r.error); }
+      // a trashed draft must not also be swept up by the pristine-draft discard
+      pristineDraft = null;
+      closeModal();
+      location.hash = `#/patient/${doc.patientId}`;
+      alertBanner("Draft deleted — you'll find it under Deleted on the Documents tab.");
+    });
+  }
 
   function signModal(doc, user) {
     const pending = window.__theraDict && window.__theraDict.pending ? window.__theraDict.pending() : 0;
@@ -7194,17 +7545,41 @@ ${privacyInfoAccordion(geminiOn)}
       : `${minutesOf(u.spareMinutes)} left · one pool for the whole month`}</div>
   </div>
 
-  ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included. If this is your normal month, the next plan up costs less than the overage.</div>` : ""}
-  ${project ? `<div class="banner">At this pace you'll reach about <b>${u.projectedVisits} visits</b> by month end, over your ${u.allowance}. Nothing stops working — the extra visits bill at ${peso(u.overagePerVisit)} each.</div>` : ""}
+  ${over ? `<div class="banner warn">${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included, at ${peso(u.overagePerVisit)} each. If this is a normal month, the next plan up costs less.</div>` : ""}
+  ${project ? `<div class="banner">At this pace you'll finish around <b>${u.projectedVisits} visits</b>. Nothing stops working — extra visits bill at ${peso(u.overagePerVisit)} each.</div>` : ""}
   <div class="allowance-note">
-    <b>Both reset on ${esc(resets)} and neither rolls over</b> — nothing unused this month is added to next month's.
-    ${over
-      ? `Dictation is <b>one pool for the month</b>, now <b>${minutesOf(u.includedMinutes)}</b> — visits past your plan add their ${u.fairUsePerVisit} minutes to it as well, so an extra visit is never charged twice.`
-      : `Dictation is <b>one pool for the month</b> — ${u.allowance} visits × ${u.fairUsePerVisit} minutes — and all of it is available from the first day, so a few long evaluations draw on it exactly as freely as many short notes.`}
-    Nothing is reserved when you open a note; only what is actually said comes out of the pool.
-    Only <b>speech</b> counts: pauses, and a mic left open in a quiet room, cost nothing.
-    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} this month used dictation, averaging ${mmssOf(u.avgSecondsPerVisit)}.` : "No dictation recorded yet this month."}
+    Resets ${esc(resets)}; neither meter rolls over.
+    Dictation is one pool for the whole month, and only speech is counted.
+    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} used dictation this month.` : "No dictation recorded yet this month."}
   </div>
+</div>`;
+  }
+
+  /* What the clinic is on, stated rather than adjustable. The plan is a
+     commercial agreement between the clinic and us, so a clinic admin reads it
+     here and changes it by talking to us; the editable version of these numbers
+     is in the operator's settings card. Sign-on date and reset date both sit
+     here because "when does my allowance come back" is the question this card
+     exists to answer, and an unstated reset is how a billing dispute starts. */
+  function planCard() {
+    const st = S.settings();
+    const u = S.monthUsage();
+    const c = (S.clinicMeta && S.clinicMeta()) || {};
+    const resets = new Date(u.resetsOn + "T00:00:00")
+      .toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+    const k = (label) => `<td style="color:var(--muted); white-space:nowrap">${label}</td>`;
+    return `
+<div class="card">
+  <h2>Your plan</h2>
+  <table class="list"><tbody>
+    <tr>${k("Plan")}<td><b>${esc(u.planName)}</b></td></tr>
+    <tr>${k("Visits included")}<td>${u.allowance} a month</td></tr>
+    <tr>${k("Dictation included")}<td>${minutesOf(u.fairUseMinutes)} a month</td></tr>
+    <tr>${k("Beyond the plan")}<td>₱${st.overagePerVisit} a visit · ₱${st.overagePerMinute} a dictation minute</td></tr>
+    <tr>${k("Clinic since")}<td>${c.createdAt ? fmtDate(c.createdAt) : "—"}</td></tr>
+    <tr>${k("Allowance resets")}<td>${esc(resets)}</td></tr>
+  </tbody></table>
+  <div class="hint" style="margin-top:10px">Allowances run on the calendar month and reset on the 1st, whatever date you signed on. To move up or down a plan, contact TheraChart.</div>
 </div>`;
   }
 
@@ -7215,7 +7590,10 @@ ${privacyInfoAccordion(geminiOn)}
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `
 <div class="page-head"><div><h1>Facility Admin</h1><div class="sub">Approvals, settings and staff licenses</div></div></div>
-${allowanceCard()}
+<div class="cards-2">
+  ${allowanceCard()}
+  ${planCard()}
+</div>
 <div class="cards-2">
   <div class="card">
     <h2>Facility settings</h2>
@@ -7234,6 +7612,11 @@ ${allowanceCard()}
         <input type="checkbox" class="st-day" value="${i}" ${st.workDays.includes(i) ? "checked" : ""}/>${d}</label>`).join("")}
       </div>
     </div>
+    ${/* The plan is what the clinic bought, not a preference: an admin who
+          could raise their own allowance would be editing their invoice. The
+          controls exist only for the operator, who sells the plan; every other
+          admin reads the same numbers, stated, in the Your plan card. */
+      isOwner ? `
     <div class="field-row" style="border-top:1px solid var(--border); padding-top:12px">
       <div class="field"><label>Plan</label>
         <select id="st-plan">
@@ -7243,12 +7626,12 @@ ${allowanceCard()}
       <div class="field"><label>Dictation pool rate (min per visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
       <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>
     </div>
-    <div style="font-size:12px; color:var(--muted); margin:-4px 0 8px">Sets what the Plan usage meter counts against. Both reset monthly and neither rolls over. Dictation is a single monthly pool sized at visits × included minutes, available in full from the 1st — minutes past it bill per minute, not as extra visits. The hard stop is a runaway-microphone backstop — set well above any real visit.</div>
+    <div class="hint" style="margin:-4px 0 8px">Operator only — this is what the clinic is billed against. The hard stop is a runaway-microphone backstop, not a limit; set it well above any real visit.</div>` : ""}
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
         Allow temporary session-audio review</label>
-      <div style="font-size:12px; color:var(--muted); margin:4px 0 8px">Off by default. When on, Google Cloud dictation audio is kept — <b>only for patients who consent</b> — so a clinician can re-check the transcript, then it's auto-deleted when the note is signed or after the window below. Audio is never kept long-term. See Privacy &amp; Security.</div>
+      <div class="hint" style="margin:4px 0 8px">Off by default. Keeps dictation audio for <b>consenting patients only</b> so a clinician can re-check the transcript. Deleted when the note is signed, or after the window below — whichever is first.</div>
       <div class="field" style="max-width:220px"><label>Auto-delete kept audio after (days)</label><input id="st-audio-days" type="number" min="1" max="90" value="${st.audioReviewDays || 7}" /></div>
     </div>
     <button class="btn primary" id="stSave">Save settings</button>
@@ -7305,7 +7688,7 @@ ${allowanceCard()}
   function bindFacility(user) {
     document.getElementById("stSave").addEventListener("click", () => {
       S.renameClinic(document.getElementById("st-name").value.trim() || "TheraChart Clinic", user);
-      S.updateSettings({
+      const patch = {
         progressEvery: Math.max(1, Number(document.getElementById("st-prog").value) || 5),
         slotMinutes: Math.max(15, Number(document.getElementById("st-slot").value) || 45),
         dayStartHour: Number(document.getElementById("st-start").value) || 8,
@@ -7313,11 +7696,18 @@ ${allowanceCard()}
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
         audioReview: document.getElementById("st-audio").checked,
         audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
-        planName: document.getElementById("st-plan").value,
-        visitAllowance: Math.max(1, Number(document.getElementById("st-allowance").value) || 130),
-        fairUseMinutesPerVisit: Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10)),
-        maxDictationMinutesPerVisit: Math.min(180, Math.max(5, Number(document.getElementById("st-maxdict").value) || 30)),
-      }, user);
+      };
+      /* The plan controls render for the operator only, so read them only if
+         they are on the page — a clinic admin saving their opening hours must
+         not blank out the allowance they can't see. */
+      const plan = document.getElementById("st-plan");
+      if (plan) {
+        patch.planName = plan.value;
+        patch.visitAllowance = Math.max(1, Number(document.getElementById("st-allowance").value) || 130);
+        patch.fairUseMinutesPerVisit = Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10));
+        patch.maxDictationMinutesPerVisit = Math.min(180, Math.max(5, Number(document.getElementById("st-maxdict").value) || 30));
+      }
+      S.updateSettings(patch, user);
       render();
     });
     document.querySelectorAll("[data-save-user]").forEach((b) =>
@@ -7494,24 +7884,26 @@ ${allowanceCard()}
     return `
 <div class="page-head"><div><h1>Clinics</h1><div class="sub">Approvals, onboarding, and every clinic on this server</div></div></div>
 ${accessRequestsCard()}
-<div class="cards-2">
-  <div class="card">
-    <h2>Onboard a clinic</h2>
-    <p style="font-size:12.5px; color:var(--muted)">Creates the clinic and its first administrator. They sign in with the temporary password, are made to choose their own, and then add their own staff. Their records are separate from every other clinic — including yours.</p>
+<div class="card">
+  <h2>Onboard a clinic</h2>
+  <p class="hint" style="max-width:640px">Creates the clinic and its first administrator. They sign in with the temporary password, are made to choose their own, and then add their own staff. Their records are separate from every other clinic — including yours.</p>
+  <div style="max-width:560px">
     <div class="field"><label>Clinic name</label><input id="nc-clinic" placeholder="e.g. Bayanihan Physical Therapy" /></div>
-    <div class="field"><label>First administrator's name</label><input id="nc-name" placeholder="e.g. Bea Navarro, PT" /></div>
-    <div class="field"><label>Their email (this is their login)</label><input id="nc-email" type="email" autocapitalize="off" spellcheck="false" placeholder="bea@bayanihanpt.ph" /></div>
+    <div class="field-row">
+      <div class="field"><label>First administrator's name</label><input id="nc-name" placeholder="e.g. Bea Navarro, PT" /></div>
+      <div class="field"><label>Their email (this is their login)</label><input id="nc-email" type="email" autocapitalize="off" spellcheck="false" placeholder="bea@bayanihanpt.ph" /></div>
+    </div>
     <div class="field"><label>Temporary password (min 8 — they'll change it at first login)</label>
       <div style="display:flex; gap:8px"><input id="nc-pw" type="text" autocomplete="off" style="flex:1" /><button class="btn small" id="nc-gen" type="button">Generate</button></div></div>
     <button class="btn primary" id="nc-create">Create clinic</button>
     <div id="nc-msg" style="font-size:12.5px; min-height:18px; margin-top:8px"></div>
     <div id="nc-handoff"></div>
   </div>
-  <div class="card">
-    <h2>All clinics</h2>
-    <p style="font-size:12.5px; color:var(--muted)">Counts only. Opening another clinic's records isn't possible from here — each clinic's charts are visible only to its own staff.</p>
-    <div id="nc-list"><div class="empty-state">Loading…</div></div>
-  </div>
+</div>
+<div class="card">
+  <h2>All clinics</h2>
+  <p class="hint">Counts only. Opening another clinic's records isn't possible from here — each clinic's charts are visible only to its own staff.</p>
+  <div id="nc-list"><div class="empty-state">Loading…</div></div>
 </div>`;
   }
 
@@ -7521,18 +7913,81 @@ ${accessRequestsCard()}
     const list = document.getElementById("nc-list");
     const say = (text, ok) => { msg.textContent = text; msg.style.color = ok ? "var(--good)" : "var(--danger)"; };
 
+    const mineId = (user && user.clinicId) || "clinic-demo";
+
     const refresh = async () => {
       const r = await T.listClinics();
       if (r.error) { list.innerHTML = `<div class="empty-state">${esc(r.error)}</div>`; return; }
       const rows = r.clinics || [];
       if (!rows.length) { list.innerHTML = `<div class="empty-state">No clinics yet.</div>`; return; }
-      list.innerHTML = `<table class="list"><thead><tr><th>Clinic</th><th>Staff</th><th>Patients</th><th>Notes</th></tr></thead><tbody>
+      list.innerHTML = `<div class="table-scroll"><table class="list">
+        <thead><tr><th>Clinic</th><th>Status</th><th>Staff</th><th>Patients</th><th>Notes</th><th>Since</th><th></th></tr></thead><tbody>
         ${rows.map((c) => `<tr>
-          <td><b>${esc(c.name)}</b>${c.admins === 0 ? ` <span class="chip bad">no active admin</span>` : ""}</td>
+          <td><b>${esc(c.name)}</b>${c.admins === 0 ? ` <span class="chip bad">no active admin</span>` : ""}${c.id === mineId ? ` <span class="chip muted">yours</span>` : ""}</td>
+          <td><span class="chip ${c.active ? "good" : "warn"}">${c.active ? "active" : "on hold"}</span></td>
           <td>${c.staff}</td><td>${c.patients}</td><td>${c.documents}</td>
+          <td class="num">${c.createdAt ? fmtDate(c.createdAt) : "—"}</td>
+          <td>${c.id === mineId ? '<span class="hint">—</span>' : `
+            <div class="clinic-actions">
+              <button class="btn small" data-hold="${esc(c.id)}" data-active="${c.active ? "1" : "0"}">${c.active ? "Put on hold" : "Reactivate"}</button>
+              <button class="btn small danger" data-del-clinic="${esc(c.id)}" data-name="${esc(c.name)}" data-counts="${c.staff}|${c.patients}|${c.documents}">Delete…</button>
+            </div>`}</td>
         </tr>`).join("")}
-      </tbody></table>`;
+      </tbody></table></div>
+      <div class="hint" style="margin-top:10px"><b>On hold</b> keeps every record and blocks sign-in until you switch it back on — the reversible option for a clinic pausing its subscription. <b>Delete</b> erases the clinic and its charts for good.</div>`;
+
+      list.querySelectorAll("[data-hold]").forEach((b) => b.addEventListener("click", () => holdClinic(b)));
+      list.querySelectorAll("[data-del-clinic]").forEach((b) => b.addEventListener("click", () => confirmDeleteClinic(b)));
     };
+
+    /* Suspending is reversible and loses nothing, so it asks once and does it.
+       Deleting is neither, so it gets the typed-name dialog below. */
+    async function holdClinic(btn) {
+      const wasActive = btn.dataset.active === "1";
+      if (wasActive && !confirm(`Put this clinic on hold?\n\nEvery record stays exactly where it is. Nobody at the clinic can sign in until you reactivate it, and anyone signed in now is signed out.`)) return;
+      btn.disabled = true;
+      const r = await T.setClinicActive(btn.dataset.hold, !wasActive);
+      if (r && r.error) { btn.disabled = false; alertBanner(r.error); return; }
+      await refresh();
+    }
+
+    function confirmDeleteClinic(btn) {
+      const name = btn.dataset.name;
+      const [staff, patients, docs] = (btn.dataset.counts || "0|0|0").split("|");
+      const m = showModal(`
+<h2>Delete ${esc(name)}?</h2>
+<div class="banner warn" style="margin-top:4px">
+  <b>This cannot be undone.</b> Deleting removes the clinic and everything filed under it:
+  <b>${esc(staff)}</b> staff account${staff === "1" ? "" : "s"}, <b>${esc(patients)}</b> patient chart${patients === "1" ? "" : "s"} and
+  <b>${esc(docs)}</b> clinical document${docs === "1" ? "" : "s"}, along with its schedule and activity log. There is no backup on our side.
+</div>
+<p style="font-size:12.5px; color:var(--muted)">If the clinic is pausing rather than leaving, close this and use <b>Put on hold</b> instead — that keeps every record and simply blocks sign-in.</p>
+<div class="field"><label>Type <b>${esc(name)}</b> to confirm</label>
+  <input id="delClinicName" autocapitalize="off" spellcheck="false" placeholder="${esc(name)}" /></div>
+<div class="error" id="delClinicErr" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
+<div class="modal-actions">
+  <button class="btn" id="delClinicCancel">Cancel</button>
+  <button class="btn danger" id="delClinicGo" disabled>Delete permanently</button>
+</div>`);
+      const input = m.querySelector("#delClinicName");
+      const go = m.querySelector("#delClinicGo");
+      const matches = () => input.value.trim().toLowerCase() === name.trim().toLowerCase();
+      input.addEventListener("input", () => { go.disabled = !matches(); });
+      input.focus();
+      m.querySelector("#delClinicCancel").addEventListener("click", closeModal);
+      go.addEventListener("click", async () => {
+        go.disabled = true; go.textContent = "Deleting…";
+        const r = await T.deleteClinic(btn.dataset.delClinic, input.value.trim());
+        if (r && r.error) {
+          m.querySelector("#delClinicErr").textContent = r.error;
+          go.disabled = false; go.textContent = "Delete permanently";
+          return;
+        }
+        closeModal();
+        alertBanner(`${name} and all of its records have been deleted.`);
+        await refresh();
+      });
+    }
 
     /* Bound after `refresh` exists and handed it: approving into a new clinic
        creates one, and a clinics table that still shows the old list makes it

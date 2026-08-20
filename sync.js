@@ -541,6 +541,30 @@
     return r.data;
   };
 
+  /* Operator: pause a clinic's subscription, or bring it back. Reversible and
+     lossless — see store.setClinicActive. */
+  sync.setClinicActive = async (clinicId, active) => {
+    if (sync.mode !== "server" || !sync.token) {
+      return { error: "Managing clinics needs the clinic server." };
+    }
+    const r = await api("/api/clinics", { method: "PATCH", body: { clinicId, active } });
+    if (!r.ok) return { error: (r.data && r.data.error) || "Couldn't update the clinic." };
+    const st = await api("/api/state"); if (st.ok) adopt(st.data);
+    return r.data;
+  };
+
+  /* Operator: erase a clinic and everything under it. `confirmName` must match
+     the clinic's name; the server checks it again. */
+  sync.deleteClinic = async (clinicId, confirmName) => {
+    if (sync.mode !== "server" || !sync.token) {
+      return { error: "Deleting a clinic needs the clinic server." };
+    }
+    const r = await api("/api/clinics", { method: "DELETE", body: { clinicId, confirmName } });
+    if (!r.ok) return { error: (r.data && r.data.error) || "Couldn't delete the clinic." };
+    const st = await api("/api/state"); if (st.ok) adopt(st.data);
+    return r.data;
+  };
+
   /* Admin: remove an employee. */
   sync.deleteUser = async (userId) => {
     if (sync.mode === "offline") return "Reconnect to the clinic server to remove an employee.";

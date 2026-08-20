@@ -295,6 +295,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .userchip .signout:hover { background: var(--side-hover); border-color: var(--side-accent); color: var(--side-accent); }
 
 /* breadcrumb + back navigation */
+/* Small explanatory line under a control or table. One rule, so the twelve
+   places that were each rolling their own inline font-size agree with each
+   other. */
+.hint { font-size: 12px; color: var(--muted); line-height: 1.55; }
+
+/* ---------- demo session banner ----------
+   Sits at the top of the content column on every screen of a demo session.
+   The demo is a byte-for-byte copy of the real app pointed at seeded charts,
+   so the only thing telling a visitor which one they are in is this strip. */
+.demo-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn, #b06d0b) 38%, var(--border));
+  background: color-mix(in srgb, var(--warn, #b06d0b) 9%, var(--panel));
+  border-radius: 11px;
+}
+.demo-badge {
+  flex: none; padding: 3px 9px; border-radius: 999px;
+  background: var(--warn, #b06d0b); color: #fff;
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+}
+.demo-banner-text { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--ink); }
+.demo-banner .btn { flex: none; }
+
+/* operator's clinic table: hold / delete, kept on one line per row */
+.clinic-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
 .crumbbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .crumb-back {
   display: inline-flex; align-items: center; gap: 5px;
@@ -381,7 +408,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    starts its second card 14px lower than its first — and under `stretch` that
    card is also 14px shorter, because the margin eats into the height it is
    stretched to. Any new gap-spaced card container belongs in this list. */
-:where(.cards-2, .cards-3, .doc-layout) > .card + .card { margin-top: 0; }
+:where(.cards-2, .cards-3, .doc-layout, .doc-fields) > .card + .card { margin-top: 0; }
 .card h2 { font-size: 15px; margin-bottom: 10px; }
 .card h3 { font-size: 13.5px; margin-bottom: 8px; }
 .cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
@@ -390,7 +417,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* ---------- Privacy: collapsible "how it works" accordion ---------- */
 .page-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.info-acc { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 18px; }
+/* align-items:start, not the default stretch: an open panel makes its grid row
+   taller, and a stretched sibling grows with it — so opening the left card
+   inflated the closed card beside it into a tall empty box. */
+.info-acc { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; gap: 8px; margin-bottom: 18px; }
 @media (max-width: 760px) { .info-acc { grid-template-columns: 1fr; } }
 .info-acc-item { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
 .info-acc-item > summary {
@@ -1037,10 +1067,37 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 .doc-fields.doc-daily     { --dt: var(--dt-daily); }
 .doc-fields.doc-progress  { --dt: var(--dt-progress); }
 .doc-fields.doc-discharge { --dt: var(--dt-discharge); }
-.doc-fields {
+/* The note column is a STACK of workflow groups, not one card. A note is
+   written in the same order every time — what you were told, what you found,
+   what you make of it, what happens next, what it bills — and one undivided
+   card hid that order behind a scroll. Each group is its own card so the step
+   you are on is the thing in front of you, and each one collapses so the parts
+   you aren't in yet stay out of the way. */
+.doc-fields { display: flex; flex-direction: column; gap: 14px; }
+.doc-fields > .card {
   border-top: 3px solid var(--dt, var(--border));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in srgb, var(--dt) 12%, transparent);
 }
+.doc-group > summary {
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer; list-style: none; user-select: none;
+}
+.doc-group > summary::-webkit-details-marker { display: none; }
+.doc-group > summary::marker { content: ""; }
+.doc-group-step {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 11.5px; font-weight: 700; color: #fff;
+  background: var(--dt, var(--accent)); font-variant-numeric: tabular-nums;
+}
+.doc-group-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 700; color: var(--ink); }
+.doc-group-title small { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.doc-group-count { flex: none; font-variant-numeric: tabular-nums; }
+.doc-group-chev { flex: none; color: var(--muted); font-size: 16px; transition: transform 0.18s ease; }
+.doc-group[open] > summary .doc-group-chev { transform: rotate(90deg); }
+.doc-group-body { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.doc-group-body > :last-child { margin-bottom: 0; }
+.doc-guide-card, .doc-sig-card { padding-top: 12px; }
 .doc-fields .field > label { color: var(--dt); font-weight: 700; }
 .doc-fields textarea,
 .doc-fields input[type="text"],
@@ -1247,6 +1304,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 /* status chips: draft = amber, signed = green */
 .fchip.fs-draft.on { background: color-mix(in srgb, var(--review) 16%, var(--panel)); border-color: var(--review); color: var(--ink); }
 .fchip.fs-signed.on { background: var(--good-soft); border-color: var(--good); color: var(--ink); }
+.fchip.fs-deleted.on { background: color-mix(in srgb, var(--danger) 12%, var(--panel)); border-color: var(--danger); color: var(--ink); }
 .fchip.fs-all.on, .fchip.ft-all.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 /* Single-line controls take the height outright — they can never wrap, and the
    date field in particular has to be pulled *down* to the shared height: a
@@ -1727,11 +1785,23 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   font-size: 11.5px; line-height: 1.5; color: var(--review);
   background: var(--review-soft); border-radius: 8px; padding: 7px 10px; margin-top: 8px;
 }
-.bug-shot-preview { margin-top: 10px; }
-.bug-shot-preview img {
-  display: block; max-width: 100%; max-height: 200px; border-radius: 9px;
-  border: 1px solid var(--border);
+/* A bug is often several screens — before, after, the error — so the previews
+   are a wrapping strip of thumbnails, each with its own remove. */
+.bug-shot-preview { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.bug-shot { position: relative; margin: 0; }
+.bug-shot img {
+  display: block; width: 132px; height: 92px; object-fit: cover;
+  border-radius: 9px; border: 1px solid var(--border);
 }
+.bug-shot-drop {
+  position: absolute; top: -6px; right: -6px;
+  width: 21px; height: 21px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+  font-size: 11px; line-height: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.bug-shot-drop:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+.bug-shot-count { font-size: 12px; color: var(--muted); }
 .bug-ctx {
   display: flex; flex-direction: column; gap: 3px; margin: 4px 0 10px;
   font-size: 11.5px; color: var(--muted); line-height: 1.5;
