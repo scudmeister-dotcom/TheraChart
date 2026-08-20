@@ -3538,6 +3538,13 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
        that outlives the session — so it is the copy that has to say so. */
     const r = d.refinement;
     const cleanup = r && r.applied
+      /* The printed copy DOES name the system, and deliberately so. On screen
+         the chip says what the thing does, because a clinician mid-visit does
+         not need a vendor's name to read a chip. On a signed clinical document
+         the question is different: someone reading this record later needs to
+         know what actually wrote the text, and "AI" does not answer that. The
+         interface names the function; the record names the system. Same reason
+         the audit line stores the engine verbatim. */
       ? `<div class="print-muted" style="margin-top:8px">AI review &amp; clean-up applied ${fmtDT(r.ranAt)} using ${r.engine === "gemini" ? "Google Gemini" : "the local reviewer"}${(r.sections || []).length ? ` — sections rewritten: ${r.sections.map(esc).join(", ")}` : ""}. Reviewed and accepted by the signing clinician.</div>`
       : "";
     const sigs = doc.signatures.map((s) =>
@@ -6029,7 +6036,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <div class="cleanup-card">
         <div class="cleanup-head">
           <b>✦ AI cleanup applied</b>
-          <span class="chip ${r.engine === "gemini" ? "info" : "muted"}">${r.engine === "gemini" ? "Gemini" : "local AI"}</span>
+          <span class="chip ${r.engine === "gemini" ? "info" : "muted"}">${r.engine === "gemini" ? "AI" : "offline reviewer"}</span>
           <button class="btn small" id="viewChangesBtn">See what changed</button>
         </div>
         <div class="cleanup-line">${esc(r.headline || "")}</div>
@@ -6046,7 +6053,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <td>${esc(c.label)}</td><td>${esc(c.detail || "")}</td></tr>`).join("");
     const m = showModal(`
 <h2>Live transcript vs AI cleanup</h2>
-<p style="font-size:12.5px; color:var(--muted)">What the live pass captured while you spoke, and what the ${r.engine === "gemini" ? "Gemini" : "local"} review changed on ${fmtDT(r.ranAt)}.</p>
+<p style="font-size:12.5px; color:var(--muted)">What the live pass captured while you spoke, and what the ${r.engine === "gemini" ? "AI" : "offline"} review changed on ${fmtDT(r.ranAt)}.</p>
 <div class="table-scroll"><table class="list"><thead><tr><th>Change</th><th>Finding</th><th>Detail</th></tr></thead>
 <tbody>${rows || `<tr><td colspan="3"><div class="empty-state">No differences — the AI confirmed the live findings.</div></td></tr>`}</tbody></table></div>
 <div style="font-size:12.5px; margin-top:10px"><b>${r.clinicianTurns || 0}</b> line${r.clinicianTurns === 1 ? "" : "s"} were identified as the clinician speaking and excluded from the patient findings.</div>

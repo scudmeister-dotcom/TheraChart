@@ -452,6 +452,24 @@ for (const t of [
     !/Gemini|Google/i.test(flow),
     (flow.match(/.{0,70}(Gemini|Google).{0,70}/i) || [""])[0]);
 
+  /* The card and the changes window describe the SAME run the modal just
+     did. Renaming only the modal left one review wearing two names. */
+  const card = APP.slice(APP.indexOf("function renderCleanupSummary("), APP.indexOf("async function runRefine("))
+    .replace(/=== "gemini"/g, "");
+  check("the applied-cleanup card agrees with the modal",
+    !/Gemini|"local AI"|local review/i.test(card),
+    (card.match(/.{0,70}(Gemini|local AI).{0,70}/i) || [""])[0]);
+
+  /* …but the SIGNED RECORD still names the system. On screen a chip should
+     say what the thing does; on a clinical document, someone reading it later
+     needs to know what actually wrote the text, and "AI" does not answer
+     that. The interface names the function, the record names the system. */
+  const printed = APP.slice(APP.indexOf("AI review &amp; clean-up applied"), APP.indexOf("AI review &amp; clean-up applied") + 320);
+  check("the printed attestation still names the system that wrote the text",
+    /Google Gemini/.test(printed), printed.slice(0, 160));
+  check("…and the audit line records the engine verbatim",
+    /audit\(user\.id, "transcript-refined", `\$\{doc\.title\}: \$\{doc\.data\.refinement\.engine\}/.test(APP));
+
   /* ai.js only covers the call it makes itself. A request that never reached
      it — server down, session expired, our own rate limiter — failed in the
      transport layer, which used to answer with a plain `source: "local"`. */
