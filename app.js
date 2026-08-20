@@ -3288,7 +3288,11 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
     return rom + mmt + sp + pain;
   }
 
-  function docPrintHtml(doc) {
+  /* `opts.includeGoals` prints the plan of care with the note. The full chart
+     print already prints goals once at the top, so it passes false; printing
+     ONE note used to drop them entirely, which is how an evaluation reached a
+     referring physician with no goals attached to it. */
+  function docPrintHtml(doc, opts) {
     const d = doc.data;
     const secs = [];
     const put = (label, val) => { if (val && String(val).trim()) secs.push(`<h3>${label}</h3><p>${esc(val)}</p>`); };
@@ -3330,14 +3334,39 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
         <tr><th colspan="2">Total</th><th>${sum.timedMinutes} timed min</th><th>${sum.totalUnits} units</th></tr></table>`);
     }
 
+    /* The plan of care. Goals live on the patient, not the note, so a
+       single-note print had nothing to show and showed nothing — the one
+       section a payer reads to judge whether the visits were justified. */
+    if (opts && opts.includeGoals && ["eval", "progress", "discharge"].includes(doc.type)) {
+      const goals = S.goalsFor(doc.patientId);
+      if (goals.length) {
+        const sum = CL.goalSummary(goals, todayIso());
+        secs.push(`<h3>Plan of care — goals (${sum.met}/${sum.total} met)</h3>
+          <table><tr><th>Goal</th><th>Baseline</th><th>Target</th><th>Target date</th><th>Status</th></tr>
+          ${sum.items.map(({ goal, status }) => `<tr>
+            <td>${esc(goal.text)} <span class="print-muted">(${goal.term === "long" ? "long" : "short"}-term)</span></td>
+            <td>${esc(goal.baseline || "—")}</td><td>${esc(goal.target || "—")}</td>
+            <td>${esc(goal.targetDate || "—")}</td><td>${esc(status.label)}</td></tr>`).join("")}</table>`);
+      }
+    }
+
     const maps = (d.mapPoints || []).length
       ? `<h3>Body chart findings</h3><ul>${d.mapPoints.map((pt) => `<li><b>${esc(pt.side ? pt.side + " " : "")}${esc(pt.part)}</b> (${pt.view} view): ${pt.notes.map((n) => esc(n.summary)).join("; ")}</li>`).join("")}</ul>` : "";
+
+    /* Say on the page that a machine rewrote parts of this. A note whose
+       sections were drafted by AI and confirmed by the therapist is a
+       different document from one they typed, and the printed copy is the one
+       that outlives the session — so it is the copy that has to say so. */
+    const r = d.refinement;
+    const cleanup = r && r.applied
+      ? `<div class="print-muted" style="margin-top:8px">AI review &amp; clean-up applied ${fmtDT(r.ranAt)} using ${r.engine === "gemini" ? "Google Gemini" : "the local reviewer"}${(r.sections || []).length ? ` — sections rewritten: ${r.sections.map(esc).join(", ")}` : ""}. Reviewed and accepted by the signing clinician.</div>`
+      : "";
     const sigs = doc.signatures.map((s) =>
       `<div class="sig-line">E-signed: ${esc(s.name)}${s.license ? ` (License ${esc(s.license)})` : ""} — ${fmtDT(s.time)} — ${esc(s.reason)}</div>`).join("");
     const amds = doc.amendments.map((a) =>
       `<div><b>Amendment</b> (${fmtDT(a.time)}, ${esc(a.name)} — reason: ${esc(a.reason)}): ${esc(a.text)}</div>`).join("");
     return `<h2>${esc(doc.title)} — ${fmtDate(doc.createdAt)} <span class="print-muted">(${doc.status})</span></h2>
-      ${secs.join("")}${maps}${amds}${sigs}`;
+      ${secs.join("")}${maps}${cleanup}${amds}${sigs}`;
   }
 
   function printPatientChart(p) {
@@ -3405,9 +3434,17 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     const canDoc = S.canDocument(user);
     const editable = !locked && canDoc;
 
-    const ta = (field, label, placeholder, rows) => `
-      <div class="field"><label>${label}</label>
+    /* Each label says who fills it. An empty box that dictation is about to
+       fill and an empty box waiting for the therapist look identical, and
+       that ambiguity is what got notes signed with an empty Plan. */
+    const ta = (field, label, placeholder, rows) => {
+      const src = fieldSourceOf(doc.type, field);
+      const meta = SOURCE_META[src];
+      return `
+      <div class="field field-src-${src}"><label>${label}
+        <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.badge}</span></label>
       <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
+    };
 
     let sections = "";
     if (doc.type === "eval") {
@@ -3528,6 +3565,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div class="route-log" id="routeLog"></div>
   </div>
   <div class="card doc-fields ${meta.cls}">
+    <div id="fieldGuide"></div>
     ${sections}
     ${sigBlock}
   </div>
@@ -3542,21 +3580,32 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
+    renderFieldGuide(doc);
     renderInsightsCard(doc, user);
     renderAssistant(document.getElementById("docAssistant"), doc.patientId, user, { compact: true });
     if (S.settings().audioReview) bindAudioReview(doc, user, editable);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
+      /* Re-read the document rather than printing the copy this view was
+         bound with. An AI cleanup, an autosave or a sync can all have landed
+         since; printing the stale copy is how a note reaches a physician
+         missing the section that was just rewritten. */
+      const fresh = S.getDoc(doc.id) || doc;
       printHTML(`<h1>${esc(S.currentClinicName())}</h1>
-        <div class="print-muted">${esc(S.patientName(p))} · DOB ${esc(p.dob)}</div>${docPrintHtml(doc)}`);
+        <div class="print-muted">${esc(S.patientName(p))} · DOB ${esc(p.dob)}</div>${docPrintHtml(fresh, { includeGoals: true })}`);
     });
 
     // autosave draft fields
     if (editable) {
       view.querySelectorAll("textarea[data-field]").forEach((t) => {
         t.addEventListener("input", () => {
-          S.updateDocData(doc.id, { [t.dataset.field]: t.value }, user);
+          /* Typed in by hand from here on. The cleanup pass reads this and
+             stops pre-ticking the field, so running a review never quietly
+             replaces a paragraph the therapist wrote themselves. */
+          markAiFilled(doc, t.dataset.field, false);
+          S.updateDocData(doc.id, { [t.dataset.field]: t.value, aiFilled: doc.data.aiFilled }, user);
+          renderFieldGuide(doc);
         });
       });
       bindMeasurementEditor(doc, user);
@@ -5294,9 +5343,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     } catch (_) { /* ignore */ } finally { btn.textContent = old; btn.disabled = false; }
   }
 
+  /* Which sections the machine wrote and which the therapist did. Dictation
+     and the cleanup pass set a field here; typing in it clears the flag.
+
+     Two things depend on knowing: the note can say, per field, whether
+     anything is going to arrive on its own or whether it is waiting for the
+     therapist — and the cleanup pass can overwrite its own earlier guess
+     without also overwriting a paragraph somebody sat down and wrote. */
+  function markAiFilled(doc, field, filled) {
+    if (!doc.data.aiFilled) doc.data.aiFilled = {};
+    doc.data.aiFilled[field] = !!filled;
+  }
+  const isAiFilled = (doc, field) => !!(doc.data.aiFilled || {})[field];
+
   function appendField(doc, field, sentence, silent) {
     const cur = (doc.data[field] || "").trim();
     doc.data[field] = cur ? cur + (cur.endsWith(".") ? " " : ". ") + sentence : sentence;
+    markAiFilled(doc, field, true);
     if (silent) return; // data only — the open view belongs to another doc
     const t = document.querySelector(`textarea[data-field="${field}"]`);
     if (t) t.value = doc.data[field];
@@ -5480,6 +5543,114 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
   }
 
+  /* ================= what fills itself, and what does not =================
+
+     A therapist looking at a blank evaluation could not tell which boxes were
+     waiting for dictation to arrive and which were waiting for them. Both
+     look identical: an empty textarea. So either they typed everything —
+     including the six sections the microphone was about to fill — or they
+     dictated and signed a note with an empty Plan, because nothing ever said
+     that the Plan is not something a transcript can produce.
+
+     Three honest answers, per field:
+
+       filled     dictation and the AI cleanup both write here
+       drafted    they write here only if you say it out loud, and it is a
+                  clinical judgement, so you confirm it either way
+       yours      nothing writes here but you
+
+     The map is derived from what the router ACTUALLY does — fieldForSentence
+     for the narrative fields, mergeMeasurements and mergeOutcomes for the
+     tables — rather than from what would be nice. If routing changes, this
+     has to change with it, and the check in test/adversarial.test.js fails
+     when the two disagree. */
+
+  const FIELD_SOURCES = {
+    eval: {
+      reason: "filled", precautions: "filled", pmh: "filled",
+      subjective: "filled", objectiveText: "filled",
+      assessment: "drafted", plan: "yours",
+    },
+    daily: {
+      subjective: "filled", summary: "filled",
+      assessment: "drafted", plan: "drafted",
+    },
+    progress: {
+      currentStatus: "filled", updatedFindings: "filled",
+      assessment: "drafted", goalsProgress: "yours",
+    },
+    discharge: {
+      summary: "filled", outcome: "yours", recommendations: "yours",
+    },
+  };
+
+  /* The parts of a note that are not textareas. Measurements and outcome
+     scores file themselves from dictation; goals and the charge sheet never
+     do, and a therapist who assumed otherwise would sign an unbillable note. */
+  const SECTION_SOURCES = {
+    measurements: { label: "Objective measurements", source: "filled", types: ["eval", "daily", "progress"] },
+    outcomes: { label: "Outcome measures", source: "filled", types: ["eval", "progress", "discharge"] },
+    bodymap: { label: "Body chart findings", source: "filled", types: ["eval", "daily", "progress"] },
+    goals: { label: "Goals", source: "yours", types: ["eval", "progress", "discharge"] },
+    charges: { label: "Billing / charges", source: "yours", types: ["eval", "daily", "progress"] },
+  };
+
+  const SOURCE_META = {
+    filled: { chip: "ai", badge: "✦ AI fills this", blurb: "dictation writes here, and the AI review rewrites it" },
+    drafted: { chip: "warn", badge: "✦ AI drafts · you confirm", blurb: "written only if you say it out loud — always your call" },
+    yours: { chip: "muted", badge: "✍ You write this", blurb: "nothing files here from dictation" },
+  };
+
+  const fieldSourceOf = (type, field) => (FIELD_SOURCES[type] || {})[field] || "yours";
+
+  /** Sections of `doc` that nothing will fill on its own and that are empty. */
+  function outstandingWork(doc) {
+    const out = [];
+    for (const [field, source] of Object.entries(FIELD_SOURCES[doc.type] || {})) {
+      if (source === "filled") continue;
+      if ((doc.data[field] || "").trim()) continue;
+      out.push({ label: fieldLabel(doc.type, field), source, field });
+    }
+    for (const [key, def] of Object.entries(SECTION_SOURCES)) {
+      if (def.source !== "yours" || !def.types.includes(doc.type)) continue;
+      // goals belong to the episode of care, not to one note
+      const have = key === "goals" ? S.goalsFor(doc.patientId).length : (doc.data[key] || []).length;
+      if (have) continue;
+      out.push({ label: def.label, source: "yours", field: key });
+    }
+    return out;
+  }
+
+  /** The banner above the note's fields: what is waiting on you right now. */
+  function renderFieldGuide(doc) {
+    const host = document.getElementById("fieldGuide");
+    if (!host) return;
+    const todo = outstandingWork(doc);
+    const filled = Object.entries(FIELD_SOURCES[doc.type] || {})
+      .filter(([, src]) => src === "filled").length
+      + Object.values(SECTION_SOURCES).filter((d) => d.source === "filled" && d.types.includes(doc.type)).length;
+
+    host.innerHTML = `
+      <div class="field-guide">
+        <div class="field-guide-head">
+          <b>What fills itself, and what needs you</b>
+          <span class="chip ai">${filled} section${filled === 1 ? "" : "s"} from dictation</span>
+        </div>
+        ${todo.length
+          ? `<div class="field-guide-todo">
+               <span class="field-guide-label">Still waiting on you:</span>
+               ${todo.map((t) => `<span class="chip ${t.source === "drafted" ? "warn" : "muted"}" title="${esc(SOURCE_META[t.source].blurb)}">${esc(t.label)}</span>`).join("")}
+             </div>`
+          : `<div class="field-guide-todo"><span class="chip good">Nothing outstanding</span>
+               <span class="field-guide-label">every section either has content or fills itself.</span></div>`}
+        <div class="field-guide-legend">
+          <span><i class="src-dot src-filled"></i>AI fills it</span>
+          <span><i class="src-dot src-drafted"></i>AI drafts it, you confirm</span>
+          <span><i class="src-dot src-yours"></i>you write it</span>
+        </div>
+      </div>`;
+  }
+
   /* ================= AI review & clean-up (second pass) ================= */
 
   function renderCleanupSummary(doc) {
@@ -5581,8 +5752,73 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       ? `<span class="chip info">Gemini</span>` : `<span class="chip muted">local AI</span>`;
 
     // which note field the cleaned subjective / treatment text writes into
-    const subjField = { eval: "subjective", daily: "subjective", progress: "currentStatus", discharge: "summary" }[doc.type];
-    const treatField = doc.type === "daily" ? "summary" : null;
+
+    /* Every section the review can write, paired with the note field it goes
+       to. Applying used to replace the Subjective and nothing else, so the
+       five other sections dictation fills kept whatever the raw live pass had
+       guessed — including lines this very review had just called small talk. */
+    const REVIEW_SECTIONS = ({
+      eval: [
+        ["reason", "reason", "why the patient was referred"],
+        ["precautions", "precautions", "restrictions stated in the visit"],
+        ["pmh", "pmh", "history the patient reported"],
+        ["subjective", "subjective", "from the patient's statements"],
+        ["objective", "objectiveText", "what the clinician observed out loud"],
+        ["assessment", "assessment", "only if an impression was stated"],
+      ],
+      daily: [
+        ["subjective", "subjective", "from the patient's statements"],
+        ["treatment", "summary", "interventions performed"],
+        ["assessment", "assessment", "only if an impression was stated"],
+      ],
+      progress: [
+        ["subjective", "currentStatus", "from the patient's statements"],
+        ["objective", "updatedFindings", "what the clinician observed out loud"],
+        ["assessment", "assessment", "only if an impression was stated"],
+      ],
+      discharge: [["subjective", "summary", "from the patient's statements"]],
+    })[doc.type] || [];
+
+    /* One row per section, each with its own tick. The default answers the
+       only question that matters: is there something here a person wrote?
+
+         empty field           → ticked. Nothing to lose.
+         written by dictation  → ticked. Replacing a machine's earlier guess
+                                 with its reviewed one is the whole point.
+         typed by the therapist → NOT ticked, and says so. A cleanup that
+                                 silently overwrote a paragraph somebody sat
+                                 down and wrote would be worse than no
+                                 cleanup at all.  */
+    const sectionRows = REVIEW_SECTIONS.map(([key, field, hint]) => {
+      const proposed = String(result[key] || "").trim();
+      const current = String(doc.data[field] || "").trim();
+      const byHand = !!current && !isAiFilled(doc, field);
+      return {
+        key, field, hint, proposed, current, byHand,
+        apply: !!proposed && !byHand && proposed !== current,
+        unchanged: !!proposed && proposed === current,
+      };
+    }).filter((r) => r.proposed || r.current);
+
+    const sectionRowHtml = (r, i) => {
+      const state = r.unchanged ? ["muted", "unchanged"]
+        : !r.proposed ? ["muted", "the visit said nothing for this section"]
+          : r.byHand ? ["warn", "you typed this — ticking replaces it"]
+            : r.current ? ["info", "replaces what dictation filed"]
+              : ["good", "fills an empty section"];
+      return `
+      <div class="rev-section${r.apply ? "" : " dropping"}">
+        <label class="rev-inc"><input type="checkbox" data-sec-apply="${i}" ${r.apply ? "checked" : ""} ${r.proposed ? "" : "disabled"}/></label>
+        <div class="rev-fbody">
+          <div class="rev-fhead"><b>${esc(fieldLabel(doc.type, r.field))}</b>
+            <span class="chip ${state[0]}">${esc(state[1])}</span>
+            <span class="rev-hint">${esc(r.hint)}</span></div>
+          ${r.byHand && r.proposed ? `<div class="rev-why">Currently in the note: “${esc(r.current.slice(0, 180))}${r.current.length > 180 ? "…" : ""}”</div>` : ""}
+          <textarea data-sec-text="${i}" rows="2" class="rev-text" ${r.proposed ? "" : "disabled"}>${esc(r.proposed)}</textarea>
+        </div>
+      </div>`;
+    };
+
     const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
     const measCount = meas.rom.length + meas.mmt.length + meas.special.length + meas.pain.length;
     const measList = [
@@ -5591,15 +5827,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       ...meas.special.map((r) => `${r.name} — ${r.result}`),
       ...meas.pain.map((r) => `Pain · ${r.location || "—"} ${r.score}/10`),
     ];
+    /* What this review cannot write, said plainly on the same screen. A
+       therapist who has just watched the AI fill six sections will assume it
+       filled the rest too, and the Plan and the charge sheet are exactly the
+       two that decide whether the visit is defensible and billable. */
+    const yoursNow = outstandingWork(doc);
+
     const sectionsHtml = `
-      <div class="rev-legend">The AI's cleaned write-up. Applying <b>replaces</b> the note's text sections and files the measurements below — all still editable afterward.</div>
-      <div class="field"><label>${esc(fieldLabel(doc.type, subjField))} — from the patient's statements</label>
-        <textarea data-sec="subjective" class="rev-text" rows="3">${esc(result.subjective || "")}</textarea></div>
-      ${treatField ? `<div class="field"><label>Treatment summary — interventions performed</label>
-        <textarea data-sec="treatment" class="rev-text" rows="2">${esc(result.treatment || "")}</textarea></div>` : ""}
+      <div class="rev-legend">Every section the review can write, each with its own tick. Ticked sections <b>replace</b> what is in the note — all still editable afterwards. Anything you typed by hand starts unticked.</div>
+      ${sectionRows.length ? sectionRows.map(sectionRowHtml).join("") : `<div class="empty-state">The visit said nothing that belongs in a note section.</div>`}
       <div class="field"><label>Objective measurements to file (${measCount})</label>
         ${measCount ? `<ul class="rev-meas">${measList.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
-        : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>`;
+        : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>
+      ${yoursNow.length ? `<div class="rev-yours">
+        <b>The review does not write these — they are still yours:</b>
+        ${yoursNow.map((t) => `<span class="chip ${t.source === "drafted" ? "warn" : "muted"}">${esc(t.label)}</span>`).join("")}
+      </div>` : ""}`;
 
     const dialogueHtml = result.dialogue.map((d, i) => `
       <div class="rev-turn${d.keep === false ? " dropping" : ""}" data-turnrow="${i}">
@@ -5683,17 +5926,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       result.dialogue[Number(c.dataset.keep)].keep = c.checked;
       c.closest(".rev-turn").classList.toggle("dropping", !c.checked);
     }));
-    m.querySelectorAll("[data-sec]").forEach((t) => t.addEventListener("input", () => { result[t.dataset.sec] = t.value; }));
+    m.querySelectorAll("[data-sec-text]").forEach((t) => t.addEventListener("input", () => {
+      sectionRows[Number(t.dataset.secText)].proposed = t.value;
+    }));
+    m.querySelectorAll("[data-sec-apply]").forEach((c) => c.addEventListener("change", () => {
+      sectionRows[Number(c.dataset.secApply)].apply = c.checked;
+      c.closest(".rev-section").classList.toggle("dropping", !c.checked);
+    }));
 
     m.querySelector("#revCancel").addEventListener("click", closeModal);
     m.querySelector("#revApply").addEventListener("click", () => {
-      applyRefinement(doc, user, dstate, result, rows, { subjField, treatField });
+      applyRefinement(doc, user, dstate, result, rows, { sectionRows });
       closeModal();
     });
   }
 
   function applyRefinement(doc, user, dstate, result, rows, fields) {
-    const { subjField, treatField } = fields || {};
     const before = doc.data.mapPoints || [];
     const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
     const correctedBy = new Map((result.corrections || []).map((t) => [t.key, t]));
@@ -5738,14 +5986,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       };
     });
 
-    // 2b) update the note's text sections + objective measurements from the AI
-    if (subjField && (result.subjective || "").trim()) {
-      doc.data[subjField] = result.subjective.trim();
-      sectionChanges.push({ tag: "section", label: fieldLabel(doc.type, subjField), detail: "updated from patient statements" });
-    }
-    if (treatField && (result.treatment || "").trim()) {
-      doc.data[treatField] = result.treatment.trim();
-      sectionChanges.push({ tag: "section", label: "Treatment summary", detail: "updated from interventions performed" });
+    /* 2b) write every section the therapist ticked, and only those. The old
+           pass wrote the Subjective (and, on a daily note, the treatment
+           summary) unconditionally and left the rest of the note holding the
+           raw live pass's guesses. */
+    for (const r of (fields || {}).sectionRows || []) {
+      const text = String(r.proposed || "").trim();
+      if (!r.apply || !text) continue;
+      if (doc.data[r.field] === text) continue;
+      doc.data[r.field] = text;
+      markAiFilled(doc, r.field, true);
+      sectionChanges.push({
+        tag: "section",
+        label: fieldLabel(doc.type, r.field),
+        detail: r.current ? "rewritten from the cleaned transcript" : "filled from the cleaned transcript",
+      });
     }
     const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
     let filed = 0;
@@ -5791,6 +6046,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     doc.data.refinement = {
       applied: true,
       ranAt: new Date().toISOString(),
+      // named on the printed copy, so the record says what a machine wrote
+      sections: sectionChanges.map((c) => c.label),
       engine: result.source && result.source.startsWith("gemini") ? "gemini" : "local",
       changes, clinicianTurns, removed,
       headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept${trimBit}${secBit}.`,

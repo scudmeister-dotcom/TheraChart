@@ -80,6 +80,14 @@
       }, required: ["bodyPart", "kind", "reason"] } },
       subjective: { type: "string" },
       treatment: { type: "string" },
+      /* The other sections live dictation files into. Reviewing only the
+         Subjective left five sections holding the raw live pass's guesses,
+         next to one that had been cleaned. */
+      reason: { type: "string" },
+      precautions: { type: "string" },
+      pmh: { type: "string" },
+      objective: { type: "string" },
+      assessment: { type: "string" },
     },
     required: ["dialogue", "findings"],
   };
@@ -131,6 +139,36 @@
       "5) TREATMENT. If the therapist described interventions performed this visit",
       "   (therapeutic exercise, manual therapy, modalities, gait/balance training,",
       "   HEP, education), summarize them in a brief Treatment paragraph; else ''.",
+      "",
+      "5b) THE REST OF THE NOTE. Live dictation files into these sections too, and",
+      "   they are just as likely to be holding small talk as the Subjective was.",
+      "   Draft each one from the SAME conversation. Return '' — not a guess, and",
+      "   not a repeat of another section — for any the visit did not mention.",
+      "",
+      "     reason       why the patient was referred, and by whom: 'Dr. Santos",
+      "                  referred for right shoulder pain'.",
+      "     precautions  restrictions and contraindications the patient or",
+      "                  surgeon stated: 'no lifting over 5 kg for six weeks',",
+      "                  weight-bearing status, 'bawal', 'iwasan'.",
+      "     pmh          relevant past history: prior surgeries, injuries, and",
+      "                  comorbidities the patient reported ('diagnosed with",
+      "                  diabetes ten years ago'). Somebody ELSE's history is",
+      "                  not history — 'my daughter had knee surgery' belongs",
+      "                  in no section at all.",
+      "     objective    what the CLINICIAN observed out loud: posture, gait,",
+      "                  palpation, asymmetry, swelling on inspection. Do NOT",
+      "                  repeat range-of-motion degrees, strength grades or",
+      "                  special-test results here — those are already filed as",
+      "                  measurements, and a second copy drifts from the first.",
+      "     assessment   the clinical impression IF the therapist stated one",
+      "                  ('consistent with rotator cuff impingement'). Never",
+      "                  infer a diagnosis that was not said out loud.",
+      "",
+      "   Every sentence belongs to exactly ONE section. A referral is the reason",
+      "   for referral and is not also a line of Subjective; a precaution is a",
+      "   precaution and not also history. Do not write the Plan — frequency,",
+      "   duration and progressions are the therapist's decision, not the",
+      "   transcript's.",
       "",
       "6) CORRECTIONS — WHAT SHOULD COME BACK OFF THE CHART. Live dictation pins",
       "   a body region the instant it hears one, mid-sentence, with no idea how",
@@ -249,6 +287,24 @@
       measurements: parser.aggregateMeasurements(dialogue.filter((d) => d.keep !== false).map((d) => d.text)),
       subjective: String(parsed.subjective || "").trim(),
       treatment: String(parsed.treatment || "").trim(),
+      /* Optional in the schema, so a model that returns none of them must
+         not blank five sections of the note. The local drafter reads the
+         same cleaned dialogue and answers the same question, so it is the
+         right thing to fall back to per-section rather than all-or-nothing. */
+      ...(() => {
+        const local = parser.sectionDrafts(dialogue);
+        const pick = (k) => {
+          const given = parsed[k];
+          return typeof given === "string" ? given.trim() : (local[k] || "");
+        };
+        return {
+          reason: pick("reason"),
+          precautions: pick("precautions"),
+          pmh: pick("pmh"),
+          objective: pick("objective"),
+          assessment: pick("assessment"),
+        };
+      })(),
     };
   }
 

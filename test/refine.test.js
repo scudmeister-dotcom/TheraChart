@@ -242,6 +242,27 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
   check("tl: the real complaint survives",
     r.findings.some((f) => f.key === "Knee|" && !f.corrected), JSON.stringify(r.findings.map((f) => f.key)));
 }
+{
+  /* An example runs to the end of its CLAUSE. One sentence that supposes one
+     region and then reports another must keep the report — dropping the whole
+     line would lose a real complaint to fix a false one. */
+  const r = PR.refineTranscript([
+    "kunwari masakit ang aking balikat pero talaga masakit ang kanang tuhod ko",
+  ]);
+  const line = r.dialogue[0];
+  check("a half-example line is kept", line.keep === true, JSON.stringify(line));
+  check("…the supposed region is flagged",
+    (r.corrections || []).some((c) => c.key === "Shoulder|" && c.kind === "hypothetical"),
+    JSON.stringify(r.corrections));
+  check("…and the reported one is filed, with its side",
+    r.findings.some((f) => f.key === "Knee|right" && !f.corrected),
+    JSON.stringify(r.findings.map((f) => f.key)));
+
+  const ranges = PR.hypotheticalRanges("kunwari masakit ang balikat pero masakit ang tuhod");
+  check("the example range stops at the contrast break", ranges.length === 1
+    && /balikat\s*$/.test("kunwari masakit ang balikat pero masakit ang tuhod".slice(ranges[0][0], ranges[0][1])),
+    JSON.stringify(ranges));
+}
 
 {
   // the commonest live-pass error of all: the CLINICIAN names a region, and

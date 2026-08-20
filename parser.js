@@ -1123,6 +1123,10 @@
      the trim, so the pair still reads. Trailing politeness particles ("po",
      "lang", "na") are part of the same non-answer. */
   const FILLER_RE = /^(?:um+|uh+|ah+|er+|hm+|mm+|mhm+|uh[-\s]?huh|mm[-\s]?hmm?|okay|ok|k|alright|all right|right|got it|i see|good|great|fine|thanks?|thank you|you'?re welcome|hello|hi|hey|good (?:morning|afternoon|evening)|bye|goodbye|see you|salamat|sige(?: lang)?|ayos|oo nga|ah oo|ayan|ayun|oks|tama|maayo|maayong (?:buntag|hapon|gabii)|kumusta|kamusta|walay problema|wala man)(?:\s+(?:po|lang|na|man|ra))*\b[\s.,!?…-]*$/i;
+  /* The therapist saying what happens next. Deliberately verb-led: a bare
+     "next week" is somebody leaving, not a frequency. */
+  const PLAN_RE = /\b(?:continue|discontinue|progress(?:ing)?\s+to|advance\s+to|frequency|(?:one|two|three|four|five|\d+)\s*(?:x|times?)\s*(?:a|per)\s*week|\d+\s*x\s*\/?\s*week|home\s+(?:exercise\s+)?program|hep\b|re-?assess\w*|re-?evaluat\w*|plan\s+is\s+to|will\s+progress|add\s+(?:in\s+)?(?:resisted|isometric|eccentric)|ituloy|magpatuloy|padayon)\b/i;
+
   const LOGISTICS_RE = /\b(?:parking|traffic|jeepney|tricycle|weather|rescheduling|reschedule|next (?:week|session|visit|appointment)|see you (?:next|then)|receipts?|payments?|philhealth|hmo|insurance card|front desk|waiting (?:room|area)|comfort room|rest ?room|charger|wi-?fi|traysikel|habal-?habal|bayad|singil|resibo|trapiko|ulan|sunod(?:\s+nga)?\s+semana|susunod na linggo)\b/i;
 
   const SMALLTALK_RE = new RegExp([
@@ -1156,10 +1160,17 @@
     const hyp = hypotheticalRanges(text);
     if (hyp.length) {
       const rest = withoutHypotheticals(text, hyp);
-      if (!rest || !turnSubstance(rest).keep) {
-        return { keep: false, reason: "an example, not something the patient reported" };
+      /* The remainder has to carry real content, not merely survive. What is
+         left of "so how is your — you could say, oh, my right arm is in a lot
+         of pain" is the fragment "how is your", which reads as a clinician cue
+         and is nothing at all. */
+      if (rest) {
+        const rr = parseUtterance(rest);
+        const mm = rr.measurements;
+        if (mm.rom.length || mm.mmt.length || mm.special.length || mm.pain.length
+          || rr.loose || rr.mentions.some((m) => !m.bare)) return { keep: true, reason: "" };
       }
-      return { keep: true, reason: "" };
+      return { keep: false, reason: "an example, not something the patient reported" };
     }
 
     const r = parseUtterance(text);
@@ -1257,6 +1268,13 @@
     /* A question or a cue is how the clinician got the answer, not the answer.
        It stays in the transcript, where it gives the reply its meaning. */
     if (CLINICIAN_RE.test(text)) return { file: false, reason: "a question or instruction, not a finding" };
+    /* What happens next is documentation too. A plan sentence names no
+       region and describes no symptom — "continue two times a week for four
+       weeks" — so nothing above recognised it and the daily note's Plan went
+       unwritten while the therapist watched themselves dictate it. Asked
+       before the logistics veto, and worded so that "see you next week"
+       still reads as logistics rather than as a frequency. */
+    if (PLAN_RE.test(text)) return { file: true, reason: "" };
     if (LOGISTICS_RE.test(text)) return { file: false, reason: "not about the patient's condition" };
 
     /* A referral, a precaution or a history line often names no region and
