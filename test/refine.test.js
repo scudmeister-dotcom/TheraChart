@@ -421,6 +421,60 @@ for (const t of [
 }
 
 
+/* ---- who spoke, and whose report it is ---- *
+   Clinical documentation is taught in the third person, and for many
+   therapists that register IS the note: "patient reports right shoulder pain
+   7/10", "pt denies numbness". Every one of those lines is the CLINICIAN
+   speaking, and the symptom in the first two is still the PATIENT'S. One flag
+   could not carry both facts, so the parser answered the wrong question with
+   it and tagged the whole note as the patient talking.
+
+   The reason it survived so long is that the wrong label produced the right
+   routing by accident: the note router sends clinician speech out of
+   Subjective, so calling this the patient kept a genuine subjective report
+   where it belonged. Correcting the label alone would have pushed the
+   patient's own complaint into Objective — worse than the bug. Both
+   directions are pinned here so neither half can be "fixed" on its own. */
+{
+  const say = (t) => `${PR.guessSpeaker(t)}/${PR.reportedVoice(t)}`;
+  for (const [text, want] of [
+    // the relay: clinician's mouth, patient's report
+    ["patient reports right shoulder pain seven out of ten", "clinician/patient"],
+    ["patient denies numbness or tingling", "clinician/patient"],
+    ["pt c/o stiffness in the morning", "clinician/patient"],
+    ["px states the pain wakes him at night", "clinician/patient"],
+    // the clinician's own observation of the patient
+    ["patient tolerated treatment well", "clinician/clinician"],
+    ["the right shoulder sits higher than the left", "clinician/clinician"],
+    ["shoulder flexion is 120 degrees today", "clinician/clinician"],
+    // a question that names the patient is still the clinician's own
+    ["does the patient report any numbness?", "clinician/clinician"],
+    // the patient speaking for themselves, in either language
+    ["my left knee has been really sore all week", "patient/patient"],
+    ["masakit ang kaliwang balikat ko", "patient/patient"],
+  ]) check(`spoke/voice — ${text.slice(0, 46)}`, say(text) === want, `${say(text)} (wanted ${want})`);
+
+  /* The end-to-end shape of it: a note dictated entirely in the third person
+     must still produce a finding and a Subjective, while the speaker labels
+     read "clinician" throughout — which is what the model returns for the
+     same transcript, so local and AI now agree instead of contradicting. */
+  const r = PR.refineTranscript([
+    "patient reports right shoulder pain seven out of ten, worse reaching overhead",
+    "right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 out of 5",
+    "we did therapeutic exercise with the theraband and manual therapy to the posterior capsule",
+    "patient tolerated treatment well and reported less pain afterwards",
+  ]);
+  check("third-person note: every line is attributed to the clinician",
+    r.dialogue.every((d) => d.speaker === "clinician"), JSON.stringify(r.dialogue.map((d) => d.speaker)));
+  check("third-person note: the relayed complaint is still a finding",
+    r.findings.some((f) => f.part === "Shoulder" && f.side === "right"), JSON.stringify(r.findings.map((f) => f.key)));
+  check("third-person note: …and still reaches Subjective, not Objective",
+    /shoulder pain/i.test(r.subjective) && !/shoulder pain seven/i.test(r.objective),
+    JSON.stringify({ s: r.subjective.slice(0, 60), o: r.objective.slice(0, 60) }));
+  check("third-person note: the measurement line stays out of Subjective",
+    !/90 degrees/.test(r.subjective), r.subjective);
+}
+
 /* ---- the two places a failure could still go quiet ---- */
 {
   const fs2 = require("fs"), path2 = require("path");

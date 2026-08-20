@@ -1137,8 +1137,60 @@
        higher" is the patient looking at themselves. The first person is the
        only thing that separates them, so the absence of one is the signal. */
     if (OBSERVATION_RE.test(t) && !FIRST_PERSON_RE.test(t)) return "clinician";
+    /* "Patient reports…", "pt denies…" — the patient is the SUBJECT of the
+       sentence, which is something no patient says about themselves. The
+       absence of a first person is what settles it, the same way it does for
+       an observation above. */
+    if (PATIENT_AS_SUBJECT_RE.test(t) && !FIRST_PERSON_RE.test(t)) return "clinician";
     return "patient"; // default: hone in on the patient
   }
+
+  /** WHOSE REPORT the content is, which is not always who said it.
+      "Patient reports right shoulder pain 7/10" is the clinician speaking in
+      the patient's voice, and belongs in Subjective; "the right shoulder sits
+      higher" is the clinician speaking in their own, and does not. */
+  function reportedVoice(raw) {
+    const t = String(raw || "").trim();
+    if (!t) return "clinician";
+    const r = parseUtterance(t);
+    // a measured value is the clinician's, whoever read it out
+    if (r.measurements.rom.length || r.measurements.mmt.length || r.measurements.special.length) return "clinician";
+    if (META_RE.test(t)) return "clinician";
+    // a question or a cue is the clinician's own, even when it names the patient
+    if (CLINICIAN_RE.test(t)) return "clinician";
+    if (TREATMENT_NARRATION_RE.test(t)) return "clinician";
+    // the relay: clinician's mouth, patient's report
+    if (PATIENT_AS_SUBJECT_RE.test(t) && REPORTING_VERB_RE.test(t)) return "patient";
+    if (OBSERVATION_RE.test(t) && !FIRST_PERSON_RE.test(t)) return "clinician";
+    return guessSpeaker(t) === "patient" ? "patient" : "clinician";
+  }
+
+  /* WHO SPOKE is not the same question as WHOSE REPORT this is.
+
+     Clinical documentation is taught in the third person — "patient reports
+     right shoulder pain 7/10", "patient denies numbness", "pt c/o stiffness"
+     — and for a large share of therapists that register IS the note. Every
+     one of those lines is the CLINICIAN speaking. But the content of the
+     first two is the PATIENT'S report, relayed; the content of "patient
+     tolerated treatment well" is the clinician's own observation.
+
+     One flag could not carry both facts, so the parser answered the wrong
+     question with it. `guessSpeaker` defaults to "patient" when it sees no
+     clinician markers, which tagged all of this as the patient talking: the
+     transcript showed the wrong speaker on most lines of a third-person note,
+     and the therapist had to relabel each by hand.
+
+     The reason it was never noticed is that the wrong label produced the
+     right ROUTING by accident. The note router sends clinician speech out of
+     Subjective, so calling this the patient kept a genuine subjective report
+     where it belonged. Fixing the label alone would have pushed "patient
+     reports right shoulder pain 7/10" into Objective and made the note worse
+     — which is why the two questions are now asked separately. */
+  const PATIENT_AS_SUBJECT_RE = /\b(?:the\s+)?(?:patients?|pt|px|client)\b/i;
+  /* A verb of REPORTING is what makes the sentence the patient's voice.
+     "Reports", "denies", "rates" relay what they said; "tolerated",
+     "presents", "ambulates" are the clinician's own observation of them. */
+  const REPORTING_VERB_RE = /\b(?:reports?|reported|reporting|states?|stated|complain(?:s|ed|ing)?|c\/o|denies|denied|describ(?:es|ed)|says?|said|rates?|rated|endorses?|endorsed|admits?|admitted|mentions?|mentioned|tells?\s+me|told\s+me|feels?|felt|notes?\s+(?:pain|discomfort|stiffness))\b/i;
 
   const OBSERVATION_RE = /\b(?:sits?|appears?|looks?|presents?|demonstrates?|exhibits?|noted|observ(?:ed|able)|palpat\w*|visibl[ey]|on inspection|compared to the (?:other|left|right)|than the (?:other|left|right)|mas\s+(?:mataas|mababa|malaki|maliit)|kumpara\s+sa|compared\s+sa|halata(?:ng)?|makita|nakikita|nakita|tan-?awon|klaro\s+nga)\b/i;
   const FIRST_PERSON_RE = /\b(?:i|i'?(?:m|ve|ll|d)|me|my|mine|myself|we|our|ako|ko|akin|aking|sakin|nako|akong)\b/i;
@@ -1587,8 +1639,19 @@
            talking, so a therapist observing out loud landed in the patient's
            own words; it is an objective observation instead. Every other
            section is about the patient whoever says it: a precaution is a
-           precaution in either voice. */
-        if (section === "subjective" && turn.speaker !== "patient") section = "objective";
+           precaution in either voice.
+
+           Two tests rather than one, because the speaker alone gets the
+           third-person register wrong in the costly direction. "Patient
+           reports right shoulder pain 7/10" is spoken by the clinician, so a
+           speaker test moves the patient's own report into Objective and
+           leaves Subjective empty — on a note where nearly every line reads
+           that way, which is how a great many therapists are taught to
+           dictate. A sentence stays in Subjective if EITHER the person
+           speaking is the patient or the report being relayed is theirs. */
+        if (section === "subjective" && turn.speaker !== "patient" && reportedVoice(sentence) !== "patient") {
+          section = "objective";
+        }
 
         if (!Object.prototype.hasOwnProperty.call(buckets, section)) continue;
         if (section === "subjective" && skip.has(turnIndex)) continue;
@@ -1682,14 +1745,20 @@
         remember(parseUtterance(text.slice(a, b).replace(HYPOTHETICAL_RE, " ")).mentions, "hypothetical",
           "Said as an example, not reported by the patient");
       }
-      if (speaker !== "patient" || META_RE.test(text)) {
+      /* Findings follow the VOICE, not the speaker. Now that "patient reports
+         right shoulder pain 7/10" is correctly attributed to the clinician,
+         keying this off the speaker would throw the shoulder away — the exact
+         regression the split exists to prevent. The clinician's mouth, the
+         patient's report. */
+      const voice = reportedVoice(text);
+      if (voice !== "patient" || META_RE.test(text)) {
         remember(parseUtterance(text).mentions,
           "not-the-patient",
           META_RE.test(text)
             ? "Said while talking about the app, not about the patient"
             : "The clinician said this — it is not the patient's report");
       }
-      if (speaker !== "patient") return;
+      if (voice !== "patient") return;
       // "Okay." and "Mm-hmm." are not Subjective content either. Each kept
       // sentence remembers which regions it spoke about, so a sentence that
       // was only ever about a retracted region can leave with it.
@@ -1850,6 +1919,7 @@
     aggregateMeasurements,
     classifyUtterance,
     guessSpeaker,
+    reportedVoice,
     noteWorthy,
     trimToClinical,
     sectionDrafts,

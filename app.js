@@ -5759,7 +5759,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       the note" (it still stands in the transcript, which is the verbatim
       record). `speaker` is optional; pass it and the clinician's own words
       stay out of the patient's sections. */
-  function fieldForSentence(type, sentence, speaker) {
+  function fieldForSentence(type, sentence, voice) {
     // A standardised score is data, not narrative: "LEFS is now 58 out of 80"
     // belongs in the outcome table the same way a ROM reading does, and
     // repeating it in Subjective just pads the note.
@@ -5792,8 +5792,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!field) return null;
     /* The therapist observing out loud is an objective observation, not the
        patient's report — send it to the objective narrative rather than
-       putting the clinician's words in the patient's mouth. */
-    if (speaker === "clinician" && PATIENT_VOICE_FIELDS.has(field)) {
+       putting the clinician's words in the patient's mouth.
+
+       This gate reads the VOICE rather than the speaker, and the difference is
+       the whole point: "patient reports right shoulder pain 7/10" is spoken by
+       the clinician but IS the patient's report, and gating on who spoke would
+       file it as an objective finding. */
+    if (voice === "clinician" && PATIENT_VOICE_FIELDS.has(field)) {
       return type === "eval" ? "objectiveText" : type === "progress" ? "updatedFindings" : null;
     }
     return field;
@@ -5822,7 +5827,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        describing is nearly always vocabulary — "push against my hand",
        "point to your shoulder" — and pinning it put marks on the mannequin
        that no patient ever complained about. */
+    /* Two different questions, asked separately. `clinician` is WHO SPOKE and
+       decides whether a bare region-name is vocabulary rather than a
+       complaint; `voice` is WHOSE REPORT it is and decides which section the
+       text belongs in. Third-person narration is the case that separates
+       them — the clinician's mouth, the patient's report. */
     const clinician = PR.guessSpeaker(parsed.text) === "clinician";
+    const voice = PR.reportedVoice(parsed.text);
     /* A referral, a precaution, a history line or an impression names a
        region without complaining about it — "Dr. Santos referred me for the
        right shoulder", "consistent with a rotator cuff impingement". Those
@@ -5858,7 +5869,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          that is documentation and leave the wedding in the transcript. */
       const clinical = PR.trimToClinical(sentence);
       if (!clinical) { heldBack += 1; continue; }
-      const field = fieldForSentence(doc.type, clinical, clinician ? "clinician" : "patient");
+      const field = fieldForSentence(doc.type, clinical, voice);
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
