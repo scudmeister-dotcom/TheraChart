@@ -22,6 +22,40 @@ check("symptom report → patient", PR.guessSpeaker("My left knee has been reall
 check("pain rating answer → patient", PR.guessSpeaker("It's about a seven out of ten.") === "patient");
 check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balikat ko.") === "patient");
 
+/* Dictation has no question mark, so the question WORD is the whole signal.
+   Without these, "so who sent you to us today" and "what brings you in" read
+   as the patient talking — and a clinician's screening question then became
+   the patient's symptom. */
+for (const t of [
+  "so who sent you to us today", "who referred you", "who told you to come in",
+  "what brings you in today", "when did it start", "which knee is it",
+  "why does it hurt more at night",
+]) check(`unpunctuated question → clinician: ${t}`, PR.guessSpeaker(t) === "clinician");
+
+/* The Filipino and Cebuano yes/no question. "Naa kay numbness sa tiil" is the
+   therapist screening for numbness; charting it filed numbness in the foot
+   that the patient had just denied. */
+for (const t of ["may sakit po ba kayo dati", "may bawal po ba sa inyo", "naa kay numbness sa tiil", "naa bay nag-igo nimo"])
+  check(`tl/ceb screening question → clinician: ${t}`, PR.guessSpeaker(t) === "clinician");
+
+/* …and the same words in a patient's own report stay the patient's. The cost
+   of getting this backwards is a symptom silently kept out of Subjective. */
+for (const t of [
+  "may sakit ako sa balikat ko", "may namamaga po sa tuhod ko", "meron akong pananakit sa likod",
+  "naa koy sakit sa akong tuhod", "naa koy numbness sa akong tiil",
+  "who sent me was my company doctor",
+]) check(`a report that only looks like a question → patient: ${t}`, PR.guessSpeaker(t) === "patient");
+
+/* The companion who says out loud that they are not the patient. */
+{
+  const c = PR.parseUtterance("tapos ako po, masakit din ang likod ko, pero hindi po ako ang pasyente");
+  check("companion: their own back is not this patient's finding", c.mentions.length === 0, JSON.stringify(c.mentions));
+  check("companion: …and it is recorded as not the patient's", c.notMine.length === 1, JSON.stringify(c.notMine));
+  const m = PR.parseUtterance("masakit daw po ang kaliwang tuhod niya, mga isang buwan na");
+  check("companion: the patient's own knee is still charted",
+    (m.mentions[0] || {}).partName === "Knee" && m.mentions[0].side === "left", JSON.stringify(m.mentions));
+}
+
 /* ---- full conversation refinement ---- */
 {
   const convo = [

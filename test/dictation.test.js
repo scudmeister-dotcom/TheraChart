@@ -341,5 +341,72 @@ const settle = () => new Promise((r) => setImmediate(r));
       !/Recording — \$\{mmss/.test(SRC));
   }
 
+  /* ---- a chunk that fails must leave a visible hole ---- *
+     Record-then-process splits the dictation into ~50-second chunks and sends
+     them in parallel. When one failed, the survivors were joined with a space:
+     the sentence before a lost fifty seconds was spliced onto the sentence
+     after it, and the record carried a continuous statement nobody made. The
+     therapist was told to "review carefully" — and in the same breath the
+     recording was cleared, so there was nothing left to review it against. */
+  {
+    const src = lift("  async function processRecording(");
+    const mark = /const AUDIO_GAP_MARK = "([^"]+)";/.exec(SRC);
+    r.check("app.js still declares a gap marker", !!mark);
+    const GAP = mark ? mark[1] : "";
+
+    // a fetch that fails whichever chunk indices it is told to
+    const fetchWith = (failing) => {
+      let n = -1;
+      return async (url, init) => {
+        n += 1;
+        const i = Number(new URL(url, "http://x").searchParams.get("docId").split(":")[1]);
+        if (failing.includes(i)) {
+          return { ok: false, status: 503, json: async () => ({ error: "upstream unavailable", billedSeconds: 3 }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ text: `chunk${i}.`, billedSeconds: 3 }) };
+      };
+    };
+    /* docId carries the chunk index so the stub can fail a chosen one; the
+       real call sends the same docId on every chunk. */
+    const runWith = async (count, failing) => {
+      const chunks = Array.from({ length: count }, (_, i) => ({ pcm: new Float32Array(8), rate: 16000, i }));
+      const sandbox = new Function("STT_LANG", "STT_LANG_DEFAULT", "STT_MODEL", "window", "fetch", "encodeWav",
+        `const AUDIO_GAP_MARK = ${JSON.stringify(GAP)};\n` + src + "\n  return processRecording;");
+      let i = -1;
+      const perChunkFetch = fetchWith(failing);
+      const f = async (url, init) => { i += 1; return perChunkFetch(url.replace("docId=d", `docId=d:${i}`), init); };
+      const fn = sandbox({ fil: "fil-PH" }, "fil-PH", "chirp2", {}, f, () => new ArrayBuffer(8));
+      return fn("d", "fil", chunks, () => {});
+    };
+
+    const clean = await runWith(3, []);
+    r.check("every chunk transcribing gives a clean transcript",
+      clean.text === "chunk0. chunk1. chunk2." && clean.errors.length === 0, JSON.stringify(clean.text));
+
+    const holed = await runWith(3, [1]);
+    r.check("a failed middle chunk leaves a marker where it was",
+      holed.text === `chunk0. ${GAP} chunk2.`, JSON.stringify(holed.text));
+    r.check("…and the failure is still reported", holed.errors.length === 1, JSON.stringify(holed.errors));
+    r.check("…so the two surviving sentences are never spliced together",
+      !/chunk0\. chunk2\./.test(holed.text), JSON.stringify(holed.text));
+
+    const run2 = await runWith(4, [1, 2]);
+    r.check("consecutive failures are one hole, not one marker each",
+      run2.text === `chunk0. ${GAP} chunk3.`, JSON.stringify(run2.text));
+
+    const allBad = await runWith(2, [0, 1]);
+    r.check("a transcript of nothing but markers is no transcript at all",
+      allBad.text === "", JSON.stringify(allBad.text));
+    r.check("…and a failed chunk is still billed for", allBad.billedSeconds === 6, String(allBad.billedSeconds));
+
+    // the audio has to survive a PARTIAL failure — that is the case where the
+    // therapist most needs to hear what the chunk actually said
+    r.check("a partial failure keeps the recording for a retry",
+      /if \(!out\.errors\.length\) \{\s*captured = null;\s*await savedAudio\.clear/.test(SRC),
+      "the Process handler no longer gates clearing the audio on a clean run");
+    r.check("…and the message says the recording is still there",
+      /chunk\(s\) failed\.[^`]*recording is still here/.test(SRC));
+  }
+
   r.done();
 })();
