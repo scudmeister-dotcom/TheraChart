@@ -1,23 +1,32 @@
 # Deploying TheraChart
 
-> ## ⚠️ Cost hold: Cloud SQL is intentionally STOPPED
+> ## Cost hold LIFTED — Cloud SQL is running
 >
-> **As of 2026-07-26 the `therachart-db` Cloud SQL instance is stopped**
-> (`activation-policy NEVER`) to stop the ~US$8–10/mo compute charge during
-> development. It is the only resource in the project that billed around the
-> clock — Cloud Run scales to zero, and Gemini/STT/GCS are per-use.
+> **As of 2026-08-17 the `therachart-db` Cloud SQL instance is back on**
+> (`activation-policy ALWAYS`, state `RUNNABLE`) and the deployed Cloud Run
+> service (https://therachart-cmcoe52aaa-uc.a.run.app) serves normally. A 503
+> from that URL is now a real outage worth debugging, not the expected state.
 >
-> **Consequence:** the deployed Cloud Run service
-> (https://therachart-cmcoe52aaa-uc.a.run.app) returns 503 while the database is
-> down. This is expected, not an outage to debug.
+> It bills ~US$8–10/mo of always-on compute again — it is the only resource in
+> the project that charges around the clock, since Cloud Run scales to zero and
+> Gemini/STT/GCS are per-use. To park it during a quiet stretch:
 >
-> **Development continues on local Postgres 15** — see
+> ```bash
+> gcloud sql instances patch therachart-db --project therachart-prod --activation-policy NEVER
+> ```
+>
+> and to bring it back (allow a few minutes before the service answers):
+>
+> ```bash
+> gcloud sql instances patch therachart-db --project therachart-prod --activation-policy ALWAYS
+> ```
+>
+> **Day-to-day development still runs on local Postgres 15** — see
 > [Local Postgres for development](#local-postgres-for-development) below. Every
-> feature works locally, including Vertex Gemini and Cloud Speech-to-Text.
+> feature works locally, including Vertex Gemini and Cloud Speech-to-Text, so
+> there is no need to keep the cloud database up just to write code.
 >
-> **Before go-live, this must be turned back on** — see the
-> [Go-live checklist](#go-live-checklist) at the bottom of this file. A safety
-> export of the database was taken first:
+> The pre-hold safety export is still at
 > `gs://therachart-prod-files/backups/therachart-20260726.sql`
 
 TheraChart runs three ways. Pick the one that matches how you want to use it.

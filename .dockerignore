@@ -27,6 +27,10 @@ test/
 design_handoff_therachart_branding/
 _testsheet-preview.html
 
+# Commercial modelling — must not ship with the app
+pricing-model.js
+PRICING.md
+
 *.log
 .DS_Store
 **/.DS_Store

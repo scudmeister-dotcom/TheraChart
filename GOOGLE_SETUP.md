@@ -334,22 +334,39 @@ gcloud storage rm -r gs://therachart-prod-files-asia
 
 ## Rough monthly cost (per active clinic)
 
+Modelled at three therapists documenting ~8 visits a day each (~530 visits a
+month). See `PRICING.md` for the working, and `/api/usage` for what a clinic has
+actually spent — the app meters real Gemini tokens and real billed audio
+seconds, so these estimates should be replaced with measurements as soon as
+there is a week of live traffic.
+
 | Piece | Estimate |
 |---|---|
 | Cloud Run + (later) Cloud SQL | ~$50–150 |
 | Speech-to-Text (Chirp 2, $0.016/min of speech sent) | ~$100–200 |
-| Gemini cleanup (once on Vertex) | a few dollars |
+| Gemini 3.7 Flash (refine + chart review) | a few dollars, doubling from 2027-01-01 |
 | **BAA** | **$0** |
 
 (The Speech-to-Text row assumes roughly 6,000–12,000 minutes of *speech* a
 month — silence never leaves the device, so this is well under the hours the
 clinic is open.)
 
-Speech-to-text is the dominant cost, and in Speech-to-Text **v2** every model
-bills at the same $0.016/min — so there is nothing to save by transcribing on a
-worse one. What actually moves the number is how much audio is sent: the voice
-gate drops silence before upload, and the per-visit minute ceiling caps a note
-that runs away. Both are in the app already.
+Speech-to-text is the dominant cost at this volume, and in Speech-to-Text **v2**
+every model bills at the same $0.016/min — so there is nothing to save by
+transcribing on a worse one. (The $0.024 / $0.064 figures this table used to
+quote were **v1** prices; this codebase calls v2.) What actually moves the
+number is how much audio is sent: the voice gate drops silence before upload,
+and the per-visit minute ceiling caps a note that runs away. Both are in the app
+already.
+
+Two things to hold onto. The **Gemini introductory rate ends 2026-12-31** — from
+January the AI line doubles ($0.75/$3.75 → $1.50/$7.50 per 1M in/out), so price
+against the 2027 rate rather than today's. And at a *per-visit* level the split
+is much closer than this table suggests: dictation is roughly half the variable
+cost today and the smaller half from January. See `PRICING.md` for the working,
+and `/api/usage` for what a clinic has actually spent — the app meters real
+Gemini tokens and real billed audio seconds, so replace these estimates with
+measurements as soon as there is a week of live traffic.
 
 ## Before you store real patient data — checklist
 
