@@ -176,9 +176,12 @@ async function verifyGoogleIdToken(idToken) {
        metadata). This is the PHI-safe path. GEMINI_LOCATION defaults to
        "global" — the only Vertex location serving the Gemini 3.x models.
        No API key needed in this mode.
-   With neither configured, a local heuristic refiner runs so the feature works
-   with no key and no network. Mode is computed per-request (key may also come
-   from facility settings). */
+   With neither configured the AI features are UNAVAILABLE, and say so. There
+   used to be a local heuristic refiner here so the feature "worked with no key
+   and no network" — but reviewing a visit is the model's work, and what the
+   heuristic produced under the same name was a different and worse artifact
+   than the one a clinician thought they were reading. Mode is computed
+   per-request (key may also come from facility settings). */
 const GEMINI_MODEL = process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
 const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL;
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
@@ -378,10 +381,10 @@ const GEMINI_OPTS = (user, purpose) => {
   return vertexConfigured()
     ? { vertex: true, project: GCP_PROJECT, location: GEMINI_LOCATION, getToken: gcpAccessToken,
         model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, purpose, onUsage,
-        onError: (w, e) => console.error(`[${w}] Gemini (Vertex) failed, using local:`, e.message) }
+        onError: (w, e) => console.error(`[${w}] AI call failed (Vertex) — the feature reports unavailable:`, e.message) }
     : { key: activeGeminiKey(), model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, base: GEMINI_BASE,
         purpose, onUsage,
-        onError: (w, e) => console.error(`[${w}] Gemini failed, using local:`, e.message) };
+        onError: (w, e) => console.error(`[${w}] AI call failed — the feature reports unavailable:`, e.message) };
 };
 
 function activeGeminiKey() {
@@ -389,12 +392,13 @@ function activeGeminiKey() {
 }
 // Vertex needs the flag + a project + a usable Google credential (reuses STT's chain).
 function vertexConfigured() { return GEMINI_VERTEX && !!GCP_PROJECT && !!sttCredentialSource(); }
-// Is any real Gemini backend reachable (vs. the local heuristic)?
+// Is any AI backend reachable? When this is false the AI features are off,
+// not degraded — /api/refine and /api/insights answer 503.
 function geminiActive() { return vertexConfigured() || !!activeGeminiKey(); }
 function geminiEngineDesc() {
   if (vertexConfigured()) return `Vertex AI (project ${GCP_PROJECT} · ${GEMINI_LOCATION})`;
   if (activeGeminiKey()) return "Gemini API (consumer key)";
-  return "local heuristic (set GEMINI_API_KEY, or GEMINI_VERTEX=1 + GCP creds for a BAA)";
+  return "none — AI features are unavailable (set GEMINI_API_KEY, or GEMINI_VERTEX=1 + GCP creds)";
 }
 
 const refineSystem = ai.refineSystem;
