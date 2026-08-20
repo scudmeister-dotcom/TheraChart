@@ -64,11 +64,20 @@
     properties: {
       dialogue: { type: "array", items: { type: "object", properties: {
         speaker: { type: "string", enum: ["patient", "clinician"] }, text: { type: "string" },
+        keep: { type: "boolean" }, dropReason: { type: "string" },
       }, required: ["speaker", "text"] } },
       findings: { type: "array", items: { type: "object", properties: {
         bodyPart: { type: "string" }, side: { type: "string", enum: ["left", "right", "none"] },
         summary: { type: "string" }, sourceQuote: { type: "string" },
       }, required: ["bodyPart", "summary"] } },
+      /* Things the live pass pinned that should come back off the chart.
+         One channel, four reasons — the therapist sees the same review row
+         whichever way the live pass went wrong. */
+      corrections: { type: "array", items: { type: "object", properties: {
+        bodyPart: { type: "string" }, side: { type: "string", enum: ["left", "right", "none"] },
+        kind: { type: "string", enum: ["corrected", "hypothetical", "not-the-patient", "misheard"] },
+        reason: { type: "string" }, supersededBy: { type: "string" }, sourceQuote: { type: "string" },
+      }, required: ["bodyPart", "kind", "reason"] } },
       subjective: { type: "string" },
       treatment: { type: "string" },
     },
@@ -123,6 +132,66 @@
       "   (therapeutic exercise, manual therapy, modalities, gait/balance training,",
       "   HEP, education), summarize them in a brief Treatment paragraph; else ''.",
       "",
+      "6) CORRECTIONS — WHAT SHOULD COME BACK OFF THE CHART. Live dictation pins",
+      "   a body region the instant it hears one, mid-sentence, with no idea how",
+      "   the sentence ends or who is speaking. Your job is to catch what it got",
+      "   wrong. Read the transcript as one conversation, not line by line.",
+      "   Every region an earlier line would have put on the chart and a later",
+      "   reading takes off it goes in 'corrections', with a plain-words reason",
+      "   a therapist can read, the quote it came from, and one of four kinds:",
+      "",
+      "     'corrected'       the patient revised it — 'chest pain' becomes",
+      "                       'sorry, I meant my arm', 'the left knee' becomes",
+      "                       'no, the right one', 'hindi pala', 'dili diay'.",
+      "                       A later statement WINS. Name what replaced it in",
+      "                       supersededBy.",
+      "     'hypothetical'    it was an EXAMPLE, not a report — 'you could say,",
+      "                       oh, my right arm is in a lot of pain', 'for",
+      "                       instance', 'kunwari', 'halimbawa', or the",
+      "                       therapist demonstrating the app to someone. Nobody",
+      "                       is complaining of that region.",
+      "     'not-the-patient' the words are the clinician's, or another person's",
+      "                       ('my daughter broke her arm'), or commentary about",
+      "                       the software ('so it highlights that', 'it went to",
+      "                       the shoulder') rather than about the body.",
+      "     'misheard'        speech-to-text plainly garbled it and the region is",
+      "                       not one the patient could have named here.",
+      "",
+      "   Do NOT also list a corrected region in 'findings' — the corrected",
+      "   version belongs there instead. A correction is not a denial: 'no pain",
+      "   in the right knee' is a finding phrased as a denial, not a correction.",
+      "",
+      "6b) PUT THE FINDING IN THE RIGHT PLACE. The live pass matches words, not",
+      "   anatomy, so it files posterior complaints on the front of the body and",
+      "   loses laterality inside a phrase. When the patient's own words locate",
+      "   something more precisely than the region name does — 'the back of my",
+      "   left leg' is the left hamstring, not a generic leg; 'likod ng kaliwang",
+      "   binti' is the left calf; 'the left side of my butt' is the left",
+      "   gluteal region — name the precise region in 'findings' and put the",
+      "   loose one in 'corrections' as 'corrected', so the chart ends up with",
+      "   one accurate pin instead of two vague ones.",
+      "",
+      "7) TRIM THE TRANSCRIPT. Set keep=false on any line that adds nothing to",
+      "   the record: backchannel ('okay', 'mm-hmm', 'sige'), greetings, small",
+      "   talk, logistics (parking, payment, rescheduling), commentary about the",
+      "   app itself, worked examples, and lines that name a body part but say",
+      "   nothing about it ('and my knee' followed by nothing). Give a short",
+      "   dropReason for each. Set keep=true on everything else, and ALWAYS",
+      "   keep: anything with a symptom, rating, duration or trigger in it; a",
+      "   clinician question or cue that gives its answer meaning; and any line",
+      "   that corrects an earlier statement. When a line is HALF commentary and",
+      "   half report ('so it highlights that and then my neck is maybe a 3 out",
+      "   of 10'), keep the line and clean the commentary out of its text —",
+      "   never drop a line that still carries a finding. When in doubt, keep.",
+      "   This is a medical record.",
+      "",
+      "8) READ THROUGH THE DISFLUENCY. Dictation transcribes stammers and filler",
+      "   exactly as spoken: 'my my neck', 'so it's like, um, sore'. Collapse",
+      "   repeated words and drop filler in the dialogue text — but never drop a",
+      "   word that carries meaning. In Tagalog and Cebuano especially: 'kanang'",
+      "   is hesitation in Cebuano AND 'right (side)' in Tagalog, and 'yung'",
+      "   carries grammar. If a word could be laterality, KEEP it.",
+      "",
       "Be faithful and conservative: if something was not said, do not add it.",
       "Return ONLY JSON matching the provided schema.",
     ].join("\n");
@@ -133,9 +202,23 @@
 
   // Attach map coordinates + turn indices + measurements — same shape as local.
   function normalizeRefinement(parsed, utterances, source) {
+    /* keep/dropReason are optional in the schema: a model that omits them
+       must not silently trim the whole transcript, so an absent flag falls
+       back to the local heuristic, which defaults to keeping the line. */
+    const withKeep = (d, text) => {
+      if (typeof d.keep === "boolean") return { keep: d.keep, dropReason: d.keep ? "" : String(d.dropReason || "").trim() };
+      const s = parser.turnSubstance(text);
+      return { keep: s.keep, dropReason: s.reason };
+    };
     const dialogue = Array.isArray(parsed.dialogue) && parsed.dialogue.length
-      ? parsed.dialogue.map((d) => ({ speaker: d.speaker === "clinician" ? "clinician" : "patient", text: String(d.text || "").trim() })).filter((d) => d.text)
-      : utterances.map((u) => ({ speaker: parser.guessSpeaker(u), text: String(u).trim() }));
+      ? parsed.dialogue.map((d) => {
+        const text = String(d.text || "").trim();
+        return { speaker: d.speaker === "clinician" ? "clinician" : "patient", text, ...withKeep(d, text) };
+      }).filter((d) => d.text)
+      : utterances.map((u) => {
+        const text = String(u).trim();
+        return { speaker: parser.guessSpeaker(u), text, ...withKeep({}, text) };
+      });
 
     const findings = (parsed.findings || []).map((f) => {
       const side = f.side === "left" || f.side === "right" ? f.side : null;
@@ -143,12 +226,27 @@
       const quote = f.sourceQuote || "";
       const turns = [];
       dialogue.forEach((d, i) => { if (quote && d.text.toLowerCase().includes(quote.toLowerCase().slice(0, 24))) turns.push(i); });
-      return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns };
+      return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns, bare: parser.isBareMention(f.summary) };
     }).filter((f) => f.summary);
 
+    const KINDS = ["corrected", "hypothetical", "not-the-patient", "misheard"];
+    const corrections = (parsed.corrections || []).map((t) => {
+      const side = t.side === "left" || t.side === "right" ? t.side : null;
+      const c = parser.coordForName(t.bodyPart, side);
+      return {
+        key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side,
+        kind: KINDS.includes(t.kind) ? t.kind : "corrected",
+        reason: String(t.reason || "").trim() || "The clean-up pass took this off the chart",
+        supersededBy: String(t.supersededBy || "").trim(),
+        quote: String(t.sourceQuote || "").trim(),
+      };
+    }).filter((t) => t.part);
+    const corrected = new Set(corrections.map((t) => t.key));
+    findings.forEach((f) => { f.corrected = corrected.has(f.key); });
+
     return {
-      dialogue, findings, source,
-      measurements: parser.aggregateMeasurements(dialogue.map((d) => d.text)),
+      dialogue, findings, corrections, source,
+      measurements: parser.aggregateMeasurements(dialogue.filter((d) => d.keep !== false).map((d) => d.text)),
       subjective: String(parsed.subjective || "").trim(),
       treatment: String(parsed.treatment || "").trim(),
     };

@@ -14,11 +14,28 @@
 
 const { test, expect } = require("@playwright/test");
 
-const PASSWORD = "1234";
+/** Sign in by PICKING the account, from a clean browser profile.
 
-/** Sign in through the real form, from a clean browser profile. */
+    Not by typing a password: the seeded demo accounts hold none — the server
+    strips their credentials on every boot so a leaked "1234" opens nothing —
+    and /api/login refuses them outright while the demo picker is available.
+    Clicking a row is the only way in, and it is the way a demo visitor comes
+    in too, which makes it the more faithful thing to test. */
 async function signIn(page, email) {
   await page.goto("/");
+  /* Sign the previous test's user out FIRST, through the app's own button.
+
+     Clearing localStorage under a running app only looks like a clean slate:
+     the old instance is still live, still holds the token in memory, and its
+     6-second sync poll calls store.save() the moment the server's rev moves —
+     writing the session straight back into the storage we just emptied. Then
+     reload() restores it and the next sign-in never happens. Ending the session
+     before clearing leaves nothing to write back. */
+  const signOut = page.locator("#logoutBtn");
+  if (await signOut.count()) {
+    await signOut.click();
+    await page.locator("#logoutBtn").waitFor({ state: "detached" });
+  }
   // start from a blank slate: no cached session, no service worker serving
   // yesterday's bundle, no previous clinic's records in localStorage
   await page.evaluate(async () => {
@@ -34,9 +51,8 @@ async function signIn(page, email) {
   const entry = page.getByRole("button", { name: /^sign in/i }).first();
   await entry.waitFor({ state: "visible" });
   await entry.click();
-  await page.getByPlaceholder("you@clinic.com").fill(email);
-  await page.getByPlaceholder("Enter your password").fill(PASSWORD);
-  await page.getByRole("button", { name: /^sign in$/i }).click();
+  // The demo panel renders open, so the row is clickable straight away.
+  await page.locator(".ta-row", { hasText: email }).click();
 
   // The branded splash covers the app briefly AND repeats the clinic name, so
   // any text assertion made too early matches twice. Let it clear first.
@@ -56,7 +72,12 @@ const store = (page, fn, arg) => page.evaluate(fn, arg);
    timer and makes tests flaky. Persistence is the real claim anyway: the
    change reached the clinic server, not just this tab. */
 async function serverState(request, email) {
-  const res = await request.post("/api/login", { data: { email, password: PASSWORD } });
+  // Same door as the browser takes: /api/demo-signin authorizes the caller
+  // rather than trusting a shared secret, and answers with the scoped state.
+  const boot = await (await request.get("/api/bootstrap")).json();
+  const acct = (boot.testAccounts || []).find((a) => a.email.toLowerCase() === email.toLowerCase());
+  if (!acct) throw new Error(`no demo account for ${email} — is THERACHART_DEMO_LOGINS=1 set for the e2e server?`);
+  const res = await request.post("/api/demo-signin", { data: { userId: acct.id } });
   return (await res.json()).state;
 }
 
@@ -193,7 +214,9 @@ test.describe("TheraChart", () => {
     // name and password, exactly as a real signature would be attested
     const fullName = await store(page, () => window.TheraStore.currentUser().name);
     await page.locator("#sigName").fill(fullName);
-    await page.locator("#sigPin").fill(PASSWORD);
+    /* No password field: this account holds no password, so the typed name
+       above IS the signature (see hasNoPassword in app.js). */
+    await expect(page.locator("#sigPin")).toHaveCount(0);
     await page.locator("#sigOk").click();
 
     await expect

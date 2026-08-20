@@ -1558,6 +1558,19 @@ ${walkthroughMarkup()}`;
   /** Does this account sign in with Google (and so have no password to re-enter)? */
   const isGoogleAccount = (u) => !!u && u.authProvider === "google" && !u.passwordHash && !u.pin;
 
+  /* An account with no password on file at all — the seeded demo accounts, whose
+     credentials the server strips on every boot so a leaked "1234" is worthless.
+     They are entered by being picked, not by typing a secret, so /api/verify-password
+     can never pass for one: asking them for a password to e-sign is a locked door
+     with no key, and it made the demo unable to do the one thing the product is for.
+     They re-attest the way the modal already asks everyone to — by typing their full
+     registered name, which store.signDoc() checks server-side.
+
+     Explicitly `=== false`, so a server too old to send the flag still gets the
+     password field. The failure to avoid is dropping the gate for an account that
+     really does have one. */
+  const hasNoPassword = (u) => !!u && !isGoogleAccount(u) && u.hasPassword === false;
+
   /* Render a Google button inside a modal that yields a FRESH id token and
      verifies it against the signed-in account server-side. This is how a
      Google user re-authenticates to e-sign: they have no password, so
@@ -3480,6 +3493,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       ${editable ? `<span class="mic-level" id="micLevel" hidden title="How loud you are, and where the gate is set. Speech should push past the line; the room shouldn't.">
         <i class="mic-level-fill" id="micLevelFill"></i><i class="mic-level-bar" id="micLevelBar"></i>
       </span>` : ""}
+      <span class="dict-meter" id="dictMeter" hidden></span>
     </div>
     ${dictationLine(doc)}
     <div class="figures">
@@ -4685,6 +4699,36 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       + `<span class="hint"> · pauses aren't counted — only speech</span></div>`;
   }
 
+  /* ---- live dictation meter ----
+     The one number a therapist genuinely needs mid-visit: how much speech this
+     visit has spent, while the mic is actually open. Dictation is the most
+     expensive thing the app does, and finding out afterwards that you have run
+     into the per-visit ceiling is worse than knowing.
+
+     What makes a clock oppressive is SECONDS. So this counts in whole minutes
+     and only redraws when the minute rolls over — glance at it and you learn
+     roughly where you are; stare at it and nothing happens. It reads as spend
+     against the visit's allowance, never as how long the appointment has run,
+     and it disappears the moment the mic closes. */
+  let meterMinute = -1;
+  function showDictMeter(seconds, ceilingSeconds) {
+    const el = document.getElementById("dictMeter");
+    if (!el) return;
+    const mins = Math.floor((Number(seconds) || 0) / 60);
+    if (el.hidden) { el.hidden = false; meterMinute = -1; }
+    if (mins === meterMinute) return; // only ever redraws on the minute
+    meterMinute = mins;
+    const ceilMin = Math.round((Number(ceilingSeconds) || 0) / 60);
+    el.innerHTML = mins < 1
+      ? `🎙 under a minute of speech`
+      : `🎙 <b>${mins} min</b> of speech${ceilMin ? ` <span class="hint">of ${ceilMin} allowed on this visit</span>` : ""}`;
+  }
+  function hideDictMeter() {
+    const el = document.getElementById("dictMeter");
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+    meterMinute = -1;
+  }
+
   /** Add billed dictation seconds to a visit, so the chart carries what the
       documentation actually cost. Additive: a therapist can record, process,
       then record more onto the same note, and each pass is real spend. */
@@ -4959,20 +5003,24 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         if (recording) {
           recording = false;
           const chunks = await rec.stop();
+          hideDictMeter();
           captured = chunks;
           meta.textContent = "Recording captured — process it when you're ready. Silence was skipped, so only speech is charged.";
           showIdle();
           return;
         }
         const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
+        const priorSec = Number(doc.data._dictationSeconds) || 0;
         rec = recorderEngine({
           docId: doc.id,
-          billedSoFar: Number(doc.data._dictationSeconds) || 0,
+          billedSoFar: priorSec,
           ceilingSeconds: ceilMin * 60,
+          // whole minutes only — see showDictMeter()
+          onElapsed: (total, voiced) => showDictMeter(priorSec + voiced, ceilMin * 60),
           onStop: (why) => {
             if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another.";
             else if (why === "ceiling") meta.textContent = `Stopped — this visit has reached ${ceilMin} minutes of recorded speech. Process this, then start another recording if you need to.`;
-            recording = false; showIdle();
+            recording = false; hideDictMeter(); showIdle();
           },
         });
         const ok = await rec.start();
@@ -5046,6 +5094,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const useCloud = !!stt.available;
 
     let listening = false;
+    let liveSeconds = Number(doc.data._dictationSeconds) || 0; // incl. earlier runs on this visit
     // deliver a finished utterance, but only draw into the note if it's still
     // the one on screen — a cloud segment can land just after we navigate away
     const deliver = (text) => {
@@ -5088,7 +5137,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // Live dictation bills exactly as record-then-process does, so it lands
       // on the visit the same way — otherwise the chart would show a cost of
       // zero for a note dictated the other way round.
-      onBilled: (secs) => recordDictationSeconds(doc.id, secs, user),
+      /* Live dictation bills per segment, and the server's figure is the
+         honest one — so the meter counts what was actually charged rather
+         than what the page guessed. */
+      onBilled: (secs) => {
+        recordDictationSeconds(doc.id, secs, user);
+        liveSeconds += secs;
+        if (listening) showDictMeter(liveSeconds, callbacks.ceilingSeconds);
+      },
       // the ceiling counts everything already billed on this visit, so
       // starting a second run doesn't walk around it
       billedSoFar: Number(doc.data._dictationSeconds) || 0,
@@ -5120,6 +5176,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         levelEl.hidden = !listening;
         if (!listening) levelFill.style.width = "0%";
       }
+      // the meter belongs to an open mic only — see showDictMeter()
+      if (listening && useCloud) showDictMeter(liveSeconds, callbacks.ceilingSeconds);
+      else hideDictMeter();
       if (!listening && engine && engine.pending() === 0) statusEl.textContent = autoStopNotice || "Mic off";
       // the cloud engine writes its own richer status (model + queue); only the
       // browser engine needs setUI to set the "Listening…" line
@@ -5245,19 +5304,51 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   /* One spoken breath usually carries several documentation sentences. Split
      on sentence enders so each lands in its own section; a paragraph with no
-     punctuation at all stays whole rather than being chopped arbitrarily. */
+     punctuation at all stays whole rather than being chopped arbitrarily.
+
+     Titles are the exception that mattered: "Dr. Santos referred me for the
+     shoulder" split at the period after "Dr", so Subjective got the word
+     "Dr." on its own and Reason for referral got a sentence starting with a
+     surname. Abbreviations are stitched back onto the sentence they belong
+     to before anything is routed. */
+  const ABBREV_RE = /(?:^|\s)(?:dr|dra|mr|mrs|ms|sr|jr|st|prof|atty|engr|capt|gen|rev|no|vs|approx|est|fig|dept|univ|inc|ltd|co|e\.g|i\.e|etc|a\.m|p\.m|[a-z])\.$/i;
+
   function splitSentences(text) {
-    const out = String(text || "").match(/[^.!?;]+[.!?;]*/g) || [];
-    const parts = out.map((s) => s.trim()).filter(Boolean);
-    return parts.length ? parts : [text];
+    const raw = String(text || "").match(/[^.!?;]+[.!?;]*/g) || [];
+    const parts = [];
+    for (const piece of raw) {
+      const prev = parts[parts.length - 1];
+      if (prev !== undefined && ABBREV_RE.test(prev)) parts[parts.length - 1] = prev + piece;
+      else parts.push(piece);
+    }
+    const out = parts.map((x) => x.trim()).filter(Boolean);
+    return out.length ? out : [text];
   }
 
-  /** Which field of `type` one sentence belongs in — null means "table only". */
-  function fieldForSentence(type, sentence) {
+  /* Subjective is, by definition, what the PATIENT reports. The live router
+     had no notion of who was speaking, so every question the therapist asked
+     and every cue they gave ("where does it hurt?", "push against my hand")
+     was written into the patient's own words. These are the fields that only
+     the patient can fill. */
+  const PATIENT_VOICE_FIELDS = new Set(["subjective", "currentStatus"]);
+
+  /** Which field of `type` one sentence belongs in — null means "nowhere in
+      the note" (it still stands in the transcript, which is the verbatim
+      record). `speaker` is optional; pass it and the clinician's own words
+      stay out of the patient's sections. */
+  function fieldForSentence(type, sentence, speaker) {
     // A standardised score is data, not narrative: "LEFS is now 58 out of 80"
     // belongs in the outcome table the same way a ROM reading does, and
     // repeating it in Subjective just pads the note.
     if (CL.extractOutcomes(sentence).length) return null;
+
+    /* The gate that decides note vs transcript. Everything below it is about
+       WHICH section; this is about whether the sentence belongs in any of
+       them. Without it the fallback was "Subjective", so small talk, parking,
+       greetings and the therapist's own instructions all became the patient's
+       reported history. */
+    if (!PR.noteWorthy(sentence).file) return null;
+
     if (type === "discharge") return "summary";
     const meas = PR.extractMeasurements(sentence);
     if (type === "daily") {
@@ -5270,13 +5361,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       return TREAT_RE.test(sentence) ? "summary" : "subjective";
     }
     const section = PR.classifyUtterance(sentence, PR.parseUtterance(sentence), meas);
-    if (type === "eval") {
-      return { reason: "reason", precautions: "precautions", pmh: "pmh", assessment: "assessment", objective: "objectiveText", subjective: "subjective" }[section];
+    const field = type === "eval"
+      ? { reason: "reason", precautions: "precautions", pmh: "pmh", assessment: "assessment", objective: "objectiveText", subjective: "subjective" }[section]
+      : type === "progress"
+        ? { reason: "currentStatus", precautions: "currentStatus", pmh: "currentStatus", assessment: "assessment", objective: "updatedFindings", subjective: "currentStatus" }[section]
+        : null;
+    if (!field) return null;
+    /* The therapist observing out loud is an objective observation, not the
+       patient's report — send it to the objective narrative rather than
+       putting the clinician's words in the patient's mouth. */
+    if (speaker === "clinician" && PATIENT_VOICE_FIELDS.has(field)) {
+      return type === "eval" ? "objectiveText" : type === "progress" ? "updatedFindings" : null;
     }
-    if (type === "progress") {
-      return { reason: "currentStatus", precautions: "currentStatus", pmh: "currentStatus", assessment: "assessment", objective: "updatedFindings", subjective: "currentStatus" }[section];
-    }
-    return null;
+    return field;
   }
 
   function routeUtterance(doc, user, raw, dstate, silent) {
@@ -5295,12 +5392,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const nOut = mergeOutcomes(doc, CL.extractOutcomes(parsed.text));
     if (nOut) routed.push(`${nOut} outcome measure${nOut > 1 ? "s" : ""} → Outcomes`);
 
-    // map points — skip mentions that are only part of a measurement
-    // ("shoulder flexion 130 degrees" is data, not a complaint) or of a
-    // treatment narration ("we did manual therapy on the shoulder")
-    const treatment = PR.guessSpeaker(parsed.text) === "clinician";
+    /* map points — skip mentions that are only part of a measurement
+       ("shoulder flexion 130 degrees" is data, not a complaint), of a
+       treatment narration ("we did manual therapy on the shoulder"), or of
+       anything else the clinician said. A region the THERAPIST names without
+       describing is nearly always vocabulary — "push against my hand",
+       "point to your shoulder" — and pinning it put marks on the mannequin
+       that no patient ever complained about. */
+    const clinician = PR.guessSpeaker(parsed.text) === "clinician";
     const pinnable = parsed.mentions.filter(
-      (m) => !((nMeas || treatment) && m.summary.startsWith("Mentioned this area"))
+      (m) => !((nMeas || clinician) && m.summary.startsWith("Mentioned this area"))
     );
     for (const m of pinnable) addDocMapPoint(doc, m, uttId, time);
     if (!parsed.mentions.length && parsed.loose && (doc.data.mapPoints || []).length) {
@@ -5317,13 +5418,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // was dropped: a daily note that mentioned any measurement lost its
     // subjective and treatment text entirely.
     const filedTo = [];
+    let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
-      const field = fieldForSentence(doc.type, sentence);
-      if (!field) continue;
+      const field = fieldForSentence(doc.type, sentence, clinician ? "clinician" : "patient");
+      if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(sentence), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
+    /* Say so out loud. A sentence that reaches the transcript and no section
+       is the normal, correct outcome for small talk — but silence about it
+       reads exactly like the mic missing a real complaint. */
+    if (heldBack && !filedTo.length) routed.push("transcript only — nothing clinical to file");
+    else if (heldBack) routed.push(`${heldBack} line${heldBack > 1 ? "s" : ""} kept to the transcript only`);
 
     S.updateDocData(doc.id, doc.data, user);
     if (silent) return;
@@ -5431,30 +5538,30 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const livePts = doc.data.mapPoints || [];
     const liveKeys = new Set(livePts.map((p) => p.key));
     const aiByKey = new Map(result.findings.map((f) => [f.key, f]));
-    /* Regions the patient took back later in the conversation. The live pass
-       pinned them the moment they were said — it cannot hear the future — so
-       the cleanup is the first chance to remove them. They are shown, unticked
-       and with the reason, rather than vanishing: the therapist heard the
-       visit and gets the last word. */
-    const retractedBy = new Map((result.retractions || []).map((t) => [t.key, t]));
+    /* Regions the clean-up pass wants off the chart — corrected, hypothetical,
+       somebody else's, or misheard. The live pass pinned them the moment the
+       words were said; it cannot hear the end of the sentence, let alone the
+       rest of the visit. They are shown unticked WITH the reason rather than
+       vanishing: the therapist was in the room and gets the last word. */
+    const correctedBy = new Map((result.corrections || []).map((t) => [t.key, t]));
     const rows = [];
     /* A finding whose whole summary is "Mentioned this area" is a region that
        was named and never described. It reads like a finding on the map and
        carries nothing, so it starts unticked wherever it came from. */
     const isEmpty = (summary) => PR.isBareMention(summary);
     for (const f of result.findings) {
-      const t = retractedBy.get(f.key);
+      const t = correctedBy.get(f.key);
       const bare = !t && isEmpty(f.summary);
       const inLive = liveKeys.has(f.key);
       rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
         summary: f.summary, quote: f.quote, include: !t && !bare,
         note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
-        origin: t ? "retracted" : bare ? "empty" : inLive ? "confirmed" : "added" });
+        origin: t ? t.kind || "corrected" : bare ? "empty" : inLive ? "confirmed" : "added" });
     }
     for (const p of livePts) {
       if (aiByKey.has(p.key)) continue;
       const sum = p.notes.map((n) => n.summary).join(" · ");
-      const t = retractedBy.get(p.key);
+      const t = correctedBy.get(p.key);
       /* A point the live pass made out of a bare mention — the region was
          named and nothing was said about it. It looks like a finding on the
          map and is not one. */
@@ -5463,7 +5570,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         summary: sum, quote: (p.notes[0] || {}).quote || "",
         include: !t && !bare,
         note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
-        origin: t ? "retracted" : bare ? "empty" : "live-only" });
+        origin: t ? t.kind || "corrected" : bare ? "empty" : "live-only" });
     }
 
     const engineChip = result.source && result.source.startsWith("gemini")
@@ -5505,7 +5612,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       added: ["good", "AI added"],
       confirmed: ["muted", "confirmed"],
       "live-only": ["warn", "live only — AI didn't confirm"],
-      retracted: ["bad", "the patient corrected this"],
+      corrected: ["bad", "the patient corrected this"],
+      hypothetical: ["bad", "an example, not a complaint"],
+      "not-the-patient": ["bad", "not the patient speaking"],
+      misheard: ["bad", "misheard by dictation"],
       empty: ["warn", "nothing was reported"],
     };
     const findingRow = (r, i) => {
@@ -5535,7 +5645,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   ${dialogueHtml || `<div class="empty-state">No dialogue.</div>`}
 </div>
 <div class="rev-pane" data-pane="findings" style="display:none">
-  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely. Anything the patient corrected later, or named without reporting anything, starts unticked.</div>
+  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely. Anything the patient corrected later, said only as an example, or named without reporting anything starts unticked.</div>
   ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
 </div>
 <div class="rev-pane" data-pane="sections" style="display:none">${sectionsHtml}</div>
@@ -5582,7 +5692,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const { subjField, treatField } = fields || {};
     const before = doc.data.mapPoints || [];
     const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
-    const retractedBy = new Map((result.retractions || []).map((t) => [t.key, t]));
+    const correctedBy = new Map((result.corrections || []).map((t) => [t.key, t]));
     const sectionChanges = [];
     const kept = rows.filter((r) => r.include && r.summary.trim());
 
@@ -5655,7 +5765,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     for (const p of before) {
       if (keptKeys.has(p.key)) continue;
-      const t = retractedBy.get(p.key);
+      const t = correctedBy.get(p.key);
       const row = rows.find((r) => r.key === p.key);
       changes.push({
         tag: "dropped",
@@ -5980,6 +6090,8 @@ ${isGoogleAccount(user)
   ? `<div class="field"><label>Confirm it's you</label>
        <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
        <div id="sigGoogle"></div></div>`
+  : hasNoPassword(user)
+  ? `<div class="banner">This account holds no password — it was opened by being picked. Your typed name above is the signature.</div>`
   : `<div class="field"><label>Password</label><input id="sigPin" type="password" autocomplete="current-password" /></div>`}
 <div class="error" id="sigErr"></div>
 <div class="modal-actions">
@@ -6007,7 +6119,7 @@ ${isGoogleAccount(user)
       err.style.color = "";
       if (isGoogleAccount(user)) {
         if (!googleConfirmed) { err.textContent = "Confirm with Google first."; return; }
-      } else if (!(await window.TheraSync.verifyPassword(m.querySelector("#sigPin").value))) { err.textContent = "Incorrect password."; return; }
+      } else if (!hasNoPassword(user) && !(await window.TheraSync.verifyPassword(m.querySelector("#sigPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.signDoc(doc.id, user, m.querySelector("#sigName").value, "");
       if (res.error) { err.textContent = res.error; return; }
       deleteSessionAudio(doc.id); // signing locks the note — the review audio is no longer needed
@@ -6027,6 +6139,8 @@ ${isGoogleAccount(user)
   ? `<div class="field"><label>Confirm it's you</label>
        <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
        <div id="amGoogle"></div></div>`
+  : hasNoPassword(user)
+  ? `<div class="banner">This account holds no password — it was opened by being picked. Your typed name above is the signature.</div>`
   : `<div class="field"><label>Password</label><input id="amPin" type="password" autocomplete="current-password" /></div>`}
 <div class="error" id="amErr"></div>
 <div class="modal-actions">
@@ -6052,7 +6166,7 @@ ${isGoogleAccount(user)
       err.style.color = "";
       if (isGoogleAccount(user)) {
         if (!amGoogleConfirmed) { err.textContent = "Confirm with Google first."; return; }
-      } else if (!(await window.TheraSync.verifyPassword(m.querySelector("#amPin").value))) { err.textContent = "Incorrect password."; return; }
+      } else if (!hasNoPassword(user) && !(await window.TheraSync.verifyPassword(m.querySelector("#amPin").value))) { err.textContent = "Incorrect password."; return; }
       const res = S.amendDoc(doc.id, user, m.querySelector("#amName").value,
         m.querySelector("#amText").value, m.querySelector("#amReason").value);
       if (res.error) { err.textContent = res.error; return; }

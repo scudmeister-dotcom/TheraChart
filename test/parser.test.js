@@ -615,6 +615,102 @@ function mention(result, partName, side = undefined) {
     JSON.stringify(r.measurements.mmt));
 }
 
+/* ------------------------------------------------------------------ *
+ * Head-to-toe anatomy sweep.
+ *
+ * A patient saying "butt" got nothing on the chart, because the lexicon only
+ * knew "buttock" and "glutes". Nobody notices a region that silently isn't
+ * there — it just looks like the patient never mentioned it. This walks the
+ * body in the words patients actually use, so the next gap fails a test
+ * instead of a visit.
+ * ------------------------------------------------------------------ */
+{
+  const ANATOMY = [
+    // head & face
+    ["my scalp is itchy", "Scalp"], ["my forehead is tight", "Forehead"],
+    ["my temples throb", "Temple"], ["my left eye twitches", "Eye"],
+    ["my right ear aches", "Ear"], ["my nose is blocked", "Nose"],
+    ["my cheek is numb", "Cheek"], ["my chin is sore", "Chin"],
+    ["my jaw clicks", "Jaw"], ["my teeth hurt", "Mouth"],
+    ["my head is pounding", "Head"], ["my throat is sore", "Throat"],
+    // neck & shoulder girdle
+    ["my neck is stiff", "Neck"], ["cervical pain since the accident", "Neck"],
+    ["the nape of my neck aches", "Back of neck"], ["the back of my head hurts", "Back of head"],
+    ["my upper traps are tight", "Trapezius"], ["my left shoulder blade aches", "Shoulder blade"],
+    ["my collarbone is tender", "Collarbone"], ["my armpit hurts", "Armpit"],
+    ["my right shoulder is painful", "Shoulder"], ["my AC joint is tender", "Shoulder"],
+    // trunk
+    ["my chest feels tight", "Chest"], ["my breast is tender", "Breast"],
+    ["my ribs hurt when I breathe", "Ribs"], ["my flank is sore", "Flank"],
+    ["my stomach hurts", "Stomach"], ["my obliques are strained", "Stomach"],
+    ["my navel area is sore", "Navel"], ["my pelvis feels unstable", "Pelvis"],
+    ["my groin is pulled", "Groin"], ["my pelvic floor is weak", "Pelvic floor"],
+    ["my perineum is sore", "Pelvic floor"],
+    ["my right hip clicks", "Hip"], ["my hip flexors are tight", "Hip"],
+    // arms
+    ["my upper arm aches", "Upper arm"], ["my elbow is sore", "Elbow"],
+    ["golfers elbow on the left", "Elbow"], ["my forearm burns", "Forearm"],
+    ["my wrist is stiff", "Wrist"], ["carpal tunnel symptoms", "Wrist"],
+    ["my thumb is numb", "Thumb"], ["my index finger tingles", "Finger"],
+    ["my hand cramps", "Hand"], ["my arm feels heavy", "Arm"],
+    // back & pelvis
+    ["my upper back aches", "Upper back"], ["my mid back is stiff", "Mid back"],
+    ["my lower back is in spasm", "Lower back"], ["my spine feels crooked", "Spine"],
+    ["my sacrum is tender", "Sacrum"], ["my SI joint hurts", "SI joint"],
+    ["my tailbone hurts", "Tailbone"],
+    ["my butt is sore", "Buttock"], ["my bottom hurts when I sit", "Buttock"],
+    ["my glutes are weak", "Buttock"],
+    // legs
+    ["my hamstring is tight", "Hamstring"], ["my IT band is tight", "IT band"],
+    ["my thigh burns", "Thigh"], ["my inner thigh is pulled", "Groin"],
+    ["my kneecap grinds", "Kneecap"], ["my knee gives way", "Knee"],
+    ["my meniscus tore", "Knee"], ["my shin hurts", "Shin"],
+    ["shin splints again", "Shin"], ["my calf cramps", "Calf"],
+    ["my achilles is sore", "Achilles"], ["my heel hurts in the morning", "Heel"],
+    ["my ankle rolled", "Ankle"], ["my foot is numb", "Foot"],
+    ["plantar fascia pain", "Foot"], ["my big toe is swollen", "Toe"],
+    ["my leg is weak", "Leg"],
+  ];
+  const missed = ANATOMY.filter(([phrase, part]) =>
+    !parseUtterance(phrase).mentions.some((m) => m.partName === part));
+  check(`anatomy sweep: all ${ANATOMY.length} regions are reachable`,
+    missed.length === 0, missed.map(([p, w]) => `"${p}" → ${w}`).join("; "));
+}
+
+/* Words that look anatomical but are not the region, and must stay out. */
+{
+  check("'belly button' is the navel, not the buttock",
+    labels(parseUtterance("I pressed my belly button and it hurt")).join() === "navel",
+    JSON.stringify(labels(parseUtterance("I pressed my belly button and it hurt"))));
+  check("'bottom of my foot' is the foot, not the buttock",
+    labels(parseUtterance("the bottom of my foot burns")).join() === "foot",
+    JSON.stringify(labels(parseUtterance("the bottom of my foot burns"))));
+  check("'breast bone' is still the sternum",
+    labels(parseUtterance("my breast bone is sore")).join() === "chest",
+    JSON.stringify(labels(parseUtterance("my breast bone is sore"))));
+}
+
+/* Sidedness, however the patient phrases it. "the left side of my butt" is
+   the exact shape that used to land unsided. */
+{
+  const sideOf = (s, part) => (mention(parseUtterance(s), part) || {}).side;
+  check("side: 'the left side of my butt'", sideOf("the left side of my butt is painful", "Buttock") === "left");
+  check("side: 'my butt on the right side'", sideOf("my butt on the right side hurts", "Buttock") === "right");
+  check("side: 'tennis elbow on the right'", sideOf("tennis elbow on the right", "Elbow") === "right");
+  check("side: 'my shoulder, on the left,'", sideOf("my shoulder, on the left, has been aching", "Shoulder") === "left");
+  check("side: 'right now' still doesn't side the knee", sideOf("my knee right now is fine", "Knee") === null);
+  const both = parseUtterance("both butt cheeks are tight").mentions.map((m) => m.side).sort();
+  check("side: 'both butt cheeks' pins each side", both.join() === "left,right", JSON.stringify(both));
+}
+
+/* One region named twice in one breath is one pin, and it keeps the side. */
+{
+  const r = parseUtterance("plantar fasciitis in my left foot");
+  check("no duplicate sideless pin beside the sided one",
+    r.mentions.length === 1 && r.mentions[0].side === "left",
+    JSON.stringify(labels(r)));
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart parser checker: ${passed}/${total} checks passed`);
 if (failures.length) {

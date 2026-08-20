@@ -442,8 +442,17 @@ function userForReq(req) {
 function publicState() {
   const s = JSON.parse(store.exportAll());
   s.sessionUserId = null;
-  // credentials are server-only — never sync password hashes (or legacy pins) to devices
-  if (Array.isArray(s.users)) s.users = s.users.map((u) => { const c = { ...u }; delete c.passwordHash; delete c.pin; return c; });
+  /* Credentials are server-only — never sync password hashes (or legacy pins)
+     to devices. `hasPassword` goes in their place: not the secret, just whether
+     there is one. The device needs it to know which re-auth to ask for when
+     someone e-signs — a seeded demo account holds no password at all
+     (stripDemoCredentials), so asking it for one is asking for something that
+     can never be right. Derived on every read, and stripped again on the way
+     back in (see PUT /api/state) so a device can never assert it. */
+  if (Array.isArray(s.users)) s.users = s.users.map((u) => {
+    const c = { ...u, hasPassword: !!(u.passwordHash || u.pin != null) };
+    delete c.passwordHash; delete c.pin; return c;
+  });
   // never sync any stored Gemini key value to devices (legacy installs only —
   // the key is now configured purely via host env vars)
   if (s.settings) delete s.settings.geminiKey;
@@ -1929,6 +1938,7 @@ const server = http.createServer(async (req, res) => {
           const h = creds.get(u.id);
           if (h) u.passwordHash = h; else delete u.passwordHash;
           delete u.pin; // clients can never introduce a plaintext credential
+          delete u.hasPassword; // derived on the way out; never storable from a push
         }
         // (any pushed Gemini key was already stripped in graftPushedState,
         // which is the copy that actually gets imported)

@@ -104,6 +104,178 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
   check("tl: patient knee finding", r.findings.some((f) => f.key === "Knee|right"), JSON.stringify(r.findings.map((f) => f.key)));
 }
 
+/* ---- corrections: a later statement beats an earlier one ----
+   The live pass pins what it hears the moment it hears it. When the patient
+   corrects themselves three lines later, the cleanup is the only chance to
+   take the first version off the chart. ---- */
+{
+  const r = PR.refineTranscript([
+    "so tell me what brings you in",
+    "i have chest pain that started last week",
+    "how bad is it",
+    "about a seven out of ten",
+    "sorry actually i meant my arm not my chest",
+    "my right arm aches when i lift it",
+  ]);
+  const t = r.corrections.find((x) => x.key === "Chest|");
+  check("correction: the chest is taken back", !!t, JSON.stringify(r.corrections));
+  check("correction: says what replaced it", t && /arm/i.test(t.supersededBy || ""), t && t.supersededBy);
+  check("correction: reason is readable", t && /corrected/i.test(t.reason), t && t.reason);
+  check("correction: the chest finding is flagged, not silently deleted",
+    r.findings.some((f) => f.key === "Chest|" && f.corrected === true),
+    JSON.stringify(r.findings.map((f) => [f.key, f.corrected])));
+  check("correction: the corrected region survives",
+    r.findings.some((f) => f.key === "Arm|right" && !f.corrected),
+    JSON.stringify(r.findings.map((f) => f.key)));
+  check("correction: the line that corrects it is never trimmed",
+    r.dialogue.find((d) => /i meant my arm/i.test(d.text)).keep === true);
+}
+{
+  const r = PR.refineTranscript([
+    "my left knee has been aching all week",
+    "no wait it's not the left knee, it's the right one",
+  ]);
+  check("correction: 'not the left, the right' swaps sides",
+    r.corrections.some((x) => x.key === "Knee|left"), JSON.stringify(r.corrections.map((x) => x.key)));
+}
+{
+  // A denial is a finding, not a correction — this must NOT retract anything.
+  const r = PR.refineTranscript([
+    "my left knee has been aching all week",
+    "i have no pain in the right knee",
+  ]);
+  check("a denial is not a correction", r.corrections.length === 0, JSON.stringify(r.corrections));
+}
+{
+  // "actually" on its own ADDS a complaint; it must not take one away.
+  const r = PR.refineTranscript([
+    "my left shoulder is sore",
+    "actually my right hip hurts too",
+  ]);
+  check("'actually … too' adds without retracting", r.corrections.length === 0, JSON.stringify(r.corrections));
+}
+
+/* ---- trimming: lines that carry nothing come out of the record ---- */
+{
+  const keepOf = (s) => PR.turnSubstance(s).keep;
+  check("trim: backchannel goes", keepOf("okay") === false && keepOf("mm-hmm") === false);
+  check("trim: greeting goes", keepOf("good morning") === false);
+  check("trim: logistics goes", keepOf("the traffic on the way here was terrible") === false);
+  check("trim: a bare mention goes", keepOf("and my knee") === false);
+  check("trim: the bare-mention reason names the region",
+    /knee/i.test(PR.turnSubstance("and my knee").reason), PR.turnSubstance("and my knee").reason);
+  check("trim: a symptom stays", keepOf("my knee aches when I climb stairs") === true);
+  check("trim: a rating with no body part stays", keepOf("it is about a seven out of ten") === true);
+  check("trim: a clinician question stays", keepOf("where does it hurt the most") === true);
+  check("trim: a measurement read-out stays", keepOf("shoulder flexion is 95 degrees") === true);
+  check("trim: an unclassifiable sentence is kept, not guessed away",
+    keepOf("my daughter drove me here after work today") === true);
+}
+{
+  const r = PR.refineTranscript([
+    "good morning how are you",
+    "okay lang po",
+    "my right knee hurts going down stairs",
+    "and my elbow",
+  ]);
+  check("trim: dialogue carries keep flags", r.dialogue.every((d) => typeof d.keep === "boolean"));
+  check("trim: the substantive line is kept",
+    r.dialogue.find((d) => /right knee/i.test(d.text)).keep === true);
+  check("trim: the bare elbow line is dropped",
+    r.dialogue.find((d) => /elbow/i.test(d.text)).keep === false);
+  check("trim: the bare elbow finding is marked empty",
+    r.findings.find((f) => f.key === "Elbow|").bare === true,
+    JSON.stringify(r.findings.map((f) => [f.key, f.bare])));
+  check("trim: the knee finding is not marked empty",
+    r.findings.find((f) => f.key === "Knee|right").bare === false);
+  check("trim: filler stays out of the Subjective",
+    !/okay lang/i.test(r.subjective) && /right knee/i.test(r.subjective), r.subjective);
+}
+
+/* ---- the live pass's own mistakes, from a real dictation session ----
+   Everything below came off one screenshot: an arm pinned from a worked
+   example, a neck pinned out of a sentence about the app, and a posterior
+   complaint filed on the front of the body. ---- */
+{
+  const r = PR.refineTranscript([
+    "okay so let me show you how this works",
+    "so how is your like you could say like oh my right arm is in a lot of pain",
+    "so it highlights that and then my my neck is maybe like 3 out of 10 pain",
+    "the back of my left leg is somewhat stiff",
+  ]);
+  const keys = r.findings.filter((f) => !f.corrected).map((f) => f.key);
+
+  check("demo line is dropped as app commentary",
+    r.dialogue[0].keep === false && /app/i.test(r.dialogue[0].dropReason), JSON.stringify(r.dialogue[0]));
+  check("a worked example never becomes a finding",
+    !keys.includes("Arm|right"), JSON.stringify(keys));
+  check("…and is labelled the clinician, not the patient",
+    r.dialogue[1].speaker === "clinician", r.dialogue[1].speaker);
+  check("…and is dropped as an example",
+    r.dialogue[1].keep === false && /example/i.test(r.dialogue[1].dropReason), JSON.stringify(r.dialogue[1]));
+
+  // half commentary, half a real report — the line stays, the commentary goes
+  const neck = r.dialogue.find((d) => /neck/i.test(d.text));
+  check("a half-commentary line keeps its finding", neck && neck.keep === true, JSON.stringify(neck));
+  check("…with the app commentary cut out of the text",
+    neck && !/highlight/i.test(neck.text), neck && neck.text);
+  check("…and the stutter collapsed", neck && !/my my/i.test(neck.text), neck && neck.text);
+  check("…and the filler gone", neck && !/\blike\b/i.test(neck.text), neck && neck.text);
+  check("…and the neck finding still recorded", keys.includes("Neck|"), JSON.stringify(keys));
+
+  check("'the back of my left leg' is the left hamstring, on the back view",
+    keys.includes("Hamstring|left"), JSON.stringify(keys));
+  check("…and not a generic front-view leg", !keys.some((k) => k.startsWith("Leg|")), JSON.stringify(keys));
+}
+{
+  const r = PR.refineTranscript([
+    "kunwari masakit ang aking balikat",
+    "pero talaga masakit ang aking tuhod",
+  ]);
+  const t = (r.corrections || []).find((x) => x.key === "Shoulder|");
+  check("tl: 'kunwari' marks the shoulder as hypothetical", !!t && t.kind === "hypothetical",
+    JSON.stringify(r.corrections));
+  check("tl: the real complaint survives",
+    r.findings.some((f) => f.key === "Knee|" && !f.corrected), JSON.stringify(r.findings.map((f) => f.key)));
+}
+
+/* ---- Tagalog and Cebuano carry their own weight ---- */
+{
+  const P2 = require("../parser.js");
+  const FILIPINO = [
+    ["nangangalay ang balikat ko", "Shoulder", /numb/i],
+    ["pagod na pagod ang katawan ko", null, /fatigue/i],
+    ["hirap akong yumuko", null, /difficulty/i],
+    ["hindi ko maigalaw ang kamay ko", "Hand", /difficulty/i],
+    ["nagmamanhid ang mga daliri ko", "Finger", /numb/i],
+    ["gasakit akong tuhod", "Knee", /pain/i],
+    ["nagngutngot ang akong abaga", "Shoulder", /throb/i],
+    ["nag-init ang akong bat-ang", "Hip", /warmth/i],
+    ["naglagutok ang tuhod ko", "Knee", /click/i],
+    ["nalilipong ako kapag tumatayo", null, /dizz/i],
+    ["walang lakas ang aking braso", "Arm", /weak/i],
+    ["dili ko makalihok ang akong liog", "Neck", /difficulty/i],
+    ["matindi ang sakit ng aking likod", "Back", /significant/i],
+    ["bahagya lang ang sakit ng tuhod ko", "Knee", /mild/i],
+    ["sakit kaayo ang akong bat-ang sukad niadtong Lunes", "Hip", /significant/i],
+    ["ang likod ng kaliwang binti ko ay medyo matigas", "Calf", /stiff/i],
+  ];
+  const bad = [];
+  for (const [phrase, part, re] of FILIPINO) {
+    const u = P2.parseUtterance(phrase);
+    const hit = part ? u.mentions.find((m) => m.partName === part) : u.loose;
+    if (!hit || !re.test(hit.summary)) bad.push(`"${phrase}" → ${hit ? hit.summary : "(nothing)"}`);
+  }
+  check(`Filipino symptom vocabulary: all ${FILIPINO.length} phrases understood`,
+    bad.length === 0, bad.join("; "));
+
+  const side = P2.parseUtterance("ang likod ng kaliwang binti ko ay medyo matigas")
+    .mentions.find((m) => m.partName === "Calf");
+  check("tl: laterality inside the phrase is still read", side && side.side === "left", side && side.side);
+  check("ceb: 'kanang tuhod' keeps its right side — it is not filler",
+    (P2.parseUtterance("masakit ang kanang tuhod ko").mentions[0] || {}).side === "right");
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart refiner checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }

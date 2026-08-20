@@ -2113,6 +2113,11 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .cmp-state { font-size: 12px; color: var(--accent); }
 
 /* ---- per-visit dictation total, and the clinic's plan-usage meter ---- */
+/* Whole minutes of speech while the mic is open. Sits with the mic controls,
+   in the muted weight — informative at a glance, never a countdown. */
+.dict-meter { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.dict-meter b { color: var(--ink); font-weight: 600; }
+.dict-meter .hint { font-size: 11.5px; }
 .dict-total { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 .dict-total b { color: var(--ink); }
 .dict-total .hint { font-size: 11.5px; }
