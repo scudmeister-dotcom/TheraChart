@@ -1,0 +1,38 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "{\n  \"dialogue\": [\n    {\n      \"speaker\": \"clinician\",\n      \"text\": \"Patient reports right shoulder pain 7/10, worse reaching overhead.\",\n      \"keep\": true\n    },\n    {\n      \"speaker\": \"clinician\",\n      \"text\": \"Right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 out of 5.\",\n      \"keep\": true\n    },\n    {\n      \"speaker\": \"clinician\",\n      \"text\": \"We did therapeutic exercise with the Theraband and manual therapy to the posterior capsule.\",\n      \"keep\": true\n    },\n    {\n      \"speaker\": \"clinician\",\n      \"text\": \"Patient tolerated treatment well and reported less pain afterwards.\",\n      \"keep\": true\n    }\n  ],\n  \"findings\": [\n    {\n      \"bodyPart\": \"shoulder\",\n      \"summary\": \"Pain rated 7/10, aggravated by reaching overhead\",\n      \"side\": \"right\",\n      \"sourceQuote\": \"patient reports right shoulder pain seven out of ten, worse reaching overhead\"\n    }\n  ],\n  \"assessment\": \"\",\n  \"corrections\": [],\n  \"objective\": \"\",\n  \"pmh\": \"\",\n  \"precautions\": \"\",\n  \"reason\": \"\",\n  \"subjective\": \"Patient reports right shoulder pain rated 7/10, which worsens when reaching overhead.\",\n  \"treatment\": \"Therapeutic exercise with Theraband and manual therapy to the posterior capsule. Patient tolerated treatment well with decreased pain post-intervention.\"\n}",
+            "thoughtSignature": "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"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 2999,
+    "candidatesTokenCount": 354,
+    "totalTokenCount": 4132,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 2999
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 354
+      }
+    ],
+    "thoughtsTokenCount": 779
+  },
+  "modelVersion": "gemini-3.7-flash",
+  "createTime": "2026-08-20T18:38:42.756009Z",
+  "responseId": "skmHaqmSLtOeq8YPvcWOkQk"
+}
