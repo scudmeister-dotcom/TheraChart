@@ -198,7 +198,12 @@
        both are everyday Filipino descriptions of a musculoskeletal problem,
        and both used to land as a bare "Mentioned this area". */
     ["fatigue", /\b(?:fatigue[ds]?|worn out|exhaust(?:ed|ion)|pagod(?: na pagod)?|napapagod|nanlalata|kapoy(?: kaayo)?|gikapoy|hapo)\b/i],
-    ["difficulty moving", /\b(?:can'?t (?:move|lift|bend|straighten)|(?:hard|difficult|struggl\w+) to (?:move|lift|bend|walk)|limited motion|hirap(?: ako| akong| na)?|nahihirapan|hindi ko (?:ma\w+|maigalaw|maiangat)|di ko ma\w+|lisod|naglisod|dili (?:ko )?maka\w+|dili malihok)\b/i],
+    /* The polite particle and the hyphen are the two things that broke this.
+       Filipino speakers say "hindi ko PO maisuot" and "hindi ko MA-LIFT" —
+       one particle between the pronoun and the verb, or an English verb
+       carrying a Filipino prefix across a hyphen — and neither shape matched,
+       so "I can't put my socks on" in Tagalog registered as nothing at all. */
+    ["difficulty moving", /\b(?:can'?t (?:move|lift|bend|straighten)|(?:hard|difficult|struggl\w+) to (?:move|lift|bend|walk)|limited motion|hirap(?: ako| akong| na)?|nahihirapan|hindi ko(?:\s+(?:po|nga|talaga|kasi|masyado|na|man))*\s+ma-?\w+|di ko(?:\s+po)?\s+ma-?\w+|hindi ko (?:maigalaw|maiangat)|lisod|naglisod|dili ko(?:\s+(?:kaya|mahimo))|dili (?:ko )?maka-?\w+|dili ko ma-?\w+|dili malihok|wala ko kaya)\b/i],
     /* What the patient can no longer DO is the other half of a subjective
        report, and the vocabulary above only heard about joints. "I can't put
        my socks on" and "I have trouble sleeping through the night" are the
@@ -210,7 +215,7 @@
        exam and none of this vocabulary registered as clinical, so "the right
        shoulder sits higher than the left" read as a region named and nothing
        said about it — the same verdict as "point to your shoulder". */
-    ["asymmetry", /\b(?:sits?(?: \w+)? (?:higher|lower)|(?:is|are|looks?|appears?)(?: \w+)? (?:higher|lower) than|elevated|depressed shoulder|asymmetr\w*|uneven|drop(?:ped)? shoulder|winging|winged|hik(?:e|ed|ing)|lateral shift|forward head|rounded shoulders|kyphotic|lordotic|scoliotic|antalgic|guard(?:ed|ing)|atroph\w*|wasting)\b/i],
+    ["asymmetry", /\b(?:mas\s+(?:mataas|mababa|malaki|maliit|nakaangat)|hindi\s+pantay|dili\s+patas|kumpara\s+sa|compared\s+sa|nakaangat|nakababa|sits?(?: \w+)? (?:higher|lower)|(?:is|are|looks?|appears?)(?: \w+)? (?:higher|lower) than|elevated|depressed shoulder|asymmetr\w*|uneven|drop(?:ped)? shoulder|winging|winged|hik(?:e|ed|ing)|lateral shift|forward head|rounded shoulders|kyphotic|lordotic|scoliotic|antalgic|guard(?:ed|ing)|atroph\w*|wasting)\b/i],
     // Reassurance — "my knee is fine" must never read as a complaint.
     ["feeling fine", /\b(?:fine|feels? (?:good|great|normal|okay)|no (?:issues|problems|complaints)|back to normal|maayos(?: ra)?|ayos(?: lang)?|okay lang)\b/i],
   ];
@@ -596,9 +601,15 @@
 
   const SECTION_RULES = [
     ["precautions", /\b(precaution|avoid|do not|don't lift|no lifting|weight.?bearing|contraindicat|restrict|bawal|iwasan|ingat|likayan)\b/i],
-    ["reason", /\b(referr(?:ed|al)|prescri(?:bed|ption)|sent (?:by|from)|doctor (?:sent|wants)|dahilan|ipinadala)\b/i],
-    ["pmh", /\b(history of|diagnosed with|surgery|surgeries|underwent|operation|hypertension|diabetes|arthritis|years? ago|noong|kaniadto|inopera|opera(?:syon|tion))\b/i],
-    ["assessment", /\b(assessment|impression|consistent with|likely|appears to (?:be|have)|prognosis|suspect)\b/i],
+    /* "Nag-refer", "ni-refer", "gipa-refer" — an English verb with a Filipino
+       affix across a hyphen is the ordinary way to say this, and none of it
+       looked like "referred" to a pattern expecting an English past tense. */
+    ["reason", /\b(referr(?:ed|al)|(?:nag|ni|na|i|gi|gipa|pina|ipina)-?refer\w*|prescri(?:bed|ption)|(?:nag|ni|na|i|gi)-?reseta\w*|sent (?:by|from)|doctor (?:sent|wants)|dahilan|ipinadala|pinadala|gipadala|gipaanhi)\b/i],
+    ["pmh", /\b(history of|diagnosed with|(?:na|ni|gi)-?diagnos\w*|surgery|surgeries|underwent|operation|hypertension|diabetes|arthritis|years? ago|when i was \d+|as a (?:kid|child|teenager)|noong|kaniadto|inopera|na-?opera\w*|gi-?opera\w*|opera(?:syon|tion))\b/i],
+    /* "Consistent WITH X" is English word order. A therapist dictating in
+       Taglish says "consistent po ito SA rotator cuff impingement", and the
+       impression was being trimmed out of the visit as a bare mention. */
+    ["assessment", /\b(assessment|impression|consistent with|consistent(?:\s+(?:po|ito|siya|ini|ni))*\s+sa\b|tugma\s+sa|katugma|likely|appears to (?:be|have)|prognosis|suspect|posible(?:ng)?|malamang)\b/i],
   ];
 
   /** Decide which documentation section an utterance belongs to.
@@ -691,8 +702,51 @@
      in, and cancelled the moment the patient claims the part themselves
      ("my daughter says MY back looks crooked"), which is the common case where
      a relative is merely the one doing the talking. */
-  const SELF_CLAIM_RE = /\b(?:my|mine|akin|aking|ako|ko|akong|nako|nakong|amoa)\b/i;
+  const SELF_CLAIM_RE = /\b(?:my|mine|akin|aking|ako|ko|akong|nako|nakong|amoa|amoang|among)\b/i;
   const CLAUSE_SPLIT_RE = /[.;,!?]|\b(?:and|but|then|so|because|pero|tapos|kasi|ug|apan)\b/gi;
+
+  /* ---- possession, in a language that marks it the other way round ----
+
+     English puts the possessive in front of the noun: "MY wife", "my
+     daughter's knee". Tagalog and Cebuano put it after: "asawa KO", "likod
+     NIYA", "akong bana". The rule written for English read "asawa ko" as the
+     speaker claiming something — the enclitic `ko` sits exactly where a
+     self-claim would — and so every Filipino sentence about a relative's body
+     was filed as the patient's own. "Yung asawa ko po, masakit din ang likod
+     niya" put a back on the patient's chart.
+
+     Two markers do most of the work once they are read in the right order:
+
+       ko / nako / namin / namo   mine — but attached to the PERSON, which
+                                  makes the person mine, not the body part
+       niya / nila / iyang /      theirs — attached to the body part, which
+       ilang / kanyang            is as explicit as a third-party marker gets */
+
+  const MINE_ENCLITIC = "(?:ko|nako|nako'?ng|namin|namo|natin|nato|naku)";
+  const MINE_PROCLITIC = "(?:akong|aking|among|amoang|akoang|atong)";
+  const THEIRS_BEFORE_RE = new RegExp("\\b(?:iyang|ilang|kaniyang|kanyang|kanilang|iyaha(?:ng)?|ilaha(?:ng)?|niyang)\\s+$", "i");
+  const THEIRS_AFTER_RE = /^\s*(?:nga\s+)?(?:niya|nila|niini|niadto)\b/i;
+  const THIRD_PERSON_RE = /\b(?:niya|nila|iyang|ilang|kaniyang|kanyang|kanilang|iyaha(?:ng)?|ilaha(?:ng)?|siya|sila|siyang|her|hers|his|their|theirs|she|he|they)\b/i;
+
+  /* Remove "<person> ko" / "akong <person>" / "my wife's" so that what is
+     left can be asked the only question that matters: does the speaker claim
+     anything for THEMSELVES in this sentence? Without the strip, the
+     possessive that makes the RELATIVE mine reads as a claim on the body. */
+  const PERSON_POSSESSED_RE = new RegExp(
+    "(?:" + MINE_PROCLITIC + "\\s+)?(?:my|our)?\\s*(?:" + PERSON_RE.source.replace(/^\\b|\\b$/g, "") + ")(?:'s)?(?:\\s+" + MINE_ENCLITIC + ")?",
+    "gi");
+
+  const stripPersonPossessives = (text) => String(text || "").replace(PERSON_POSSESSED_RE, " ");
+
+  /** True when the sentence is plainly about somebody else's body: it names a
+      person, refers to them in the third person, and the speaker never claims
+      anything of their own in it. */
+  function aboutSomeoneElse(text) {
+    const t = String(text || "");
+    if (!PERSON_RE.test(t)) return false;
+    if (!THIRD_PERSON_RE.test(t)) return false;
+    return !SELF_CLAIM_RE.test(stripPersonPossessives(t));
+  }
 
   /** The fragment of `text` between the last clause break and `idx`. */
   function clauseBefore(text, idx) {
@@ -711,13 +765,30 @@
       had knee surgery" opens with a possessive belonging to the daughter, not
       to the knee; "my daughter says MY back looks crooked" is the other shape,
       where the relative is merely the one doing the talking. */
-  function isThirdPartyRegion(text, start) {
+  function isThirdPartyRegion(text, start, end) {
     if (THIRD_PARTY_RE.test(text.slice(Math.max(0, start - 60), start))) return true;
+    /* "IYANG abaga", "likod NIYA" — Tagalog and Cebuano say whose it is right
+       next to the part. But `niya` is "his/her", and who that is depends
+       entirely on who is talking: a therapist dictating about the patient
+       says "namamaga ang kanang kamay NIYA" and means the person in front of
+       them. It is third-party evidence only when a third party was actually
+       named — "ang asawa ko … ang likod NIYA". */
+    if (PERSON_RE.test(text)) {
+      if (THEIRS_BEFORE_RE.test(text.slice(Math.max(0, start - 24), start))) return true;
+      if (end !== undefined && THEIRS_AFTER_RE.test(text.slice(end, end + 24))) return true;
+    }
+    if (aboutSomeoneElse(text)) return true;
+
     const clause = clauseBefore(text, start);
+    /* Strip the possessive that makes the PERSON mine before looking for a
+       claim on the body — otherwise "anak ko" ("my child") reads as the
+       speaker claiming the knee that follows it. */
+    const stripped = stripPersonPossessives(clause);
     const who = new RegExp(PERSON_RE.source, "gi");
     let after = null, m;
     while ((m = who.exec(clause)) !== null) after = m.index + m[0].length;
-    return after !== null && !SELF_CLAIM_RE.test(clause.slice(after));
+    if (after === null) return false;
+    return !SELF_CLAIM_RE.test(stripped);
   }
 
   /* Idioms. English and Filipino both hang figures of speech on body parts,
@@ -747,7 +818,14 @@
     /\bpull(?:ing|ed)?\s+(?:my|your|his|her|their)\s+leg\b/gi,
     /\bmakapal\s+ang\s+mukha\b/gi,
     /\bmabigat\s+ang\s+(?:dugo|loob)\b/gi,
-    /\bmasakit\s+sa\s+(?:ulo|bulsa)\b/gi,
+    /* "Sakit sa ulo ang papeles" is an annoyance, not a headache; "masakit sa
+       bulsa" is expensive, not a symptom. The literal reading attaches the
+       possessive to the part — "masakit ang ulo KO" — so a trailing first
+       person is what rules the idiom out. */
+    /\b(?:sobrang\s+|grabe(?:ng)?\s+|ang\s+|napaka)?(?:ma)?sakit\s+sa\s+(?:ulo|bulsa|dibdib|kalag|tiyan)\b(?!\s+(?:ko|nako|nakong|namin|natin|ako|nako'?ng))/gi,
+    /\bmakapal\s+ang\s+(?:mukha|apog)\b/gi,
+    /\bmalakas\s+ang\s+(?:loob|dugo)\b/gi,
+    /\bpasan\s+sa\s+balikat\b/gi,
   ];
 
   /** Character ranges in `text` that are figures of speech, not anatomy. */
@@ -833,7 +911,7 @@
            rather than merely skipped — an utterance whose ONLY region was
            filtered must not then fall through to the loose-signal path and
            re-attach that same wording to whatever was pinned last. */
-        if (isThirdPartyRegion(text, start)) { notMine.push([start, "someone else's"]); continue; }
+        if (isThirdPartyRegion(text, start, end)) { notMine.push([start, "someone else's"]); continue; }
         if (figurative.some(([fs, fe]) => start >= fs && end <= fe)) { notMine.push([start, "a figure of speech"]); continue; }
         if (isFutureContingency(text, start)) { notMine.push([start, "a hypothetical"]); continue; }
 
@@ -921,6 +999,9 @@
         loose = {
           summary: summarize(text, anchor[0], anchor[1]),
           quote: snippet(text, anchor[0], anchor[1]),
+          // where it was found, so a caller can ask whether it sits inside a
+          // figure of speech — "MASAKIT sa bulsa" is not a symptom
+          start: anchor[0], end: anchor[1],
         };
       }
     }
@@ -963,7 +1044,7 @@
 
   // Marks a turn as the clinician speaking: a question, an instruction, or a
   // called-out objective measurement.
-  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|(?:take|takes|taking) a (?:deep )?breath|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
+  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|(?:take|takes|taking) a (?:deep )?breath|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|i-\w+(?:\s+(?:niyo|nyo|ninyo|mo|po|na))|(?:hu)?wag\s+(?:niyo|mo|kang|kayong|po)|ayaw\s+(?:mo|niyo|pag|pug)|palihug\s+\w+|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
 
   function guessSpeaker(raw) {
     const t = String(raw || "").trim();
@@ -984,7 +1065,7 @@
     return "patient"; // default: hone in on the patient
   }
 
-  const OBSERVATION_RE = /\b(?:sits?|appears?|looks?|presents?|demonstrates?|exhibits?|noted|observ(?:ed|able)|palpat\w*|visibl[ey]|on inspection|compared to the (?:other|left|right)|than the (?:other|left|right))\b/i;
+  const OBSERVATION_RE = /\b(?:sits?|appears?|looks?|presents?|demonstrates?|exhibits?|noted|observ(?:ed|able)|palpat\w*|visibl[ey]|on inspection|compared to the (?:other|left|right)|than the (?:other|left|right)|mas\s+(?:mataas|mababa|malaki|maliit)|kumpara\s+sa|compared\s+sa|halata(?:ng)?|makita|nakikita|nakita|tan-?awon|klaro\s+nga)\b/i;
   const FIRST_PERSON_RE = /\b(?:i|i'?(?:m|ve|ll|d)|me|my|mine|myself|we|our|ako|ko|akin|aking|sakin|nako|akong)\b/i;
 
   // therapist narrating what was done this visit (distinct from a patient
@@ -1131,7 +1212,9 @@
 
   const SMALLTALK_RE = new RegExp([
     // greetings, thanks, compliments, farewells
-    "\\b(?:good\\s+(?:morning|afternoon|evening)|how\\s+(?:are|have)\\s+you(?:\\s+been)?|nice\\s+to\\s+(?:see|meet)|thank\\s+you|thanks\\s+(?:so|very|a\\s+lot)|you'?re\\s+(?:very\\s+)?(?:kind|welcome)|take\\s+care|god\\s+bless|ingat\\s+po|(?:maraming\\s+)?salamat|walang\\s+anuman|daghang\\s+salamat)\\b",
+    "\\b(?:good\\s+(?:morning|afternoon|evening)|how\\s+(?:are|have)\\s+you(?:\\s+been)?|nice\\s+to\\s+(?:see|meet)|thank\\s+you|thanks\\s+(?:so|very|a\\s+lot)|you'?re\\s+(?:very\\s+)?(?:kind|welcome)|take\\s+care|god\\s+bless|ingat(?:\\s+po|\\s+kayo|\\s+ka)?|(?:maraming\\s+)?salamat|walang\\s+anuman|daghang\\s+salamat)\\b",
+    // the Filipino half of the same courtesies
+    "\\b(?:magandang\\s+(?:umaga|hapon|gabi|araw)|maayong\\s+(?:buntag|hapon|gabii|adlaw)|ku?mu?sta(?:\\s+(?:na|po|ka|kayo|man))*|mabuti\\s+naman|okay\\s+lang\\s+po|ayos\\s+lang|hangtod\\s+sa\\s+sunod|paalam|babay)\\b",
     // family and social news
     "\\b(?:getting\\s+married|wedding|birthday|anniversary|graduation|christening|baptism|fiesta|reunion|vacation|holiday|christmas|new\\s+year|kasal|kaarawan|bakasyon|pista)\\b",
     // the room interrupting the visit
@@ -1255,6 +1338,23 @@
        about that, so it must not be filed under this patient's history. */
     if (!hasRegion && !hasMeasurement && !r.loose && (r.notMine || []).length) {
       return { file: false, reason: "the body part named here is " + r.notMine[0][1] + ", not the patient's" };
+    }
+
+    /* A sentence about somebody else's body need not name a region this
+       parser knows — "ang akong asawa, sakit sad iyang back" names none it
+       recognises, and the symptom word alone was enough to file it as the
+       patient's. */
+    if (!hasMeasurement && aboutSomeoneElse(text)) {
+      return { file: false, reason: "this is about somebody else, not the patient" };
+    }
+
+    /* The symptom word IS the figure of speech: "MASAKIT sa bulsa" is
+       expensive, "sakit sa ulo" is an annoyance. No region is named, so
+       nothing above caught it — but the word doing the work sits inside a
+       phrase already known to be figurative. */
+    if (!hasRegion && !hasMeasurement && r.loose && typeof r.loose.start === "number"
+      && figurativeRanges(text).some(([fs, fe]) => r.loose.start >= fs && r.loose.end <= fe)) {
+      return { file: false, reason: "a figure of speech, not a symptom" };
     }
 
     /* Hard evidence — a named region that was actually described, or a
