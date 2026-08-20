@@ -75,6 +75,36 @@ const reportedAbout = (r, theme, subject) =>
    ...(r.redFlags || []).map((f) => f.flag || "")]
     .some((entry) => theme.test(entry) && subject.test(entry));
 
+/** Text of one drafted note section, lowercased. */
+const sec = (r, key) => norm(r[key]);
+
+/** Which section(s) mention `re` — used to prove a sentence landed in exactly
+    one place. Every sentence belongs to exactly ONE section (prompt rule 5b),
+    so a referral that also shows up in Subjective is a real defect, not a
+    stylistic one. */
+const SECTION_KEYS = ["reason", "precautions", "pmh", "objective", "assessment", "subjective", "treatment"];
+const sectionsMentioning = (r, re) => SECTION_KEYS.filter((k) => re.test(sec(r, k)));
+const onlyIn = (r, re, ...keys) => {
+  const hit = sectionsMentioning(r, re);
+  return hit.length > 0 && hit.every((k) => keys.includes(k));
+};
+
+/** Was a region taken back off the chart, and for the stated reason? */
+const hasCorrection = (r, part, kind) => (r.corrections || []).some((c) =>
+  norm(c.part) === norm(part) && (kind === undefined || c.kind === kind));
+
+/** No finding anywhere mentions `re` — used for "the clinician's numbers must
+    not become the patient's symptoms". */
+const noFindingSays = (r, re) => (r.findings || []).every((f) => !re.test(f.summary || ""));
+
+const mmt = (r) => ((r.measurements && r.measurements.mmt) || []);
+const special = (r) => ((r.measurements && r.measurements.special) || []);
+
+/** Turns the cleanup kept (keep !== false) — the trimmed medical record. */
+const kept = (r) => (r.dialogue || []).filter((d) => d.keep !== false);
+const keptText = (r) => norm(kept(r).map((d) => d.text).join(" "));
+const droppedText = (r) => norm((r.dialogue || []).filter((d) => d.keep === false).map((d) => d.text).join(" "));
+
 /* ---------- refine cases ---------- */
 
 const REFINE_CASES = [

@@ -295,6 +295,66 @@ for (const [label, text] of NOISE) {
     JSON.stringify(r.dialogue.filter((d) => d.keep === false).map((d) => [d.text, d.dropReason])));
 }
 
+
+/* ------------------------------------------------------------------ *
+ * The words a clinic actually uses for a body part
+ * ------------------------------------------------------------------ *
+   Each of these came back from the parser as a symptom with nowhere to live —
+   a loose signal that attaches to whatever region happened to be pinned last,
+   which is worse than silence. They are not rare words: "sentido" is how a
+   headache gets located, "kili-kili" is the standard spelling of the armpit
+   (the lexicon only had the unhyphenated one), and "bewang" is what Cloud
+   dictation writes down when a patient says "baywang". */
+{
+  const pins = (t) => PR.parseUtterance(t).mentions.map((m) => `${m.side || ""} ${m.partName}`.trim());
+  for (const [text, want] of [
+    ["masakit ang sentido ko", "Temple"],                 // tl/ceb — temple
+    ["sakit akong sentido", "Temple"],
+    ["masakit ang kili-kili ko", "Armpit"],               // hyphenated spelling
+    ["masakit ang bewang ko", "Lower back"],              // STT spelling of baywang
+    ["masakit ang beywang ko", "Lower back"],
+    ["masakit ang alak-alakan ko", "Calf"],               // tl — calf
+    ["masakit ang puson ko", "Stomach"],                  // tl — lower abdomen
+    ["masakit ang bunganga ko", "Mouth"],
+    ["masakit ang tagiliran ko", "Flank"],                // tl — side of the torso
+    ["sakit akong kilid nako", "Flank"],                  // ceb, possessed
+  ]) {
+    check(`lexicon: ${text} → ${want}`, pins(text).join() === want, JSON.stringify(pins(text)));
+  }
+
+  /* Cebuano "kilid" is only the body when somebody owns it — "sa kilid" is
+     just as often the side of a room, and a bare pin there is a mark on a
+     mannequin nobody complained about. */
+  check("lexicon: an unpossessed 'kilid' is not the flank",
+    !pins("ibutang sa kilid ang lamesa").includes("Flank"),
+    JSON.stringify(pins("ibutang sa kilid ang lamesa")));
+}
+
+/* ------------------------------------------------------------------ *
+ * Posterior complaints belong on the posterior figure
+ * ------------------------------------------------------------------ *
+   Tagalog and Cebuano stack a possessive, a side word and a linker between
+   "the back of" and the body part — "luyo sa AKONG TUONG paa" is three words
+   where English has one. The phrase pattern allowed a single filler, so the
+   posterior wording fell through to the generic front-view region and the
+   complaint was pinned on the wrong side of the body. */
+{
+  const one = (t) => {
+    const m = PR.parseUtterance(t).mentions;
+    return m.length === 1 ? `${m[0].side || "-"} ${m[0].partName} (${m[0].view})` : JSON.stringify(m.map((x) => x.partName));
+  };
+  for (const [text, want] of [
+    ["luyo sa akong tuong paa", "right Hamstring (back)"],
+    ["luyo sa akong wala nga hita", "left Hamstring (back)"],
+    ["likod ng aking kaliwang binti", "left Calf (back)"],
+    ["masakit ang likod ng kanang hita ko", "right Hamstring (back)"],
+    ["the back of my left upper leg", "left Hamstring (back)"],
+    ["backs of my really sore calves", "- Calf (back)"],
+  ]) {
+    check(`posterior: ${text}`, one(text) === want, one(text));
+  }
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart code-switching checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }

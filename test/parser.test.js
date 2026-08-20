@@ -711,6 +711,160 @@ function mention(result, partName, side = undefined) {
     JSON.stringify(labels(r)));
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Measurements: the numbers a therapist reads out loud
+ * ------------------------------------------------------------------ *
+   Three silent losses lived here, and every one of them threw away the
+   single most useful part of the reading. A ROM angle with no side on it
+   cannot show a left/right difference, which is most of why it is measured.
+   A strength grade counted in Filipino was not a grade at all. And only the
+   first pain rating in a line was read, so "my neck is a 3 out of 10 but my
+   shoulder is an 8 out of 10" charted the 3 and dropped the 8. */
+
+const meas = (t) => parseUtterance(t).measurements;
+
+{
+  // ROM: the side is as often stated AFTER the number as before it
+  for (const [text, side] of [
+    ["knee flexion is 110 degrees on the right", "right"],
+    ["shoulder flexion 95 degrees on the left", "left"],
+    ["shoulder flexion 100 degrees sa kanan", "right"],       // tl
+    ["knee flexion 110 degrees sa tuo", "right"],             // ceb
+    ["knee flexion 110 degrees sa kaliwa", "left"],           // tl
+    ["right knee flexion is 110 degrees", "right"],           // leading still wins
+  ]) {
+    const r = meas(text).rom;
+    check(`rom side: ${text}`, r.length === 1 && r[0].side === side, JSON.stringify(r));
+  }
+
+  /* Bare "kaliwa" had no spelling in the side vocabulary while bare "kanan"
+     accidentally did, so laterality was lost on one side of the body only. */
+  for (const [text, want] of [
+    ["masakit ang kaliwa kong tuhod", "left knee"],
+    ["masakit ang kanan kong tuhod", "right knee"],
+    ["sakit sa kaliwa nga tuhod", "left knee"],
+  ]) {
+    const r = parseUtterance(text);
+    check(`bare side word: ${text}`, labels(r).join() === want, JSON.stringify(labels(r)));
+  }
+  check("bare 'pareho' still means both sides",
+    labels(parseUtterance("pareho ang tuhod ko masakit")).sort().join() === "left knee,right knee",
+    JSON.stringify(labels(parseUtterance("pareho ang tuhod ko masakit"))));
+  // …without turning the Tagalog negation "wala" into a left side
+  for (const text of ["walang sakit ang tuhod ko", "wala akong problema sa balikat"]) {
+    check(`'wala' as a negation is not a side: ${text}`,
+      parseUtterance(text).mentions.every((m) => m.side === null),
+      JSON.stringify(labels(parseUtterance(text))));
+  }
+
+  // "bilaterally" is how it is actually dictated; it means both readings
+  const bi = meas("knee flexion 130 degrees bilaterally").rom;
+  check("rom: 'bilaterally' records both sides",
+    bi.length === 2 && bi.map((x) => x.side).sort().join(",") === "left,right", JSON.stringify(bi));
+
+  /* A trailing "right" is as often a discourse marker as a side — the
+     connector is what makes it anatomy. */
+  const disc = meas("knee flexion 110 degrees, right, let's move on").rom;
+  check("rom: a trailing discourse 'right' is not a side",
+    disc.length === 1 && disc[0].side === null, JSON.stringify(disc));
+}
+
+{
+  // MMT: the grade gets spoken in whichever language the therapist counts in
+  for (const [text, grade] of [
+    ["quad strength four out of five", "4/5"],
+    ["quad strength 4 out of 5", "4/5"],
+    ["lakas ng quad apat sa lima", "4/5"],        // tl
+    ["quad strength upat sa lima", "4/5"],        // ceb
+    ["grip strength lima sa lima", "5/5"],
+  ]) {
+    const r = meas(text).mmt;
+    check(`mmt: ${text}`, r.length === 1 && r[0].grade === grade, JSON.stringify(r));
+  }
+  check("mmt: the Filipino linker is not filed as the muscle",
+    meas("lakas ng quad apat sa lima").mmt[0].context === "quad",
+    JSON.stringify(meas("lakas ng quad apat sa lima").mmt));
+  check("mmt: a trailing Cebuano side is read",
+    meas("hamstring strength tulo sa lima sa tuo").mmt[0].side === "right",
+    JSON.stringify(meas("hamstring strength tulo sa lima sa tuo").mmt));
+  // the context guard still holds — not every "out of 5" is a muscle grade
+  check("mmt: '5 out of 5 kids' is not a strength grade",
+    meas("he has 5 out of 5 kids").mmt.length === 0);
+}
+
+{
+  // Pain: every rating in the line, each on the region it was said about
+  const two = meas("my neck is 3 out of 10 but my shoulder is 8 out of 10").pain;
+  check("pain: both ratings in one line are captured",
+    two.length === 2, JSON.stringify(two));
+  check("pain: each rating lands on its own region",
+    two.some((p) => p.score === 3 && p.location === "neck")
+    && two.some((p) => p.score === 8 && p.location === "shoulder"), JSON.stringify(two));
+
+  /* The second half of a two-sided report elides the body part. Filing the
+     four against the LEFT knee is worse than not filing it at all. */
+  const sided = meas("left knee is a seven out of ten and the right is a four out of ten").pain;
+  check("pain: an elided second side re-sides the rating",
+    sided.some((p) => p.score === 7 && p.location === "left knee")
+    && sided.some((p) => p.score === 4 && p.location === "right knee"), JSON.stringify(sided));
+
+  const tl = meas("masakit ang kaliwang balikat, mga pito sa sampu, tapos ang tuhod ko mga tatlo sa sampu").pain;
+  check("pain: two Tagalog ratings, two regions",
+    tl.some((p) => p.score === 7 && p.location === "left shoulder")
+    && tl.some((p) => p.score === 3 && p.location === "knee"), JSON.stringify(tl));
+
+  // 0/10 is a real reading, not an absent one — it belongs in the chart
+  check("pain: 'zero out of ten' is charted as a zero",
+    meas("no pain in the knee, zero out of ten").pain.some((p) => p.score === 0),
+    JSON.stringify(meas("no pain in the knee, zero out of ten").pain));
+}
+
+/* ------------------------------------------------------------------ *
+ * Worked examples, caught live instead of only in the cleanup pass
+ * ------------------------------------------------------------------ *
+   "For example, you could say my right arm is in a lot of pain" is a
+   demonstration of the software, not a complaint. The marker is spoken
+   BEFORE the region, so the live pass has everything it needs to decline the
+   pin at the moment it hears it — rather than pinning an arm and waiting for
+   the cleanup pass to take it back off the chart. */
+{
+  const demo = parseUtterance("for example you could say my right arm is in a lot of pain");
+  check("demo: the illustrated arm is not pinned", demo.mentions.length === 0, JSON.stringify(labels(demo)));
+  check("demo: it is recorded as not the patient's", demo.notMine.length === 1, JSON.stringify(demo.notMine));
+  check("demo: and no loose signal leaks onto the last pin", demo.loose === null, JSON.stringify(demo.loose));
+
+  /* An example ends at its clause. Suppressing the rest of the sentence
+     would throw away a real complaint, which is the worse error. */
+  for (const [text, want] of [
+    ["kunwari masakit ang balikat ko pero talaga masakit ang kanang tuhod ko", "right knee"],
+    ["for instance my knee. but really my neck is the problem", "neck"],
+    ["halimbawa po, masakit ang tuhod. pero ang totoo, ang balikat ko po", "shoulder"],
+  ]) {
+    const r = parseUtterance(text);
+    check(`demo: the real complaint after the example survives — ${want}`,
+      labels(r).length === 1 && labels(r)[0] === want, JSON.stringify(labels(r)));
+  }
+
+  /* "Something like" is how people describe real symptoms. It is in the
+     transcript-trimming vocabulary but deliberately NOT in the live one:
+     dropping a pin is destructive in a way that dropping a line is not. */
+  const real = parseUtterance("it feels something like burning in my left foot");
+  check("demo: 'something like' still pins a real symptom",
+    labels(real).join() === "left foot", JSON.stringify(labels(real)));
+}
+
+/* A loose signal attaches to whatever was pinned last, so an idiom carrying a
+   symptom word used to append the price of the medicine to the shoulder. */
+{
+  const idiom = parseUtterance("masakit sa bulsa ang gamot");
+  check("idiom: 'masakit sa bulsa' leaves no loose signal",
+    idiom.mentions.length === 0 && idiom.loose === null, JSON.stringify(idiom.loose));
+  const still = parseUtterance("it is about a six out of ten at night");
+  check("idiom: a genuine follow-up still produces a loose signal",
+    !!still.loose, JSON.stringify(still.loose));
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart parser checker: ${passed}/${total} checks passed`);
 if (failures.length) {

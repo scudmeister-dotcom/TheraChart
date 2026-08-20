@@ -27,7 +27,7 @@
 
   const BODY_PARTS = [
     // Back view, specific first
-    P("Lower back", "low(?:er)?\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back|baywang|hawak", { view: "back", y: 178 }),
+    P("Lower back", "low(?:er)?\\s+back|lumbar(?:\\s+region)?|small of (?:my|the|his|her) back|b[ae]ywang|bewang|hawak", { view: "back", y: 178 }),
     P("Upper back", "upper\\s+back", { view: "back", y: 110 }),
     P("Mid back", "mid(?:dle)?[-\\s]?back", { view: "back", y: 145 }),
     P("Shoulder blade", "shoulder\\s+blades?|scapula[er]?|scapular|paypay", { view: "back", dx: 24, y: 112, sided: true }),
@@ -48,11 +48,11 @@
     /* "The back of my leg" has to land on the BACK view. It used to fall
        through to the generic front-view "Leg", which put a posterior complaint
        on the wrong figure. Posterior thigh is the standard reading. */
-    P("Hamstring", "hamstrings?|ham\\s?strings?|biceps femoris|semitendinosus|semimembranosus|backs?\\s+of\\s+(?:my|the|his|her|your)\\s+(?:\\w+\\s+)?(?:upper\\s+)?(?:legs?|thighs?)|likod\\s+ng\\s+(?:\\w+\\s+)?(?:hita|paa)|luyo\\s+sa\\s+(?:\\w+\\s+)?(?:paa|hita)", { view: "back", dx: 16, y: 265, sided: true }),
-    P("Flank", "flanks?|love\\s?handles?", { view: "back", dx: 26, y: 168, sided: true }),
+    P("Hamstring", "hamstrings?|ham\\s?strings?|biceps femoris|semitendinosus|semimembranosus|backs?\\s+of\\s+(?:my|the|his|her|your)\\s+(?:\\w+\\s+){0,3}?(?:upper\\s+)?(?:legs?|thighs?)|likod\\s+ng\\s+(?:\\w+\\s+){0,3}?(?:hita|paa)|luyo\\s+sa\\s+(?:\\w+\\s+){0,3}?(?:paa|hita)", { view: "back", dx: 16, y: 265, sided: true }),
+    P("Flank", "flanks?|love\\s?handles?|tagiliran|(?<=\\bakong\\s)kilid|kilid(?=\\s+(?:ko|nako|nimo|niya))", { view: "back", dx: 26, y: 168, sided: true }),
     P("Achilles", "achilles(?:\\s+tendon)?", { view: "back", dx: 15.5, y: 392, sided: true }),
     P("Heel", "heels?|sakong|tikod", { view: "back", dx: 16, y: 404, sided: true }),
-    P("Calf", "backs?\\s+of\\s+(?:my|the|his|her|your)\\s+(?:\\w+\\s+)?(?:calf|calves|lower\\s+legs?)|likod\\s+ng\\s+(?:\\w+\\s+)?(?:binti|bitiis)|calf|calves|gastroc(?:nemius)?|soleus|binti|b[ai]tiis", { view: "back", dx: 16, y: 350, sided: true }),
+    P("Calf", "backs?\\s+of\\s+(?:my|the|his|her|your)\\s+(?:\\w+\\s+){0,3}?(?:calf|calves|lower\\s+legs?)|likod\\s+ng\\s+(?:\\w+\\s+){0,3}?(?:binti|bitiis)|luyo\\s+sa\\s+(?:\\w+\\s+){0,3}?(?:bitiis|binti)|calf|calves|gastroc(?:nemius)?|soleus|alak-?alakan|binti|b[ai]tiis", { view: "back", dx: 16, y: 350, sided: true }),
     // Generic "back" only when clearly the body part:
     // needs a possessive before it, and not "back of" / "behind my back".
     // "likod" (tl/ceb) is always the body part.
@@ -62,21 +62,21 @@
     // Head & face
     P("Scalp", "scalps?", { y: 20 }),
     P("Forehead", "forehead|noo|agtang", { y: 24 }),
-    P("Temple", "temples?", { dx: 14, y: 28, sided: true }),
+    P("Temple", "temples?|sentido", { dx: 14, y: 28, sided: true }),
     P("Eye", "eyes?|eyebrows?|eyelids?|mata", { dx: 8, y: 32, sided: true }),
     P("Ear", "ears?|earlobes?|tenga|tainga|dalunggan", { dx: 18, y: 36, sided: true }),
     P("Nose", "nose|sinus(?:es)?|ilong", { y: 38 }),
     P("Jaw", "jaws?|jawlines?|tmj|temporomandibular|panga|apapangig", { dx: 10, y: 48, sided: true }),
     P("Chin", "chins?|suwang|sulang", { y: 54 }),
     P("Cheek", "cheeks?|pisngi|aping", { dx: 13, y: 42, sided: true }),
-    P("Mouth", "mouth|teeth|tooth|gums?|tongue|lips?|bibig|ngipin|ngipon|dila", { y: 46 }),
+    P("Mouth", "mouth|teeth|tooth|gums?|tongue|lips?|bibig|bunganga|ngipin|ngipon|dila", { y: 46 }),
     P("Head", "head|skull|headaches?|migraines?|ulo", { y: 34 }),
     P("Throat", "throat|lalamunan|tutunlan", { y: 70 }),
     P("Neck", "neck|cervical(?:\\s+spine)?|leeg|liog", { y: 66 }),
 
     // Torso
     P("Collarbone", "collar\\s?bones?|clavicle", { dx: 13, y: 88, sided: true }),
-    P("Armpit", "armpits?|underarms?|kilikili|ilok", { dx: 38, y: 105, sided: true }),
+    P("Armpit", "armpits?|underarms?|kili-?kili|ilok", { dx: 38, y: 105, sided: true }),
     P("Shoulder", "shoulders?|rotator cuffs?|deltoids?|ac\\s+joints?|acromioclavicular|acromion|supraspinatus|infraspinatus|subscapularis|glenohumeral|balikat|abaga", { dx: 46, y: 95, sided: true }),
     // lookahead skips emotional idioms ("my heart wasn't in it")
     P("Heart", "heart(?!\\s*(?:wasn'?t|isn'?t|was\\s+not|is\\s+not|goes\\s+out|went\\s+out|of\\s+gold|set\\s+on|-?\\s?to-?\\s?heart))|puso", { dx: 14, y: 112, fixedSide: "left" }),
@@ -85,7 +85,7 @@
     P("Breast", "breasts?|suso", { dx: 16, y: 118, sided: true }),
     P("Ribs", "ribs?|rib\\s?cage|costal|inter-?costal|tadyang|gusok", { dx: 20, y: 135, sided: true }),
     P("Navel", "navel|belly\\s?button|pusod", { y: 170 }),
-    P("Stomach", "stomach(?:\\s?aches?)?|belly|abdomen|abdominal|tummy|gut|obliques?|tiyan|sikmura", { y: 160 }),
+    P("Stomach", "stomach(?:\\s?aches?)?|belly|abdomen|abdominal|tummy|gut|obliques?|tiyan|sikmura|puson", { y: 160 }),
     /* Pelvic-health work is physical therapy too, and a patient describing it
        uses lay words. A region the system refuses to hear is a region that
        cannot be treated or billed for. */
@@ -124,7 +124,12 @@
   // kaliwa(ng) = left (tl) · wala(ng) = left (ceb) · kanan(g) = right (tl)
   // tuo(ng) = right (ceb). "both"/"bilateral"/"pareho" mark both sides and
   // are expanded into two mentions. Normalized by sideWord().
-  const SIDE_WORDS = "left|right|both|bilateral|parehong?|kaliwang?|kanang?|walang?|wala|tuong?|tuo";
+  /* Every word has to list its BARE form as well as its linked one. "kaliwang?"
+     spells kaliwan/kaliwang and so never matched a plain "kaliwa" — while
+     "kanang?" happens to spell kanan/kanang and did. The result was a
+     laterality bug that only ever lost the LEFT side: "masakit ang kaliwa kong
+     tuhod" charted a knee with no side, and "kanan" charted a right one. */
+  const SIDE_WORDS = "left|right|both|bilateral(?:ly)?|pareho(?:ng)?|kaliwa(?:ng)?|kanan(?:g)?|wala(?:ng)?|tuo(?:ng)?";
   const LEFT_RE = /^(left|kaliwa|wala)/i;
   const BOTH_RE = /^(both|bilateral|pareho)/i;
 
@@ -248,6 +253,12 @@
       dates ("on 6/10", "6/10/25") and caps hyperbole ("11 out of 10") at the
       top of the scale. Returns { score, index, length } or null. */
   function findRating(text) {
+    return findRatings(text)[0] || null;
+  }
+
+  /** Every 0-10 rating in `text`, in the order spoken. */
+  function findRatings(text) {
+    const out = [];
     const re = new RegExp(RATING_RE.source, "gi");
     let m;
     while ((m = re.exec(text)) !== null) {
@@ -259,9 +270,9 @@
       }
       let score = NUM_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
       if (score > 10) score = 10;
-      return { score, index: m.index, length: m[0].length };
+      out.push({ score, index: m.index, length: m[0].length });
     }
-    return null;
+    return out;
   }
 
   /* ---------------------------------------------------------------- *
@@ -415,7 +426,14 @@
   /* "out of 5", "/5" and the spoken "over 5" are the same grade. "over" was
      missing, so "strength 4 over 5" — a normal way to say it out loud, and what
      Cloud dictation transcribes — produced no measurement at all. */
-  const MMT_RE = /\b((?:[A-Za-z][\w-]*\s+){0,3}?)(?:strength|mmt|lakas)?\s*(?:is|was|graded?(?:\s+at)?|at)?\s*((?:[0-5]|zero|one|two|three|four|five)(?:\s*(?:plus|minus)|[+-])?)\s*(?:out\s+of|over|\/)\s*(?:5|five)\b/gi;
+  /* The grade itself gets spoken in whichever language the therapist counts
+     in. Pain ratings already read "pito sa sampu"; strength did not, so a
+     Taglish "quad strength apat sa lima" — an ordinary way to dictate 4/5 —
+     produced no measurement at all and the grade was lost from the chart. */
+  const MMT_NUM = "[0-5]|zero|one|two|three|four|five|sero|isa|dalawa|tatlo|apat|lima|usa|duha|tulo|upat";
+  const MMT_RE = new RegExp(
+    `\\b((?:[A-Za-z][\\w-]*\\s+){0,3}?)(?:strength|mmt|lakas|kusog)?\\s*(?:is|was|graded?(?:\\s+at)?|at)?\\s*`
+    + `((?:${MMT_NUM})(?:\\s*(?:plus|minus)|[+-])?)\\s*(?:out\\s+of|over|sa|\\/)\\s*(?:5|five|lima)\\b`, "gi");
   /* The muscle is often named AFTER the grade, especially in Taglish word order
      — "strength 4 over 5 sa deltoid". Without this the grade was filed with no
      muscle attached, which makes it useless for tracking a specific weakness. */
@@ -484,6 +502,19 @@
       return found;
     };
 
+    /* "Knee flexion is 110 degrees ON THE RIGHT" / "sa kanan" / "sa tuo".
+       MMT already read a trailing side; ROM only ever read a leading one, so
+       every read-out dictated in the natural word order recorded an angle with
+       no side on it — and a left/right difference is most of what a ROM
+       measurement is for. */
+    const ROM_TRAIL_RE = new RegExp(
+      `^[\\s,]*(?:(?:on|of|in|for|sa|ang|ng)\\s+(?:the|his|her|their|ang)?\\s*(${SIDE_WORDS})\\b`
+      + `|(bilateral(?:ly)?|both)\\b|(${SIDE_WORDS})\\s+sides?\\b)`, "i");
+    const trailSide = (end) => {
+      const t = ROM_TRAIL_RE.exec(text.slice(end, end + 28));
+      return t ? sideWord(t[1] || t[2] || t[3]) : null;
+    };
+
     const pushRom = (side, joint, motion, degrees) => {
       const entry = { joint, motion, degrees };
       if (side === "both") rom.push({ side: "left", ...entry }, { side: "right", ...entry });
@@ -499,7 +530,8 @@
       const degrees = Number(m[4]);
       claimed.push([m.index, m.index + m[0].length]);
       if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
-      pushRom(sideWord(m[1]), m[2].toLowerCase().replace(/s$/, ""), normMotion(m[3]), degrees);
+      pushRom(sideWord(m[1]) || trailSide(m.index + m[0].length),
+        m[2].toLowerCase().replace(/s$/, ""), normMotion(m[3]), degrees);
     }
 
     // Pass 2 — a motion with no joint of its own, inheriting the joint stated
@@ -515,7 +547,7 @@
         const anchor = anchorBefore(start);
         if (!anchor) continue;
         claimed.push([start, end]);
-        pushRom(sideWord(b[1]) || anchor.side, anchor.joint, normMotion(b[2]), degrees);
+        pushRom(sideWord(b[1]) || trailSide(end) || anchor.side, anchor.joint, normMotion(b[2]), degrees);
       }
     };
 
@@ -532,7 +564,7 @@
       if (!MMT_CONTEXT_RE.test(m[0])) continue;
       const grade = m[2]
         .replace(/\s*plus/i, "+").replace(/\s*minus/i, "-").trim()
-        .replace(/^(zero|one|two|three|four|five)/i, (w) => NUM_WORDS[w.toLowerCase()]);
+        .replace(/^[a-z]+/i, (w) => (NUM_WORDS[w.toLowerCase()] ?? w));
 
       /* Side, which was previously thrown away entirely — "deltoid strength is
          4 out of 5 on the right" recorded a grade with no side, so a left/right
@@ -544,7 +576,7 @@
       const leadSide = new RegExp(`^(${SIDE_WORDS})\\b\\s*`, "i").exec(context);
       if (leadSide) context = context.slice(leadSide[0].length).trim();
       // strip the grading verb itself — it names no muscle
-      context = context.replace(/\b(?:strength|mmt|lakas|is|was|at|graded?)\b/gi, "").replace(/\s+/g, " ").trim();
+      context = context.replace(/\b(?:strength|mmt|lakas|kusog|is|was|at|graded?|ang|ng|nga|sa|og|ug)\b/gi, "").replace(/\s+/g, " ").trim();
 
       const trail = MMT_TRAIL_RE.exec(text.slice(end, end + 40));
       const trailWords = (trail && trail[2] ? trail[2] : "").trim();
@@ -563,8 +595,12 @@
 
     for (const s of specialTests(text)) special.push({ result: s.result, name: s.name });
 
-    const rating = findRating(text);
-    if (rating && !NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
+    /* One line routinely carries two ratings — "my neck is a 3 out of 10 but
+       my shoulder is an 8 out of 10", "left is a seven out of ten, right is a
+       four". Reading only the first silently dropped the second complaint's
+       severity, which is the number the whole note is built around. */
+    for (const rating of findRatings(text)) {
+    if (!NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
       // attach the rating to the NEAREST non-denied mention, not just the
       // first — "no pain in the neck, but the shoulder is a 7/10" — and
       // prefer a mention in the same clause over one across a break
@@ -588,8 +624,23 @@
         if (!sep && d < bestSameD) { bestSameD = d; bestSame = mn; }
       }
       const best = bestSame || bestAny;
-      const where = best ? `${best.side ? best.side + " " : ""}${best.partName.toLowerCase()}` : null;
-      pain.push({ score: rating.score, location: where });
+      /* The second half of a two-sided report elides the body part — "left
+         knee is a seven out of ten and THE RIGHT is a four". The only mention
+         in the line is the left one, so the four would be filed against the
+         left knee: a number on the wrong side, which is worse than no number.
+         A side word standing on its own just before the rating re-sides it. */
+      let side = best ? best.side : null;
+      if (best) {
+        const lead = new RegExp(`\\b(${SIDE_WORDS})\\b(?:\\s+(?:one|side|na|nga))?[\\s,]*(?:is|was|ay|kay)?[\\s,]*(?:a|an|maybe|about|mga|around)?[\\s,]*$`, "i")
+          .exec(text.slice(Math.max(0, rating.index - 34), rating.index));
+        const spoken = lead ? sideWord(lead[1]) : null;
+        if (spoken && spoken !== "both") side = spoken;
+      }
+      const where = best ? `${side ? side + " " : ""}${best.partName.toLowerCase()}` : null;
+      if (!pain.some((p) => p.score === rating.score && p.location === where)) {
+        pain.push({ score: rating.score, location: where });
+      }
+    }
     }
 
     return { rom, mmt, special, pain };
@@ -896,6 +947,7 @@
     const claimed = [];
     const notMine = [];             // regions named, but not this patient's complaint
     const figurative = figurativeRanges(text);
+    const demo = demoRanges(text);
     const seenMentions = new Set(); // collapse identical repeats within one utterance
     for (const part of BODY_PARTS) {
       part.re.lastIndex = 0;
@@ -913,6 +965,7 @@
            re-attach that same wording to whatever was pinned last. */
         if (isThirdPartyRegion(text, start, end)) { notMine.push([start, "someone else's"]); continue; }
         if (figurative.some(([fs, fe]) => start >= fs && end <= fe)) { notMine.push([start, "a figure of speech"]); continue; }
+        if (demo.some(([hs, he]) => start >= hs && start < he)) { notMine.push([start, "an example, not a complaint"]); continue; }
         if (isFutureContingency(text, start)) { notMine.push([start, "a hypothetical"]); continue; }
 
         let side = null;
@@ -995,7 +1048,13 @@
     }
     if (!mentions.length) {
       const anchor = firstSignal(text);
-      if (anchor) {
+      /* A loose signal attaches to whatever was pinned last, so an idiom that
+         carries a symptom word — "masakit sa bulsa ang gamot", "that was a
+         headache to sort out" — used to append the cost of the medicine to the
+         patient's shoulder. Same test the mentions get, applied to the anchor. */
+      const inIdiom = anchor && (figurative.some(([fs, fe]) => anchor[0] >= fs && anchor[0] < fe)
+        || demo.some(([hs, he]) => anchor[0] >= hs && anchor[0] < he));
+      if (anchor && !inIdiom) {
         loose = {
           summary: summarize(text, anchor[0], anchor[1]),
           quote: snippet(text, anchor[0], anchor[1]),
@@ -1111,6 +1170,17 @@
      sentence is hypothetical until it is finished — which is exactly the work
      the clean-up pass exists to do. */
 
+  /* The subset the LIVE pass can act on. The comment above is true of an
+     example the speaker only reveals at the end ("…my right arm is killing me,
+     just as an example") — but every marker below is spoken BEFORE the region
+     it introduces, so by the time the arm is heard the parser already knows it
+     is an illustration and does not have to pin it and wait to be corrected.
+     Deliberately narrower than HYPOTHETICAL_RE: "something like" and "para
+     bang" are how people describe real symptoms ("it feels something like
+     burning in my left foot"), and suppressing a pin is destructive in a way
+     that trimming a transcript line is not. */
+  const DEMO_LEAD_RE = /\b(?:for example|for instance|let'?s say|lets say|you (?:could|can|would|might) say|say (?:something like|for example)|just as an example|hypothetically|pretend|kunwari|halimbawa|pananglitan)\b/i;
+
   // "you could say…", "for example", "kunwari", "halimbawa" — an illustration,
   // not a complaint.
   const HYPOTHETICAL_RE = /\b(?:for example|for instance|let'?s say|lets say|you (?:could|can|would|might) say|if (?:i|you) said?|say (?:something like|for example)|something like|pretend|hypothetically|just as an example|kunwari|halimbawa|pananglitan|pasagdi lang nga|para bang|parang sasabihin)\b/i;
@@ -1120,9 +1190,19 @@
      ko" supposes a shoulder and then reports a knee; treating the whole line
      as hypothetical would throw away a real complaint, which is a worse error
      than the one this is here to fix. */
+  /** Ranges a leading "for example"/"kunwari" governs, to the end of its
+      clause — the live-safe subset of hypotheticalRanges(). */
+  function demoRanges(text) {
+    return markerRanges(text, DEMO_LEAD_RE);
+  }
+
   function hypotheticalRanges(text) {
+    return markerRanges(text, HYPOTHETICAL_RE);
+  }
+
+  function markerRanges(text, marker) {
     const t = String(text || "");
-    const finder = new RegExp(HYPOTHETICAL_RE.source, "gi");
+    const finder = new RegExp(marker.source, "gi");
     const ranges = [];
     let m;
     while ((m = finder.exec(t)) !== null) {
@@ -1569,7 +1649,12 @@
       };
       // regions named only inside an example, clause by clause
       for (const [a, b] of hypRanges) {
-        remember(parseUtterance(text.slice(a, b)).mentions, "hypothetical",
+        /* The marker has to come OFF the slice before it is re-parsed. This
+           range is already known to be an example, and parseUtterance now
+           declines to pin a region introduced by "kunwari"/"for example" —
+           so leaving the marker in place asked it the question it had just
+           answered, and the region went unnamed instead of unreported. */
+        remember(parseUtterance(text.slice(a, b).replace(HYPOTHETICAL_RE, " ")).mentions, "hypothetical",
           "Said as an example, not reported by the patient");
       }
       if (speaker !== "patient" || META_RE.test(text)) {
