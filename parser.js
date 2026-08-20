@@ -1131,7 +1131,7 @@
 
   const SMALLTALK_RE = new RegExp([
     // greetings, thanks, compliments, farewells
-    "\\b(?:good\\s+(?:morning|afternoon|evening)|how\\s+(?:are|have)\\s+you(?:\\s+been)?|nice\\s+to\\s+(?:see|meet)|thank\\s+you|thanks\\s+(?:so|very|a\\s+lot)|you'?re\\s+(?:very\\s+)?(?:kind|welcome)|take\\s+care|god\\s+bless|ingat\\s+po|salamat\\s+po)\\b",
+    "\\b(?:good\\s+(?:morning|afternoon|evening)|how\\s+(?:are|have)\\s+you(?:\\s+been)?|nice\\s+to\\s+(?:see|meet)|thank\\s+you|thanks\\s+(?:so|very|a\\s+lot)|you'?re\\s+(?:very\\s+)?(?:kind|welcome)|take\\s+care|god\\s+bless|ingat\\s+po|(?:maraming\\s+)?salamat|walang\\s+anuman|daghang\\s+salamat)\\b",
     // family and social news
     "\\b(?:getting\\s+married|wedding|birthday|anniversary|graduation|christening|baptism|fiesta|reunion|vacation|holiday|christmas|new\\s+year|kasal|kaarawan|bakasyon|pista)\\b",
     // the room interrupting the visit
@@ -1422,6 +1422,13 @@
     return out.length ? out : [String(text || "")];
   }
 
+  /** A finding's summaries, with "named this area" placeholders removed when
+      anything else was actually reported about it. */
+  function summariesOf(f) {
+    const real = (f.summaries || []).filter((x) => !isBareMention(x));
+    return real.length ? real : (f.summaries || []);
+  }
+
   function refineTranscript(utterances) {
     const dialogue = [];
     const findingsMap = new Map();
@@ -1483,6 +1490,16 @@
       const r = parseUtterance(hypRanges.length ? withoutHypotheticals(text, hypRanges) : text);
       const priorKey = lastKey; // what was on the map BEFORE this line
       const illustration = META_RE.test(text);
+
+      /* A referral, a precaution, a history line or an impression names a
+         region without complaining about it. Those sentences have their own
+         sections; a mention drawn from one of them adds a pin the patient
+         never asked for and, worse, gets there FIRST — so the finding leads
+         with "named this area" and reads empty even after the real complaint
+         arrives two lines later. */
+      const asSection = classifyUtterance(text, r, r.measurements);
+      const notAComplaint = ["reason", "precautions", "pmh", "assessment"].includes(asSection);
+      if (notAComplaint && r.mentions.every((m) => m.bare)) return;
 
       if (r.mentions.length) {
         for (const m of r.mentions) {
@@ -1556,7 +1573,13 @@
 
     const findings = [...findingsMap.values()].map((f) => ({
       key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
-      summary: uniqueJoin(f.summaries), quote: f.quotes[0] || "", turns: f.turns,
+      /* A region can be named in passing before it is ever described — the
+         referral says "the right shoulder", and two lines later the patient
+         says what is wrong with it. Joining every summary in order left the
+         placeholder in front, so the finished finding READ as a bare mention
+         and the review screen offered a real complaint for deletion. Drop the
+         placeholders once there is something real to say. */
+      summary: uniqueJoin(summariesOf(f)), quote: f.quotes[0] || "", turns: f.turns,
       bare: f.bare, corrected: corrections.has(f.key),
     }));
 
@@ -1592,7 +1615,12 @@
     const out = { rom: [], mmt: [], special: [], pain: [] };
     const seen = new Set();
     for (const t of texts) {
-      const m = extractMeasurements(t, []);
+      /* Extract WITH the sentence's body-part mentions. Without them a pain
+         rating has nowhere to live — "my right shoulder is a seven out of
+         ten" came back as an unlocated 7/10, which is both a worse record
+         and a second row in the table, because the live pass had already
+         filed the located one and the two no longer looked like duplicates. */
+      const m = parseUtterance(t).measurements;
       for (const kind of ["rom", "mmt", "special", "pain"]) {
         for (const item of m[kind]) {
           const sig = kind + ":" + JSON.stringify(item);

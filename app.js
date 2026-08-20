@@ -5463,11 +5463,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        "point to your shoulder" — and pinning it put marks on the mannequin
        that no patient ever complained about. */
     const clinician = PR.guessSpeaker(parsed.text) === "clinician";
+    /* A referral, a precaution, a history line or an impression names a
+       region without complaining about it — "Dr. Santos referred me for the
+       right shoulder", "consistent with a rotator cuff impingement". Those
+       belong in their sections; putting them on the mannequin as well marks
+       a body the patient never said anything about. */
+    const section = PR.classifyUtterance(parsed.text, parsed, parsed.measurements);
+    const notAComplaint = ["reason", "precautions", "pmh", "assessment"].includes(section);
     const pinnable = parsed.mentions.filter(
-      (m) => !((nMeas || clinician) && m.summary.startsWith("Mentioned this area"))
+      (m) => !((nMeas || clinician || notAComplaint) && m.summary.startsWith("Mentioned this area"))
     );
     for (const m of pinnable) addDocMapPoint(doc, m, uttId, time);
-    if (!parsed.mentions.length && parsed.loose && (doc.data.mapPoints || []).length) {
+    /* A loose signal attaches to whatever was pinned last, which is right for
+       a follow-up ("about a seven out of ten") and wrong for a section that
+       is not about the complaint at all — "no lifting for SIX WEEKS" is the
+       precaution's duration, and it was landing on the shoulder. */
+    if (!parsed.mentions.length && parsed.loose && !notAComplaint && (doc.data.mapPoints || []).length) {
       const pt = doc.data.mapPoints[doc.data.mapPoints.length - 1];
       pt.notes.push({ time, summary: parsed.loose.summary, quote: parsed.loose.quote, uttId, marks: [[0, parsed.text.length, false]] });
       routed.push(`follow-up → ${pt.part}`);
@@ -6004,11 +6015,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
     let filed = 0;
+    /* Key order is whatever the object was built in, and these travel through
+       storage and back — so two identical readings could serialise
+       differently and both be filed. Sort the keys before comparing. */
+    const sig = (x) => JSON.stringify(Object.keys(x || {}).sort().map((k) => [k, x[k]]));
     for (const kind of ["rom", "mmt", "special", "pain"]) {
       if (!doc.data[kind]) doc.data[kind] = [];
-      const seen = new Set(doc.data[kind].map((x) => JSON.stringify(x)));
+      const seen = new Set(doc.data[kind].map(sig));
       for (const item of meas[kind] || []) {
-        if (!seen.has(JSON.stringify(item))) { doc.data[kind].push(item); seen.add(JSON.stringify(item)); filed++; }
+        if (!seen.has(sig(item))) { doc.data[kind].push(item); seen.add(sig(item)); filed++; }
       }
     }
     if (filed) sectionChanges.push({ tag: "section", label: "Objective measurements", detail: `${filed} filed` });

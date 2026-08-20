@@ -265,6 +265,45 @@ for (const [label, text] of NOISE) {
     JSON.stringify(r.findings.map((f) => f.key)));
 }
 
+/* ================================================================== *
+ * 6. The cleanup must not empty the body map
+ * ================================================================== *
+   A region gets named in passing before anyone describes it — the referral
+   says "the right shoulder", and the complaint arrives two lines later. The
+   finding joined every summary in the order they arrived, so it led with the
+   "named this area" placeholder, READ as a bare mention, and the review
+   screen offered a real complaint for deletion with every other finding.
+   Accepting the defaults wiped the mannequin. */
+{
+  const r = PR.refineTranscript([
+    "anyway doctor Santos referred me for the right shoulder",
+    "my right shoulder has been really painful for about two weeks, maybe a seven out of ten",
+    "it is worse when I reach overhead or when I sleep on that side",
+    "this is consistent with a rotator cuff impingement",
+  ]);
+  const shoulder = r.findings.find((f) => f.key === "Shoulder|right");
+  check("the complaint survives as a finding", !!shoulder,
+    JSON.stringify(r.findings.map((f) => f.key)));
+  check("the finding does not read as a bare mention",
+    shoulder && !PR.isBareMention(shoulder.summary), shoulder && shoulder.summary);
+  check("the finding is not flagged bare", shoulder && shoulder.bare === false);
+  check("the finding carries the complaint, not the referral",
+    shoulder && /pain/i.test(shoulder.summary) && /7\/10/.test(shoulder.summary),
+    shoulder && shoulder.summary);
+  check("the referral did not leave a placeholder in the summary",
+    shoulder && !/Mentioned this area/i.test(shoulder.summary), shoulder && shoulder.summary);
+  check("the assessment did not invent a second, sideless shoulder",
+    !r.findings.some((f) => f.key === "Shoulder|"),
+    JSON.stringify(r.findings.map((f) => f.key)));
+
+  // and a region that genuinely was only ever named still reads as empty
+  const bare = PR.refineTranscript([
+    "my right knee hurts going down stairs",
+    "and my elbow",
+  ]).findings.find((f) => f.key === "Elbow|");
+  check("a region nobody described still reads as bare", bare && bare.bare === true);
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart adversarial dictation checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }
