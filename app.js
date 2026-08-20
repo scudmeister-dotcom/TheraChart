@@ -2877,7 +2877,7 @@ ${tabStrip}
           const spent = S.docConsumption(d);
           return `<tr>
             <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b>
-              ${spent.billed ? `<div class="hint">${spent.minutes} dictated min · ${spent.aiCalls} AI pass${spent.aiCalls === 1 ? "" : "es"} — still on this month's usage</div>` : `<div class="hint">Nothing was spent on this one.</div>`}</td>
+              ${spent.billed ? `<div class="hint">${esc(spendParts(spent, false).join(" · "))} — still on this month's usage</div>` : `<div class="hint">Nothing was spent on this one.</div>`}</td>
             <td>${fmtDT(d.deletedAt)}<div class="hint">by ${esc((S.getUser(d.deletedBy) || {}).name || "—")}</div></td>
             <td class="num">${fmtDate(d.createdAt)}</td>
             <td><button class="btn small" data-restore-doc="${d.id}">Put back</button></td>
@@ -6856,6 +6856,24 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      already cost what it cost. Saying that here, before the click, is the
      difference between a clear invoice and an argument at the end of the
      month. */
+  /* "4 min of dictation and 2 AI passes" — or just the half that actually
+     happened. Naming a zero reads as though the thing ran and cost nothing:
+     "0 min of dictation and 1 AI pass" says a microphone was open when none
+     ever was. Seconds decide whether dictation is mentioned rather than
+     rounded minutes, so a twenty-second burst says "under a minute" instead of
+     rounding itself back into the zero this exists to avoid. */
+  function spendParts(spent, bold) {
+    const b = (t) => (bold ? `<b>${t}</b>` : t);
+    const parts = [];
+    if (spent.seconds > 0) {
+      parts.push(spent.minutes >= 1
+        ? `${b(minutesOf(spent.minutes))} of dictation`
+        : `${b("under a minute")} of dictation`);
+    }
+    if (spent.aiCalls > 0) parts.push(`${b(spent.aiCalls)} AI pass${spent.aiCalls === 1 ? "" : "es"}`);
+    return parts;
+  }
+
   function deleteDraftModal(doc, user) {
     const spent = S.docConsumption(doc);
     const m = showModal(`
@@ -6865,8 +6883,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 ${spent.billed
   ? `<div class="banner warn">
       <b>What it has already spent stays on your bill.</b>
-      This draft used <b>${minutesOf(spent.minutes)}</b> of dictation and <b>${spent.aiCalls}</b> AI pass${spent.aiCalls === 1 ? "" : "es"}.
-      Both were charged the moment they ran, so deleting the note doesn't refund them — this month's Plan usage keeps counting them,
+      This draft used ${spendParts(spent, true).join(" and ")}.
+      ${spendParts(spent, true).length > 1
+        ? "Both were charged the moment they ran, so deleting the note doesn't refund them"
+        : "That was charged the moment it ran, so deleting the note doesn't refund it"} — this month's Plan usage keeps counting ${spendParts(spent, true).length > 1 ? "them" : "it"},
       and it still counts as one documented visit.
     </div>`
   : `<div class="banner good">Nothing has been spent on this draft — no dictation, no AI. Deleting it costs you nothing and it won't count as a visit.</div>`}

@@ -202,6 +202,44 @@ test.describe("TheraChart", () => {
     expect(filed.mmt.join(",")).toContain("right|deltoid|4/5");
   });
 
+  /* The delete dialog quotes what a draft has already spent. It used to name
+     both halves unconditionally — "0 min of dictation and 1 AI pass" — which
+     says a microphone was open when none ever was, in the one dialog whose
+     whole job is to be believed about a bill. */
+  test("the delete dialog names only what was actually spent", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+
+    const docId = await store(page, () => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "daily", S.currentUser());
+      const id = (r && r.id) || (r && r.doc && r.doc.id);
+      // an AI pass and no dictation at all — the case that produced "0 min"
+      S.updateDocData(id, { subjective: "x", _aiCalls: 1 }, S.currentUser());
+      return id;
+    });
+    await page.goto(`/#/doc/${docId}`);
+
+    await page.locator("button", { hasText: "Delete draft" }).first().click();
+    const dialog = page.locator("#modalRoot .modal");
+    await expect(dialog).toContainText("1 AI pass");
+    await expect(dialog).not.toContainText("0 min");
+    await expect(dialog).not.toContainText("dictation");
+    // one thing spent, so the follow-on is singular
+    await expect(dialog).toContainText("That was charged");
+
+    // and with both, it names both and goes plural again
+    await page.locator("#modalRoot button", { hasText: "Keep it" }).click();
+    await store(page, (id) => {
+      const S = window.TheraStore;
+      S.updateDocData(id, { _dictationSeconds: 240 }, S.currentUser());
+    }, docId);
+    await page.reload();
+    await page.locator("button", { hasText: "Delete draft" }).first().click();
+    await expect(dialog).toContainText("of dictation");
+    await expect(dialog).toContainText("1 AI pass");
+    await expect(dialog).toContainText("Both were charged");
+  });
+
   test("signing a note locks it", async ({ page, request }) => {
     await signIn(page, "maria@therachart.demo");
 
