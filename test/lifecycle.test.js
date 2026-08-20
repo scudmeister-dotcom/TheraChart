@@ -103,6 +103,48 @@ if (frontDesk) {
   check("an account that can't document can't delete either", !!denied.error, JSON.stringify(denied));
 }
 
+/* ================= the name you are called vs. the name on the claim =========
+
+   A nickname is not a spelling of the legal name and must never stand in for
+   it. Everything that asserts an identity — the signed document, the printed
+   chart, the charge sheet, the audit log — carries the legal name; the
+   preferred name is for the schedule and the reminder, where the point is that
+   the patient recognises their own appointment. */
+
+const nick = store.updatePatient(patient.id, { preferredName: "Bong" }, maria);
+
+check("the legal name is unchanged by a nickname",
+  store.patientName(nick) === `${nick.lastName}, ${nick.firstName}`, store.patientName(nick));
+check("the preferred name is what you call them", store.patientPreferred(nick) === "Bong");
+check("the call name pairs it with the surname",
+  store.patientCallName(nick) === `Bong ${nick.lastName}`, store.patientCallName(nick));
+check("the chart header carries both", store.patientNameWithPreferred(nick) === `${store.patientName(nick)} (Bong)`,
+  store.patientNameWithPreferred(nick));
+
+/* Audit is a record of who did what to whom, so it identifies rather than
+   greets: a log that says "Bong" is a log you cannot match to a chart. */
+store.updatePatient(nick.id, { phone: nick.phone }, maria);
+const lastEntry = store.auditLog().filter((a) => a.action === "patient-updated").pop();
+check("the activity log records the legal name, not the nickname",
+  lastEntry && lastEntry.detail === store.patientName(nick) && !/Bong/.test(lastEntry.detail),
+  lastEntry && lastEntry.detail);
+
+// no nickname set → every accessor falls back to the first name, unchanged
+const plain = store.patients().find((x) => !(x.preferredName || "").trim());
+if (plain) {
+  check("a patient with no nickname reads exactly as before",
+    store.patientPreferred(plain) === plain.firstName &&
+    store.patientNameWithPreferred(plain) === store.patientName(plain));
+}
+
+/* A nickname identical to the first name adds nothing and must not produce
+   "Villanueva, Mateo (Mateo)". */
+const echoed = store.updatePatient(nick.id, { preferredName: nick.firstName }, maria);
+check("a nickname that repeats the first name is not shown twice",
+  store.patientNameWithPreferred(echoed) === store.patientName(echoed),
+  store.patientNameWithPreferred(echoed));
+store.updatePatient(nick.id, { preferredName: "Bong" }, maria);
+
 /* ================= suspending and deleting a clinic ================= */
 
 const AUTH_PLAIN = { hash: (p) => `plain$${p}`, verify: (u, p) => u.passwordHash === `plain$${p}` };

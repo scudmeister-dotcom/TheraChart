@@ -105,7 +105,7 @@
              `p-liza` predate a rename of the demo patients and are referenced
              by tests, the screenshot harness and seeded document ids. The id is
              opaque; the name is what anyone reads. */
-          firstName: "Mark Anthony", lastName: "Bautista",
+          firstName: "Mark Anthony", lastName: "Bautista", preferredName: "Bong",
           dob: "1988-04-12", sex: "M",
           address: "12 Mabini St, Cebu City",
           phone: "+63 917 555 0101", email: "juan.reyes@example.com",
@@ -1353,7 +1353,41 @@
    * ---------------------------------------------------------------- */
 
   const getPatient = (id) => load().patients.find((p) => p.id === id) || null;
+  /* THE LEGAL NAME. What identifies the record, and the only name allowed
+     anywhere identity is being asserted: the signed document, the printed
+     chart, the charge sheet, the audit log. */
   const patientName = (p) => (p ? `${p.lastName}, ${p.firstName}` : "Unknown");
+
+  /* WHAT TO CALL THEM. A separate field, never folded into firstName, because
+     the two answer different questions and only one of them may appear on a
+     claim: a PhilHealth claim has to match the member's registered name, and a
+     note signed by a licensed PT is an attestation about a legally identified
+     person. Every serious record system draws the same line — FHIR gives a
+     nickname its own HumanName.use, HL7 v2 its own PID-5 repetition with a
+     name-type code, and Epic and Cerner both carry "preferred name" beside the
+     legal one rather than instead of it.
+
+     It earns its place here more than in most markets. Filipino nicknames are
+     near-universal and often the only name a patient answers to, so a front
+     desk calling "Mark Anthony" across a waiting room can get no response from
+     the Mark Anthony sitting in it. Falls back to the first name, so a chart
+     without one reads exactly as it did before. */
+  const patientPreferred = (p) => (p ? (String(p.preferredName || "").trim() || p.firstName || "") : "Unknown");
+
+  /* "Bong Bautista" — how the front desk would say it out loud. For the
+     schedule and the reminder, where the point is that the patient recognises
+     their own appointment. */
+  const patientCallName = (p) => (p ? `${patientPreferred(p)} ${p.lastName || ""}`.trim() : "Unknown");
+
+  /* "Bautista, Mark Anthony (Bong)" — the legal name with what they answer to
+     beside it. For screens where a human reads a name; never for documents. */
+  const patientNameWithPreferred = (p) => {
+    if (!p) return "Unknown";
+    const nick = String(p.preferredName || "").trim();
+    return nick && nick.toLowerCase() !== String(p.firstName || "").trim().toLowerCase()
+      ? `${patientName(p)} (${nick})`
+      : patientName(p);
+  };
 
   function addPatient(fields, byUserId) {
     load();
@@ -2301,6 +2335,8 @@
     SEEDED_DEMO_USER_IDS,
     // patients — patients() is clinic-scoped; allPatients() is unscoped (server-side lookups)
     patients: () => load().patients.filter(mine), allPatients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
+    // what to CALL a patient, vs. what legally identifies them — see above
+    patientPreferred, patientCallName, patientNameWithPreferred,
     // patient action items / care history (accepted AI recommendations)
     acceptRecommendation, dismissRecommendation, addActionItem, completeActionItem, deleteActionItem,
     actionItems, careHistory, resolvedRecKeys,

@@ -1962,6 +1962,11 @@ ${walkthroughMarkup()}`;
     <div class="field"><label>First name *</label><input id="in-first" value="${v("firstName")}" /></div>
     <div class="field"><label>Last name *</label><input id="in-last" value="${v("lastName")}" /></div>
   </div>
+  <div class="field"><label>Preferred name / nickname</label>
+    <input id="in-preferred" value="${v("preferredName")}" placeholder="What they actually answer to — e.g. Bong" />
+    <div class="hint">Used on the schedule and appointment reminders, and shown beside their name on the chart.
+      It never appears on a signed document, a printed chart or a claim — those carry the legal name.</div>
+  </div>
   <div class="field-row">
     <div class="field"><label>Date of birth *</label><input id="in-dob" type="date" max="${todayIso()}" value="${v("dob")}" /></div>
     <div class="field"><label>Sex</label><select id="in-sex">
@@ -2009,7 +2014,7 @@ ${walkthroughMarkup()}`;
      `in-*` ids alone, and lets the patient edit windows reuse the same
      validator against a completely different set of ids. */
   const INTAKE_IDS = {
-    firstName: "in-first", lastName: "in-last", dob: "in-dob", address: "in-address",
+    firstName: "in-first", lastName: "in-last", preferredName: "in-preferred", dob: "in-dob", address: "in-address",
     phone: "in-phone", email: "in-email", referringPhysician: "in-ref", allergies: "in-allergies",
     ecName: "in-ecname", ecRelationship: "in-ecrel", ecPhone: "in-ecphone",
     provider: "in-prov", memberId: "in-member", paymentNotes: "in-paynotes",
@@ -2020,7 +2025,7 @@ ${walkthroughMarkup()}`;
      at a time under their own `pe-*` ids. A key missing from the map is a
      field this window doesn't show — applyValidation skips it. */
   const PERSONAL_IDS = {
-    firstName: "pe-first", lastName: "pe-last", dob: "pe-dob",
+    firstName: "pe-first", lastName: "pe-last", preferredName: "pe-preferred", dob: "pe-dob",
     address: "pe-address", phone: "pe-phone", email: "pe-email", referringPhysician: "pe-ref",
   };
   const SAFETY_IDS = {
@@ -2046,7 +2051,7 @@ ${walkthroughMarkup()}`;
       const g = (id) => document.getElementById(id).value.trim();
       const editId = (location.hash.split("?edit=")[1] || "").trim();
       const raw = {
-        firstName: g("in-first"), lastName: g("in-last"), dob: g("in-dob"),
+        firstName: g("in-first"), lastName: g("in-last"), preferredName: g("in-preferred"), dob: g("in-dob"),
         sex: g("in-sex"), address: g("in-address"), phone: g("in-phone"),
         email: g("in-email"), referringPhysician: g("in-ref"),
         allergies: g("in-allergies"),
@@ -2126,6 +2131,10 @@ ${walkthroughMarkup()}`;
         <div class="field"><label>Last name *</label><input id="pe-last" value="${esc(p.lastName || "")}" /></div>
       </div>
       <div class="field-row">
+        <div class="field"><label>Preferred name / nickname</label>
+          <input id="pe-preferred" value="${esc(p.preferredName || "")}" placeholder="What they answer to" /></div>
+      </div>
+      <div class="field-row">
         <div class="field"><label>Date of birth *</label><input id="pe-dob" type="date" max="${todayIso()}" value="${esc(p.dob || "")}" /></div>
         <div class="field"><label>Sex</label><select id="pe-sex">
           <option value="">—</option><option ${p.sex === "F" ? "selected" : ""}>F</option><option ${p.sex === "M" ? "selected" : ""}>M</option></select></div>
@@ -2165,7 +2174,7 @@ ${walkthroughMarkup()}`;
       <div class="error" id="pe-err" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px"></div>
       <div class="modal-actions" id="pe-actions"></div>`);
 
-    const ids = isPersonal ? ["pe-first", "pe-last", "pe-dob", "pe-sex", "pe-address", "pe-phone", "pe-email", "pe-ref"]
+    const ids = isPersonal ? ["pe-first", "pe-last", "pe-preferred", "pe-dob", "pe-sex", "pe-address", "pe-phone", "pe-email", "pe-ref"]
               : isSafety ? ["pe-allergies", "pe-ecname", "pe-ecrel", "pe-ecphone"]
                          : ["pe-prov", "pe-member", "pe-paynotes", "pe-authvisits", "pe-authexp", "pe-authref"];
     const snap = () => ids.map((id) => m.querySelector("#" + id).value).join("");
@@ -2183,7 +2192,7 @@ ${walkthroughMarkup()}`;
       let edited, idFor;
       if (isPersonal) {
         idFor = PERSONAL_IDS;
-        edited = { firstName: g("pe-first"), lastName: g("pe-last"), dob: g("pe-dob"), sex: g("pe-sex"),
+        edited = { firstName: g("pe-first"), lastName: g("pe-last"), preferredName: g("pe-preferred"), dob: g("pe-dob"), sex: g("pe-sex"),
                    address: g("pe-address"), phone: g("pe-phone"), email: g("pe-email"), referringPhysician: g("pe-ref") };
       } else if (isSafety) {
         idFor = SAFETY_IDS;
@@ -2317,7 +2326,8 @@ ${walkthroughMarkup()}`;
 <div class="patient-banner">
   <div class="pb-avatar" aria-hidden="true">${esc(initials(S.patientName(p)))}</div>
   <div class="pb-id">
-    <h1 class="pb-name">${esc(S.patientName(p))}</h1>
+    <h1 class="pb-name">${esc(S.patientName(p))}${(p.preferredName || "").trim() && (p.preferredName || "").trim().toLowerCase() !== (p.firstName || "").trim().toLowerCase()
+      ? `<span class="pb-nick">“${esc(p.preferredName.trim())}”</span>` : ""}</h1>
     <div class="pb-meta">
       <span class="pb-chip"><span class="pb-k">Age</span>${age(p.dob)} · ${esc(p.dob)}${sexBits}</span>
       <span class="pb-chip"><span class="pb-k">Phone</span>${esc(p.phone || "—")}</span>
@@ -2889,6 +2899,8 @@ ${tabStrip}
         <div class="card">
           <h2>Personal information</h2>
           <table class="list"><tbody>
+            <tr><td style="color:var(--muted)">Legal name</td><td>${esc(S.patientName(p))}</td></tr>
+            <tr><td style="color:var(--muted)">Goes by</td><td>${esc((p.preferredName || "").trim() || "—")}</td></tr>
             <tr><td style="color:var(--muted)">Address</td><td>${esc(p.address || "—")}</td></tr>
             <tr><td style="color:var(--muted)">Phone</td><td class="num">${esc(p.phone)}</td></tr>
             <tr><td style="color:var(--muted)">Email</td><td>${esc(p.email || "—")}</td></tr>
@@ -6907,7 +6919,7 @@ ${isGoogleAccount(user)
       ${cols.map((t) => {
         const here = apptsBySlot.get(`${t.id}|${slot}`) || [];
         if (here.length) return `<div class="cal-cell">${here.map((a) => `
-          <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientName(S.getPatient(a.patientId)))}
+          <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientCallName(S.getPatient(a.patientId)))}
           <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
         return `<div class="cal-cell"><span class="slot-free" data-slot="${slot}" data-ther="${t.id}">+ available</span></div>`;
       }).join("")}`).join("")}
@@ -6919,7 +6931,7 @@ ${isGoogleAccount(user)
     const grid = board + (stranded.length ? `<div class="cal-offhours">
   <p><b>Booked, but not on this board</b> — outside the day's opening hours, or a provider without a column.</p>
   <div class="cal-offhours-list">
-    ${stranded.map((a) => `<div class="slot-appt" data-appt="${a.id}">${fmtTime(a.start)} · ${esc(S.patientName(S.getPatient(a.patientId)))}
+    ${stranded.map((a) => `<div class="slot-appt" data-appt="${a.id}">${fmtTime(a.start)} · ${esc(S.patientCallName(S.getPatient(a.patientId)))}
       <small>${esc((S.getUser(a.therapistId) || {}).name || "")}${a.note ? ` — ${esc(a.note)}` : ""}</small></div>`).join("")}
   </div>
 </div>` : "");
@@ -7075,7 +7087,7 @@ ${body}
     const p = S.getPatient(a.patientId);
     const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent("PT visit — " + S.patientName(p))}&dates=${gcalTime(a.start)}/${gcalTime(new Date(new Date(a.start).getTime() + a.minutes * 60000).toISOString())}`;
     const m = showModal(`
-<h2>${esc(S.patientName(p))} — ${fmtDT(a.start)}</h2>
+<h2>${esc(S.patientNameWithPreferred(p))} — ${fmtDT(a.start)}</h2>
 <table class="list"><tbody>
   <tr><td style="color:var(--muted)">Therapist</td><td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td></tr>
   <tr><td style="color:var(--muted)">Note</td><td>${esc(a.note || "—")}</td></tr>
@@ -7124,7 +7136,7 @@ ${ths.map((t) => {
       ${mine.length ? `<table><tr><th>Time</th><th>Patient</th><th>Phone</th><th>Note</th><th>Booked by</th></tr>
         ${mine.map((a) => {
         const p = S.getPatient(a.patientId);
-        return `<tr><td>${fmtTime(a.start)}</td><td>${esc(S.patientName(p))}</td><td>${esc(p ? p.phone : "")}</td><td>${esc(a.note || "")}</td><td>${esc((S.getUser(a.createdBy) || {}).name || "")}</td></tr>`;
+        return `<tr><td>${fmtTime(a.start)}</td><td>${esc(S.patientNameWithPreferred(p))}</td><td>${esc(p ? p.phone : "")}</td><td>${esc(a.note || "")}</td><td>${esc((S.getUser(a.createdBy) || {}).name || "")}</td></tr>`;
       }).join("")}</table>` : `<p class="print-muted">No visits.</p>`}`;
     }).join("")}`;
     S.audit(user.id, "schedule-printed", calDate);

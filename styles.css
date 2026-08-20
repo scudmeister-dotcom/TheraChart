@@ -377,6 +377,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .pb-id { flex: 1; min-width: 220px; }
 .pb-name { font-size: 23px; line-height: 1.12; font-weight: 700; }
+/* What they answer to, beside the name that identifies them — lighter, so
+   the legal name stays the one being read. */
+.pb-nick { margin-left: 8px; font-size: 17px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .pb-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
 .pb-chip {
   display: inline-flex; align-items: baseline; gap: 7px;

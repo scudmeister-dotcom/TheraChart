@@ -980,10 +980,15 @@ async function reminderTick() {
       if (!r.status.startsWith("scheduled") || r.when > now) continue;
       const patient = store.getPatient(appt.patientId);
       const payload = {
-        to: patient ? { name: store.patientName(patient), phone: patient.phone, email: patient.email } : null,
+        /* `name` stays the legal name — a webhook may be feeding a system that
+           has to match the patient on it. `callName` is what the message itself
+           should use: a reminder addressed to "Mark Anthony" when everyone has
+           called him Bong since he was six reads like it was meant for someone
+           else, and gets ignored. */
+        to: patient ? { name: store.patientName(patient), callName: store.patientCallName(patient), phone: patient.phone, email: patient.email } : null,
         method: r.method,
         visit: appt.start,
-        message: `Reminder from ${store.settingsFor(clinicOf(patient || appt)).facilityName}: you have a physical therapy visit on ${new Date(appt.start).toLocaleString()}. Reply to reschedule.`,
+        message: `${patient ? `Hi ${store.patientPreferred(patient)} — r` : "R"}eminder from ${store.settingsFor(clinicOf(patient || appt)).facilityName}: you have a physical therapy visit on ${new Date(appt.start).toLocaleString()}. Reply to reschedule.`,
       };
       let delivered = "sent (logged)";
       if (process.env.REMINDER_WEBHOOK) {

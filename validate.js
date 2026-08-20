@@ -375,6 +375,10 @@
     const cleaned = {
       firstName: take("firstName", checkName(f.firstName, { label: "First name", required: true })),
       lastName: take("lastName", checkName(f.lastName, { label: "Last name", required: true })),
+      /* Optional, and validated as a name rather than free text: it is a name,
+         it appears on the schedule and in an SMS, and the same "no digits or
+         symbols" rule that protects the legal name protects this one. */
+      preferredName: take("preferredName", checkName(f.preferredName, { label: "Preferred name" })),
       dob: take("dob", checkDob(f.dob, { required: true, today: o.today })),
       sex: ["F", "M"].indexOf(tidy(f.sex)) >= 0 ? tidy(f.sex) : "",
       address: take("address", checkText(f.address, { label: "Address", max: LIMITS.address })),
@@ -444,7 +448,7 @@
   }
 
   const FIELD_ORDER = [
-    "firstName", "lastName", "dob", "address", "phone", "email", "referringPhysician",
+    "firstName", "lastName", "preferredName", "dob", "address", "phone", "email", "referringPhysician",
     "allergies", "ecName", "ecRelationship", "ecPhone",
     "provider", "memberId", "paymentNotes", "visitsAuthorized", "authExpires", "authReference",
   ];
