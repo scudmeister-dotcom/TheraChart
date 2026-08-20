@@ -956,6 +956,16 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 }
 .dict-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .dict-bar select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+
+/* Live input meter. Small on purpose — it is a reassurance and a diagnostic,
+   not a readout anyone should be watching instead of the patient. The tick is
+   where the voice gate currently sits: speech should cross it, the room
+   shouldn't. */
+.mic-level { position: relative; flex: 0 1 96px; height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.mic-level-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: var(--muted); transition: width .08s linear; }
+.mic-level-fill.voiced { background: var(--accent); }
+.mic-level-bar { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; left: 15%; background: var(--ink); opacity: .55; }
+@media (max-width: 720px) { .mic-level { flex: 1 1 100%; } }
 .dict-status { font-size: 12px; color: var(--muted); }
 .interim-bar {
   margin-top: 8px; padding: 8px 11px;
@@ -1556,7 +1566,14 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .rev-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .rev-pane { max-height: 52vh; overflow-y: auto; }
 .rev-legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-.rev-turn { display: flex; gap: 8px; margin-bottom: 7px; align-items: flex-start; }
+.rev-turn { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; align-items: flex-start; }
+/* A line or finding the cleanup proposes to remove: still legible, clearly on
+   its way out, and one click from being kept. */
+.rev-turn .rev-drop-why { display: none; flex-basis: 100%; font-size: 11.5px; color: var(--danger); padding-left: 30px; }
+.rev-turn.dropping .rev-drop-why { display: block; }
+.rev-turn.dropping .rev-text, .rev-turn.dropping .rev-spk { opacity: 0.55; text-decoration: line-through; }
+.rev-why { font-size: 11.5px; color: var(--danger); margin-bottom: 5px; line-height: 1.45; }
+.rev-finding.dropping .rev-text { opacity: 0.55; text-decoration: line-through; }
 .rev-spk { flex: none; width: 104px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 12px; }
 .rev-text { flex: 1; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); resize: none; overflow: hidden; line-height: 1.4; font-size: 13px; }
 
@@ -1573,7 +1590,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .rev-text:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 .rev-finding { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .rev-inc { flex: none; padding-top: 3px; }
-.rev-fbody { flex: 1; }
+.rev-fbody { flex: 1; min-width: 0; }
+/* .rev-text's flex:1 does nothing inside .rev-fbody, which is a block — the
+   textarea would fall back to its default column width. */
+.rev-fbody .rev-text { display: block; width: 100%; }
 .rev-fhead { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 .rev-fhead b { font-size: 13px; }
 .rev-meas { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink); }
@@ -2064,7 +2084,11 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 /* ---- record-then-process dictation ----
    A second way to dictate: record straight through, process once. The bar sits
    under the engine picker so the two modes read as alternatives, not a hierarchy. */
-.rec-bar { border: 1px solid var(--border); border-radius: 11px; padding: 11px 13px; margin-top: 10px; background: var(--panel); }
+/* The recorder sits below the typed box now, as the second way to dictate —
+   live listening is the default. Quieter than the mic bar on purpose: it is
+   there to be found, not to compete for the first tap. */
+.rec-bar { border: 1px solid var(--border); border-radius: 11px; padding: 11px 13px; margin-top: 14px; background: var(--bg); }
+.rec-alt-head { font-size: 11.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
 .rec-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rec-btn { display: inline-flex; align-items: center; gap: 8px; }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; }

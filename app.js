@@ -291,6 +291,27 @@
   let activeDictation = null; // stop mic when leaving a document
   let showLogin = false; // logged-out: false → marketing landing, true → login form
 
+  /* Has anyone ever signed in on this browser? That, and not "has been here
+     before", is what decides whether a logged-out visitor sees the marketing
+     page or the sign-in form. A visitor who read the landing, looked at the
+     prices and left still has no account, so on their next visit the pitch is
+     still the right page — sending them to a sign-in form they cannot use was
+     losing exactly the person the page is for. Someone who has signed in wants
+     the form, so once it is set the flag stays set, including through sign-out.
+
+     Device-scoped by nature: it lives in this browser, so a real account holder
+     on a new phone gets the landing once and taps Sign in. That is the harmless
+     direction to be wrong in — the other way round is not. */
+  const LS_KNOWN = "therachart-known-account";
+  const knowsAnAccount = () => { try { return localStorage.getItem(LS_KNOWN) === "1"; } catch { return false; } };
+  const rememberAccount = () => { try { localStorage.setItem(LS_KNOWN, "1"); } catch { } };
+
+  /* A hash that names an actual app screen — a bookmark or a shared link that
+     genuinely wants the app, so it still opens the sign-in form for a stranger.
+     Deliberately a list of routes rather than "any hash": a leftover #pricing
+     from the landing page is not a request to sign in. */
+  const APP_ROUTES = /^#\/(dashboard|drafts|patients|patient|intake|doc|calendar|privacy|facility|clinics|profile)\b/;
+
   const NAV = [
     // `short` is the compact label used in the mobile bottom tab bar.
     { hash: "#/dashboard", label: "Dashboard", short: "Home", icon: ICON.dash, emr: true },
@@ -330,11 +351,12 @@
     closeModal();
     const user = S.currentUser();
     // Logged-out visitors land on the marketing page first; the Sign-in CTA
-    // flips to the login form. A deep link into an app route skips the splash.
+    // flips to the login form. A browser that has signed in before, or a deep
+    // link into an app screen, goes straight to sign-in instead.
     if (!user) {
-      const deepLink = location.hash && location.hash !== "#/" && location.hash !== "#/welcome";
-      return (showLogin || deepLink) ? renderLogin() : renderLanding();
+      return (showLogin || knowsAnAccount() || APP_ROUTES.test(location.hash || "")) ? renderLogin() : renderLanding();
     }
+    rememberAccount(); // signed in here at least once — see LS_KNOWN
     // New hires and admin-reset accounts must set their own password before doing anything.
     if (user.mustChangePassword) return renderForcePassword(user);
 
@@ -754,7 +776,7 @@
     <div class="lp-hero-copy">
       <div class="lp-eyebrow">Physical therapy EMR · built for the clinic floor</div>
       <h1>Chart by voice.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
-      <p class="lp-lead">Press <b>Listen</b> and speak the way you normally would. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English and Tagalog together, or English and Cebuano together</b>, both languages understood in the same sentence. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
+      <p class="lp-lead">Press <b>Listen &amp; dictate live</b> and speak the way you normally would. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English and Tagalog together, or English and Cebuano together</b>, both languages understood in the same sentence. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
       <div class="lp-cta">
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
         <button class="btn ghost lp-cta-btn" data-open-walkthrough type="button">See how it works</button>
@@ -1159,7 +1181,7 @@ ${walkthroughMarkup()}`;
       shot: "05-dictation-body-map",
       title: "Talk through the visit. It writes the note.",
       now: "You finish the session, then type the note up afterwards — usually after hours, usually from memory.",
-      here: "Press <b>Listen</b> and speak the way you already speak. Set the pairing once — <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — and both languages are understood together, including switching between them mid-sentence. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
+      here: "Press <b>Listen &amp; dictate live</b> and speak the way you already speak. Set the pairing once — <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — and both languages are understood together, including switching between them mid-sentence. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
       where: "Inside any note · <b>Dictation &amp; body map</b>, top left",
     },
     {
@@ -3449,25 +3471,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>
     </div>
     <div class="dict-bar">
-      <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen</span></button>
+      <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen &amp; dictate live</span></button>
       <select id="langSel" title="What you'll be speaking" ${editable ? "" : "disabled"}>
         <option value="fil-PH">English &amp; Tagalog</option>
         <option value="ceb-PH">English &amp; Cebuano</option>
       </select>
       <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
+      ${editable ? `<span class="mic-level" id="micLevel" hidden title="How loud you are, and where the gate is set. Speech should push past the line; the room shouldn't.">
+        <i class="mic-level-fill" id="micLevelFill"></i><i class="mic-level-bar" id="micLevelBar"></i>
+      </span>` : ""}
     </div>
-    ${editable ? `
-    <div class="rec-bar" id="recBar">
-      <div class="rec-main">
-        <button class="btn rec-btn" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
-        <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
-        <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
-        <span class="rec-meta" id="recMeta">Record straight through, then process once.</span>
-      </div>
-      <div class="rec-progress" id="recProgress" hidden></div>
-    </div>` : ""}
     ${dictationLine(doc)}
-    ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="figures">
       <figure><figcaption>Front <span class="hint">(patient's L on your right)</span></figcaption><div class="bodymap" id="mapFront">${figureMarkup("front")}</div></figure>
       <figure><figcaption>Back</figcaption><div class="bodymap" id="mapBack">${figureMarkup("back")}</div></figure>
@@ -3485,6 +3499,18 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <textarea id="typedDictation" rows="3" placeholder="No mic, or dictation missed something? Type here and press Enter to file it into the note (Shift+Enter for a new line)…"></textarea>
       <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
     </div>` : ""}
+    ${editable ? `
+    <div class="rec-bar" id="recBar">
+      <div class="rec-alt-head">Or record the whole visit</div>
+      <div class="rec-main">
+        <button class="btn rec-btn" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
+        <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
+        <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
+        <span class="rec-meta" id="recMeta">Record straight through, then process once.</span>
+      </div>
+      <div class="rec-progress" id="recProgress" hidden></div>
+    </div>` : ""}
+    ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="route-log" id="routeLog"></div>
   </div>
   <div class="card doc-fields ${meta.cls}">
@@ -4416,37 +4442,84 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      to be talking during calibration, the mean is their voice, but the quietest
      frame in half a second is still the room. */
   function voiceGate() {
-    const FLOOR = 0.012;          // the old fixed threshold, now the lower bound
-    const CAP = 0.05;             // speech sits well above this; never gate higher
+    const FLOOR = 0.012;          // a silent room's bar; never gate below this
+    /* The bar may never sit on top of ordinary speech. 0.05 did: a therapist
+       dictating at a normal indoor level measured around 0.03-0.04 here, so a
+       gate parked at the old cap heard them as silence — no transcript, no
+       billing, and the idle backstop hanging up mid-visit. The cap is the one
+       number protecting the clinician's words, so it is set below the quietest
+       speech we are willing to lose rather than above the loudest room we
+       would like to reject. */
+    const CAP = 0.03;
     const MARGIN = 3;             // speech must clear the room by this factor
-    const CALIBRATE_MS = 500;
-    const REESTIMATE_FRAMES = 120; // ~10s of quiet frames before moving the bar
+    const SPEECHY = 0.02;         // a "room" this loud is somebody talking
+    const IDLE_MARGIN = 1.6;      // how far above the room counts as "someone is here"
+    const DROPOUT = 0.0005;       // below this is a buffer glitch, not a quiet room
+    const CALIBRATE_MS = 500;     // first estimate; see test()
+    const WINDOW_FRAMES = 60;     // ~5s — one re-estimate per window, thereafter
 
     let calMs = 0, calMin = Infinity, ready = false;
-    let threshold = FLOOR;
-    let quietMin = Infinity, quietN = 0;
+    let threshold = FLOOR, room = FLOOR;
+    let winMin = Infinity, winN = 0;
 
-    const set = (ambient) => { threshold = Math.min(CAP, Math.max(FLOOR, ambient * MARGIN)); };
+    const set = (ambient) => {
+      room = ambient;
+      threshold = Math.min(CAP, Math.max(FLOOR, ambient * MARGIN));
+    };
 
     return {
       threshold: () => threshold,
+      room: () => room,
       calibrated: () => ready,
+      /* The bar the IDLE backstop asks about, which is deliberately NOT the
+         billing bar. The billing bar wants a wide margin so quiet moments are
+         not charged; the hang-up decision wants a narrow one, so that a room
+         the billing gate has failed open on can still be recognised as a room
+         with nobody in it. Without this the two failures compounded: a gate
+         sitting under the room tone marked every frame "speech", so the idle
+         timer never advanced and the microphone ran until someone noticed. */
+      idleBar: () => Math.max(FLOOR, room * IDLE_MARGIN),
       /** Is this frame speech? */
       test(rms, ms) {
+        /* Track the room from a rolling MINIMUM of every frame, speech
+           included, because in any five seconds of a real visit there is a gap
+           between words and the quietest frame in that window is the room.
+
+           The old estimator only sampled frames it had already judged to be
+           silence, which meant it could ratchet the bar DOWN and never back
+           up. That made the first 500ms load-bearing in a way it could not
+           support: it was the single moment the gate could ever learn that a
+           room was loud, and if the therapist was already talking through it —
+           which is what people do — the bar stayed at the floor for the whole
+           visit. Room tone then read as speech forever: billed as speech, and
+           invisible to the idle backstop, which is the runaway this gate
+           exists to prevent. Sampling everything lets the estimate move in
+           both directions, and demotes calibration to a head start.
+
+           A frame below DROPOUT is a glitch rather than a quiet room; letting
+           one drag the floor to zero would pin the bar at FLOOR again. */
+        if (rms > DROPOUT) {
+          winMin = Math.min(winMin, rms);
+          if (++winN >= WINDOW_FRAMES) { set(winMin); winMin = Infinity; winN = 0; }
+        }
+
         if (!ready) {
           calMin = Math.min(calMin, rms);
           calMs += ms;
-          if (calMs >= CALIBRATE_MS) { set(calMin); ready = true; }
+          if (calMs >= CALIBRATE_MS) {
+            /* If the QUIETEST frame of the calibration window is already
+               speech-loud, nobody sampled a room — the therapist was talking
+               through it, and calMin is their voice. Discard the window and
+               stay on FLOOR; the rolling estimate above corrects it either way
+               within a few seconds. */
+            if (calMin < SPEECHY) set(calMin);
+            ready = true;
+          }
           // during calibration fall back to the fixed floor, so a therapist who
           // starts talking immediately doesn't lose their first half-second
           return rms > FLOOR;
         }
-        const voiced = rms > threshold;
-        if (!voiced) {
-          quietMin = Math.min(quietMin, rms);
-          if (++quietN >= REESTIMATE_FRAMES) { set(quietMin); quietMin = Infinity; quietN = 0; }
-        }
-        return voiced;
+        return rms > threshold;
       },
     };
   }
@@ -4599,10 +4672,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   /* What this visit's dictation actually cost, in the unit that was billed.
      Shown to the clinician on their own note — it is a feedback loop on their
      own work, not a scoreboard, so it is deliberately stated as speech time
-     and never as money or as a comparison against anyone else. */
+     and never as money or as a comparison against anyone else.
+
+     It is also withheld until the note is SIGNED. A clock ticking away on the
+     screen during an evaluation makes the therapist watch the visit's length
+     instead of the patient, which is the opposite of what dictation is for.
+     The number is real and the therapist is entitled to it — just afterwards,
+     when reading it can no longer shorten the visit it is describing. */
   function dictationLine(doc) {
     const s = Number((doc.data || {})._dictationSeconds) || 0;
-    if (!s) return "";
+    if (!s || doc.status !== "signed") return "";
     return `<div class="dict-total" id="dictTotal">🎙 <b>${mmssOf(s)}</b> of dictation billed on this visit`
       + `<span class="hint"> · pauses aren't counted — only speech</span></div>`;
   }
@@ -4623,7 +4702,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      under the clinic's BAA. Segments are held only in memory and sent
      immediately — no audio is written to the device — and are delivered in
      order via a promise chain. */
-  function cloudEngine({ docId, lang, onText, onInterim, onStatus, onAutoStop, onBilled, billedSoFar, ceilingSeconds }) {
+  function cloudEngine({ docId, lang, onText, onInterim, onStatus, onAutoStop, onBilled, onLevel, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, listening = false;
     let seg = [], voicedMs = 0, silenceMs = 0, segMs = 0;
     const gate = voiceGate();
@@ -4635,7 +4714,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        backstop for a microphone nobody turned off. */
     const PRE_ROLL_CHUNKS = 4;     // ~340ms at 4096 samples / 48kHz
     const POST_ROLL = 350;         // ms of trailing silence kept per utterance
-    const IDLE_STOP_MS = 60000;    // stop after a minute with no speech at all
+    /* How long a mic may sit with nobody speaking into it. Silence itself is
+       nearly free — the gate means it is never sent and never billed — so this
+       is not a silence budget. It is the backstop for a gate that has failed
+       OPEN in a loud room, where room tone is billed as speech indefinitely.
+       Read that way a minute was far too short: an evaluation has plenty of
+       quiet stretches where the therapist is doing goniometry with both hands,
+       and hanging up on them there costs a re-tap and the first words of what
+       they say next. Three minutes still bounds a runaway mic, and the
+       per-visit ceiling bounds it again. */
+    const IDLE_STOP_MS = 180000;
     let preRoll = [], tailMs = 0, idleMs = 0;
     let pending = 0;               // segments in flight
     let chain = Promise.resolve(); // keeps segments transcribing in order
@@ -4667,9 +4755,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
                adaptive gate. Enforced on what has actually been BILLED, so it
                tracks spend rather than how long the appointment ran. */
             if (ceilSec && sentSec >= ceilSec && listening) {
-              listening = false;
-              onStatus(`Dictation stopped — this visit has reached ${Math.round(ceilSec / 60)} minutes of recorded speech. Tap Listen to carry on if you need to.`, false);
-              if (typeof onAutoStop === "function") onAutoStop();
+              const msg = `Dictation stopped — this visit has reached ${Math.round(ceilSec / 60)} minutes of recorded speech. Tap Listen & dictate live to carry on if you need to.`;
+              release();
+              onStatus(msg, false);
+              if (typeof onAutoStop === "function") onAutoStop(msg);
             }
           }
           if (res.ok) { if (data.text) onText(data.text); }
@@ -4700,10 +4789,33 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       return n;
     }
 
+    /* Let go of the microphone. Split out of stop() because the idle and
+       ceiling backstops have to release it too, and neither of them did: they
+       announced a stop and left the audio graph connected and `listening`
+       true. The mic stayed hot, so speech after an "auto-stop" was still
+       gated, still POSTed to /api/stt and still billed while the button read
+       Listen — and because the idle condition was never cleared, the branch
+       re-fired on every frame. Worse, the next tap ran start() again and built
+       a SECOND graph on top of the live one, both pushing into the same
+       buffer: doubled audio, garbled transcripts, doubled spend.
+
+       Idempotent, so start() can call it first and guarantee exactly one
+       graph. */
+    function release() {
+      listening = false;
+      preRoll = []; idleMs = 0;
+      cut(true); // flush whatever was being said
+      try { if (proc) { proc.onaudioprocess = null; proc.disconnect(); } } catch (_) { }
+      try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
+      try { if (ctx && typeof ctx.close === "function") ctx.close(); } catch (_) { }
+      proc = null; stream = null; ctx = null;
+    }
+
     return {
       name: "cloud",
       pending: () => pending,
       async start() {
+        release(); // never stack a second graph on a live one
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
@@ -4757,7 +4869,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             silenceMs += chunkMs;
           }
 
-          idleMs = voiced ? 0 : idleMs + chunkMs;
+          /* Audible-but-ungated sound still counts as "someone is here
+             talking" — the hang-up bar is the gate's own, and sits nearer the
+             room than the billing bar does. See voiceGate().idleBar(). */
+          idleMs = (voiced || rms > gate.idleBar()) ? 0 : idleMs + chunkMs;
+          if (onLevel) onLevel(rms, voiced, gate.threshold());
           onInterim(voicedMs > 200 ? "recording…" : "");
           // cut on a natural pause, or hard-cut long monologues
           if ((voicedMs > 400 && silenceMs > 750) || segMs > 15000) cut(false);
@@ -4769,9 +4885,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
              swallowed what the therapist said next would be a data-loss bug
              wearing a saving's clothes. */
           if (idleMs > IDLE_STOP_MS) {
-            cut(true);
-            onStatus("Dictation paused — no speech for a minute. Tap Listen to carry on.", false);
-            if (typeof onAutoStop === "function") onAutoStop();
+            const msg = `Dictation stopped — no speech for ${Math.round(IDLE_STOP_MS / 60000)} minutes. Tap Listen & dictate live to carry on.`;
+            release(); // flushes the buffer, then hands the mic back to the OS
+            onStatus(msg, false);
+            if (typeof onAutoStop === "function") onAutoStop(msg);
+            return;
           }
         };
         src.connect(proc);
@@ -4780,15 +4898,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         status();
         return true;
       },
-      stop() {
-        listening = false;
-        preRoll = []; idleMs = 0;
-        cut(true); // flush whatever was being said
-        try { if (proc) proc.disconnect(); } catch (_) { }
-        try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
-        try { if (ctx) ctx.close(); } catch (_) { }
-        status();
-      },
+      stop() { release(); status(); },
       setLang() { },
       // test hook: feed synthetic samples through the same path as the mic
       _testPush(float32, sampleRate) {
@@ -4835,7 +4945,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const prog = document.getElementById("recProgress");
       let rec = null, recording = false, captured = null;
 
-      const mmss = (s2) => `${Math.floor(s2 / 60)}:${String(Math.floor(s2 % 60)).padStart(2, "0")}`;
+      /* Deliberately no running clock while the mic is open — see
+         dictationLine(). The pulsing dot on the button is the "still
+         recording" cue; a mm:ss counter would just be the visit timer we
+         took out of the note. */
       const showIdle = () => {
         label.textContent = captured && captured.length ? "Record more" : "Record the visit";
         btn.classList.remove("on");
@@ -4848,7 +4961,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           recording = false;
           const chunks = await rec.stop();
           captured = chunks;
-          meta.textContent = `${mmss(rec.voicedSeconds())} of speech captured — silence was skipped, so that is all you'll be charged for.`;
+          meta.textContent = "Recording captured — process it when you're ready. Silence was skipped, so only speech is charged.";
           showIdle();
           return;
         }
@@ -4857,7 +4970,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           docId: doc.id,
           billedSoFar: Number(doc.data._dictationSeconds) || 0,
           ceilingSeconds: ceilMin * 60,
-          onElapsed: (total, voiced) => { meta.textContent = `Recording — ${mmss(voiced)} of speech (${mmss(total)} elapsed)`; },
           onStop: (why) => {
             if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another.";
             else if (why === "ceiling") meta.textContent = `Stopped — this visit has reached ${ceilMin} minutes of recorded speech. Process this, then start another recording if you need to.`;
@@ -4867,6 +4979,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         const ok = await rec.start();
         if (!ok) { meta.textContent = "Mic blocked — allow microphone access and try again."; return; }
         recording = true;
+        meta.textContent = "Recording — speak normally, and take as long as the patient needs.";
         label.textContent = "Stop recording";
         btn.classList.add("on");
         processBtn.hidden = true; discardBtn.hidden = true;
@@ -4951,10 +5064,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       lang: () => langSel.value,
       onText: deliver,
       onInterim: (t) => { interimEl.textContent = t ? t + " …" : "…"; },
+      /* The one thing about dictation nobody could see. Whether the gate is
+         set sensibly for a given room was an assumption in a constant, and a
+         therapist whose words were being dropped had no way to tell that from
+         a mic that wasn't working. The meter makes it observable: your voice
+         should push past the line, the room alone should not. It is also why
+         there is no "calibrating…" countdown — a 500ms wait says nothing and
+         delays the first word, while this keeps saying something all visit. */
+      onLevel: (rms, voiced, threshold) => {
+        if (!levelEl) return;
+        const pct = (v) => Math.max(0, Math.min(100, (v / LEVEL_FULL) * 100));
+        levelFill.style.width = pct(rms) + "%";
+        levelFill.classList.toggle("voiced", !!voiced);
+        levelBar.style.left = pct(threshold) + "%";
+      },
       onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
-      // The idle backstop stopped the mic itself; put the button back in step
-      // so the therapist can see it happened and tap once to resume.
-      onAutoStop: () => { listening = false; setUI(); },
+      /* A backstop stopped the mic itself; put the button back in step so the
+         therapist can see it happened and tap once to resume. The REASON is
+         carried through rather than just printed: onStatus writes it to the
+         status line, then setUI() immediately overwrote it with a bare "Mic
+         off" — which is why an auto-stop looked to the clinician like the mic
+         had died on its own. Held until they tap the button. */
+      onAutoStop: (msg) => { autoStopNotice = msg || ""; listening = false; setUI(); },
       // Live dictation bills exactly as record-then-process does, so it lands
       // on the visit the same way — otherwise the chart would show a cost of
       // zero for a note dictated the other way round.
@@ -4965,6 +5096,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       ceilingSeconds: (S.settings().maxDictationMinutesPerVisit || 30) * 60,
     };
 
+    const levelEl = document.getElementById("micLevel");
+    const levelFill = document.getElementById("micLevelFill");
+    const levelBar = document.getElementById("micLevelBar");
+    const LEVEL_FULL = 0.08; // an RMS that reads as full scale — a raised voice
+    let autoStopNotice = ""; // why the mic stopped, until the therapist acts on it
     let engine = null;
     function makeEngine() {
       if (useCloud) {
@@ -4980,8 +5116,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     const setUI = () => {
       micBtn.classList.toggle("listening", listening);
-      micLabel.textContent = listening ? "Stop" : "Listen";
-      if (!listening && engine && engine.pending() === 0) statusEl.textContent = "Mic off";
+      micLabel.textContent = listening ? "Stop listening" : "Listen & dictate live";
+      if (levelEl) {
+        levelEl.hidden = !listening;
+        if (!listening) levelFill.style.width = "0%";
+      }
+      if (!listening && engine && engine.pending() === 0) statusEl.textContent = autoStopNotice || "Mic off";
       // the cloud engine writes its own richer status (model + queue); only the
       // browser engine needs setUI to set the "Listening…" line
       if (listening && !useCloud) {
@@ -4991,6 +5131,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     micBtn.addEventListener("click", async () => {
       if (!engine) return;
+      autoStopNotice = ""; // the therapist has seen it and acted
       if (!listening) {
         listening = true;
         const ok = await Promise.resolve(engine.start());
@@ -5253,7 +5394,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const r = doc.data.refinement;
     if (!r) return;
     const rows = (r.changes || []).map((c) => `
-      <tr><td><span class="chip ${c.tag === "added" ? "good" : c.tag === "dropped" ? "bad" : c.tag === "reworded" ? "warn" : "muted"}">${esc(c.tag)}</span></td>
+      <tr><td><span class="chip ${c.tag === "added" ? "good" : c.tag === "dropped" ? "bad" : c.tag === "reworded" || c.tag === "trimmed" ? "warn" : "muted"}">${esc(c.tag)}</span></td>
       <td>${esc(c.label)}</td><td>${esc(c.detail || "")}</td></tr>`).join("");
     const m = showModal(`
 <h2>Live transcript vs AI cleanup</h2>
@@ -5291,17 +5432,39 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const livePts = doc.data.mapPoints || [];
     const liveKeys = new Set(livePts.map((p) => p.key));
     const aiByKey = new Map(result.findings.map((f) => [f.key, f]));
+    /* Regions the patient took back later in the conversation. The live pass
+       pinned them the moment they were said — it cannot hear the future — so
+       the cleanup is the first chance to remove them. They are shown, unticked
+       and with the reason, rather than vanishing: the therapist heard the
+       visit and gets the last word. */
+    const retractedBy = new Map((result.retractions || []).map((t) => [t.key, t]));
     const rows = [];
+    /* A finding whose whole summary is "Mentioned this area" is a region that
+       was named and never described. It reads like a finding on the map and
+       carries nothing, so it starts unticked wherever it came from. */
+    const isEmpty = (summary) => PR.isBareMention(summary);
     for (const f of result.findings) {
+      const t = retractedBy.get(f.key);
+      const bare = !t && isEmpty(f.summary);
       const inLive = liveKeys.has(f.key);
       rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
-        summary: f.summary, quote: f.quote, include: true, origin: inLive ? "confirmed" : "added" });
+        summary: f.summary, quote: f.quote, include: !t && !bare,
+        note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
+        origin: t ? "retracted" : bare ? "empty" : inLive ? "confirmed" : "added" });
     }
     for (const p of livePts) {
       if (aiByKey.has(p.key)) continue;
       const sum = p.notes.map((n) => n.summary).join(" · ");
+      const t = retractedBy.get(p.key);
+      /* A point the live pass made out of a bare mention — the region was
+         named and nothing was said about it. It looks like a finding on the
+         map and is not one. */
+      const bare = !t && (p.notes || []).every((n) => isEmpty(n.summary));
       rows.push({ key: p.key, part: p.part, side: p.side, view: p.view, x: p.x, y: p.y,
-        summary: sum, quote: (p.notes[0] || {}).quote || "", include: true, origin: "live-only" });
+        summary: sum, quote: (p.notes[0] || {}).quote || "",
+        include: !t && !bare,
+        note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
+        origin: t ? "retracted" : bare ? "empty" : "live-only" });
     }
 
     const engineChip = result.source && result.source.startsWith("gemini")
@@ -5329,23 +5492,36 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>`;
 
     const dialogueHtml = result.dialogue.map((d, i) => `
-      <div class="rev-turn">
+      <div class="rev-turn${d.keep === false ? " dropping" : ""}" data-turnrow="${i}">
+        <label class="rev-inc" title="Keep this line in the transcript"><input type="checkbox" data-keep="${i}" ${d.keep === false ? "" : "checked"}/></label>
         <select data-spk="${i}" class="rev-spk">
           <option value="patient" ${d.speaker === "patient" ? "selected" : ""}>Patient</option>
           <option value="clinician" ${d.speaker === "clinician" ? "selected" : ""}>Clinician</option>
         </select>
         <textarea data-turn="${i}" rows="1" class="rev-text">${esc(d.text)}</textarea>
+        <div class="rev-drop-why">Will be removed — ${esc(d.dropReason || "nothing clinical in this line")}</div>
       </div>`).join("");
 
-    const findingRow = (r, i) => `
-      <div class="rev-finding">
+    const ORIGIN = {
+      added: ["good", "AI added"],
+      confirmed: ["muted", "confirmed"],
+      "live-only": ["warn", "live only — AI didn't confirm"],
+      retracted: ["bad", "the patient corrected this"],
+      empty: ["warn", "nothing was reported"],
+    };
+    const findingRow = (r, i) => {
+      const [cls, label] = ORIGIN[r.origin] || ORIGIN.confirmed;
+      return `
+      <div class="rev-finding${r.include ? "" : " dropping"}">
         <label class="rev-inc"><input type="checkbox" data-inc="${i}" ${r.include ? "checked" : ""}/></label>
         <div class="rev-fbody">
           <div class="rev-fhead"><b>${esc(r.side ? cap(r.side) + " " : "")}${esc(r.part)}</b>
-            <span class="chip ${r.origin === "added" ? "good" : r.origin === "live-only" ? "warn" : "muted"}">${r.origin === "added" ? "AI added" : r.origin === "live-only" ? "live only — AI didn't confirm" : "confirmed"}</span></div>
+            <span class="chip ${cls}">${label}</span></div>
+          ${r.note ? `<div class="rev-why">${esc(r.note)} — leave it unticked and it comes off the note and the body map. Tick it to keep it.</div>` : ""}
           <textarea data-fsum="${i}" rows="1" class="rev-text">${esc(r.summary)}</textarea>
         </div>
       </div>`;
+    };
 
     const m = showModal(`
 <h2>Review &amp; clean up ${engineChip}</h2>
@@ -5356,11 +5532,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   <button class="rev-tab" data-tab="sections">Note sections</button>
 </div>
 <div class="rev-pane" data-pane="dialogue">
-  <div class="rev-legend">Who said what — click a speaker to change it, edit text inline.</div>
+  <div class="rev-legend">Who said what — click a speaker to change it, edit text inline. Unticked lines carry nothing clinical and will be dropped from the transcript; what goes is listed afterwards under “See what changed”.</div>
   ${dialogueHtml || `<div class="empty-state">No dialogue.</div>`}
 </div>
 <div class="rev-pane" data-pane="findings" style="display:none">
-  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely.</div>
+  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely. Anything the patient corrected later, or named without reporting anything, starts unticked.</div>
   ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
 </div>
 <div class="rev-pane" data-pane="sections" style="display:none">${sectionsHtml}</div>
@@ -5386,7 +5562,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     m.querySelectorAll("[data-spk]").forEach((s) => s.addEventListener("change", () => { result.dialogue[Number(s.dataset.spk)].speaker = s.value; }));
     m.querySelectorAll("[data-turn]").forEach((t) => t.addEventListener("input", () => { result.dialogue[Number(t.dataset.turn)].text = t.value; }));
     m.querySelectorAll("[data-fsum]").forEach((t) => t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; }));
-    m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => { rows[Number(c.dataset.inc)].include = c.checked; }));
+    m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => {
+      rows[Number(c.dataset.inc)].include = c.checked;
+      c.closest(".rev-finding").classList.toggle("dropping", !c.checked);
+    }));
+    m.querySelectorAll("[data-keep]").forEach((c) => c.addEventListener("change", () => {
+      result.dialogue[Number(c.dataset.keep)].keep = c.checked;
+      c.closest(".rev-turn").classList.toggle("dropping", !c.checked);
+    }));
     m.querySelectorAll("[data-sec]").forEach((t) => t.addEventListener("input", () => { result[t.dataset.sec] = t.value; }));
 
     m.querySelector("#revCancel").addEventListener("click", closeModal);
@@ -5400,19 +5583,35 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const { subjField, treatField } = fields || {};
     const before = doc.data.mapPoints || [];
     const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
+    const retractedBy = new Map((result.retractions || []).map((t) => [t.key, t]));
     const sectionChanges = [];
+    const kept = rows.filter((r) => r.include && r.summary.trim());
 
-    // 1) transcript becomes the speaker-labeled, cleaned dialogue
-    doc.data.transcript = result.dialogue.map((d) => ({ time: "", speaker: d.speaker, text: d.text, edited: true }));
+    /* 1) transcript becomes the speaker-labeled, cleaned dialogue, minus the
+          lines that carry nothing.
+
+          One rail before anything is deleted: a line that a KEPT finding was
+          drawn from stays, whatever the trim thought of it. Losing the source
+          of a finding that survives would leave a note nobody could trace back
+          to what the patient actually said. */
+    const quoteNeedle = (s) => String(s || "").toLowerCase().replace(/^[…\s]+|[…\s]+$/g, "").slice(0, 20);
+    const sourceNeedles = kept.map((r) => quoteNeedle(r.quote)).filter(Boolean);
+    const isSource = (text) => sourceNeedles.some((n) => text.toLowerCase().includes(n));
+
+    const removed = [];
+    doc.data.transcript = result.dialogue.filter((d) => {
+      if (d.keep !== false || isSource(d.text)) return true;
+      removed.push({ speaker: d.speaker, text: d.text, reason: d.dropReason || "nothing clinical in this line" });
+      return false;
+    }).map((d) => ({ time: "", speaker: d.speaker, text: d.text, edited: true }));
 
     // 2) rebuild body-map points from the findings the user kept, relinking
     //    each to the dialogue turn that contains its words (click-to-source)
     const findText = (needle) => {
-      if (!needle) return -1;
-      const key = needle.toLowerCase().replace(/^[…\s]+|[…\s]+$/g, "").slice(0, 20);
+      const key = quoteNeedle(needle);
+      if (!key) return -1;
       return doc.data.transcript.findIndex((u) => u.text.toLowerCase().includes(key));
     };
-    const kept = rows.filter((r) => r.include && r.summary.trim());
     doc.data.mapPoints = kept.map((r) => {
       const c = PR.coordForName(r.part, r.side);
       const quoteIdx = findText(r.quote);
@@ -5456,20 +5655,32 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       else changes.push({ tag: "kept", label, detail: r.summary });
     }
     for (const p of before) {
-      if (!keptKeys.has(p.key)) changes.push({ tag: "dropped", label: `${p.side ? cap(p.side) + " " : ""}${p.part}`, detail: "removed in cleanup" });
+      if (keptKeys.has(p.key)) continue;
+      const t = retractedBy.get(p.key);
+      const row = rows.find((r) => r.key === p.key);
+      changes.push({
+        tag: "dropped",
+        label: `${p.side ? cap(p.side) + " " : ""}${p.part}`,
+        detail: t ? t.reason + (t.supersededBy ? ` — now recorded as ${t.supersededBy}` : "")
+          : row && row.origin === "empty" ? "Named, but nothing was reported about it"
+            : "removed in cleanup",
+      });
     }
-    const clinicianTurns = result.dialogue.filter((d) => d.speaker === "clinician").length;
+    for (const r of removed) changes.push({ tag: "trimmed", label: `“${r.text}”`, detail: r.reason });
+
+    const clinicianTurns = doc.data.transcript.filter((d) => d.speaker === "clinician").length;
     const added = changes.filter((c) => c.tag === "added").length;
     const reworded = changes.filter((c) => c.tag === "reworded").length;
     const dropped = changes.filter((c) => c.tag === "dropped").length;
 
     const secBit = sectionChanges.length ? ` · ${sectionChanges.length} section${sectionChanges.length === 1 ? "" : "s"} updated` : "";
+    const trimBit = removed.length ? ` · ${removed.length} empty line${removed.length === 1 ? "" : "s"} trimmed` : "";
     doc.data.refinement = {
       applied: true,
       ranAt: new Date().toISOString(),
       engine: result.source && result.source.startsWith("gemini") ? "gemini" : "local",
-      changes, clinicianTurns,
-      headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept${secBit}.`,
+      changes, clinicianTurns, removed,
+      headline: `${clinicianTurns} clinician line${clinicianTurns === 1 ? "" : "s"} set aside · ${added} added · ${reworded} reworded · ${dropped} dropped · ${kept.length} finding${kept.length === 1 ? "" : "s"} kept${trimBit}${secBit}.`,
     };
 
     S.updateDocData(doc.id, doc.data, user);
