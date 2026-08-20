@@ -213,12 +213,45 @@ PAGE_HAND = [
     L(P("    "), Hd("posterior capsule mob grade III, HEP reviewed.")),
 ]
 
+# The register a Philippine clinic actually writes in. Everything the import
+# path has to get right is here in a form the English fixtures cannot test:
+# laterality written in Tagalog ("sa kaliwa", "kaliwang tuhod"), a denial in
+# Tagalog ("walang pamamanhid"), a family history that must NOT become a
+# finding on this patient ("nanay niya may arthritis"), and measurements that
+# must stay measurements.
+PAGE_TAGLISH = [
+    L(B("BAYANIHAN PHYSICAL THERAPY CENTER")),
+    L(P("PATIENT RECORD (photocopy)")),
+    L(),
+    L(P("Pasyente: DELA CRUZ, MARIA   DOB: 09/21/1974")),
+    L(P("Dx: L knee osteoarthritis")),
+    L(),
+    L(B("INITIAL EVALUATION - 03/06/2023")),
+    L(P("Therapist: J. Bautista, PT")),
+    L(P("S: Masakit ang kaliwang tuhod, 7/10, mga 3 buwan na.")),
+    L(P("   Mas masakit pag-akyat ng hagdan. Walang pamamanhid.")),
+    L(P("   Ang nanay niya may arthritis din.")),
+    L(P("O: Antalgic gait. Knee flexion 105 degrees sa kaliwa,")),
+    L(P("   extension -10 degrees sa kaliwa.")),
+    L(P("   MMT L quad 3+/5. Positive McMurray test.")),
+    L(P("A: Consistent sa left knee osteoarthritis.")),
+    L(P("P: PT 2x/week x 6 weeks - therex, modalities, HEP.")),
+    L(),
+    L(B("DAILY TREATMENT NOTE - 03/13/2023")),
+    L(P("Therapist: J. Bautista, PT")),
+    L(P("S: Bumuti na po, 4/10. Kaya ko na umakyat ng hagdan")),
+    L(P("   nang dahan-dahan.")),
+    L(P("O: Knee flexion 120 degrees sa kaliwa.")),
+    L(P("Rx: Quad sets 3x10, SLR, hot pack 15 mins, HEP reviewed.")),
+]
+
 if __name__ == "__main__":
     printable = "--print" in sys.argv
     prefix = "print" if printable else "scan"
     build(f"{prefix}_2visit.pdf", [PAGE_2VISIT], degrade=not printable)
     build(f"{prefix}_4visit.pdf", [PAGE_4A, PAGE_4B], degrade=not printable)
     build(f"{prefix}_handwritten.pdf", [PAGE_HAND], degrade=not printable)
+    build(f"{prefix}_taglish.pdf", [PAGE_TAGLISH], degrade=not printable)
     if printable:
         print("\nPrint these, then capture with a scanner or phone. Save the result as\n"
               "  real_<name>.pdf (or .jpg/.png) next to this script,\n"

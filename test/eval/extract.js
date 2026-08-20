@@ -121,9 +121,21 @@ const TEXT_PDF_LINES = [
 
 // The clinical story is the same across every document, so one set of
 // expectations covers all of them.
-const TWO = { visits: 2, dates: ["2023-05-02", "2023-05-09"], types: ["eval", "daily"], name: /reyes/i };
+const TWO = { visits: 2, dates: ["2023-05-02", "2023-05-09"], types: ["eval", "daily"], name: /reyes/i, side: "right" };
 const FOUR = { visits: 4, dates: ["2023-05-02", "2023-05-09", "2023-05-23", "2023-06-13"],
-  types: ["eval", "daily", "progress", "discharge"], name: /reyes/i };
+  types: ["eval", "daily", "progress", "discharge"], name: /reyes/i, side: "right" };
+
+/* The Taglish chart. Every English fixture above is written the way an
+   American clinic writes, and so proves nothing about the register this
+   product is built for: a side written "sa kaliwa", a denial written "walang
+   pamamanhid", and a mother's arthritis sitting in the same S line as the
+   patient's own complaint. */
+const TAGLISH = {
+  visits: 2, dates: ["2023-03-06", "2023-03-13"], types: ["eval", "daily"],
+  name: /dela\s*cruz|maria/i, side: "left",
+  forbidFinding: /arthritis|nanay|mother/i,   // family history is not this body
+  forbidPositive: /pamamanhid|numb/i,          // a denial stays a denial
+};
 
 const FIXTURES = [
   { id: "text_2visit", label: "text-layer PDF (control — no OCR needed)",
@@ -133,6 +145,9 @@ const FIXTURES = [
 
   // Handwriting is genuinely harder than typed text and the model is allowed
   // to be imperfect at it, so this reports but does not gate.
+  { id: "scan_taglish", label: "Taglish record — Tagalog laterality, denial and family history",
+    base: "scan_taglish", ...TAGLISH },
+
   { id: "scan_handwritten", label: "printed form with handwritten fills",
     base: "scan_handwritten", advisory: true, ...TWO },
 
@@ -179,10 +194,23 @@ function ensureScans() {
    leave subjective/objective empty, which normalizeExtraction faithfully kept
    as a content-less visit. `narrativeSplit` is what catches a relapse. */
 
+const NORM = (s) => String(s || "").toLowerCase();
+// everything on a visit that carries a laterality
+const sidesOn = (x) => [
+  ...x.findings.map((f) => f.side),
+  ...x.rom.map((m) => m.side),
+  ...(x.mmt || []).map((m) => m.side),
+].filter(Boolean);
+/* A measured value copied into a patient-reported finding — the same
+   double-count, and the same mis-attribution, that the dictation cleanup
+   exists to prevent. */
+const MEASURED_RE = /\b\d{2,3}\s*(?:deg|°)|\b[0-5][+-]?\s*\/\s*5\b|\b(?:positive|negative)\s+[\w\s]{0,20}test\b/i;
+
 function assess(fx, r) {
   const v = r.visits;
   const dates = v.map((x) => x.date);
   const types = v.map((x) => x.type);
+  const findings = v.flatMap((x) => x.findings);
   const checks = {
     visitCount: v.length === fx.visits,
     datesExact: JSON.stringify(dates) === JSON.stringify(fx.dates),
@@ -195,6 +223,23 @@ function assess(fx, r) {
     // the eval's measurements survived
     measurements: v.some((x) => x.rom.length >= 2) && v.some((x) => x.mmt.length >= 1) &&
       v.some((x) => x.special.length >= 1) && v.some((x) => x.pain.length >= 1),
+
+    /* The chart is about one side of one body. A laterality that arrives
+       mirrored is worse than one that is missing: it reads as fact. */
+    laterality: !fx.side || (v.some((x) => sidesOn(x).length > 0)
+      && v.every((x) => sidesOn(x).every((sd) => sd === fx.side))),
+
+    // a number the clinician measured must not come back as a patient symptom
+    noMeasurementAsFinding: findings.every((f) => !MEASURED_RE.test(f.summary || "")),
+
+    // somebody else's condition is never a finding on this patient's body
+    noThirdParty: !fx.forbidFinding || findings.every((f) =>
+      !fx.forbidFinding.test(NORM(f.summary) + " " + NORM(f.part))),
+
+    // a documented denial stays a denial
+    denialKept: !fx.forbidPositive || findings.every((f) =>
+      !fx.forbidPositive.test(NORM(f.summary))
+      || /\bno\b|den(?:ies|ied)|wala|negative|without/i.test(f.summary)),
   };
   return { checks, passed: Object.values(checks).filter(Boolean).length, total: Object.keys(checks).length };
 }

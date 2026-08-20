@@ -4952,7 +4952,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   /* Send every chunk to /api/stt in parallel and stitch the transcript back in
-     order. Each chunk is inside the sync limit, so each returns on its own. */
+     order. Each chunk is inside the sync limit, so each returns on its own.
+
+     A chunk that FAILS leaves a hole, and the hole has to be visible. Joining
+     the surviving chunks with a space spliced the sentence before a lost fifty
+     seconds onto the sentence after it, so "…denies numbness" and "…in the
+     right shoulder" read in the record as one continuous statement nobody ever
+     said. The marker is deliberately not speech-shaped: it names no region and
+     carries no symptom, so it stands in the verbatim transcript and the
+     note-filling pass files none of it. */
+  const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
   async function processRecording(docId, lang, chunks, onProgress) {
     const done = new Array(chunks.length).fill(null);
     let finished = 0, billedSeconds = 0;
@@ -4978,8 +4987,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (onProgress) onProgress(finished, chunks.length);
     }));
     const errors = done.filter((d) => d && d.error).map((d) => d.error);
-    const text = done.filter((d) => typeof d === "string").join(" ").replace(/\s+/g, " ").trim();
-    return { text, errors, chunks: chunks.length, billedSeconds };
+    // consecutive failures are one hole, not one marker each
+    const text = done
+      .map((d) => (typeof d === "string" ? d : AUDIO_GAP_MARK))
+      .filter((t, i) => t !== AUDIO_GAP_MARK || i === 0 || typeof done[i - 1] === "string")
+      .join(" ").replace(/\s+/g, " ").trim();
+    // a run of markers and nothing else is not a transcript
+    const heard = done.some((d) => typeof d === "string" && d.trim());
+    return { text: heard ? text : "", errors, chunks: chunks.length, billedSeconds };
   }
 
   /** "6:12" for 372 seconds. For ONE visit, where seconds are meaningful. */
@@ -5366,7 +5381,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             return;
           }
           if (out.errors.length) {
-            prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed — review carefully.`;
+            prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed. The gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript, and the recording is still here — press Process again to retry.`;
           } else {
             prog.textContent = "Transcribed. Review what the AI filled in against your own notes below.";
           }
@@ -5385,8 +5400,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           // measurements, the body map and the SOAP fields all fill the same way.
           out.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
             .forEach((line) => routeUtterance(doc, user, line, dstate));
-          captured = null;
-          await savedAudio.clear(doc.id).catch(() => {});
+          /* Only discard the audio once ALL of it was transcribed. A partial
+             failure used to clear the recording anyway, so the words in the
+             chunk that failed were gone for good — while the message on screen
+             told the therapist to review them. The whole-failure path already
+             kept the audio; the partial one is where keeping it matters more. */
+          if (!out.errors.length) {
+            captured = null;
+            await savedAudio.clear(doc.id).catch(() => {});
+          }
           showIdle();
           openCompare(doc, user);
         } finally { processBtn.disabled = false; btn.disabled = false; }

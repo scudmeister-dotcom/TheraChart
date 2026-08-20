@@ -152,7 +152,11 @@
   /* Two trailing shapes. The first spells out "side", so it can stand alone.
      The second ("on the right") must keep the word "on" — without it "my knee
      right now" would read as a right knee. */
-  const SIDE_SUFFIX = `(?:[,\\s]+(?:(?:on\\s+)?(?:the\\s+)?(${SIDE_WORDS})\\s+sides?\\b|on\\s+(?:the\\s+)?(${SIDE_WORDS})\\b))?`;
+  /* A third shape, and the one an answer takes: asked "which knee?", nobody
+     repeats the word knee — they say "the right one". Dictation puts that in
+     the same breath as the region ("my knee, the um, the right one"), so the
+     side sat a filler word away from the part and was thrown away. */
+  const SIDE_SUFFIX = `(?:[,\\s]+(?:(?:on\\s+)?(?:the\\s+)?(${SIDE_WORDS})\\s+sides?\\b|on\\s+(?:the\\s+)?(${SIDE_WORDS})\\b|(?:the\\s+)?(?:\\w+[,\\s]+){0,2}?(${SIDE_WORDS})\\s+ones?\\b))?`;
   for (const part of BODY_PARTS) {
     part.re = new RegExp(`\\b${SIDE_PREFIX}(?:${part.kw})\\b${SIDE_SUFFIX}`, "gi");
   }
@@ -741,6 +745,16 @@
      deliberately high: dropping a real complaint is far worse than keeping a
      spurious one, which the therapist can still untick during cleanup. */
 
+  /* In a Philippine clinic the person doing most of the talking is often not
+     the patient — an adult child brings a parent and answers for them. Third-
+     party detection cannot help there, because the companion describes their
+     OWN aches in the first person ("masakit din ang likod ko"), which is
+     exactly the grammar of a patient reporting a symptom. What separates them
+     is that companions say so: they announce it. The marker has to be that
+     explicit, because the cost of believing it wrongly is dropping the real
+     patient's complaint. */
+  const NOT_THE_PATIENT_RE = /\b(?:i'?m not the patient|i am not the patient|it'?s not (?:for )?me,? it'?s|hindi (?:po )?ako ang (?:pasyente|pasiente)|dili (?:ko|ako) ang pasyente|hindi po ako ang magpapa-?\w+|dili ko ang pasyente)\b/i;
+
   const PERSON_RE = /\b(?:daughter|son|wife|husband|mother|father|mom|dad|brother|sister|grand(?:ma|pa|mother|father|son|daughter|child)|aunt|uncle|cousin|friend|neighbou?r|co-?worker|boss|anak|asawa|nanay|tatay|inay|itay|kapatid|lola|lolo|kuya|misis|mister|bana|kapikas)\b/i;
 
   // "my daughter broke HER arm" / "my wife'S back" — an explicit possessive.
@@ -948,6 +962,7 @@
     const notMine = [];             // regions named, but not this patient's complaint
     const figurative = figurativeRanges(text);
     const demo = demoRanges(text);
+    const disclaimed = NOT_THE_PATIENT_RE.test(text);
     const seenMentions = new Set(); // collapse identical repeats within one utterance
     for (const part of BODY_PARTS) {
       part.re.lastIndex = 0;
@@ -963,6 +978,7 @@
            rather than merely skipped — an utterance whose ONLY region was
            filtered must not then fall through to the loose-signal path and
            re-attach that same wording to whatever was pinned last. */
+        if (disclaimed) { notMine.push([start, "the speaker said they are not the patient"]); continue; }
         if (isThirdPartyRegion(text, start, end)) { notMine.push([start, "someone else's"]); continue; }
         if (figurative.some(([fs, fe]) => start >= fs && end <= fe)) { notMine.push([start, "a figure of speech"]); continue; }
         if (demo.some(([hs, he]) => start >= hs && start < he)) { notMine.push([start, "an example, not a complaint"]); continue; }
@@ -971,7 +987,7 @@
         let side = null;
         if (part.fixedSide) side = part.fixedSide;
         else if (part.sided) {
-          side = sideWord(m[1] || m[2] || m[3]);
+          side = sideWord(m[1] || m[2] || m[3] || m[4]);
           /* Some regions are named by a phrase that swallows the side word
              ("the back of my LEFT leg", "likod ng KALIWANG binti"), so neither
              the leading nor the trailing capture sees it. Read it back out of
@@ -1103,7 +1119,7 @@
 
   // Marks a turn as the clinician speaking: a question, an instruction, or a
   // called-out objective measurement.
-  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|(?:take|takes|taking) a (?:deep )?breath|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|i-\w+(?:\s+(?:niyo|nyo|ninyo|mo|po|na))|(?:hu)?wag\s+(?:niyo|mo|kang|kayong|po)|ayaw\s+(?:mo|niyo|pag|pug)|palihug\s+\w+|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
+  const CLINICIAN_RE = /\?\s*$|\b(can you|could you|do you|does (?:it|that|this)|did (?:you|it)|are you|have you|where (?:is|does|do|are)|how (?:does|is|bad|long|much|old|many)|who (?:sent|referred|told|gave|else)|what (?:brings?|brought)\s+you|what(?:'?s| is| was) (?:going on|bothering|the problem|been happening)|when did (?:it|this|that|you|the)|which (?:one|side|arm|leg|knee|shoulder|hand|foot|hip|elbow|wrist|ankle|hita|tuhod|balikat)|why (?:do|does|did) (?:it|you|that)|may(?:roon)?\b[\w\s]{0,25}\bba\b|naa\s+(?:ka|ba)y?\b|aduna\s+kay?\b|on a scale|rate (?:your|the|it)|point to|show me|let me|let's|lets|i['’]?m going to|i am going to|i will|i['’]?ll|push (?:against|into|up|down)|resist|relax|breathe|(?:take|takes|taking) a (?:deep )?breath|turn (?:your|to|over)|lie (?:down|back|on)|stand (?:up|straight)|sit (?:up|down)|hold (?:still|this|that)|squeeze|tell me|any (?:pain|numbness|tingling|weakness)|follow my|repeat after|palpat|assess|saan|kailan|gaano|ano ang|anong|ano po|bakit|paano|masakit ba|sakit ba|may sakit ba|i-\w+(?:\s+(?:niyo|nyo|ninyo|mo|po|na))|(?:hu)?wag\s+(?:niyo|mo|kang|kayong|po)|ayaw\s+(?:mo|niyo|pag|pug)|palihug\s+\w+|ituro|subukan|huminga|humiga|umupo|maupo|tumayo|tumindig|iikot|itaas|ibaba|iunat|igalaw|kaya mo bang|pwede mo bang|tignan|tingnan|sabihin mo|itudlo|asa|kanus-?a|pila ka|unsa imong|unsa ang|unsay|ngano|unsaon|sulayi|ginhawa|paghigda|paglingkod|pagtindog|ituy-?od|ipataas|tan-?awon|sultihi ko|makahimo ka ba)\b/i;
 
   function guessSpeaker(raw) {
     const t = String(raw || "").trim();
@@ -1135,7 +1151,10 @@
      "my my neck", "so it's like, um, sore". Only FUNCTION words are collapsed
      when doubled — repeating "very very" is emphasis and means something,
      repeating "my my" is a stammer and means nothing. */
-  const STUTTER_RE = /\b(my|the|a|an|i|it|is|was|and|to|of|in|on|that|this|you|he|she|they|we|so|ang|ng|sa|ko|na|ay)(\s+\1\b)+/gi;
+  /* Dictation punctuates a stammer as if each try were a clause — "my knee,
+     the, the right one" — so the repeat has to be allowed to carry a comma or
+     the second "the" survives into the record. */
+  const STUTTER_RE = /\b(my|the|a|an|i|it|is|was|and|to|of|in|on|that|this|you|he|she|they|we|so|ang|ng|sa|ko|na|ay)([,\s]+\1\b)+/gi;
   /* Filler only. "kanang" is NOT here: it is Cebuano hesitation AND the
      Tagalog word for the right side, and losing "kanang tuhod" costs a
      laterality. "yung" stays for the same reason — it carries grammar. */
@@ -1146,7 +1165,13 @@
     if (!t) return "";
     t = t.replace(META_LEAD_RE, "");
     t = t.replace(STUTTER_RE, "$1");
-    t = t.replace(VERBAL_FILLER_RE, "$1").replace(/\s{2,}/g, " ").replace(/\s+([,.?!])/g, "$1").trim();
+    /* Filler sits BETWEEN the two tries of a stammer — "the um, the right
+       one" — so the repeat only becomes adjacent once the filler is gone.
+       One pass over the text could never see it; the second one can. */
+    t = t.replace(VERBAL_FILLER_RE, "$1").replace(STUTTER_RE, "$1").replace(/\s{2,}/g, " ").replace(/\s+([,.?!])/g, "$1")
+      /* "it's been, like, sore" loses the filler and keeps both commas. The
+         punctuation either side of a dropped word was punctuating the word. */
+      .replace(/,[\s,]*,/g, ",").replace(/,\s*([.?!])/g, "$1").replace(/^[,\s]+/, "").trim();
     t = t.replace(/^(?:so|and|okay|ok|well|then)[\s,]+/i, "");
     if (!t) return "";
     t = t.charAt(0).toUpperCase() + t.slice(1);

@@ -327,6 +327,65 @@ check("Tagalog symptom → patient", PR.guessSpeaker("Masakit ang kaliwang balik
     (P2.parseUtterance("masakit ang kanang tuhod ko").mentions[0] || {}).side === "right");
 }
 
+
+/* ---- the model names the region; the parser owns the anatomy ---- *
+   The body map has a front figure and a back one and chooses between them
+   from the region NAME. So a model that reads "the back of my left leg"
+   correctly and then labels it "Thigh" — which is what Gemini does — puts a
+   posterior complaint on the front of the body. The label is re-read against
+   the words it was drawn from, and only a limb is allowed to move, so a
+   summary that merely contains the word "back" can never relocate a knee. */
+{
+  const AI = require("../ai.js");
+  const norm = (findings) => AI.normalizeRefinement({ dialogue: [], findings }, [], "gemini").findings[0];
+
+  const moved = norm([{ bodyPart: "Thigh", side: "left",
+    summary: "Tightness and pulling aggravated by bending forward",
+    sourceQuote: "the back of my left leg, from my butt down to my calf" }]);
+  check("posterior: a 'thigh' quoted from the back of the leg becomes the hamstring",
+    moved.part === "Hamstring", JSON.stringify(moved));
+  check("posterior: …and lands on the back view", moved.view === "back", JSON.stringify(moved));
+  check("posterior: …keeping the side the model gave it", moved.side === "left", JSON.stringify(moved));
+
+  const tl = norm([{ bodyPart: "Leg", side: "left", summary: "Masakit",
+    sourceQuote: "masakit ang likod ng kaliwang binti ko" }]);
+  check("posterior: the Tagalog posterior phrase moves it too",
+    tl.part === "Calf" && tl.view === "back", JSON.stringify(tl));
+
+  // …and the guard stays shut on everything else
+  const stays = norm([{ bodyPart: "Knee", side: "right", summary: "Pain",
+    sourceQuote: "it is worse when I lie on my back" }]);
+  check("posterior: a knee is not relocated by the word 'back'",
+    stays.part === "Knee" && stays.view === "front", JSON.stringify(stays));
+
+  const anterior = norm([{ bodyPart: "Thigh", side: "left", summary: "Pain at the front of the thigh",
+    sourceQuote: "the front of my left thigh burns" }]);
+  check("posterior: an anterior thigh stays on the front",
+    anterior.part === "Thigh" && anterior.view === "front", JSON.stringify(anterior));
+
+  const already = norm([{ bodyPart: "Lower back", side: "none", summary: "Stiff",
+    sourceQuote: "my lower back is stiff in the morning" }]);
+  check("posterior: a region already on the back view is left alone",
+    already.part === "Lower back", JSON.stringify(already));
+}
+
+/* ---- an imported record keeps its laterality ---- *
+   ROM carried a side and strength did not, so "MMT R shoulder abduction 3+/5"
+   arrived belonging to neither arm. */
+{
+  const AI = require("../ai.js");
+  const e = AI.normalizeExtraction({ patientName: "Reyes, Juan", docDescription: "", visits: [{
+    date: "2023-05-02", type: "eval", subjective: "R shoulder pain", objective: "", assessment: "", treatment: "",
+    mmt: [{ side: "right", context: "shoulder abduction", grade: "3+/5" }],
+    pain: [{ side: "right", location: "shoulder", score: 8 }],
+  }] });
+  check("import: a strength grade keeps its side", e.visits[0].mmt[0].side === "right", JSON.stringify(e.visits[0].mmt));
+  check("import: a pain rating keeps its side", e.visits[0].pain[0].side === "right", JSON.stringify(e.visits[0].pain));
+  const none = AI.normalizeExtraction({ visits: [{ date: "", type: "daily", subjective: "x", objective: "", assessment: "", treatment: "",
+    mmt: [{ side: "none", grade: "4/5" }] }] });
+  check("import: 'none' normalizes to no side", none.visits[0].mmt[0].side === null, JSON.stringify(none.visits[0].mmt));
+}
+
 const total = passed + failures.length;
 console.log(`\nTheraChart refiner checker: ${passed}/${total} checks passed`);
 if (failures.length) { console.log("\n" + failures.join("\n") + "\n"); process.exit(1); }

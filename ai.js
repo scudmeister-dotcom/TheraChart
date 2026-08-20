@@ -222,6 +222,15 @@
       "   loose one in 'corrections' as 'corrected', so the chart ends up with",
       "   one accurate pin instead of two vague ones.",
       "",
+      "   Name the region by its POSTERIOR name when the complaint is posterior.",
+      "   The body map has a front figure and a back one and picks between them",
+      "   from the name alone, so 'thigh' puts a pin on the front of the leg",
+      "   however clearly the summary says otherwise. Use: hamstring for the",
+      "   back of the thigh or upper leg, calf for the back of the lower leg,",
+      "   buttock for the gluteal region, shoulder blade for the scapula,",
+      "   lower back for the lumbar region, and Achilles or heel behind the",
+      "   ankle.",
+      "",
       "7) TRIM THE TRANSCRIPT. Set keep=false on any line that adds nothing to",
       "   the record: backchannel ('okay', 'mm-hmm', 'sige'), greetings, small",
       "   talk, logistics (parking, payment, rescheduling), commentary about the",
@@ -271,9 +280,29 @@
         return { speaker: parser.guessSpeaker(u), text, ...withKeep({}, text) };
       });
 
+    /* The model names the region in words; the parser owns the anatomy. When
+       the words are a front-of-body limb ("thigh", "leg") but the quote they
+       came from plainly locates the complaint behind it ("the back of my left
+       leg", "likod ng binti", "luyo sa"), the parser's reading of what was
+       actually said is the better evidence of WHERE — and the difference is a
+       pin on the wrong figure. Deliberately narrow: only a limb is allowed to
+       move, and only onto its own posterior counterpart, so a summary that
+       merely contains the word "back" ("worse when I lie on my back") can
+       never relocate a knee to the lumbar spine. */
+    const FRONT_LIMB = new Set(["Leg", "Thigh", "Arm", "Upper arm"]);
+    const POSTERIOR = new Set(["Hamstring", "Calf", "Buttock"]);
+    const locate = (bodyPart, side, quote, summary) => {
+      const c = parser.coordForName(bodyPart, side);
+      if (c.view !== "front" || !FRONT_LIMB.has(c.part)) return c;
+      const said = `${summary || ""} ${quote || ""}`;
+      if (!/\b(?:back|behind|posterior|likod|luyo)\b/i.test(said)) return c;
+      const m = parser.parseUtterance(said).mentions.find((x) => POSTERIOR.has(x.partName));
+      return m ? parser.coordForName(m.partName, side || m.side) : c;
+    };
+
     const findings = (parsed.findings || []).map((f) => {
       const side = f.side === "left" || f.side === "right" ? f.side : null;
-      const c = parser.coordForName(f.bodyPart, side);
+      const c = locate(f.bodyPart, side, f.sourceQuote, f.summary);
       const quote = f.sourceQuote || "";
       const turns = [];
       dialogue.forEach((d, i) => { if (quote && d.text.toLowerCase().includes(quote.toLowerCase().slice(0, 24))) turns.push(i); });
@@ -445,10 +474,17 @@
           side: { type: "string", enum: ["left", "right", "none"] }, joint: { type: "string" },
           motion: { type: "string" }, degrees: { type: "number" },
         }, required: ["joint", "motion", "degrees"] } },
+        /* Side, which the schema simply had no room for. ROM carried one and
+           strength did not, so "MMT R shoulder abduction 3+/5" imported as a
+           grade belonging to neither arm — and a left/right difference is most
+           of why the grade is in the record. Live dictation reads a trailing
+           side now; the import had no way to report one at all. */
         mmt: { type: "array", items: { type: "object", properties: {
+          side: { type: "string", enum: ["left", "right", "none"] },
           context: { type: "string" }, grade: { type: "string" },
         }, required: ["grade"] } },
         pain: { type: "array", items: { type: "object", properties: {
+          side: { type: "string", enum: ["left", "right", "none"] },
           location: { type: "string" }, score: { type: "number" },
         }, required: ["score"] } },
         special: { type: "array", items: { type: "object", properties: {
@@ -486,7 +522,39 @@
       "  reported: bodyPart, side (left/right/none), and a short clinical summary.",
       "- rom / mmt / pain / special: objective measurements exactly as recorded",
       "  (range of motion in degrees, muscle grades like 4-/5, pain 0-10 ratings,",
-      "  special orthopedic tests positive/negative).",
+      "  special orthopedic tests positive/negative). Put the side on EACH one",
+      "  it was recorded for — a grade or an angle that loses its side stops",
+      "  showing the left/right difference it was measured to show.",
+      "",
+      "WHICH SIDE. Charts abbreviate laterality and rarely spell it out. Read",
+      "all of these as the side: R / L, (R) / (L), Rt / Lt, B or (B) or B/L for",
+      "bilateral, ® for right, a circled or underlined R/L, and the Filipino",
+      "words a Philippine clinic writes in — kanan/kanang and tuo/tuong for the",
+      "RIGHT, kaliwa/kaliwang and wala/walang for the LEFT, magkabila and",
+      "pareho for both. A bilateral entry becomes one entry per side.",
+      "  Careful with two of them. Cebuano `wala` is the LEFT side, but Tagalog",
+      "  `wala`/`walang` means NONE — 'walang sakit sa tuhod' is no knee pain,",
+      "  not left knee pain. And `kanang` is the Tagalog word for right AND a",
+      "  Cebuano hesitation noise. Use the language of the surrounding sentence",
+      "  to decide, and leave the side out when the document does not settle it.",
+      "",
+      "FINDINGS ARE THE PATIENT'S REPORT, NOT THE CLINICIAN'S EXAM. Take them",
+      "from the S line — what the patient said hurts, and where. Never turn a",
+      "measured value into a finding: strength grades, range-of-motion degrees",
+      "and special-test results are the clinician's objective data and are",
+      "already captured in rom/mmt/special, so repeating them as findings both",
+      "double-counts them and files the clinician's words as the patient's. A",
+      "documented denial ('denies numbness', 'walang pamamanhid') IS a finding,",
+      "written as a denial. A visit whose record shows no patient complaint has",
+      "an EMPTY findings array — that is a correct answer, not a failure.",
+      "",
+      "WHOSE BODY. Records carry family history, and Tagalog and Cebuano mark",
+      "possession AFTER the noun, the opposite way round from English: 'asawa",
+      "ko' is MY spouse, 'likod niya' is THEIR back, 'akong bana' is my",
+      "husband. Somebody else's condition — 'mother with RA', 'father had a",
+      "stroke', 'nanay may diabetes' — is family history and belongs in the",
+      "narrative if the document has a place for it. It is never a finding on",
+      "THIS patient's body.",
       "",
       "Every one of subjective/objective/assessment/treatment must be present on",
       "every visit. When a visit genuinely has no such section, return an EMPTY",
@@ -537,9 +605,9 @@
         rom: (v.rom || []).map((r) => ({ side: side(r.side), joint: String(r.joint || "").toLowerCase().trim(),
           motion: String(r.motion || "").toLowerCase().trim(), degrees: clamp(r.degrees, 0, 360) }))
           .filter((r) => r.joint && r.motion),
-        mmt: (v.mmt || []).map((r) => ({ context: String(r.context || "").trim() || null, grade: String(r.grade || "").trim() }))
+        mmt: (v.mmt || []).map((r) => ({ side: side(r.side), context: String(r.context || "").trim() || null, grade: String(r.grade || "").trim() }))
           .filter((r) => r.grade),
-        pain: (v.pain || []).map((r) => ({ location: String(r.location || "").trim() || null, score: clamp(r.score, 0, 10) })),
+        pain: (v.pain || []).map((r) => ({ side: side(r.side), location: String(r.location || "").trim() || null, score: clamp(r.score, 0, 10) })),
         special: (v.special || []).map((r) => ({ name: String(r.name || "").trim(), result: r.result === "negative" ? "negative" : "positive" }))
           .filter((r) => r.name),
       };
