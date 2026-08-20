@@ -90,18 +90,40 @@ node tools/capture-screenshots.js 00 11
 
 ## Deploy
 
-Production is on `057ca2e` (revision `therachart-00055-w6n`). `main` is well
-ahead of both prod and `origin/main`, and **nothing has been pushed**.
+**Production is on `4f4d080`, revision `therachart-00056-zvt`**, deployed
+2026-08-20. `main` is pushed to `origin/main` and the tree, the remote and the
+running service are all the same commit.
 
-Unshipped work on `main` includes a behaviour change to the AI paths — the
-extraction schema gained a `side` field on `mmt` and `pain`, the refine prompt
-changed, and a failed AI call now shows a failure dialog instead of quietly
-presenting the offline reviewer's output as the AI's. That is worth a look
-before it reaches a clinic, rather than after.
+That deploy carried 22 commits from two sessions working in the same checkout:
+the note editor's workflow groups, clinic suspend/delete, draft trash with
+recovery, the demo banner, the preferred-name field, the screenshot harness and
+all 24 recaptured images, the removal of every legal and regulatory claim from
+the product — and on the AI side the removal of the offline reviewer,
+retry-with-backoff, the `side` field on `mmt`/`pain`, and the speaker/voice
+split in dictation.
 
-Reminders for whoever runs it:
-- `deploy-gcp.sh` ships the **working directory**, not a commit — make sure the
-  tree is clean and is what you mean to send
-- it reads the live service's settings and carries them forward, so scrub
-  `THERACHART_DEMO_LOGINS` from your shell first; production is INVITE-only
+### Expect this, and don't read it as a fault
+
+With the offline reviewer gone, **a failed AI review now shows the clinician a
+dialog instead of quietly substituting a keyword pass.** Vertex's *dynamic
+shared quota* — Google's shared pool, not our project limits, which are nowhere
+near binding — does occasionally return 429 under load. Retry-with-backoff sits
+in front of it (3 attempts on 429/5xx/timeout) and absorbs nearly all of it,
+and the dialog leads with **Try again**, which normally lands.
+
+So "AI review didn't complete" is the system working: saying so, rather than
+handing a therapist a worse note and calling it an AI review. Worth knowing
+before someone goes hunting through our own quota config for a problem that
+isn't there.
+
+### Running it again
+
+- `deploy-gcp.sh` ships the **working directory**, not a commit — the tree must
+  be clean and must be what you mean to send
+- it reads the live service's settings and carries them forward, **but a shell
+  export beats the live value**. Run `echo "[$THERACHART_DEMO_LOGINS]"` first;
+  empty is what you want. `--set-env-vars` replaces the whole environment, so
+  this is not a partial update you can casually walk back, and prod is
+  INVITE-only. Watch the script's own `carrying forward:` line — it should read
+  `demo-logins=0  demo-invite=1`.
 - `./verify-prod.sh` afterwards — 19 read-only checks, non-zero exit on failure
