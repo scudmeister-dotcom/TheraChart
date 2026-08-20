@@ -4721,7 +4721,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const ceilMin = Math.round((Number(ceilingSeconds) || 0) / 60);
     el.innerHTML = mins < 1
       ? `🎙 under a minute of speech`
-      : `🎙 <b>${mins} min</b> of speech${ceilMin ? ` <span class="hint">of ${ceilMin} allowed on this visit</span>` : ""}`;
+      : `🎙 <b>${mins} min</b> of speech${ceilMin ? ` <span class="hint">· ${ceilMin} min allowed on this visit</span>` : ""}`;
   }
   function hideDictMeter() {
     const el = document.getElementById("dictMeter");

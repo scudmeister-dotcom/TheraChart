@@ -292,5 +292,54 @@ const settle = () => new Promise((r) => setImmediate(r));
       a.state.streams.every((s) => s.tracks.every((t) => t.stopped)));
   }
 
+  /* ---- the on-screen meter ----
+     Per-visit dictation spend is the one number a therapist needs mid-visit,
+     and a ticking mm:ss is the one presentation that makes them rush. These
+     pin both halves: it counts, and it counts in whole minutes only. */
+  {
+    const METER = new Function("document",
+      [lift("  function showDictMeter("), lift("  function hideDictMeter(")].join("\n")
+      + "\n  let meterMinute = -1;"
+      + "\n  return { showDictMeter, hideDictMeter, minute: () => meterMinute };");
+
+    const el = { hidden: true, innerHTML: "" };
+    const doc = { getElementById: (id) => (id === "dictMeter" ? el : null) };
+    // the lifted functions close over their own `meterMinute`, so re-lift per case
+    const m = METER(doc);
+
+    m.showDictMeter(0, 1800);
+    r.check("meter appears when capturing starts", el.hidden === false);
+    r.check("under a minute reads as words, not 0:00",
+      /under a minute/i.test(el.innerHTML) && !/\d+:\d\d/.test(el.innerHTML), el.innerHTML);
+
+    m.showDictMeter(59, 1800);
+    r.check("no redraw inside the same minute", /under a minute/i.test(el.innerHTML), el.innerHTML);
+
+    m.showDictMeter(61, 1800);
+    r.check("the first minute is reported", /\b1 min\b/.test(el.innerHTML), el.innerHTML);
+    r.check("…against the visit's allowance", /30/.test(el.innerHTML), el.innerHTML);
+    r.check("…and never as a clock", !/\d+:\d\d/.test(el.innerHTML), el.innerHTML);
+
+    m.showDictMeter(119, 1800);
+    r.check("still one minute at 1:59", /\b1 min\b/.test(el.innerHTML), el.innerHTML);
+    m.showDictMeter(120, 1800);
+    r.check("two minutes at 2:00", /\b2 min\b/.test(el.innerHTML), el.innerHTML);
+
+    m.hideDictMeter();
+    r.check("the meter leaves with the microphone", el.hidden === true && el.innerHTML === "");
+  }
+
+  /* The meter must never be rendered onto a draft note the way the billed
+     total used to be — that is the timer we deliberately took out. */
+  {
+    const line = lift("  function dictationLine(");
+    r.check("billed time on a note is gated on the note being signed",
+      /doc\.status !== "signed"/.test(line), line.slice(0, 200));
+    const bar = SRC.slice(SRC.indexOf('<div class="dict-bar">'), SRC.indexOf('<div class="dict-bar">') + 1200);
+    r.check("the dict bar carries a meter element", /id="dictMeter"/.test(bar));
+    r.check("the recorder no longer paints a running clock",
+      !/Recording — \$\{mmss/.test(SRC));
+  }
+
   r.done();
 })();

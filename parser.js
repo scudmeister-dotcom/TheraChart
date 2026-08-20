@@ -976,8 +976,16 @@
     if (META_RE.test(t)) return "clinician";
     // the therapist narrates the interventions performed ("we did scaption…")
     if (TREATMENT_NARRATION_RE.test(t)) return "clinician";
+    /* An observation with nobody in it. "The right shoulder sits higher than
+       the left" is the therapist looking at the patient; "MY shoulder sits
+       higher" is the patient looking at themselves. The first person is the
+       only thing that separates them, so the absence of one is the signal. */
+    if (OBSERVATION_RE.test(t) && !FIRST_PERSON_RE.test(t)) return "clinician";
     return "patient"; // default: hone in on the patient
   }
+
+  const OBSERVATION_RE = /\b(?:sits?|appears?|looks?|presents?|demonstrates?|exhibits?|noted|observ(?:ed|able)|palpat\w*|visibl[ey]|on inspection|compared to the (?:other|left|right)|than the (?:other|left|right))\b/i;
+  const FIRST_PERSON_RE = /\b(?:i|i'?(?:m|ve|ll|d)|me|my|mine|myself|we|our|ako|ko|akin|aking|sakin|nako|akong)\b/i;
 
   // therapist narrating what was done this visit (distinct from a patient
   // simply mentioning "exercise"): needs an action verb or a clinical technique
@@ -1025,6 +1033,36 @@
   // "you could say…", "for example", "kunwari", "halimbawa" — an illustration,
   // not a complaint.
   const HYPOTHETICAL_RE = /\b(?:for example|for instance|let'?s say|lets say|you (?:could|can|would|might) say|if (?:i|you) said?|say (?:something like|for example)|something like|pretend|hypothetically|just as an example|kunwari|halimbawa|pananglitan|pasagdi lang nga|para bang|parang sasabihin)\b/i;
+
+  /* An example runs to the end of its CLAUSE, not to the end of the sentence.
+     "Kunwari masakit ang aking balikat PERO talaga masakit ang kanang tuhod
+     ko" supposes a shoulder and then reports a knee; treating the whole line
+     as hypothetical would throw away a real complaint, which is a worse error
+     than the one this is here to fix. */
+  function hypotheticalRanges(text) {
+    const t = String(text || "");
+    const finder = new RegExp(HYPOTHETICAL_RE.source, "gi");
+    const ranges = [];
+    let m;
+    while ((m = finder.exec(t)) !== null) {
+      CLAUSE_BREAK_RE.lastIndex = m.index + m[0].length;
+      const brk = CLAUSE_BREAK_RE.exec(t);
+      const end = brk ? brk.index : t.length;
+      ranges.push([m.index, end]);
+      finder.lastIndex = end;
+    }
+    return ranges;
+  }
+
+  /** The same sentence with its examples taken out — what is actually being
+      reported, if anything. */
+  function withoutHypotheticals(text, ranges) {
+    const rs = ranges || hypotheticalRanges(text);
+    if (!rs.length) return String(text || "");
+    let out = "", at = 0;
+    for (const [a, b] of rs) { out += String(text).slice(at, a); at = b; }
+    return (out + String(text).slice(at)).replace(/\s{2,}/g, " ").replace(/^[\s,;.]+/, "").trim();
+  }
 
   /* The therapist narrating the SOFTWARE — "so it highlights that", "it picked
      that up", "see, it went to the shoulder". About the tool, not the patient.
@@ -1112,12 +1150,28 @@
        chart. Trimming it away would leave the retraction unevidenced. */
     if (CORRECTION_RE.test(text)) return { keep: true, reason: "" };
 
+    /* Judge what is left once the examples are removed. A line that is ALL
+       example goes; a line that supposes one thing and reports another stays,
+       because the part that stays is a real complaint. */
+    const hyp = hypotheticalRanges(text);
+    if (hyp.length) {
+      const rest = withoutHypotheticals(text, hyp);
+      if (!rest || !turnSubstance(rest).keep) {
+        return { keep: false, reason: "an example, not something the patient reported" };
+      }
+      return { keep: true, reason: "" };
+    }
+
     const r = parseUtterance(text);
     const ms = r.measurements;
     if (ms.rom.length || ms.mmt.length || ms.special.length || ms.pain.length) return { keep: true, reason: "" };
     if (META_RE.test(text)) return { keep: false, reason: "about the app, not the patient" };
-    if (HYPOTHETICAL_RE.test(text)) return { keep: false, reason: "an example, not something the patient reported" };
     if (r.mentions.some((m) => !m.bare)) return { keep: true, reason: "" };
+    /* "Dr. Santos referred me for the right shoulder" and "this is consistent
+       with a rotator cuff impingement" both name a region and describe no
+       symptom, so the bare-mention rule below called them empty and trimmed
+       the referral and the assessment out of the visit. */
+    if (SECTION_RULES.some(([, re]) => re.test(text))) return { keep: true, reason: "" };
     if (r.mentions.length) {
       return { keep: false, reason: `${mentionLabel(r.mentions[0])} was named but nothing was said about it` };
     }
@@ -1263,6 +1317,93 @@
     return keep.map((c, i) => (i === 0 ? c.replace(/^(?:but|and|though|although|however|pero|kaso|tapos|ug|apan)\s+/i, "") : c)).join(", ");
   }
 
+  /* ---------------------------------------------------------------- *
+   *  The rest of the note
+   * ---------------------------------------------------------------- *
+     Live dictation files into six sections of an evaluation — reason for
+     referral, precautions, past medical history, subjective, the objective
+     narrative and assessment. The cleanup pass rewrote exactly one of them.
+
+     So the therapist would dictate a referral and a precaution, watch them
+     land, run the AI review to tidy the visit up, and get back a note whose
+     Subjective had been rewritten and whose Precautions still held whatever
+     the raw live pass had guessed — including anything this same review had
+     just decided was small talk. The cleanest section of the note sat next
+     to five that had never been reviewed at all.
+
+     This drafts all of them from the same cleaned dialogue, using the same
+     classifier the live pass uses, so "reviewed" means the whole note. */
+
+  const DRAFT_SECTIONS = ["reason", "precautions", "pmh", "assessment", "objective", "subjective"];
+
+  /**
+   * Draft every note section the transcript supports.
+   * `dialogue` is the cleaned, speaker-labelled turn list.
+   * `opts.skipSubjective` is a set of turn indices whose content the caller
+   * has already decided against (a region the patient took back).
+   * Returns one paragraph per section, "" where the visit said nothing that
+   * belongs there.
+   */
+  function sectionDrafts(dialogue, opts) {
+    const skip = (opts && opts.skipSubjective) || new Set();
+    const buckets = {};
+    for (const k of DRAFT_SECTIONS) buckets[k] = [];
+
+    (dialogue || []).forEach((turn, turnIndex) => {
+      if (turn.keep === false) return;
+      for (const raw of splitIntoSentences(turn.text)) {
+        const sentence = trimToClinical(raw);
+        if (!sentence) continue;
+
+        const parsed = parseUtterance(sentence);
+        const meas = parsed.measurements;
+        let section = classifyUtterance(sentence, parsed, meas);
+
+        /* Subjective is what the PATIENT reports — that is the whole
+           definition of the section. The classifier has no idea who is
+           talking, so a therapist observing out loud landed in the patient's
+           own words; it is an objective observation instead. Every other
+           section is about the patient whoever says it: a precaution is a
+           precaution in either voice. */
+        if (section === "subjective" && turn.speaker !== "patient") section = "objective";
+
+        if (!Object.prototype.hasOwnProperty.call(buckets, section)) continue;
+        if (section === "subjective" && skip.has(turnIndex)) continue;
+
+        /* A sentence that is nothing but a reading — "shoulder flexion is 95
+           degrees" — is already filed in the measurement table. Repeating it
+           in the objective narrative is padding the reader has to check
+           twice, and the two copies drift apart the moment one is edited. */
+        if (section === "objective"
+          && (meas.rom.length || meas.mmt.length || meas.special.length)
+          && !parsed.mentions.some((m) => !m.bare)) continue;
+
+        buckets[section].push(tidy(sentence));
+      }
+    });
+
+    const out = {};
+    for (const k of DRAFT_SECTIONS) out[k] = [...new Set(buckets[k])].join(" ");
+    return out;
+  }
+
+  /* The same sentence split the live router uses. Kept here so the cleanup
+     and the live pass cannot drift apart on where a sentence ends — titles
+     included: "Dr. Santos referred me" is one sentence, not two. */
+  const ABBREV_TAIL_RE = /(?:^|\s)(?:dr|dra|mr|mrs|ms|sr|jr|st|prof|atty|engr|capt|gen|rev|no|vs|approx|est|fig|dept|univ|inc|ltd|co|e\.g|i\.e|etc|a\.m|p\.m|[a-z])\.$/i;
+
+  function splitIntoSentences(text) {
+    const raw = String(text || "").match(/[^.!?;]+[.!?;]*/g) || [];
+    const parts = [];
+    for (const piece of raw) {
+      const prev = parts[parts.length - 1];
+      if (prev !== undefined && ABBREV_TAIL_RE.test(prev)) parts[parts.length - 1] = prev + piece;
+      else parts.push(piece);
+    }
+    const out = parts.map((x) => x.trim()).filter(Boolean);
+    return out.length ? out : [String(text || "")];
+  }
+
   function refineTranscript(utterances) {
     const dialogue = [];
     const findingsMap = new Map();
@@ -1294,30 +1435,36 @@
          Remember them here; at the end, any of these the patient never
          actually complained about becomes a correction the therapist can see
          and undo. */
-      if (speaker !== "patient" || HYPOTHETICAL_RE.test(text) || META_RE.test(text)) {
-        const kind = HYPOTHETICAL_RE.test(text) ? "hypothetical" : "not-the-patient";
-        const reason = HYPOTHETICAL_RE.test(text)
-          ? "Said as an example, not reported by the patient"
-          : META_RE.test(text)
-            ? "Said while talking about the app, not about the patient"
-            : "The clinician said this — it is not the patient's report";
-        for (const m of parseUtterance(text).mentions) {
+      const hypRanges = hypotheticalRanges(text);
+      const remember = (mentions, kind, reason) => {
+        for (const m of mentions) {
           const k = mentionKey(m);
           if (!unreported.has(k)) unreported.set(k, { key: k, part: m.partName, side: m.side, kind, reason, quote: text });
         }
+      };
+      // regions named only inside an example, clause by clause
+      for (const [a, b] of hypRanges) {
+        remember(parseUtterance(text.slice(a, b)).mentions, "hypothetical",
+          "Said as an example, not reported by the patient");
+      }
+      if (speaker !== "patient" || META_RE.test(text)) {
+        remember(parseUtterance(text).mentions,
+          "not-the-patient",
+          META_RE.test(text)
+            ? "Said while talking about the app, not about the patient"
+            : "The clinician said this — it is not the patient's report");
       }
       if (speaker !== "patient") return;
       // "Okay." and "Mm-hmm." are not Subjective content either. Each kept
       // sentence remembers which regions it spoke about, so a sentence that
       // was only ever about a retracted region can leave with it.
-      const sentence = { text, keys: [] };
+      const sentence = { text, keys: [], turn: turnIndex };
       if (substance.keep) patientSentences.push(sentence);
 
-      const r = parseUtterance(text);
+      // findings come from what is left once the examples are taken out
+      const r = parseUtterance(hypRanges.length ? withoutHypotheticals(text, hypRanges) : text);
       const priorKey = lastKey; // what was on the map BEFORE this line
-      // "you could say, oh, my right arm is in a lot of pain" is an example
-      // being given, not a symptom being reported.
-      const illustration = HYPOTHETICAL_RE.test(text) || META_RE.test(text);
+      const illustration = META_RE.test(text);
 
       if (r.mentions.length) {
         for (const m of r.mentions) {
@@ -1396,14 +1543,28 @@
     }));
 
     const measurements = aggregateMeasurements(dialogue.filter((d) => d.keep).map((d) => d.text));
+
+    /* A turn that was only ever about a region the patient took back — or
+       never really reported — must not survive in the Subjective either. */
+    const skipSubjective = new Set(patientSentences
+      .filter((x) => x.keys.length && x.keys.every((k) => corrections.has(k)))
+      .map((x) => x.turn));
+
+    const drafts = sectionDrafts(dialogue, { skipSubjective });
     return {
       dialogue, findings, measurements, source: "local",
       corrections: [...corrections.values()],
-      // a sentence that was only ever about a region the patient took back —
-      // or never really reported — must not survive in the Subjective either
-      subjective: patientSentences
-        .filter((s) => !s.keys.length || !s.keys.every((k) => corrections.has(k)))
-        .map((s) => s.text).join(" "),
+      /* Every section the visit supports, all drafted from the same cleaned
+         dialogue. Each sentence lands in exactly one of them: a referral is
+         the reason for referral and is not ALSO repeated in Subjective, which
+         is what happened while Subjective was built from every patient
+         sentence regardless of where it belonged. */
+      reason: drafts.reason,
+      precautions: drafts.precautions,
+      pmh: drafts.pmh,
+      assessment: drafts.assessment,
+      objective: drafts.objective,
+      subjective: drafts.subjective,
       treatment: treatmentSentences.join(" "),
     };
   }
@@ -1435,12 +1596,16 @@
     guessSpeaker,
     noteWorthy,
     trimToClinical,
+    sectionDrafts,
+    splitIntoSentences,
     refineTranscript,
     turnSubstance,
     isBareMention,
     CORRECTION_RE,
     HYPOTHETICAL_RE,
     META_RE,
+    hypotheticalRanges,
+    withoutHypotheticals,
     BODY_PARTS,
   };
 });
