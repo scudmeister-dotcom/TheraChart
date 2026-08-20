@@ -251,7 +251,7 @@ const REFINE_CASES = [
       { name: "the referral is drafted, and only as the reason for referral", weight: 2,
         engines: ["gemini"], test: (r) => onlyIn(r, /santos/i, "reason") },
       { name: "the diabetes and the gallbladder are past history", weight: 2,
-        engines: ["gemini"], test: (r) => /diabet/i.test(sec(r, "pmh")) },
+        engines: ["gemini"], test: (r) => /diabet|\bdm\b|gall\s?bladder|cholecystect/i.test(sec(r, "pmh")) },
       { name: "the lifting restriction is a precaution", weight: 2,
         engines: ["gemini"], test: (r) => /kilo|kg|lift/i.test(sec(r, "precautions")) },
       { name: "the shoulder-height observation is objective, not the patient's report", weight: 2,
