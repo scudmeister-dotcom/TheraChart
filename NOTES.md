@@ -116,6 +116,26 @@ handing a therapist a worse note and calling it an AI review. Worth knowing
 before someone goes hunting through our own quota config for a problem that
 isn't there.
 
+### Three "reviewer" strings that survive on purpose
+
+A grep for the removed offline reviewer finds three hits in `app.js`. All three
+are deliberate. **Do not finish the cleanup.**
+
+| Where | String | Why it stays |
+|---|---|---|
+| `app.js:3593` | `the local reviewer` | The printed attestation on a signed document. The interface names the *function*; the record names the *system*. Someone reading a note months later needs to know what actually wrote the text, and "AI" does not answer that. |
+| `app.js:6106` | `offline reviewer` | The cleanup-card chip for those same historical notes. Relabelling a past local review as "AI" would be false. |
+| `app.js:7394` | `built-in reviewer` | Inside a code comment explaining why that branch was rewritten. Not user-facing. |
+
+The first two only ever render for documents reviewed **before** the
+2026-08-20 deploy. Nothing produces a local review any more; these exist so the
+record of one stays honest.
+
+The general rule, worth keeping: **identity assertions keep the precise value,
+the friendly surface gets the readable one.** It is the same split as legal
+name vs. preferred name — a signed document and a chart header answer different
+questions, and so do a signed attestation and a chip.
+
 ### Running it again
 
 - `deploy-gcp.sh` ships the **working directory**, not a commit — the tree must
