@@ -88,32 +88,6 @@ node tools/capture-screenshots.js 00 11
 
 ---
 
-## Speaker labels are wrong for third-person dictation
-
-**Not mine to fix — raised with the session that owns the dictation path, and
-recorded here so it does not get lost between us.**
-
-`guessSpeaker` has no pattern for third-person clinical narration and defaults
-to "patient". So "patient reports…", "patient denies…", "patient tolerated…"
-— the register clinical documentation is *taught* in — are all tagged as the
-patient speaking, when they are a clinician narrating. A therapist who dictates
-that way has to relabel most of a note by hand.
-
-It is **not** the one-line fix it looks like. `routeUtterance` sends
-clinician-spoken sentences away from Subjective, so simply relabelling
-"patient reports right shoulder pain 7/10" as clinician would push a genuine
-subjective report into Objective and make the note worse. The label is wrong
-but currently produces the right routing by accident. Fixing it properly means
-separating **who spoke** from **whose voice the content is**, which the data
-model does not currently carry.
-
-Confirmed empirically on the four-line transcript the screenshot harness
-dictates: the real model tags all four lines clinician; the old heuristic
-tagged lines 1 and 4 as patient. Both of those are a clinician narrating in the
-third person.
-
----
-
 ## Deploy
 
 Production is on `057ca2e` (revision `therachart-00055-w6n`). `main` is well
