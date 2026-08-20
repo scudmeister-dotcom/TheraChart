@@ -4661,12 +4661,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
   }
 
-  /** "21h 40m" / "37 min" — a month's worth, where mm:ss would be unreadable. */
-  function hoursOf(mins) {
-    mins = Math.round(mins);
-    if (mins < 60) return `${mins} min`;
-    const h = Math.floor(mins / 60), m = mins % 60;
-    return m ? `${h}h ${m}m` : `${h}h`;
+  /** "1,300 min" — a month's worth. Plain minutes, not h/m: the plan is sold
+      and billed in minutes (see overagePerMinute), so the meter should read
+      in the unit a clinic would actually check its bill against. */
+  function minutesOf(mins) {
+    return `${Math.round(mins).toLocaleString()} min`;
   }
 
   /* What this visit's dictation actually cost, in the unit that was billed.
@@ -6785,7 +6784,7 @@ ${privacyInfoAccordion(geminiOn)}
 <div class="card allowance">
   <div class="allowance-head">
     <div><h2>Plan usage — ${esc(month)}</h2>
-      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits and ${hoursOf(u.fairUseMinutes)} of dictation</div></div>
+      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits and ${minutesOf(u.fairUseMinutes)} of dictation</div></div>
     ${u.estimatedOverage ? `<div class="allowance-count bad"><b>${peso(u.estimatedOverage)}</b><span>overage so far</span></div>` : ""}
   </div>
 
@@ -6798,11 +6797,11 @@ ${privacyInfoAccordion(geminiOn)}
   </div>
 
   <div class="meter">
-    <div class="meter-head"><span>Dictation</span><b class="${mTone}">${hoursOf(u.minutesUsed)} <span>of ${hoursOf(u.includedMinutes)}</span></b></div>
+    <div class="meter-head"><span>Dictation</span><b class="${mTone}">${minutesOf(u.minutesUsed)} <span>of ${minutesOf(u.includedMinutes)}</span></b></div>
     <div class="allowance-bar"><div class="allowance-fill ${mTone}" style="width:${mPct}%"></div></div>
     <div class="meter-foot">${minsOver
-      ? `${hoursOf(u.excessMinutes)} over · ${peso(u.excessMinutes * u.overagePerMinute)} at ${peso(u.overagePerMinute)}/min`
-      : `${hoursOf(u.spareMinutes)} left · one pool for the whole month`}</div>
+      ? `${minutesOf(u.excessMinutes)} over · ${peso(u.excessMinutes * u.overagePerMinute)} at ${peso(u.overagePerMinute)}/min`
+      : `${minutesOf(u.spareMinutes)} left · one pool for the whole month`}</div>
   </div>
 
   ${over ? `<div class="banner warn">You're ${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included. If this is your normal month, the next plan up costs less than the overage.</div>` : ""}
@@ -6810,7 +6809,7 @@ ${privacyInfoAccordion(geminiOn)}
   <div class="allowance-note">
     <b>Both reset on ${esc(resets)} and neither rolls over</b> — nothing unused this month is added to next month's.
     ${over
-      ? `Dictation is <b>one pool for the month</b>, now <b>${hoursOf(u.includedMinutes)}</b> — visits past your plan add their ${u.fairUsePerVisit} minutes to it as well, so an extra visit is never charged twice.`
+      ? `Dictation is <b>one pool for the month</b>, now <b>${minutesOf(u.includedMinutes)}</b> — visits past your plan add their ${u.fairUsePerVisit} minutes to it as well, so an extra visit is never charged twice.`
       : `Dictation is <b>one pool for the month</b> — ${u.allowance} visits × ${u.fairUsePerVisit} minutes — and all of it is available from the first day, so a few long evaluations draw on it exactly as freely as many short notes.`}
     Nothing is reserved when you open a note; only what is actually said comes out of the pool.
     Only <b>speech</b> counts: pauses, and a mic left open in a quiet room, cost nothing.
