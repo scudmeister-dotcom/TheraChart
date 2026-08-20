@@ -88,19 +88,51 @@ node tools/capture-screenshots.js 00 11
 
 ---
 
+## Our fixtures only know the happy ordering
+
+Both bugs found in production on 2026-08-20 were the same shape, and neither
+could occur locally — not because the code differed, but because **every test
+sets events up in the order where nothing goes wrong**.
+
+- The delete dialog said *"0 min of dictation and 1 AI pass"*. An AI pass with
+  no dictation cannot arise in a local test, because every local test dictates
+  before it reviews.
+- A review that was ATTEMPTED AND FAILED could not arise either, because every
+  local refine succeeds — against a stub, a key, or the old offline fallback.
+  Vertex's dynamic shared quota returns 429 under real load, so that state is
+  reachable in production and was reachable the day it shipped.
+
+Both are now covered by `test/aifail.test.js`, which drives the real HTTP path
+against a stub model and asserts what happens when the model does not answer:
+429 and 5xx retried three times, 400 not retried, the refusal carrying no
+review content, the offline heuristic NOT filling the gap, and 401 deciding
+before availability so an anonymous probe cannot learn whether the model is up.
+It also pins every branch of the delete dialog's spend line.
+
+**The pattern to check for when adding a feature:** list the orderings in which
+a step is skipped or fails, not just the one where each step succeeds. Those
+are the states no fixture will build for you, and they are the ones a clinic
+meets first.
+
+---
+
 ## Deploy
 
-**Production is on `4f4d080`, revision `therachart-00056-zvt`**, deployed
+**Production is on `ffc542a`, revision `therachart-00057-dhv`**, deployed
 2026-08-20. `main` is pushed to `origin/main` and the tree, the remote and the
 running service are all the same commit.
 
-That deploy carried 22 commits from two sessions working in the same checkout:
+Two deploys that day. The first, `4f4d080` / `therachart-00056-zvt`, carried 22
+commits from two sessions working in the same checkout:
 the note editor's workflow groups, clinic suspend/delete, draft trash with
 recovery, the demo banner, the preferred-name field, the screenshot harness and
 all 24 recaptured images, the removal of every legal and regulatory claim from
 the product — and on the AI side the removal of the offline reviewer,
 retry-with-backoff, the `side` field on `mmt`/`pain`, and the speaker/voice
 split in dictation.
+
+The second, `ffc542a` / `therachart-00057-dhv`, was a single commit: the delete
+dialog no longer names a zero it never spent.
 
 ### Expect this, and don't read it as a fault
 
@@ -125,7 +157,7 @@ are deliberate. **Do not finish the cleanup.**
 |---|---|---|
 | `app.js:3593` | `the local reviewer` | The printed attestation on a signed document. The interface names the *function*; the record names the *system*. Someone reading a note months later needs to know what actually wrote the text, and "AI" does not answer that. |
 | `app.js:6106` | `offline reviewer` | The cleanup-card chip for those same historical notes. Relabelling a past local review as "AI" would be false. |
-| `app.js:7394` | `built-in reviewer` | Inside a code comment explaining why that branch was rewritten. Not user-facing. |
+| `app.js:7414` | `built-in reviewer` | Inside a code comment explaining why that branch was rewritten. Not user-facing. |
 
 The first two only ever render for documents reviewed **before** the
 2026-08-20 deploy. Nothing produces a local review any more; these exist so the
