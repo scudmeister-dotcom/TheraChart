@@ -118,11 +118,16 @@ meets first.
 
 ## Deploy
 
-**Production is on `ffc542a`, revision `therachart-00057-dhv`**, deployed
-2026-08-20. `main` is pushed to `origin/main` and the tree, the remote and the
-running service are all the same commit.
+**Production is on `8ea04d5`, revision `therachart-00058-fqm`**, deployed
+2026-08-20, `main` pushed to `origin/main`.
 
-Two deploys that day. The first, `4f4d080` / `therachart-00056-zvt`, carried 22
+> The commit recording a deploy always postdates the deploy it describes, so
+> this line can never be inside the release it names. What matters is that the
+> *artifact* matches: `NOTES.md`, `test/` and `test-results/` are all in
+> `.gcloudignore`, so a commit touching only those produces a byte-identical
+> image and there is nothing to re-ship.
+
+Three deploys that day. The first, `4f4d080` / `therachart-00056-zvt`, carried 22
 commits from two sessions working in the same checkout:
 the note editor's workflow groups, clinic suspend/delete, draft trash with
 recovery, the demo banner, the preferred-name field, the screenshot harness and
@@ -133,6 +138,11 @@ split in dictation.
 
 The second, `ffc542a` / `therachart-00057-dhv`, was a single commit: the delete
 dialog no longer names a zero it never spent.
+
+The third, `8ea04d5` / `therachart-00058-fqm`, carried no behaviour change at
+all — `test/aifail.test.js` and these notes, plus one line of `package.json`'s
+test script that the runtime never executes. Deployed so the running revision
+sits on the current commit rather than one behind it.
 
 ### Expect this, and don't read it as a fault
 
