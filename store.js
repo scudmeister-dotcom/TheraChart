@@ -1288,19 +1288,53 @@
     visitAllowance: 130,
     /* The RATE the monthly dictation pool is sized at — `visitAllowance` x
        this — not a per-visit cap. The pool is the plan's and is there in full
-       from the 1st; see monthUsage(). 10 minutes is deliberately generous —
-       the cost model is built on 6 — so a clinic only ever sees the overage
-       line if it is genuinely an outlier, which is the point. It is shown,
-       never enforced; cutting a therapist off mid-dictation to save a peso
-       would be indefensible. Break-even is ~18 minutes a visit, so this rate
-       is the one number here that must not drift upward. */
-    fairUseMinutesPerVisit: 10,
-    /* Overage, quoted per unit rather than blended. P28 a visit over a
-       10-minute budget works out at P2.80 a minute, so P3 keeps the two rates
-       consistent with each other while staying a round number on a price page
-       — and roughly 3x the ~P0.98 a minute actually costs us. */
-    overagePerVisit: 28,
-    overagePerMinute: 3,
+       from the 1st; see monthUsage(). It is shown, never enforced; cutting a
+       therapist off mid-dictation to save a peso would be indefensible.
+
+       THIS NUMBER IS CURRENTLY TOO HIGH, and the note that used to sit here
+       said the opposite. It claimed break-even was "~18 minutes a visit", so
+       10 looked like a wide margin. Run `node pricing-model.js` — the real
+       figures, on the entry plan, are:
+
+         Gemini intro rate (to 2026-12-31)   break-even 13.5 min/visit
+         Gemini list rate  (from 2027-01-01) break-even 10.4 min/visit
+
+       Break-even, not target. At the list rate a clinic that actually spends
+       the pool it was promised leaves us a 2% gross margin, because the AI
+       cost of a visit is paid out of the same per-visit revenue BEFORE
+       dictation gets any of it — which is what the old note left out.
+
+       CUT FROM 10 TO 6 on 2026-08-21, with the landing-page copy moved in the
+       same commit — the two have to agree or a clinic is metered against
+       something it was not sold. 6 is still more than twice the 2.9 min/visit
+       the model assumes, so nobody documenting normally will ever see it, and
+       it puts break-even a comfortable distance away again rather than 0.4 of
+       a minute above the entitlement. */
+    fairUseMinutesPerVisit: 6,
+    /* Overage, quoted per unit rather than blended, and priced to the SAME
+       margin as a plan rather than below it.
+
+       Three constraints decide these two numbers, and only a matched pair
+       satisfies all three:
+
+         1. They must AGREE with each other. An extra visit arrives with its
+            `fairUseMinutesPerVisit` of dictation priced in, so
+            `overagePerVisit / fairUseMinutesPerVisit` has to land on
+            `overagePerMinute` — otherwise the same overrun costs a different
+            amount depending on which meter happened to notice it. Pinned in
+            test/allowance.test.js.
+         2. The visit rate must sit ABOVE the plan's own per-visit rate
+            (P26.54 on Solo), or a clinic is better off sitting on overage
+            forever than moving up a rung.
+         3. Both must carry the margin the plans carry, ~70%.
+
+       P28/P3 was set against a 10-minute pool and an entry plan billing
+       P18.85 a visit. Both moved on 2026-08-21, which broke (2) and (3) at
+       once. P42 over a 6-minute pool is exactly P7 a minute, clears the
+       included rate, and carries 72% and 86% against a real cost of P11.89 a
+       visit and P0.98 a minute. */
+    overagePerVisit: 42,
+    overagePerMinute: 7,
     /* Backstop, not a limit. The voice gate is an energy threshold, so a room
        loud enough to clear it defeats BOTH the silence gating and the idle
        auto-stop at once — noise reads as speech, so `idleMs` never accumulates

@@ -900,10 +900,30 @@
     opts = opts || {};
     if (aiReady(opts)) {
       try {
-        // Insights is the reasoning-heavy path: same Flash model, thinking high.
+        /* Insights ran at THINKING_DEEP until 2026-08-21, on the reasoning that
+           a chart review reads across visits and should think hardest. It was
+           also the most expensive single line in the product — thinking bills
+           as output, so `high` was roughly P3.03 of a P8.84 visit against
+           P1.78 at `medium`.
+
+           The comment here used to say not to lower this without re-running
+           the eval. That is exactly what was done, and it is why the level
+           moved: every scored insights case — including the red-flag screen,
+           which is the clinically consequential one — returned 100% at BOTH
+           levels over three runs each, against Vertex, with no fallbacks.
+           Identical output, 41% less to run it.
+
+           If the insights prompt or schema changes materially, re-run that
+           comparison rather than assuming this still holds:
+
+             node test/eval/run.js --case insights/ --runs 3
+             GEMINI_THINKING_LEVEL=high node test/eval/run.js --case insights/ --runs 3
+
+           Check `FELL BACK` is absent from both — a 429 scores the local
+           heuristic and silently drags the number down. */
         const model = opts.insightsModel || DEFAULT_INSIGHTS_MODEL;
         const parsed = await geminiJson(insights.insightsPrompt(ctx), insights.INSIGHTS_SCHEMA,
-          { ...opts, model, thinkingLevel: opts.thinkingLevel || THINKING_DEEP, temperature: 0.3 });
+          { ...opts, model, thinkingLevel: opts.thinkingLevel || THINKING_STANDARD, temperature: 0.3 });
         return { connections: parsed.connections || [], redFlags: parsed.redFlags || [], recommendations: parsed.recommendations || [], source: "gemini" };
       } catch (e) { if (opts.onError) opts.onError("insights", e); }
     }

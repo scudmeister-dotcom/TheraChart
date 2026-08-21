@@ -15,6 +15,22 @@
 
 const store = require("../store.js");
 
+/* The shipped commercial defaults, read ONCE before any fixture below calls
+   updateSettings. The rate-consistency check at the bottom used to read
+   store.settings() live, by which point an earlier block had already set
+   fairUseMinutesPerVisit to 10 for its own arithmetic — so it was quietly
+   checking a fixture's pool against the published per-minute rate rather than
+   the pair we actually sell. It passed by coincidence while those two numbers
+   happened to divide out; it stopped the moment either moved. */
+const SHIPPED = (() => {
+  const s = store.settings();
+  return {
+    overagePerVisit: s.overagePerVisit,
+    overagePerMinute: s.overagePerMinute,
+    fairUseMinutesPerVisit: s.fairUseMinutesPerVisit,
+  };
+})();
+
 /* Open a counting window that cannot see anything created before it.
 
    These blocks isolate themselves by date rather than by deleting, because the
@@ -324,9 +340,15 @@ check("the pool is the PLAN's, not what the visits so far have earned",
   check("a 25-minute evaluation overdraws the pool and bills the minutes",
     long.spareMinutes === -6 && long.excessMinutes === 6,
     `spare=${long.spareMinutes} excess=${long.excessMinutes}`);
+  /* Quoted per MINUTE, because that is the meter that noticed. The visit
+     count is inside its allowance, so nothing here is a visit overage — and
+     since the two rates are now exactly consistent (P42 / 6 min = P7), the
+     totals alone can no longer tell the two paths apart. Assert the unit. */
   check("…quoted in minutes at the per-minute rate, not converted to visits",
-    long.estimatedOverage === 6 * long.overagePerMinute && long.overagePerMinute === 3,
-    `6 min x P${long.overagePerMinute} should be P${6 * long.overagePerMinute}, got P${long.estimatedOverage}`);
+    long.estimatedOverage === 6 * long.overagePerMinute
+    && long.overagePerMinute === SHIPPED.overagePerMinute
+    && long.overBy === 0,
+    `6 min x P${long.overagePerMinute} = P${6 * long.overagePerMinute}, got P${long.estimatedOverage} with ${long.overBy} visit(s) over`);
 }
 
 /* ---- the case accrual got wrong: fewer visits, longer notes ----
@@ -382,13 +404,16 @@ check("the pool is the PLAN's, not what the visits so far have earned",
     over.includedMinutes === 40 && over.minutesUsed === 40,
     `pool=${over.includedMinutes} used=${over.minutesUsed}`);
   check("…so it is billed as ONE extra visit and not as minutes as well",
-    over.overBy === 1 && over.excessMinutes === 0 && over.estimatedOverage === 28,
-    `visits over=${over.overBy} minutes over=${over.excessMinutes} charged=P${over.estimatedOverage} (a frozen pool double-bills to P58)`);
+    over.overBy === 1 && over.excessMinutes === 0
+    && over.estimatedOverage === SHIPPED.overagePerVisit,
+    `visits over=${over.overBy} minutes over=${over.excessMinutes} charged=P${over.estimatedOverage}`
+    + ` (a frozen pool would double-bill: P${SHIPPED.overagePerVisit} + 10 x P${SHIPPED.overagePerMinute})`);
 
   say(25);                                            // a 5th, well past its own budget
   const both = store.monthUsage(wB);
   check("a 5th visit that also overruns bills on both meters, each in its own unit",
-    both.overBy === 2 && both.excessMinutes === 15 && both.estimatedOverage === 2 * 28 + 15 * 3,
+    both.overBy === 2 && both.excessMinutes === 15
+    && both.estimatedOverage === 2 * SHIPPED.overagePerVisit + 15 * SHIPPED.overagePerMinute,
     `visits over=${both.overBy} minutes over=${both.excessMinutes} charged=P${both.estimatedOverage}`);
 }
 
@@ -434,8 +459,10 @@ check("the window is isolated for the exact-arithmetic checks below",
 for (let i = 0; i < 3; i++) { const d = store.createDoc("p-juan", "daily", m8).doc; store.updateDocData(d.id, { _dictationSeconds: 30 * 60 }, m8); }
 const heavy3 = store.monthUsage(cutoff);
 check("three visits all at 3x the budget bill the full excess, with no pool to draw on",
-  heavy3.visits === 3 && heavy3.excessMinutes === 60 && heavy3.estimatedOverage === 180,
-  `3 x 30min against 30 pooled = 60 min over = P180, got ${heavy3.excessMinutes} min / P${heavy3.estimatedOverage}`);
+  heavy3.visits === 3 && heavy3.excessMinutes === 60
+  && heavy3.estimatedOverage === 60 * SHIPPED.overagePerMinute,
+  `3 x 30min against 30 pooled = 60 min over = P${60 * SHIPPED.overagePerMinute},`
+  + ` got ${heavy3.excessMinutes} min / P${heavy3.estimatedOverage}`);
 check("…and the excess is reported in minutes, not guessed",
   heavy3.includedMinutes === 30 && heavy3.excessMinutes === 60,
   `included=${heavy3.includedMinutes} excess=${heavy3.excessMinutes} of ${heavy3.minutesUsed} used`);
@@ -463,8 +490,8 @@ check("a normal visit is never weighted above one",
    A tier that costs MORE per visit than the one above it is a reason to stay
    put. Pinned here because it is a pricing invariant, not a UI detail: the
    published ladder must get cheaper per visit at every rung. */
-const LADDER = [["Solo", 2450, 130], ["Practice", 4700, 260], ["Clinic", 7900, 450], ["Group", 24900, 1450]];
-const OVERAGE = 28;
+const LADDER = [["Solo", 3450, 130], ["Practice", 6700, 260], ["Clinic", 10900, 450], ["Group", 32900, 1450]];
+const OVERAGE = 42;
 let prevRate = Infinity, monotonic = true, detail = [];
 for (const [name, price, visits] of LADDER) {
   const rate = price / visits;
@@ -488,14 +515,19 @@ check("overage pushes an upgrade before the next tier's allowance runs out",
   upgradesInTime, ud.join(" · "));
 
 /* The two overage rates have to agree with each other, or the same excess costs
-   a different amount depending on which meter noticed it. P28 a visit over a
-   10-minute budget is P2.80 a minute; P3 is the rounded published rate. */
+   a different amount depending on which meter noticed it. P42 a visit over a
+   6-minute budget is exactly P7 a minute, which is the published rate. */
 {
-  const s = store.settings();
+  const s = SHIPPED;
   const impliedPerMinute = s.overagePerVisit / s.fairUseMinutesPerVisit;
   check("the per-minute and per-visit overage rates are consistent",
     Math.abs(s.overagePerMinute - impliedPerMinute) <= 0.5,
     `P${s.overagePerMinute}/min vs P${impliedPerMinute.toFixed(2)}/min implied by P${s.overagePerVisit} per ${s.fairUseMinutesPerVisit}-min visit`);
+  /* And the visit rate has to clear the ENTRY plan's own per-visit rate, or a
+     clinic is better off sitting on overage than moving up a rung. */
+  check("an extra visit costs more than a visit inside the entry plan",
+    s.overagePerVisit > LADDER[0][1] / LADDER[0][2],
+    `P${s.overagePerVisit} overage vs P${(LADDER[0][1] / LADDER[0][2]).toFixed(2)} included on ${LADDER[0][0]}`);
   /* Both meters have to exist. Minutes alone would leave visit volume
      unbounded — a clinic typing 2,000 notes dictates zero minutes and still
      costs a Gemini call each — and visits alone was the gap that let dictation

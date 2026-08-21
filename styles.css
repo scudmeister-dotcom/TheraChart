@@ -337,7 +337,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .crumb-sep { color: var(--muted); opacity: 0.6; }
 
 .content {
-  flex: 1; min-width: 0; padding: 22px 26px 60px;
+  flex: 1; min-width: 0;
+  /* named so a full-bleed child (.doc-page's wash) can cancel exactly this
+     padding at whatever breakpoint it is currently on, instead of hard-coding
+     26px and drifting the moment the phone rule changes it */
+  --content-pad-x: 26px; --content-pad-top: 22px;
+  padding: var(--content-pad-top) var(--content-pad-x) 60px;
   background:
     radial-gradient(90% 34% at 0% 0%, color-mix(in srgb, var(--brand-1) 8%, transparent), transparent 62%),
     radial-gradient(70% 30% at 100% 0%, color-mix(in srgb, var(--brand-3) 6%, transparent), transparent 60%);
@@ -1063,13 +1068,48 @@ tr.rowlink .doc-tag { margin-right: 6px; }
 .newdoc-btn.doc-progress .dt-swatch { background: var(--dt-progress); }
 .newdoc-btn.doc-discharge .dt-swatch { background: var(--dt-discharge); }
 
-/* Colour-code the note fields by document type, so you know at a glance which
-   form you're in. Each type sets --dt; the card accent, labels, and text-box
-   borders all follow it. */
-.doc-fields.doc-eval      { --dt: var(--dt-eval); }
-.doc-fields.doc-daily     { --dt: var(--dt-daily); }
-.doc-fields.doc-progress  { --dt: var(--dt-progress); }
-.doc-fields.doc-discharge { --dt: var(--dt-discharge); }
+/* Colour-code the whole document by type, so you know at a glance which form
+   you're in. Each type sets --dt once on the page; the wash behind it, both
+   columns' top edge, the step numbers, the field labels and the text-box
+   borders all read it, so a fifth document type needs a colour and nothing
+   else. It used to be set on the note column alone, which left the body map,
+   the transcript and the page around them all identical across the four —
+   the 10px type tag was the only thing telling an evaluation from a daily
+   note, and it is 10px. */
+.doc-page.doc-eval      { --dt: var(--dt-eval); }
+.doc-page.doc-daily     { --dt: var(--dt-daily); }
+.doc-page.doc-progress  { --dt: var(--dt-progress); }
+.doc-page.doc-discharge { --dt: var(--dt-discharge); }
+
+/* The wash is a pseudo-element rather than a background on .doc-page itself so
+   it can bleed out to the full width of the content area, past the page's own
+   box, and fade out down the screen instead of tinting the text far below it.
+   Kept weak on purpose: it has to be recognisable in peripheral vision and
+   invisible when reading a paragraph on top of it. */
+.doc-page { position: relative; }
+.doc-page::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--content-pad-top));
+  left: calc(-1 * var(--content-pad-x));
+  right: calc(-1 * var(--content-pad-x));
+  height: 460px;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--dt) 14%, transparent),
+    color-mix(in srgb, var(--dt) 5%, transparent) 42%,
+    transparent);
+}
+.doc-page > * { position: relative; }
+
+/* both columns carry the type edge, not just the note column */
+.doc-page .map-card {
+  border-top: 3px solid var(--dt, var(--border));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in srgb, var(--dt) 12%, transparent);
+}
+.doc-page .doc-guide-card {
+  background: color-mix(in srgb, var(--dt) 5%, var(--panel));
+}
 /* The note column is a STACK of workflow groups, not one card. A note is
    written in the same order every time — what you were told, what you found,
    what you make of it, what happens next, what it bills — and one undivided
@@ -1479,17 +1519,31 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
    The charge sheet lives in the note's narrow right-hand column, so the table
    is fixed-layout: the code cell absorbs the slack and the number cells keep a
    predictable width instead of a long CPT description forcing a scrollbar. */
+/* Every selector below is deliberately over-weighted, and dropping the leading
+   `table` / `.bill-table` from any of them silently breaks this table. The
+   charge sheet sits inside a `.field` and its rows are `table.list` rows, so
+   two generic rules outrank the obvious spellings:
+
+     `.field input, .field select, .field textarea`  (0,1,1) > `.charge-num`   (0,1,0)
+     `table.list td`                                 (0,1,2) > `.bill-table td` (0,1,1)
+
+   With the plain selectors the cells kept 10px of padding and the inputs 11px
+   instead of the 6px/5px written here, leaving 12px of usable width — not
+   enough for two digits, so a 15-minute charge rendered as a clipped "15". */
 .bill-table { table-layout: fixed; width: 100%; }
-.bill-table td, .bill-table th { padding-left: 6px; padding-right: 6px; }
-.bill-table .c-min, .bill-table .c-unit { width: 56px; }
-.bill-table .c-del { width: 34px; }
-.bill-table td { vertical-align: middle; overflow: hidden; }
-.charge-num, .charge-code { box-sizing: border-box; }
-.charge-num { width: 100%; text-align: right; padding: 4px 5px; font-variant-numeric: tabular-nums; }
+table.bill-table td, table.bill-table th { padding-left: 6px; padding-right: 6px; }
+.bill-table .c-min, .bill-table .c-unit { width: 54px; }
+.bill-table .c-del { width: 40px; }
+table.bill-table td { vertical-align: middle; overflow: hidden; }
+.bill-table .charge-num, .bill-table .charge-code { box-sizing: border-box; }
+.bill-table .charge-num { width: 100%; text-align: right; padding: 4px 5px; font-variant-numeric: tabular-nums; }
 /* the spin buttons eat half a narrow cell and nobody nudges minutes one at a time */
 .charge-num::-webkit-outer-spin-button, .charge-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .charge-num[type="number"] { -moz-appearance: textfield; appearance: textfield; }
-.charge-code { width: 100%; min-width: 0; }
+.bill-table .charge-code { width: 100%; min-width: 0; padding-left: 8px; padding-right: 4px; }
+/* the row's remove button is an icon, not a labelled button — the default
+   `.btn.small` padding alone is wider than the column it sits in */
+.bill-table [data-delcharge] { --pad-x: 7px; }
 .charge-na { color: var(--muted); }
 .bill-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .bill-totals {
@@ -1666,6 +1720,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .ins-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ins-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
 .ins-disclaimer { font-size: 12px; color: var(--muted); margin: 8px 0 12px; }
+/* The one thing the narrowed re-run trigger cannot know on its own: an
+   unsigned note written since the review ran. Said plainly, beside the button
+   that fixes it, rather than left for the therapist to discover. */
+.ins-stale { font-size: 12.5px; line-height: 1.6; margin: 0 0 12px; }
 .ins-section { margin-bottom: 14px; }
 .ins-section:last-child { margin-bottom: 0; }
 .ins-h { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 8px; }
@@ -1908,8 +1966,29 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .lp-feature p { font-size: 13.5px; line-height: 1.55; color: var(--muted); }
 
 .lp-shots { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 30px 0; }
+@media (max-width: 700px) { .lp-shots { grid-template-columns: 1fr; } }
 .lp-shot img { width: 100%; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(15, 30, 45, 0.12); }
 .lp-shot span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 10px; text-align: center; }
+
+/* ---- landing: what it takes to start ----
+   The page answered "what is it" and "what does it cost" and never the two a
+   clinic owner asks between them: what do I need, and how do I begin. Same
+   card grid as the privacy row so it reads as another plain-answers section
+   rather than a sales panel. */
+.lp-start { padding: 44px 0 8px; }
+.lp-start-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 22px; }
+.lp-start-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px 20px 22px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.lp-start-card h3 { font-size: 15.5px; font-weight: 700; margin-bottom: 7px; letter-spacing: -0.15px; }
+.lp-start-card p { font-size: 13.5px; line-height: 1.65; color: var(--muted); margin: 0; }
+.lp-start-foot {
+  max-width: 780px; margin: 24px auto 0; text-align: center;
+  font-size: 13.5px; line-height: 1.7; color: var(--muted);
+}
+@media (max-width: 760px) { .lp-start-grid { grid-template-columns: 1fr; } }
 
 /* ---- landing: what happens to your patients' data ----
    Its own section rather than a line under the hero, because a clinic's DPO
@@ -2104,9 +2183,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 
   /* content clears both fixed bars (plus notch / home indicator) */
   .content {
-    padding: 16px;
-    padding-top: calc(66px + env(safe-area-inset-top));
-    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+    --content-pad-x: 16px;
+    --content-pad-top: calc(66px + env(safe-area-inset-top));
+    padding: var(--content-pad-top) var(--content-pad-x)
+             calc(84px + env(safe-area-inset-bottom));
   }
 
   /* 16px form controls stop iOS Safari from zooming in on focus */
@@ -2341,17 +2421,46 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
   margin-bottom: 14px;
   background: var(--surface-2, rgba(127, 127, 127, 0.05));
 }
-.field-guide-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
-.field-guide-head b { font-size: 12.5px; }
 .field-guide-todo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .field-guide-label { font-size: 12px; color: var(--muted); }
-.field-guide-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted); }
+.field-guide-legend {
+  display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted);
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
 .field-guide-legend span { display: inline-flex; align-items: center; gap: 5px; }
 
-.src-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
-.src-filled { background: var(--accent, #6c5ce7); }
-.src-drafted { background: var(--warn, #d98324); }
-.src-yours { background: var(--muted, #8a8a99); }
+/* The legend carries the same mark the field labels carry — a star for the two
+   AI sources, a pen for the clinician's. It drew a coloured dot before, so the
+   key and the badge it explained looked like two unrelated systems. */
+.src-mark { font-size: 10px; line-height: 1; flex: none; }
+.src-mark.src-filled { color: var(--accent, #6c5ce7); }
+.src-mark.src-drafted { color: var(--warn, #d98324); }
+.src-mark.src-yours { color: var(--muted, #8a8a99); }
+
+/* How far the note has got. Answers "am I nearly done" without reading, which
+   is the question between patients, and it moves live while dictation files
+   sections. The denominator is every part of the note including the ones the
+   AI writes — a note is not finished because the clinician's half is. */
+.note-progress { margin-bottom: 9px; }
+.note-progress-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+}
+.note-progress-head b { font-size: 12.5px; }
+.note-progress-count { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.note-progress-count b { color: var(--ink); font-size: 13px; }
+.note-progress-track {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--muted) 20%, transparent);
+}
+.note-progress-fill {
+  display: block; height: 100%; border-radius: 999px;
+  transition: width 0.35s ease, background-color 0.35s ease;
+}
+.note-progress-fill.tone-good { background: var(--good); }
+.note-progress-fill.tone-warn { background: var(--review); }
+.note-progress-fill.tone-muted { background: color-mix(in srgb, var(--muted) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) { .note-progress-fill { transition: none; } }
 
 .src-badge {
   font-size: 10px;

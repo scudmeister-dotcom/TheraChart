@@ -37,6 +37,21 @@ else bad "app root returned $root" "expected 200"; fi
 ping=$(body "$BASE/api/ping")
 echo "$ping" | grep -q '"ok":true' && ok "/api/ping healthy" || bad "/api/ping unhealthy" "$ping"
 
+# ---- security response headers ---------------------------------------------
+# The service sent none of these before 2026-08-21. They are checked here and
+# not only in the test suite because they are set by the running revision, and
+# a deploy that carried the wrong image would still pass every local test.
+hdrs=$(curl -s -D - -o /dev/null --max-time 20 "$BASE/" | tr 'A-Z' 'a-z')
+check_hdr() {
+  if printf '%s' "$hdrs" | grep -q "$2"; then ok "$1"
+  else bad "$1" "no '$2' in the response headers for /"; fi
+}
+check_hdr "a Content-Security-Policy is sent"        "content-security-policy:"
+check_hdr "…and it forbids framing (clickjacking)"  "frame-ancestors 'none'"
+check_hdr "…and it forbids inline script"           "script-src 'self'"
+check_hdr "MIME sniffing is off"                    "x-content-type-options: nosniff"
+check_hdr "the microphone is restricted to this origin" "microphone=(self)"
+
 # ---- the security fixes, as far as they can be seen from outside -----------
 # Unauthenticated reads must be refused. Before the tenancy work these were the
 # endpoints that handed over every clinic's records.

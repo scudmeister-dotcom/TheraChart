@@ -234,20 +234,46 @@
   // Word numerals included: cloud STT (chirp) spells small numbers out, and it
   // transcribes Tagalog/Cebuano counting as words rather than digits — so
   // "pito sa sampu" has to score the same as "seven out of ten".
-  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|sero|isa|dalawa|tatlo|apat|lima|anim|pito|walo|siyam|sampu|usa|duha|tulo|upat|unom|napulo)\s*(?:\/|out of|sa|sa\s+gawas\s+sa)\s*(?:10|ten|sampu|napulo)\b/i;
+  /* "over" is here because MMT already accepts it — "four over five" files a
+     grade — and a patient saying "seven over ten" was getting nothing. The
+     denominator is always 10, so "over ten years" cannot reach this: it needs
+     a number immediately before "over", and a comma or any other punctuation
+     between the two breaks the \s* run.
+
+     The Spanish-derived numerals are how a great many Filipino patients say a
+     number out loud. "otso" is eight and "sais" is six in any Manila or Cebu
+     clinic, and neither was recognised, so the rating was simply lost. They
+     are safe to add HERE specifically because this pattern requires the
+     "<number> out-of ten" shape around them. */
+  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|sero|isa|dalawa|tatlo|apat|lima|anim|pito|walo|siyam|sampu|usa|duha|tulo|upat|unom|napulo|uno|dos|tres|kwatro|kuwatro|singko|sais|siyete|otso|nuwebe|nwebe|diyes)\s*(?:\/|out of|over|sa|sa\s+gawas\s+sa)\s*(?:10|ten|sampu|napulo|diyes)\b/i;
   const NUM_WORDS = {
     zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
     // Tagalog
     sero: 0, isa: 1, dalawa: 2, tatlo: 3, apat: 4, lima: 5, anim: 6, pito: 7, walo: 8, siyam: 9, sampu: 10,
     // Cebuano (lima/pito/walo/siyam are shared with Tagalog, above)
     usa: 1, duha: 2, tulo: 3, upat: 4, unom: 6, napulo: 10,
+    // Spanish-derived, which is how a great many patients actually count
+    uno: 1, dos: 2, tres: 3, kwatro: 4, kuwatro: 4, singko: 5,
+    sais: 6, siyete: 7, otso: 8, nuwebe: 9, nwebe: 9, diyes: 10,
   };
   const DURATION_RE = /\b((?:for|since|over|mula|simula|sukad|noong|niadtong)\s+(?:the\s+)?(?:last\s+|past\s+)?(?:about\s+|pa\s+)?(?:a\s+|an\s+|few\s+|couple(?:\s+of)?\s+|\w+\s+)?(?:days?|weeks?|months?|years?|hours?|nights?|mornings?|yesterday|today|kahapon|kagabi|kanina|kaganina|gabii|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|childhood|surgery|accident|fall|injury)|\w+\s+(?:linggo|araw|buwan|taon|oras|gabi|semana|adlaw|bulan|tuig|gabii)\s+(?:na|nan?g)|(?:matagal|dugay)\s+na)\b/i;
   // kapag/tuwing/pag (tl) · inig/kon/human/samtang (ceb) · habang/pagkatapos (tl)
   const TRIGGER_RE = /\b((?:when(?:ever)?|every time|after|while|during|kapag|kapg|tuwing|kada|habang|pagkatapos|pag|kung|inig|kon|human|samtang|sa dihang)\s+(?:(?:i|he|she|they|ako|siya)\s+)?[a-z' -]{2,36})/i;
-  // A symptom is treated as denied when a negation sits shortly before it.
-  // hindi/wala(ng) (tl) · dili/walay (ceb)
-  const NEG_TAIL_RE = /\b(?:no|not|don't|dont|doesn't|doesnt|didn't|didnt|isn't|isnt|never|without|denies|denied|hindi|hindi na|walang?|wala pa|walay|wa\b|dili|di\b|ayaw)\b[\w\s']{0,22}$/i;
+  /* A symptom is treated as denied when a negation sits shortly before it.
+     hindi/wala(ng) (tl) · dili/walay (ceb)
+
+     `walang?` spells walan/walang and so never matched a bare "wala" — the
+     same bug the side words carry a note about above, in the same file. It
+     cost more here: "wala nay sakit ang akong abaga" is Cebuano for "my
+     shoulder does not hurt any more", and it charted an ACTIVE painful
+     shoulder on a patient who had just said the pain was gone.
+
+     Bare "wala" is deliberately still NOT a negator on its own, because in
+     Cebuano it also means LEFT — "sakit ang wala nga tuhod" is a painful left
+     knee, and reading that as a denial would be the same bug pointing the
+     other way. What disambiguates is the particle that follows: "wala na(y)",
+     "wala pa(y)", "wala koy" negate; "wala nga" sides. */
+  const NEG_TAIL_RE = /\b(?:no|not|don't|dont|doesn't|doesnt|didn't|didnt|isn't|isnt|never|without|denies|denied|hindi na|hindi|walang|walay|wala\s+(?:nay?|nang|pay?|koy?|miy?|kay?|siyay?|moy?)|wa\b|dili na|dili|di\b|ayaw)\b[\w\s']{0,22}$/i;
 
   function cap(s) {
     return s.charAt(0).toUpperCase() + s.slice(1);
@@ -409,6 +435,22 @@
     `\\b(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   const BARE_ROM_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+  /* Motion first, joint after it — the ordinary Tagalog and Cebuano word order,
+     and English's too once the joint is qualified:
+
+       "abduction SA TUONG ABAGA 95 degrees"
+       "abduction NG KALIWANG BALIKAT 95 degrees"
+       "flexion OF THE RIGHT KNEE 120 degrees"
+
+     None of these were read. JOINT_ROM_RE wants the joint first, and the bare
+     pattern wants the motion and the number adjacent, so the linker and the
+     joint between them stopped both — the reading was not mis-sided or
+     unsided, it was dropped, with nothing on screen to say a number had been
+     spoken at all. */
+  const MOTION_JOINT_ROM_RE = new RegExp(
+    `\\b(${ROM_MOTIONS})\\s+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
+    `(?:the|his|her|their|ang|akong|among|imong|iyang|yung|aking)?\\s*` +
+    `(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   const BARE_ROM_NOUNIT_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_BARE_NUM}`, "gi");
   // where a joint (with any side stated on it) is named, so a bare motion can
@@ -426,6 +468,28 @@
   const normMotion = (raw) => {
     const k = String(raw).toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
     return MOTION_ALIASES[k] || k;
+  };
+
+  /* The local joint names, normalised the same way the motion abbreviations
+     are. ROM_JOINTS has understood "balikat" and "tuhod" for as long as it has
+     understood "shoulder", but the word was written into the measurement
+     verbatim, so a note dictated in Taglish came out with a row reading
+     "balikat abduction 110°" next to one reading "shoulder abduction 95°" —
+     two names for one joint, which stops them aggregating into a trend and
+     reads as two different findings to whoever reads the claim.
+
+     The spoken word is not lost: the transcript keeps exactly what was said.
+     This is the same split the rest of the app makes — the record keeps the
+     precise value, the readable surface gets the readable one. */
+  const JOINT_ALIASES = {
+    balikat: "shoulder", abaga: "shoulder",   // tl · ceb
+    tuhod: "knee",                            // tl and ceb
+    siko: "elbow",                            // tl and ceb
+    leeg: "neck", liog: "neck",               // tl · ceb
+  };
+  const normJoint = (raw) => {
+    const k = String(raw).toLowerCase().replace(/s$/, "").trim();
+    return JOINT_ALIASES[k] || k;
   };
   /* "out of 5", "/5" and the spoken "over 5" are the same grade. "over" was
      missing, so "strength 4 over 5" — a normal way to say it out loud, and what
@@ -462,7 +526,23 @@
   const SPECIAL_NAMES = "neer|hawkins(?:[-\\s]kennedy)?|empty[-\\s]can|jobe|speed['’]?s?|yergason['’]?s?|apprehension|relocation|o['’]?brien['’]?s?|drop[-\\s]arm|lift[-\\s]?off|spurling['’]?s?|phalen['’]?s?|tinel['’]?s?|finkelstein['’]?s?|mcmurray['’]?s?|lachman['’]?s?|(?:anterior|posterior)[-\\s]drawer|thessaly|apley['’]?s?|ober['’]?s?|faber|patrick['’]?s?|fadir|straight[-\\s]leg[-\\s]raise|slr|slump|thompson['’]?s?|talar[-\\s]tilt|(?:valgus|varus)[-\\s]stress|impingement";
   const SPECIAL_REV_RE = new RegExp(
     `\\b((?:${SPECIAL_NAMES})(?:\\s+(?:test|sign))?|(?:[A-Za-z'’-]+\\s+){1,3}?(?:test|sign))` +
-    `\\s*(?:is|was|were|came\\s+back|came\\s+out|reads?)?\\s*:?\\s*(positive|negative)\\b`, "gi");
+    // `ay` (tl) and `kay` (ceb) are the copula: "ang Neer test AY positive"
+    `\\s*(?:is|was|were|came\\s+back|came\\s+out|reads?|ay|kay)?\\s*:?\\s*(positive|negative)\\b`, "gi");
+
+  /* Leading articles and particles are not part of a test's name. English ones
+     were stripped in the reverse word order only, so "positive ang Neer test"
+     — the ordinary Taglish way to say it — filed a special test called "Ang
+     Neer test", which is the wrong name on a signed document and does not
+     match the same test recorded in English on the next visit. */
+  const PARTICLE_RE = /^(?:the|a|an|this|that|his|her|their|ang|mga|yung|iyong|si|ni|sa|ng|nga|pa|rin|din|na|pod|sad|gihapon|talaga|po|ba|lang|ra|man|siguro|yata)\s+/i;
+  const stripArticle = (raw) => {
+    /* A run, not one word. Tagalog stacks particles in front of the article —
+       "positive PA RIN ANG Neer test" is three of them — so stripping a single
+       leading word filed a special test called "Pa rin ang Neer test". */
+    let out = String(raw || "").trim();
+    for (let i = 0; i < 6 && PARTICLE_RE.test(out); i++) out = out.replace(PARTICLE_RE, "").trim();
+    return out;
+  };
 
   /** Every special test in `text`, both word orders, with its span so callers
       can tell test vocabulary apart from a patient's own complaint. */
@@ -471,15 +551,15 @@
     let m;
     SPECIAL_RE.lastIndex = 0;
     while ((m = SPECIAL_RE.exec(text)) !== null) {
-      out.push({ result: m[1].toLowerCase(), name: cap(m[2].trim()) + " test", start: m.index, end: m.index + m[0].length });
+      const fwd = stripArticle(m[2]);
+      if (!fwd) continue;
+      out.push({ result: m[1].toLowerCase(), name: cap(fwd) + " test", start: m.index, end: m.index + m[0].length });
     }
     SPECIAL_REV_RE.lastIndex = 0;
     while ((m = SPECIAL_REV_RE.exec(text)) !== null) {
       const start = m.index, end = m.index + m[0].length;
       if (out.some((s) => start < s.end && end > s.start)) continue; // already caught in the other order
-      const name = m[1].trim()
-        .replace(/^(?:the|a|an|this|that|his|her|their)\s+/i, "")
-        .replace(/\s+(?:test|sign)$/i, "");
+      const name = stripArticle(m[1].replace(/\s+(?:test|sign)$/i, ""));
       if (!name) continue;
       out.push({ result: m[2].toLowerCase(), name: cap(name) + " test", start, end });
     }
@@ -498,12 +578,29 @@
     JOINT_ANCHOR_RE.lastIndex = 0;
     let a;
     while ((a = JOINT_ANCHOR_RE.exec(text)) !== null) {
-      anchors.push({ at: a.index, side: sideWord(a[1]), joint: a[2].toLowerCase().replace(/s$/, "") });
+      anchors.push({ at: a.index, side: sideWord(a[1]), joint: normJoint(a[2]) });
     }
     const anchorBefore = (idx) => {
       let found = null;
       for (const an of anchors) { if (an.at <= idx) found = an; else break; }
       return found;
+    };
+    /* Tagalog and Cebuano put the motion first and the joint after it —
+       "abduction SA TUONG ABAGA 95 degrees", "abduction NG KALIWANG BALIKAT
+       95". English does it too when the joint is qualified: "flexion of the
+       right knee, 120". Only a preceding joint was ever consulted, so the
+       whole reading was dropped: not mis-sided, not unsided — gone, with
+       nothing on screen to say a number had been spoken.
+
+       Deliberately only consulted when there is no joint BEFORE the motion, so
+       "shoulder abduction 90, knee flexion 120" keeps reading backwards and
+       cannot steal the knee for the shoulder's number. The joint also has to
+       sit close after the motion, because a joint named in the next clause is
+       not what this motion belongs to. */
+    const FORWARD_ANCHOR_MAX = 30;   // characters, i.e. a word or two of linker
+    const anchorJustAfter = (idx) => {
+      for (const an of anchors) if (an.at >= idx && an.at - idx <= FORWARD_ANCHOR_MAX) return an;
+      return null;
     };
 
     /* "Knee flexion is 110 degrees ON THE RIGHT" / "sa kanan" / "sa tuo".
@@ -535,7 +632,19 @@
       claimed.push([m.index, m.index + m[0].length]);
       if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
       pushRom(sideWord(m[1]) || trailSide(m.index + m[0].length),
-        m[2].toLowerCase().replace(/s$/, ""), normMotion(m[3]), degrees);
+        normJoint(m[2]), normMotion(m[3]), degrees);
+    }
+
+    // Pass 1b — the same reading with the joint AFTER the motion. Runs before
+    // the bare pass so its span is claimed and the number is not read twice.
+    MOTION_JOINT_ROM_RE.lastIndex = 0;
+    while ((m = MOTION_JOINT_ROM_RE.exec(text)) !== null) {
+      const start = m.index, end = start + m[0].length;
+      if (claimed.some(([a, b]) => start < b && end > a)) continue;
+      const degrees = Number(m[4]);
+      if (degrees > 180) continue;
+      claimed.push([start, end]);
+      pushRom(sideWord(m[2]) || trailSide(end), normJoint(m[3]), normMotion(m[1]), degrees);
     }
 
     // Pass 2 — a motion with no joint of its own, inheriting the joint stated
@@ -548,7 +657,7 @@
         if (claimed.some(([s, e]) => start < e && end > s)) continue;
         const degrees = Number(b[numGroup]);
         if (degrees > 180) continue;
-        const anchor = anchorBefore(start);
+        const anchor = anchorBefore(start) || anchorJustAfter(start);
         if (!anchor) continue;
         claimed.push([start, end]);
         pushRom(sideWord(b[1]) || trailSide(end) || anchor.side, anchor.joint, normMotion(b[2]), degrees);

@@ -32,12 +32,7 @@
 <script src="store.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
-<script>
-// Install as an app: the service worker makes TheraChart launch from a
-// phone's home screen like a native app (only when served over http/https).
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
-}
-</script>
+<!-- a file, not an inline block, so the server's CSP can keep script-src 'self' -->
+<script src="boot.js"></script>
 </body>
 </html>

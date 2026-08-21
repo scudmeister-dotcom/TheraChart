@@ -355,6 +355,63 @@ function aiRateLimited(res, req, user, purpose) {
   return true;
 }
 
+/* ---- how much a caller may put in front of the model ----
+
+   /api/refine and /api/blend-note clamp their inputs at the boundary — a
+   transcript is cut to 500 lines of 2,000 characters, a blend to 6,000 each.
+   /api/insights and /api/patient-assistant did not: both took the parsed
+   request body and handed it straight to the prompt builder.
+
+   That is a spending hole rather than a data one — the chart comes from the
+   caller, so nobody reads another clinic's records this way. But readBody
+   accepts 15 MB, which is roughly a million tokens of prose. That fits inside
+   Gemini's context window, so it is not rejected as too long; it is accepted,
+   and billed. At the 2027 list rate that is on the order of a dollar a call,
+   against a 2,000/day limit for insights — so a single client stuck in a retry
+   loop could spend thousands of dollars in a day without one request failing.
+
+   Nothing honest comes close to these caps. app.js sends at most 12 visits in
+   full and digests everything older, which is around 20 KB; the total budget
+   below is twenty times that. This is a backstop against a loop or an abusive
+   caller, not a feature limit — which is why it answers with something an
+   administrator can act on rather than a bare error. */
+const AI_FIELD_MAX = 4000;          // one prose field
+const AI_ARRAY_MAX = 60;            // visits in a chart, findings in a visit
+const AI_DEPTH_MAX = 6;
+const AI_PAYLOAD_MAX = 400 * 1024;  // ~100k tokens, vs ~20 KB for a real chart
+
+/** Bound a client-supplied structure per node: string length, array length,
+    key count and nesting. Shape-agnostic on purpose — it guards the two
+    endpoints that need it today and any prompt builder added later. */
+function clampAiPayload(v, depth) {
+  depth = depth || 0;
+  if (typeof v === "string") return v.slice(0, AI_FIELD_MAX);
+  if (v == null || typeof v === "number" || typeof v === "boolean") return v;
+  if (depth >= AI_DEPTH_MAX) return null;
+  if (Array.isArray(v)) return v.slice(0, AI_ARRAY_MAX).map((x) => clampAiPayload(x, depth + 1));
+  if (typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v).slice(0, AI_ARRAY_MAX)) out[k] = clampAiPayload(v[k], depth + 1);
+    return out;
+  }
+  return null;
+}
+
+/** Answer 413 and return true if `payload` is still too large after clamping.
+    Per-node limits alone do not bound the total — 60 visits of 60 findings is
+    within every one of them and still enormous — so the total is checked too. */
+function aiPayloadTooLarge(res, payload) {
+  let size;
+  try { size = Buffer.byteLength(JSON.stringify(payload == null ? {} : payload)); }
+  catch { size = Infinity; }
+  if (size <= AI_PAYLOAD_MAX) return false;
+  console.warn(`[ai] refused an oversized payload: ${size} bytes (limit ${AI_PAYLOAD_MAX})`);
+  json(res, 413, {
+    error: "That chart is too large to send to the AI. Nothing has been lost. If you see this during ordinary work, tell your administrator — it usually means something is retrying in a loop.",
+  });
+  return true;
+}
+
 /** Billed seconds for a WAV, by Google's rule: round UP to the next second.
     16 kHz, 16-bit, mono = 32000 bytes/second, minus the 44-byte header. */
 const wavBilledSeconds = (buf) => Math.max(1, Math.ceil((buf.length - 44) / 32000));
@@ -1042,6 +1099,7 @@ const CLIENT_FILES = new Set([
   "/index.html", "/styles.css", "/sw.js", "/manifest.webmanifest",
   // the scripts index.html loads, in order
   "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/app.js", "/sync.js",
+  "/boot.js",   // service-worker registration; a file so the CSP can forbid inline script
 ]);
 const CLIENT_DIRS = ["/icons/", "/assets/", "/marketing-screenshots/"];
 const isClientAsset = (webPath) =>
@@ -1139,8 +1197,65 @@ function readBody(req, limit = 15 * 1024 * 1024) {
   });
 }
 
+/* ---- security response headers ----
+
+   The service sent none of these until 2026-08-21. For an application holding
+   clinical records, two of them are worth more than the rest:
+
+   `frame-ancestors 'none'` — an EMR is a clickjacking target with a specific
+   prize. Frame the real app, float an invisible button over "Sign & lock", and
+   a signed-in clinician signs a note they never read. Nothing in the app can
+   defend against that from the inside; only this header can.
+
+   `script-src 'self'` — the app escapes everything it renders (see esc() in
+   app.js) and this does not replace that. It is what catches the one place
+   escaping is eventually missed.
+
+   'unsafe-inline' stays in `style-src` and only there. The app writes inline
+   style attributes for anything computed — a progress bar's width, a meter's
+   fill — and injected CSS cannot exfiltrate a chart the way injected script
+   can. Removing it would mean a nonce on every computed width, which buys
+   little against the risk it is guarding.
+
+   accounts.google.com is listed three times because Google Sign-In needs all
+   three: the library is a script, the button it renders is an iframe, and the
+   credential exchange is a fetch. Drop any one and Google sign-in breaks while
+   the rest of the app keeps working — a failure that is easy to misread as a
+   Google configuration problem. See ensureGis() in app.js. */
+const GSI = "https://accounts.google.com";
+const CSP = [
+  "default-src 'self'",
+  `script-src 'self' ${GSI}`,
+  "style-src 'self' 'unsafe-inline'",       // computed widths/positions, and GSI's own styles
+  "img-src 'self' data: blob: https://*.googleusercontent.com",
+  "media-src 'self' blob:",                 // dictation playback during the review window
+  "font-src 'self'",
+  `connect-src 'self' ${GSI}`,
+  `frame-src ${GSI}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function securityHeaders(res, req) {
+  res.setHeader("content-security-policy", CSP);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("referrer-policy", "same-origin");
+  res.setHeader("x-frame-options", "DENY");          // for anything not honouring frame-ancestors
+  /* The microphone is the one capability this app genuinely needs, and
+     display-capture is used by the bug reporter's optional screenshot. Naming
+     them keeps every other powerful feature off by default. */
+  res.setHeader("permissions-policy", "microphone=(self), display-capture=(self), camera=(), geolocation=(), payment=(), usb=()");
+  // Cloud Run terminates TLS, so only assert HSTS when the hop that reached it was https
+  if (String(req.headers["x-forwarded-proto"] || "").toLowerCase() === "https") {
+    res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  securityHeaders(res, req);
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
@@ -1805,7 +1920,8 @@ const server = http.createServer(async (req, res) => {
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can’t create clinical documents." });
         if (!geminiActive()) return json(res, 503, { error: "AI insights are not configured on this server.", unavailable: true });
         if (aiRateLimited(res, req, user, "insights")) return;
-        const ctx = await readBody(req);
+        const ctx = clampAiPayload(await readBody(req));
+        if (aiPayloadTooLarge(res, ctx)) return;
         const result = await clinicalInsights(ctx || {}, user);
         return json(res, 200, result);
       }
@@ -1813,11 +1929,13 @@ const server = http.createServer(async (req, res) => {
         if (!store.canAccessEmr(user)) return json(res, 403, { error: "Not permitted." });
         if (aiRateLimited(res, req, user, "assistant")) return;
         const { chart, question, history } = await readBody(req);
+        const safeChart = clampAiPayload(chart || {});
+        if (aiPayloadTooLarge(res, safeChart)) return;
         const q = String(question || "").slice(0, 2000).trim();
         if (!q) return json(res, 400, { error: "No question provided." });
         const turns = Array.isArray(history) ? history.slice(-8).map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", text: String(t.text || "").slice(0, 2000) })) : [];
         try {
-          const result = await patientAssistant(chart || {}, q, turns, user);
+          const result = await patientAssistant(safeChart, q, turns, user);
           return json(res, 200, result);
         } catch (e) {
           // a 501 carries our own "not set up on this server yet" text, which is

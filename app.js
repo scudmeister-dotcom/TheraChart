@@ -830,6 +830,8 @@
   <section class="lp-shots">
     <div class="lp-shot"><img src="marketing-screenshots/walkthrough/02-patient-overview.jpg" alt="Patient chart overview" loading="lazy" /><span>Everything that needs attention on one patient, before you open a single note.</span></div>
     <div class="lp-shot"><img src="marketing-screenshots/walkthrough/01-dashboard.jpg" alt="Clinic dashboard" loading="lazy" /><span>Clinic-wide view: today's schedule, unsigned drafts and progress reports due.</span></div>
+    <div class="lp-shot"><img src="marketing-screenshots/walkthrough/03-documents.jpg" alt="A patient's documents" loading="lazy" /><span>Evaluation, daily notes, progress reports and discharge — each colour-coded, each locked once signed.</span></div>
+    <div class="lp-shot"><img src="marketing-screenshots/walkthrough/09-calendar.jpg" alt="Clinic calendar" loading="lazy" /><span>The clinic's schedule, with the visits that still have no note attached to them.</span></div>
   </section>
 
 
@@ -872,26 +874,58 @@
       than written into the copy.</div>
   </section>
 
+  <section class="lp-start" id="getting-started">
+    <h2 class="lp-section-title">What it takes to start</h2>
+    <p class="lp-privacy-lead">The practical questions, before the price. Nothing here needs an IT person.</p>
+    <div class="lp-start-grid">
+      <div class="lp-start-card">
+        <h3>A browser and a microphone</h3>
+        <p>Nothing to install and no server to run. TheraChart opens in any current browser on a laptop, tablet or phone,
+          and adds itself to the home screen so it launches like an app. Dictation uses the device's own microphone —
+          a laptop's built-in one is enough in an ordinary treatment room.</p>
+      </div>
+      <div class="lp-start-card">
+        <h3>A connection, for the parts that need one</h3>
+        <p>Dictation and the AI run on the server, so those need internet. Charts already on the device stay readable
+          without it, and anything written while the connection is down is counted and merged the moment it returns —
+          the sign-in screen tells you which of the two you are in.</p>
+      </div>
+      <div class="lp-start-card">
+        <h3>Your existing records can come with you</h3>
+        <p>Give it a scanned or exported PDF of a patient's past notes and it reads the visits out into the chart —
+          dates, findings and measurements — and shows you what it found before a single line is filed.</p>
+      </div>
+      <div class="lp-start-card">
+        <h3>Accounts are approved, never self-opened</h3>
+        <p>Staff ask for an account from the sign-in screen and an administrator at your clinic approves it. Every
+          account carries a role — therapist, front desk, administrator — and a therapist without a current licence
+          number on file can read charts but cannot sign a note.</p>
+      </div>
+    </div>
+    <div class="lp-start-foot">Setting up a new clinic is a short conversation with us rather than a form —
+      we create the clinic and its first administrator, and your team requests their own accounts from there.</div>
+  </section>
+
   <section class="lp-pricing" id="pricing">
     <h2 class="lp-section-title">Pricing</h2>
     <p class="lp-pricing-lead">One price per clinic, not per therapist. Every plan includes the AI — dictation, the note it writes, the chart review and the assistant. Add as many staff as you need.</p>
 
     <div class="lp-tiers">
-      ${tier("Solo", 2450, 130, "A single practitioner starting out.", false)}
-      ${tier("Practice", 4700, 260, "Two or three therapists sharing a front desk.", true)}
-      ${tier("Clinic", 7900, 450, "A full schedule across several rooms.", false)}
-      ${tier("Group", 24900, 1450, "Several branches under one organisation.", false)}
+      ${tier("Solo", 3450, 130, "A single practitioner starting out.", false)}
+      ${tier("Practice", 6700, 260, "Two or three therapists sharing a front desk.", true)}
+      ${tier("Clinic", 10900, 450, "A full schedule across several rooms.", false)}
+      ${tier("Group", 32900, 1450, "Several branches under one organisation.", false)}
     </div>
 
     <div class="lp-price-notes">
       <div class="lp-price-note">
-        <b>Two things are included, counted separately.</b> A visit counts once, whether the note was dictated or typed. Dictation is a <b>single monthly pool</b> — your visits × 10 minutes, yours in full from the 1st — so it makes no difference whether you do many short visits or a few long evaluations. You are only past your plan on the one you actually exceed.
+        <b>Two things are included, counted separately.</b> A visit counts once, whether the note was dictated or typed. Dictation is a <b>single monthly pool</b> — your visits × 6 minutes, yours in full from the 1st — so it makes no difference whether you do many short visits or a few long evaluations. You are only past your plan on the one you actually exceed.
       </div>
       <div class="lp-price-note">
         <b>Only speech is counted.</b> Pauses cost nothing, and a microphone left open in a quiet room costs nothing. Nothing is ever cut off mid-sentence.
       </div>
       <div class="lp-price-note">
-        <b>Past your plan:</b> ₱28 per extra visit, ₱3 per extra dictation minute. Both reset monthly and neither rolls over. If you are regularly over, the next plan up costs less than the overage.
+        <b>Past your plan:</b> ₱42 per extra visit, ₱7 per extra dictation minute. Both reset monthly and neither rolls over. Going over is meant to be a signal rather than a bill — if it happens two months running, move up a plan.
       </div>
     </div>
     <div class="lp-price-foot">Prices in Philippine pesos, per clinic per month. No per-seat fee and no separate charge for AI.</div>
@@ -899,7 +933,8 @@
 
   <section class="lp-final">
     <h2>Ready when you are.</h2>
-    <p>Sign in with the credentials your administrator gave you.</p>
+    <p>Already set up? Sign in with the account your administrator approved.<br>
+      New here? Ask for an account from the same screen — or talk to us about setting up your clinic.</p>
     <button class="btn primary lp-cta-btn" id="lpStart2">Sign in</button>
     <div class="lp-foot">TheraChart EMR · ${facility}</div>
   </section>
@@ -2718,7 +2753,9 @@ ${tabStrip}
 
   function renderAiReviewCard(el, p, user, state) {
     const review = p.aiReview || {};
-    const note = `<p class="ins-disclaimer">Runs automatically when this chart changes${review.ranAt ? ` · last run ${fmtDT(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`;
+    const stale = state === "done" && reviewMissesDraft(p);
+    const note = `<p class="ins-disclaimer">Runs automatically when a note is signed, amended or removed${review.ranAt ? ` · last run ${fmtDT(review.ranAt)}` : ""}. Decision support for a licensed PT — <b>verify before acting</b>.</p>`
+      + (stale ? `<div class="banner info ins-stale">This chart has an unsigned note written since the review ran, so today's work is not in it yet. <b>Re-run review</b> to include it, or sign the note and it will re-run on its own.</div>` : "");
     let body;
     if (state === "running") {
       body = `<div class="empty-state" style="padding:16px">
@@ -2768,8 +2805,30 @@ ${tabStrip}
      false MISS costs one extra run, a false HIT would show a stale review, so
      it errs toward re-running. */
   function chartReviewKey(p) {
+    /* SIGNED documents only.
+
+       The key used to include every document's modification stamp, drafts
+       included. A draft autosaves on each keystroke, so typing one sentence
+       changed the key, and the next time the Overview tab rendered it fired a
+       full `thinking: high` run — the single most expensive call in the
+       product. A therapist who moves between the note and the Overview two or
+       three times during a visit paid for the whole chart review two or three
+       times, for one visit.
+
+       What the review is *about* is the episode of care, and a half-written
+       draft is not part of that record yet. Signing it is — so signing flips
+       its status, which changes this key, and the review re-runs then. So do
+       an amendment to a signed note, a document being deleted, and the patient
+       facts that reach the prompt.
+
+       The draft is still READ when the review runs (gatherInsightContext takes
+       the latest document whatever its status). This decides only WHEN, not
+       WHAT. A therapist who wants today's unsigned dictation included presses
+       Re-run — and the card tells them when that would add something, rather
+       than leaving them to wonder. */
     const docs = S.docsFor(p.id)
-      .map((d) => `${d.id}:${d._mod || d.createdAt}:${d.status}:${d.type}`)
+      .filter((d) => d.status === "signed")
+      .map((d) => `${d.id}:${d._mod || d.createdAt}:${d.type}`)
       .sort()
       .join("|");
     const facts = [p.dob, p.sex, p.referringPhysician, p.pmh, p.allergies].join("~");
@@ -2781,6 +2840,17 @@ ${tabStrip}
       h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
     }
     return `${str.length.toString(36)}-${h.toString(36)}`;
+  }
+
+  /** An unsigned note changed since this review ran, i.e. the review is correct
+      about the record but does not know about today's work yet. This is the
+      honest cost of not re-running on every keystroke, so it is said out loud
+      rather than left for the therapist to discover. */
+  function reviewMissesDraft(p) {
+    const r = p.aiReview;
+    if (!r || !r.ranAt) return false;
+    return S.docsFor(p.id).some((d) =>
+      d.status !== "signed" && (d._mod || d.createdAt) > r.ranAt);
   }
 
   async function startAiReview(p, user) {
@@ -3694,7 +3764,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       const meta = SOURCE_META[src];
       return `
       <div class="field field-src-${src}"><label>${label}
-        <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.badge}</span></label>
+        <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span></label>
       <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
     };
 
@@ -3815,6 +3885,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       </div>`;
 
     view.innerHTML = `
+<div class="doc-page ${meta.cls}">
 <div class="page-head doc-head ${meta.cls}">
   <div>
     <div class="doc-title-row"><span class="doc-tag ${meta.cls}">${meta.short}</span><h1>${esc(doc.title)}</h1></div>
@@ -3905,7 +3976,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   </div>
 </div>
 <div class="card" id="insightsCard"></div>
-<div class="card asst-card" id="docAssistant"></div>`;
+<div class="card asst-card" id="docAssistant"></div>
+</div>`;
 
     // ------- shared dictation/map state -------
     const dstate = { selectedKey: null, editable };
@@ -3914,6 +3986,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
     renderCleanupSummary(doc);
+    fieldGuideSig = null;        // the host element is new; nothing to reuse
     renderFieldGuide(doc);
     view.querySelectorAll("details.doc-group").forEach((g) =>
       g.addEventListener("toggle", () => setGroupCollapsed(g.dataset.group, !g.open)));
@@ -5983,10 +6056,31 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     charges: { label: "Billing / charges", source: "yours", types: ["eval", "daily", "progress"] },
   };
 
+  /* One row per source, and every surface naming a source reads from here: the
+     badge on a field label, the tooltip behind it, and the legend under the
+     progress bar. They used to be three separate strings in three voices — the
+     badge said "AI fills this", the legend "AI fills it", the tooltip opened
+     lowercase mid-sentence, and the legend drew a plain dot where the badge
+     drew a star, so the key and the thing it keyed did not look related.
+
+     The wording is third person throughout. A note is read later by someone
+     who is not the person who wrote it — a colleague, a reviewer, the same
+     therapist a year on — and "the clinician" is who the record means. It also
+     stops the AI-filled sections reading as finished: the therapist reviews
+     and edits every one of them before it is signed. */
   const SOURCE_META = {
-    filled: { chip: "ai", badge: "✦ AI fills this", blurb: "dictation writes here, and the AI review rewrites it" },
-    drafted: { chip: "warn", badge: "✦ AI drafts · you confirm", blurb: "written only if you say it out loud — always your call" },
-    yours: { chip: "muted", badge: "✍ You write this", blurb: "nothing files here from dictation" },
+    filled: {
+      tone: "muted", mark: "✦", label: "AI fills · clinician reviews",
+      blurb: "Dictation writes this section and the AI review rewrites it. The clinician reviews and edits it before signing.",
+    },
+    drafted: {
+      tone: "warn", mark: "✦", label: "AI drafts · clinician confirms",
+      blurb: "Written only if it is said out loud, and always the clinician's call to confirm or change.",
+    },
+    yours: {
+      tone: "muted", mark: "✍", label: "Clinician writes",
+      blurb: "Nothing files here from dictation — the clinician writes this section.",
+    },
   };
 
   const fieldSourceOf = (type, field) => (FIELD_SOURCES[type] || {})[field] || "yours";
@@ -6043,50 +6137,89 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
   }
 
-  /** Sections of `doc` that nothing will fill on its own and that are empty. */
-  function outstandingWork(doc) {
-    const out = [];
+  /** Every part of `doc`, in note order, with who fills it and whether it has
+      anything in it yet. The progress bar counts these and the outstanding
+      list filters them, so the two can never disagree about what a note is
+      made of — which they could when each walked FIELD_SOURCES itself. */
+  function noteParts(doc) {
+    const parts = [];
     for (const [field, source] of Object.entries(FIELD_SOURCES[doc.type] || {})) {
-      if (source === "filled") continue;
-      if ((doc.data[field] || "").trim()) continue;
-      out.push({ label: fieldLabel(doc.type, field), source, field });
+      parts.push({
+        field, source, label: fieldLabel(doc.type, field),
+        done: !!String(doc.data[field] || "").trim(),
+      });
     }
     for (const [key, def] of Object.entries(SECTION_SOURCES)) {
-      if (def.source !== "yours" || !def.types.includes(doc.type)) continue;
+      if (!def.types.includes(doc.type)) continue;
       // goals belong to the episode of care, not to one note; measurements are
       // spread across four arrays — docPartCount knows both
-      if (docPartCount(doc, key)) continue;
-      out.push({ label: def.label, source: "yours", field: key });
+      parts.push({ field: key, source: def.source, label: def.label, done: docPartCount(doc, key) > 0 });
     }
-    return out;
+    return parts;
   }
 
-  /** The banner above the note's fields: what is waiting on you right now. */
+  /** Sections of `doc` that nothing will fill on its own and that are empty. */
+  function outstandingWork(doc) {
+    return noteParts(doc).filter((p) => !p.done && p.source !== "filled");
+  }
+
+  /** The banner above the note's fields: how far the note has got, and which
+      sections are still waiting on the clinician.
+
+      The count was a sentence before — "Still waiting on you:" followed by a
+      row of chips — which says what is left but never how much is done. A bar
+      answers "am I nearly there" without reading anything, which is the
+      question a therapist actually has between patients, and it moves while
+      they dictate. The chips stay underneath: the bar gives the shape, the
+      chips name the work. */
+  /* The signature of what the guide DISPLAYS — which parts are done, in order.
+     renderFieldGuide runs on every keystroke of a draft (see the autosave
+     handler), and typing the second character of a section changes nothing it
+     shows: the section was already counted as done by the first. Rebuilding
+     the markup anyway threw away and recreated the bar on every letter, which
+     also meant its width transition never had two frames to run between. */
+  let fieldGuideSig = null;
+
   function renderFieldGuide(doc) {
     const host = document.getElementById("fieldGuide");
     if (!host) return;
-    const todo = outstandingWork(doc);
-    const filled = Object.entries(FIELD_SOURCES[doc.type] || {})
-      .filter(([, src]) => src === "filled").length
-      + Object.values(SECTION_SOURCES).filter((d) => d.source === "filled" && d.types.includes(doc.type)).length;
+    const parts = noteParts(doc);
+    const sig = `${doc.id}|${parts.map((p) => (p.done ? "1" : "0")).join("")}`;
+    if (sig === fieldGuideSig && host.firstElementChild) return;
+    fieldGuideSig = sig;
+    const total = parts.length;
+    const done = parts.filter((p) => p.done).length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const todo = parts.filter((p) => !p.done && p.source !== "filled");
+    /* Tone tracks the bar, not the outstanding list: a note with every section
+       written is complete even though signing has its own checks to run. */
+    const tone = done >= total ? "good" : done ? "warn" : "muted";
 
     host.innerHTML = `
       <div class="field-guide">
-        <div class="field-guide-head">
-          <b>What fills itself, and what needs you</b>
-          <span class="chip ai">${filled} section${filled === 1 ? "" : "s"} from dictation</span>
+        <div class="note-progress">
+          <div class="note-progress-head">
+            <b>Note completeness</b>
+            <span class="note-progress-count"><b>${done}</b> of ${total} sections</span>
+          </div>
+          <div class="note-progress-track" role="progressbar"
+               aria-valuenow="${done}" aria-valuemin="0" aria-valuemax="${total}"
+               aria-label="Note completeness: ${done} of ${total} sections written">
+            <span class="note-progress-fill tone-${tone}" style="width:${pct}%"></span>
+          </div>
         </div>
         ${todo.length
           ? `<div class="field-guide-todo">
-               <span class="field-guide-label">Still waiting on you:</span>
-               ${todo.map((t) => `<span class="chip ${t.source === "drafted" ? "warn" : "muted"}" title="${esc(SOURCE_META[t.source].blurb)}">${esc(t.label)}</span>`).join("")}
+               <span class="field-guide-label">Waiting on the clinician:</span>
+               ${todo.map((t) => `<span class="chip ${SOURCE_META[t.source].tone}" title="${esc(SOURCE_META[t.source].blurb)}">${esc(t.label)}</span>`).join("")}
              </div>`
           : `<div class="field-guide-todo"><span class="chip good">Nothing outstanding</span>
-               <span class="field-guide-label">every section either has content or fills itself.</span></div>`}
+               <span class="field-guide-label">Every section either has content or fills itself from dictation.</span></div>`}
         <div class="field-guide-legend">
-          <span><i class="src-dot src-filled"></i>AI fills it</span>
-          <span><i class="src-dot src-drafted"></i>AI drafts it, you confirm</span>
-          <span><i class="src-dot src-yours"></i>you write it</span>
+          ${["filled", "drafted", "yours"].map((src) => {
+            const m = SOURCE_META[src];
+            return `<span title="${esc(m.blurb)}"><i class="src-mark src-${src}">${m.mark}</i>${esc(m.label)}</span>`;
+          }).join("")}
         </div>
       </div>`;
     refreshGroupCounts(doc);
@@ -6344,8 +6477,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         ${measCount ? `<ul class="rev-meas">${measList.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
         : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>
       ${yoursNow.length ? `<div class="rev-yours">
-        <b>The review does not write these — they are still yours:</b>
-        ${yoursNow.map((t) => `<span class="chip ${t.source === "drafted" ? "warn" : "muted"}">${esc(t.label)}</span>`).join("")}
+        <b>The review does not write these — the clinician does:</b>
+        ${yoursNow.map((t) => `<span class="chip ${SOURCE_META[t.source].tone}">${esc(t.label)}</span>`).join("")}
       </div>` : ""}`;
 
     const dialogueHtml = result.dialogue.map((d, i) => `

@@ -86,59 +86,181 @@ above what a Philippine PT clinic will pay. The gap is the actual pricing
 problem, and it closes from both ends: charge nearer ₱3,500–5,000, and cut
 COGS.
 
-## What we can advertise
+## What we sell
 
-Priced at the **2027** rate, so January is a cost event and not a repricing.
-Allowances are in AI-documented visits — the clinic's own unit, and the thing
-that actually drives cost.
+**Repriced 2026-08-21.** This section previously described a three-rung,
+per-seat ladder the product had already stopped selling. The shipped ladder is
+**per clinic**, has four rungs, and meters **two** things — visits *and* a
+monthly dictation pool. It lives in two places, both authoritative:
 
-| Plan | Price | Seats | Included | Per seat |
-|---|---|---|---|---|
-| **Solo** | ₱3,900/mo | 1 | 250 visits | ₱3,900 |
-| **Clinic** | ₱9,900/mo | 3 | 750 visits | ₱3,300 |
-| **Group** | ₱17,900/mo | 6 | 1,600 visits | ₱2,983 |
+- `app.js` → `renderLanding()` — the tiers a customer reads and buys
+- `store.js` → `DEFAULT_SETTINGS` — the allowance and overage rates the app meters
 
-Extra visits beyond the allowance: **₱15 each** (48% margin at the 2027 rate,
-64% after the cuts below).
+`pricing-model.js` mirrors both and **fails with a non-zero exit** if its copy
+drifts from either. A confident margin computed for a price nobody is charged is
+worse than no model.
 
-Gross margin at typical use (8 visits/day/seat):
+| Plan | Price | Was | Visits | Per visit | Dictation pool |
+|---|---|---|---|---|---|
+| **Solo** | ₱3,450/mo | ₱2,450 | 130 | ₱26.54 | 780 min |
+| **Practice** | ₱6,700/mo | ₱4,700 | 260 | ₱25.77 | 1,560 min |
+| **Clinic** | ₱10,900/mo | ₱7,900 | 450 | ₱24.22 | 2,700 min |
+| **Group** | ₱32,900/mo | ₱24,900 | 1,450 | ₱22.69 | 8,700 min |
 
-| Plan | Today | Jan 2027 | After the cuts |
+Overage: **₱42 per extra visit** (was ₱28), **₱7 per extra dictation minute**
+(was ₱3). The pool is **6 minutes × included visits** (was 10), granted in full
+on the 1st, never enforced — only shown.
+
+Practice is ₱6,700 rather than the ₱6,900 a 70% target would ask for, because
+**every rung has to be cheaper per visit than the one below it** — at ₱6,900 it
+landed on ₱26.54, exactly Solo's rate, so upgrading bought capacity and no
+better price. `test/allowance.test.js` pins that as an invariant.
+
+### Why these numbers
+
+Three things moved together, because fixing any one alone left the business
+thin:
+
+1. **The pool went 10 → 6 minutes.** At the January rate, break-even on the
+   entry plan was **10.4 dictation minutes a visit** and the plan promised 10.
+   A clinic using what it had been *sold* left a 2% gross margin. Six is still
+   more than twice the 2.9 min/visit the model assumes, so nobody documenting
+   normally will ever see it.
+2. **The chart review stopped re-running on every keystroke.** See below.
+3. **Prices rose 33–41%.** The old ladder sat at 2.1–2.4% of a clinic's
+   collections; practice software elsewhere runs 2–5%. The new one sits at
+   **2.9–3.9%** — still inside the norm, and TheraChart is doing something the
+   non-AI EMRs in this market are not.
+
+Solo is deliberately priced to a **65%** target rather than 70%: it is the rung
+where price sensitivity is highest and the one clinics grow out of, and its
+margin is hurt most by fixed infrastructure spread over only 130 visits.
+
+### Where the margins land
+
+Gross margin at the January 2027 rate — the hard case, since it doubles the
+Gemini line:
+
+| Plan | Typical (75% of allowance, 2.9 min) | Allowance maxed | Everything maxed |
 |---|---|---|---|
-| Solo | 67% | 56% | 67% |
-| Clinic | 68% | 55% | 68% |
-| Group | 67% | 53% | 66% |
+| Solo | **69%** | 62% | 50% |
+| Practice | **73%** | 65% | 54% |
+| Clinic | **73%** | 66% | 53% |
+| Group | **74%** | 66% | 52% |
 
-The allowances are set at ~11 visits/seat/day — comfortably above the 8/day
-typical case, so a normal month never touches the overage and the number exists
-as a runaway backstop rather than a revenue line. Even fully consumed, no plan
-goes underwater.
+At today's introductory rate every figure is 6–9 points higher. The right-hand
+column is the one that matters commercially: **a clinic consuming every visit
+and every dictation minute it was sold still leaves us better than half.**
+Before this repricing that column read 2–6%.
 
-For scale: a 3-therapist clinic billing ₱800 a visit turns over ~₱420,000 a
-month. ₱9,900 is 2.4% of that. Practice-management software elsewhere runs
-2–5% of collections, so this is not an aggressive ask.
+### The overage rates are a matched pair, not two numbers
 
-## Two cost cuts worth making before publishing
+Three constraints decide them together, and only a pair satisfies all three:
 
-Together these take a visit from ₱7.73 to ₱5.41 (−30%) and put a 75% margin
-within reach at ₱4,300/seat instead of ₱5,900.
+1. **They must agree with each other.** An extra visit arrives with its
+   dictation allowance priced in, so `overagePerVisit ÷ fairUseMinutesPerVisit`
+   has to land on `overagePerMinute` — otherwise the same overrun costs a
+   different amount depending on which meter happened to notice it.
+2. **The visit rate must clear the entry plan's own per-visit rate** (₱26.54),
+   or a clinic is better off sitting on overage than moving up a rung.
+3. **Both must carry the margin the plans carry.**
 
-1. **Insights thinking `high` → `medium`.** The chart review is the single
-   biggest AI line — ₱4.88 of the ₱7.73 visit. `ai.js` says explicitly not to
-   lower a thinking level without re-running the eval. That is the point: there
-   *is* an eval, with a 98.0% baseline in `test/eval/baseline.vertex.json`, so
-   this is a measurable decision rather than a hopeful one. If the score holds,
-   take it. If red flags degrade, don't — insights output is clinically
-   consequential and that is not a margin trade.
-2. **Stop re-running the chart review on every content change.** The fingerprint
-   cache fixed the far worse "re-run on every chart opened" behaviour, but it
-   still re-runs on every new note. Running it on demand plus on a new
-   *evaluation* would cut it to a fraction of visits.
+₱42 over a 6-minute pool is exactly ₱7 a minute, clears ₱26.54, and carries
+**75% and 86%** at the January rate against a real cost of ₱10.65 a visit and
+₱0.98 a minute. ₱28/₱3 was set against a 10-minute pool and an ₱18.85 visit;
+when both of those moved it broke (2) and (3) at once.
 
-Two smaller ones, for completeness: the live-dictation path pays ~27s per visit
-in per-request round-up (record-then-process already collapses this to ~6
-events), and context caching at $0.075/1M would trim the fixed system prompts —
-worth little, since input is a rounding error next to thinking.
+> A side-effect worth knowing about: because the two rates now agree *exactly*,
+> six minutes of overrun and one extra visit both come to ₱42. Two tests used
+> to tell those billing paths apart by their totals and can no longer — they
+> assert the *unit* now (`overBy` vs `excessMinutes`) instead.
+
+## What the AI actually costs, by feature
+
+`pricing-model.js` costed only `refine` and `insights` until 2026-08-21. Both
+`patient-assistant` and `extract-doc` also call Gemini, and neither was in the
+model, so the model was costing a product we do not sell. `/api/usage` already
+meters every Gemini call regardless of endpoint, so the *metering* was never
+wrong; only the forecast was.
+
+At the 2027 rate, base band, per documented visit:
+
+| Feature the clinic sees | Line | Cost | Share |
+|---|---|---|---|
+| Listen & dictate live | Speech-to-Text v2 | ₱2.84 | 37% |
+| Review & clean up with AI | Gemini refine | ₱1.86 | 24% |
+| Clinical insights card | Gemini insights | ₱1.78 | 23% |
+| Grounded AI assistant | Gemini assistant | ₱0.95 | 13% |
+| Import an outside document | Gemini extract-doc | ₱0.16 | 2% |
+| | **Total** | **₱7.59** | |
+
+The assistant and import *frequencies* are estimated (a question every third
+visit, an import every twentieth); their per-call costs are not. They are the
+next two numbers `/api/usage` settles.
+
+**Dictation is the largest single line again, at 37%.** It stopped being the
+dominant cost when the voice gate removed the silence, and the chart review
+overtook it; both cuts below have now put it back in front. AI in total is 63%
+of a visit and dictation 37%.
+
+> An earlier version of this file said the chart review was "55% of the variable
+> cost". That was wrong — it was refine and insights added together, from before
+> the table separated them.
+
+## The two cost cuts — both now made
+
+Together they took a visit from ₱13.38 to ₱7.59.
+
+### 1. The chart review re-ran on every keystroke — **fixed**
+
+`chartReviewKey()` hashed every document's modification stamp, drafts included,
+and a draft autosaves on each keystroke. So typing a sentence and then glancing
+at the Overview tab fired a full chart review, and doing that two or three times
+in a visit paid for it two or three times — for one visit. The model always
+assumed **one** run per visit, which made this the most expensive kind of error:
+not a wrong price, a wrong *count*, invisible on the invoice.
+
+The key is now built from **signed** documents only. It fires when a note is
+signed, amended or removed, and when the patient facts that reach the prompt
+change — never while a note is being written. The draft is still *read* when the
+review runs; this decides only *when*, not *what*.
+
+The one thing that loses: a review can now be correct about the record and not
+know about today's unsigned dictation. That is said on the card, beside the
+Re-run button, rather than left for the therapist to discover.
+`test/reviewtrigger.test.js` pins both halves — cost control and honesty.
+
+At ~2.5 runs/visit before, this alone was **₱4.54 a visit**, or ₱2,044 a month
+across a 450-visit clinic.
+
+### 2. Insights thinking `high` → `medium` — **taken, on evidence**
+
+`ai.js` said not to lower this without re-running the eval. It was re-run:
+
+| | insights/declining-rom | red-flag-screen | radicular | first-visit | overall |
+|---|---|---|---|---|---|
+| `high`, 3 runs | 100% | 100% | 100% | 100% | **100.0%** |
+| `medium`, 3 runs | 100% | 100% | 100% | 100% | **100.0%** |
+
+Against Vertex, twelve calls each, no fallbacks in either. Identical output at
+**41% less** — insights ₱3.03 → ₱1.78 a visit.
+
+Caveat worth keeping: this is four cases. The red-flag screen is the clinically
+consequential one and it scored full marks at both levels, but if the insights
+prompt or schema changes materially, re-run the comparison rather than assuming
+it still holds. The command is in the comment at the call site in `ai.js`.
+
+> A separate lesson from that session: **a single eval run is noisy.** One
+> refine case swung 35 points between two runs at an identical configuration.
+> Use `--runs 3` for any decision, and check `FELL BACK` is absent — a 429
+> silently scores the local heuristic and drags the number down.
+
+### Still available, not taken
+
+The live-dictation path pays ~27s per visit in per-request round-up
+(record-then-process already collapses this to ~6 events), and context caching
+at $0.075/1M would trim the fixed system prompts — worth little, since input is
+a rounding error next to thinking.
 
 ## What is still un-metered
 
