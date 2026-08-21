@@ -118,8 +118,8 @@ meets first.
 
 ## Deploy
 
-**Production is on `8ea04d5`, revision `therachart-00058-fqm`**, deployed
-2026-08-20, `main` pushed to `origin/main`.
+**Production is on `8926714`, revision `therachart-00059-cxk`**, deployed
+2026-08-21, `main` pushed to `origin/main`.
 
 > The commit recording a deploy always postdates the deploy it describes, so
 > this line can never be inside the release it names. What matters is that the
@@ -143,6 +143,44 @@ The third, `8ea04d5` / `therachart-00058-fqm`, carried no behaviour change at
 all — `test/aifail.test.js` and these notes, plus one line of `package.json`'s
 test script that the runtime never executes. Deployed so the running revision
 sits on the current commit rather than one behind it.
+
+### 2026-08-21 — `8926714` / `therachart-00059-cxk`
+
+One commit, and the largest change to what a clinic pays since the ladder
+existed. `PRICING.md` carries the reasoning; the short version:
+
+- **The chart review was running two or three times a visit, not once.**
+  `chartReviewKey()` hashed every document's `_mod`, drafts included, and a
+  draft autosaves on every keystroke. The unit model had always assumed one
+  run. A visit cost ₱13.38, not the ₱8.84 the price was set against. The key
+  is now built from **signed** documents only.
+- **Insights dropped `high` → `medium`**, after the eval returned 100% at both
+  over three runs against Vertex. Together with the above: ₱13.38 → ₱7.59.
+- **The ladder was repriced** — ₱3,450 / ₱6,700 / ₱10,900 / ₱32,900 — the pool
+  cut 10 → 6 min, and overage moved to ₱42 + ₱7 as a matched pair. January
+  margins 51–60% → 69–74% at typical use, and 2–6% → 50–55% at full
+  entitlement.
+- **Security headers**, which the service had none of. CSP with
+  `frame-ancestors 'none'`, nosniff, Referrer-Policy, a microphone-scoped
+  Permissions-Policy, HSTS. One inline script became `boot.js` so
+  `script-src 'self'` could hold.
+- **`/api/insights` and `/api/patient-assistant` now clamp their payloads.**
+  Both handed the 15 MB request body to the prompt builder, which the model
+  accepts and bills rather than rejecting.
+- **Six dictation defects**, the worst of which charted an active painful
+  shoulder for a patient who had said in Cebuano that the pain was gone.
+- The note editor's billing minutes no longer clip, the source labels read in
+  the third person, each document type colours its whole page, and the landing
+  page finally says what a clinic needs in order to start.
+
+`verify-prod.sh` is 24 checks now, not 19 — the five new ones are the security
+headers, which can only be seen on the running revision.
+
+Two things deliberately NOT done, both waiting on Kim's testing rather than on
+us: the charge sheet still uses **US CPT codes and Medicare's 8-minute rule**
+for clinics that file PhilHealth and HMO, and **nothing collects money** — the
+app meters visits, minutes and overage and can suspend a clinic, but there is
+no payment integration at all.
 
 ### Expect this, and don't read it as a fault
 
