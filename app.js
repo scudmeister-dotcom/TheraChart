@@ -2766,10 +2766,33 @@ ${tabStrip}
     } else {
       body = review.result ? insightsHtml(review.result, { recMode: "chart", filterKeys: S.resolvedRecKeys(p.id) }) : `<div class="empty-state" style="padding:12px">No review yet.</div>`;
     }
+    /* The button is OFF when there is nothing to re-read.
+
+       It used to be live at all times, which made the most expensive call in
+       the product one idle click away and told the therapist nothing. Now it
+       is the state of the chart: greyed and reading "Up to date" when the
+       review already covers every signed note, live and inviting when an
+       unsigned note has been written since. The same glance answers "is this
+       current?" and "is there any point pressing this?".
+
+       Disabled rather than hidden. A control that vanishes reads as a feature
+       someone has lost; one that is visibly off, with the reason on hover,
+       says the work is already done. */
+    const upToDate = state === "done" && !stale;
+    const btnLabel = state === "running" ? "Reviewing…"
+      : state === "error" ? "Try again"
+      : upToDate ? "✓ Up to date" : "Re-run review";
+    const btnTitle = state === "running" ? "The review is running now"
+      : upToDate ? "This review already covers every signed note on this chart. It re-runs on its own when a note is signed, amended or removed."
+      : stale ? "An unsigned note has been written since this review ran — re-run to include it"
+      : "Run the chart review again";
+    const btnOff = state === "running" || upToDate;
+
     el.innerHTML = `
       <div class="ins-head">
         <h2>✦ AI chart review</h2>
-        <button class="btn small ai" id="aiReviewBtn" ${state === "running" ? "disabled" : ""}>${state === "running" ? "Reviewing…" : "Re-run review"}</button>
+        <button class="btn small ${upToDate ? "" : "ai"}" id="aiReviewBtn"
+                title="${esc(btnTitle)}" ${btnOff ? "disabled" : ""}>${btnLabel}</button>
       </div>
       ${note}
       <div id="aiReviewBody">${body}</div>`;
