@@ -167,12 +167,16 @@ gcloud run deploy "$SERVICE" --source . --project "$PROJ" --region "$REGION" \
   --set-env-vars "GCP_PROJECT=${PROJ},STT_LOCATION=${STT_REGION},GEMINI_VERTEX=1,GCS_BUCKET=${BUCKET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_OWNER_EMAIL=${GOOGLE_OWNER_EMAIL},THERACHART_DEMO_LOGINS=${THERACHART_DEMO_LOGINS},THERACHART_DEMO_INVITE=${THERACHART_DEMO_INVITE}"
 
 # Optional email allowlist for additional Google users (owner is always admin).
-# Uses a custom delimiter (^@^) so the commas inside the value are preserved.
+# Uses a custom delimiter so the commas inside the value are preserved. It has
+# to be a character that cannot appear in the value: "@" looked free until the
+# value turned out to be a list of EMAIL ADDRESSES, and gcloud split
+# "kim@gmail.com:therapist" into two bogus variables. "~" appears in neither an
+# address nor a role, so it is safe here.
 GOOGLE_ALLOWLIST="${GOOGLE_ALLOWLIST:-$LIVE_ALLOWLIST}"
 if [ -n "${GOOGLE_ALLOWLIST:-}" ]; then
   echo "==> Setting GOOGLE_ALLOWLIST…"
   gcloud run services update "$SERVICE" --project "$PROJ" --region "$REGION" \
-    --update-env-vars "^@^GOOGLE_ALLOWLIST=${GOOGLE_ALLOWLIST}"
+    --update-env-vars "^~^GOOGLE_ALLOWLIST=${GOOGLE_ALLOWLIST}"
 fi
 # GEMINI_LOCATION is intentionally NOT set -> defaults to "global": the Gemini
 # 3.x publisher models are ONLY served from the global Vertex location (regional
