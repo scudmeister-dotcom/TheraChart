@@ -129,8 +129,18 @@ thin:
 2. **The chart review stopped re-running on every keystroke.** See below.
 3. **Prices rose 33–41%.** The old ladder sat at 2.1–2.4% of a clinic's
    collections; practice software elsewhere runs 2–5%. The new one sits at
-   **2.9–3.9%** — still inside the norm, and TheraChart is doing something the
-   non-AI EMRs in this market are not.
+   **2.84–3.32%** at a ₱800 visit — still inside the norm, and TheraChart is
+   doing something the non-AI EMRs in this market are not.
+
+   > That band was first written here, and in the repricing commit, as
+   > "2.9–3.9%". It never was. The figure came from the *target* prices
+   > computed before Solo was pulled down to ₱3,450 and Practice to ₱6,700,
+   > and it is arithmetically impossible for the shipped ladder at any visit
+   > fee: the ladder's own per-visit spread is 1.17× and a 2.9–3.9% band is
+   > 1.34×. `node pricing-model.js` now prints the real band from the real
+   > prices, at four visit fees, so the number cannot be transcribed by hand
+   > again. The correction matters commercially rather than pedantically —
+   > 3.9% is the top of the norm and 3.3% is the middle of it.
 
 Solo is deliberately priced to a **65%** target rather than 70%: it is the rung
 where price sensitivity is highest and the one clinics grow out of, and its
@@ -174,6 +184,88 @@ when both of those moved it broke (2) and (3) at once.
 > six minutes of overrun and one extra visit both come to ₱42. Two tests used
 > to tell those billing paths apart by their totals and can no longer — they
 > assert the *unit* now (`overBy` vs `excessMinutes`) instead.
+
+## Market position — what clinics actually pay
+
+Researched 2026-08-21. Everything below is a published list price with a
+source; where a number is inferred it says so.
+
+### The Philippine anchor is ₱1,500, and it is not us
+
+Two competitors sell clinic software into this market at the same price:
+
+| Product | Price | What it is |
+|---|---|---|
+| [DoktorEMR](https://doktoremr.com/pricing/) | **₱1,500/mo** | 2 users (1 doctor, 1 secretary). Records, scheduling, labs, prescriptions, and **voice-to-text for notes**. |
+| [ClinicEMR — Med Core Solutions](https://www.medcore.solutions/) | **₱1,500/mo** | SOAP charting, PhilHealth YAKAP, eKon replacement, offline mode, booking. |
+
+**This, not the percentage, is the number that decides a deal.** Our entry rung
+is ₱3,450 — **2.3× the anchor** — and no argument about shares of collections
+survives contact with a ₱1,500 quote on the next tab. Two things about it:
+
+- **DoktorEMR already advertises voice-to-text.** "We have dictation and they
+  do not" is *false* and must not be said to a prospect who has seen their
+  page. What is true is narrower and has to be demonstrated rather than
+  asserted: their feature turns speech into text in a box. Ours decides which
+  *section* a sentence belongs in, files ROM/MMT/pain into a measurement table,
+  pins the body map, keeps the patient's words separate from the clinician's,
+  and does it across Tagalog and Cebuano in one sentence. That is the entire
+  pitch, and Kim's testing is what proves or kills it.
+- **₱1,500 buys 2 users.** Our ladder is per clinic with unlimited staff, so a
+  4-person clinic on DoktorEMR is likely paying more than the sticker suggests.
+  Worth confirming before quoting it as a comparison.
+
+### What the AI part is worth, priced elsewhere
+
+AI documentation is not a free feature anywhere else. Standalone AI scribes,
+**with no EMR attached**, at [published self-serve
+rates](https://www.commure.com/blog-scribe/scribe-pricing):
+
+| Tier | Per clinician / month | In pesos |
+|---|---|---|
+| Self-serve (Freed, Commure, Heidi) | $39 – $119 | ₱2,400 – ₱7,300 |
+| [Heidi Health](https://www.getfreed.ai/resources/cost-of-ai-scribes) clinician / practice | $110 / $180 | ₱6,765 / ₱11,070 |
+| Abridge (enterprise) | $208 – $600 | ₱12,800 – ₱36,900 |
+
+**Our entire Solo plan — EMR, body map, billing, scheduling and the AI — is
+₱3,450, or about $56.** That is inside the range people pay for the scribe
+alone. It is a real argument, with the obvious caveat that these are US prices
+and Philippine willingness to pay is structurally lower; it establishes that
+the AI has priced value, not that a Manila clinic will pay US rates for it.
+
+### The visit fee, which the whole percentage argument rests on
+
+`VISIT_FEE_PHP = 800` is the assumption, and it holds for the middle of the
+market but **not for the bottom**:
+
+| Setting | Per session | Source |
+|---|---|---|
+| Clinic-based PT | ₱500 – ₱1,500 | [ClinicFinderPH](https://www.clinicfinderph.com/blog/physical-therapy-cost-philippines) |
+| Metro Manila | ₱800 – ₱2,500 | [ClinicFinderPH](https://www.clinicfinderph.com/blog/best-physical-therapy-clinics-manila) |
+| Makati | ₱600 – ₱2,000 | [ClinicFinderPH](https://www.clinicfinderph.com/blog/physical-therapy-clinics-makati) |
+| Pampanga (provincial) | ₱400 – ₱1,200 | [ClinicFinderPH](https://www.clinicfinderph.com/blog/physical-therapy-clinics-pampanga) |
+| Government (POC) | ₱300 – ₱700 | [ClinicFinderPH](https://www.clinicfinderph.com/blog/philippine-orthopedic-center-rates-fees) |
+
+So the shipped ladder reads **2.84–3.32% in Manila and 4.42% for a provincial
+clinic billing ₱600** — at the very top of the 2–5% norm, and above it at ₱500.
+`pricing-model.js` prints the band at four fees for exactly this reason. **The
+pricing problem is regional, not global**, and the fix for it is a regional
+rung or a negotiated rate, not moving the whole ladder down.
+
+### The argument that actually works: hours, not percentages
+
+A Philippine PT earns [₱19,000–₱23,000 a month, about
+₱231/hour](https://ph.jobstreet.com/career-advice/role/physical-therapist/salary).
+
+- Solo at ₱3,450 costs **about 15 hours of therapist time a month**. It pays
+  for itself if it saves more than ~40 minutes of charting a day.
+- The gap to a ₱1,500 competitor is ₱1,950, or **8.4 hours a month**. That is
+  the real question a clinic owner is asking, and it is answerable — but only
+  with evidence from a working therapist, which is question 7 in Kim's test
+  email.
+- At ₱800 a visit, one extra patient a day is ₱17,600 a month. If the AI buys
+  back enough evening admin to add even one slot, the subscription is a
+  rounding error against it. **This is the pitch.** Do not lead with 3.3%.
 
 ## What the AI actually costs, by feature
 

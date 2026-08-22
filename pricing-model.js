@@ -369,6 +369,154 @@ for (const p of PLANS) {
     ` · sold out (${String(p.visits).padStart(4)} @6min) today ${gm(p.visits, 6, vi).padStart(4)} / Jan ${gm(p.visits, 6, v).padStart(4)}`);
 }
 
+/* ---------------------------------------------------------------------------
+   PRICE AS A SHARE OF WHAT THE CLINIC COLLECTS.
+
+   "What percent of collections is this?" is the sentence a clinic owner
+   actually evaluates a practice bill with, so the ladder has to be quotable in
+   it. The arithmetic is only as good as VISIT_FEE_PHP, which is why that is a
+   constant with a sensitivity table under it rather than a number asserted in
+   prose — it is the single input that moves the whole argument.
+
+   AND IT WAS WRONG HERE UNTIL 2026-08-21. PRICING.md and the repricing commit
+   both said the new ladder "sits at 2.9-3.9% of a clinic's collections". It
+   does not, at any visit fee. The ladder's own spread is P26.54/P22.69 = 1.17x
+   and a 2.9-3.9% band is 1.34x, so no single fee can produce it. At P800 the
+   shipped ladder is 2.84-3.32%. The 2.1-2.4% quoted for the OLD ladder does
+   reproduce exactly at P800, so the METHOD was right and the result was
+   mis-transcribed. This matters commercially, not pedantically: 3.9% is at the
+   top of the 2-5% norm and 3.3% is in the middle of it, and the difference is
+   the whole of the "are we too expensive" question. */
+const VISIT_FEE_PHP = 800;
+
+const perVisitRate = (p) => p.php / p.visits;
+const shareOfCollections = (p, fee) => perVisitRate(p) / fee;
+
+console.log("\n=========== THE LADDER AS A SHARE OF COLLECTIONS ===========");
+console.log(`  (a clinic's collections = included visits x the fee it bills per visit)\n`);
+{
+  const fees = [600, 800, 1000, 1500];
+  console.log(`    plan       P/visit   ` + fees.map((f) => `@P${f}`.padStart(8)).join(""));
+  for (const p of PLANS) {
+    console.log(`    ${p.name.padEnd(9)} ${("P" + perVisitRate(p).toFixed(2)).padStart(7)}   ` +
+      fees.map((f) => `${(100 * shareOfCollections(p, f)).toFixed(2)}%`.padStart(8)).join(""));
+  }
+  const lo = Math.min(...PLANS.map((p) => shareOfCollections(p, VISIT_FEE_PHP)));
+  const hi = Math.max(...PLANS.map((p) => shareOfCollections(p, VISIT_FEE_PHP)));
+  console.log(`\n  At the P${VISIT_FEE_PHP} we assume, the shipped ladder spans ${(100 * lo).toFixed(2)}%-${(100 * hi).toFixed(2)}%.`);
+  console.log(`  It is quoted in PRICING.md as 2.9-3.9%. That is not this ladder — see the`);
+  console.log(`  comment above VISIT_FEE_PHP. The band is narrower and LOWER than claimed.`);
+}
+
+/* ---------------------------------------------------------------------------
+   CANDIDATE LADDERS, AUDITED AGAINST EVERY INVARIANT THE SUITE PINS.
+
+   Four rules constrain any ladder, and three of them are in
+   test/allowance.test.js rather than in anyone's judgement:
+
+     1. every rung must be CHEAPER PER VISIT than the one below it, or
+        upgrading buys capacity and no better price;
+     2. overage must make the next rung attractive BEFORE the current one runs
+        out — v1 + (p2-p1)/overage has to land inside v2, or a clinic sits on
+        overage paying more than a plan;
+     3. overagePerVisit / fairUseMinutesPerVisit must land within 0.5 of
+        overagePerMinute, and overagePerVisit must clear the ENTRY rung's own
+        per-visit rate;
+     4. and the thing no test can check: the margin has to survive a clinic
+        consuming everything it was sold.
+
+   Rule 1 has a consequence that is easy to miss and decides this question: you
+   cannot cut the entry rung on its own. Drop Solo to Group's per-visit rate and
+   Practice is suddenly the expensive rung, so every price above it has to come
+   down too. "Hold the entry rung low and leave the top alone" is not a ladder
+   this product can sell. --------------------------------------------------- */
+
+const CANDIDATES = [
+  {
+    label: "A — shipped today",
+    note: "2.84-3.32% of collections at P800",
+    plans: PLANS,
+  },
+  {
+    label: "B — the literal 2.5-3.5% band",
+    note: "entry rung AT 3.5%, top rung AT 2.5% — a WIDER band than today's",
+    plans: [
+      { name: "Solo",     php: 3640,  visits: 130 },
+      { name: "Practice", php: 6650,  visits: 260 },
+      { name: "Clinic",   php: 10450, visits: 450 },
+      { name: "Group",    php: 29000, visits: 1450 },
+    ],
+  },
+  {
+    label: "C — a real cut, 2.5-2.9%",
+    note: "what 'move the whole band down' actually costs",
+    plans: [
+      { name: "Solo",     php: 3000,  visits: 130 },
+      { name: "Practice", php: 5800,  visits: 260 },
+      { name: "Clinic",   php: 9550,  visits: 450 },
+      { name: "Group",    php: 29000, visits: 1450 },
+    ],
+  },
+];
+
+function auditLadder(c) {
+  const ps = c.plans;
+  console.log(`\n  ${c.label}  —  ${c.note}`);
+  console.log(`    plan       price     P/visit   % of collections   Jan margin typical / sold out`);
+  for (let i = 0; i < ps.length; i++) {
+    const p = ps[i];
+    const typical = Math.round(p.visits * 0.75);
+    const t = planMargin(p, typical, BLEND_MIN, RATES.list).gm;
+    const s = planMargin(p, p.visits, POOL_MIN_PER_VISIT, RATES.list).gm;
+    const delta = PLANS[i] ? p.php - PLANS[i].php : 0;
+    console.log(`    ${p.name.padEnd(9)} ${("P" + p.php.toLocaleString("en-US")).padStart(8)}` +
+      ` ${("P" + perVisitRate(p).toFixed(2)).padStart(9)}` +
+      ` ${((100 * shareOfCollections(p, VISIT_FEE_PHP)).toFixed(2) + "%").padStart(13)}      ` +
+      ` ${((100 * t).toFixed(0) + "%").padStart(4)} / ${((100 * s).toFixed(0) + "%").padStart(4)}` +
+      (delta ? `   (${delta > 0 ? "+" : "-"}P${Math.abs(delta).toLocaleString("en-US")})` : ""));
+  }
+  /* rule 1 */
+  let prev = Infinity, monotonic = true;
+  for (const p of ps) { if (perVisitRate(p) >= prev) monotonic = false; prev = perVisitRate(p); }
+  /* rule 2 */
+  let upgradesInTime = true, when = [];
+  for (let i = 0; i < ps.length - 1; i++) {
+    const be = ps[i].visits + (ps[i + 1].php - ps[i].php) / OVERAGE_VISIT_PHP;
+    when.push(`${ps[i + 1].name} wins at ${Math.round(be)}/${ps[i + 1].visits}`);
+    if (be >= ps[i + 1].visits) upgradesInTime = false;
+  }
+  /* rule 3 */
+  const overageClears = OVERAGE_VISIT_PHP > perVisitRate(ps[0]);
+  const ratesAgree = Math.abs(OVERAGE_MIN_PHP - OVERAGE_VISIT_PHP / POOL_MIN_PER_VISIT) <= 0.5;
+  /* rule 4 */
+  const worst = Math.min(...ps.map((p) => planMargin(p, p.visits, POOL_MIN_PER_VISIT, RATES.list).gm));
+  const row = (label, verdict, detail) =>
+    console.log(`    ${(label + " ").padEnd(38, ".")} ${verdict}${detail ? "   " + detail : ""}`);
+  const ok = (b) => (b ? "PASS" : "FAIL");
+  row("rung gets cheaper per visit", ok(monotonic));
+  row("overage forces a timely upgrade", ok(upgradesInTime), `(${when.join(" · ")})`);
+  row(`P${OVERAGE_VISIT_PHP} overage clears the entry rate`, ok(overageClears), `(P${OVERAGE_VISIT_PHP} vs P${perVisitRate(ps[0]).toFixed(2)})`);
+  row("overage rates agree with each other", ok(ratesAgree), `(P${OVERAGE_VISIT_PHP}/${POOL_MIN_PER_VISIT}min = P${(OVERAGE_VISIT_PHP / POOL_MIN_PER_VISIT).toFixed(2)}/min vs P${OVERAGE_MIN_PHP})`);
+  row("worst margin at full entitlement", `${(100 * worst).toFixed(0)}%`.padStart(4), worst < 0.5 ? "<-- under the 50% the shipped ladder holds" : "");
+  const mrr = ps.reduce((a, p) => a + p.php, 0), mrrA = PLANS.reduce((a, p) => a + p.php, 0);
+  if (c.plans !== PLANS) row("one clinic on each rung", `P${mrr.toLocaleString("en-US")}/mo`, `vs P${mrrA.toLocaleString("en-US")} today  (${(100 * (mrr / mrrA - 1)).toFixed(1)}%)`);
+}
+
+console.log("\n=========== 2.9-3.9% vs 2.5-3.5%: THE LADDERS SIDE BY SIDE ===========");
+console.log("  (margins at the January 2027 Gemini rate — the hard case)");
+for (const c of CANDIDATES) auditLadder(c);
+
+/* The floor, stated once so it can be argued with rather than assumed. Below
+   ~60% gross margin this stops being a software business at this scale: there
+   is no room left for the support, sales and R&D a clinic-facing EMR needs out
+   of the same peso, and every point of it is bought back only by volume this
+   market does not have. The column that decides it is "sold out", not
+   "typical" — a clinic using what it PAID FOR must still clear the floor. */
+const GM_FLOOR = 0.60;
+console.log(`\n  The floor: ${(100 * GM_FLOOR).toFixed(0)}% at typical use, and the shipped ladder holds 50-55% even`);
+console.log(`  when every visit and every dictation minute sold is consumed. Any ladder whose`);
+console.log(`  SOLD-OUT column drops under ~45% is one bad usage month from unprofitable.`);
+
 console.log("\n=========== WHAT THE DICTATION METER IS PROTECTING ===========");
 console.log(`  30 min of mic-on, gate OFF (before yesterday):           ${peso(30 * STT_PER_MIN)}`);
 console.log(`  30 min mic-on, gated, quiet room:                        ${peso(0)} — nothing is submitted, so nothing is billed`);
