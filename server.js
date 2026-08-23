@@ -1100,7 +1100,23 @@ const CLIENT_FILES = new Set([
   // the scripts index.html loads, in order
   "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/app.js", "/sync.js",
   "/boot.js",   // service-worker registration; a file so the CSP can forbid inline script
+  // The public legal pages. Plain HTML with no script and no sign-in, because
+  // Google's OAuth consent screen links to them and they have to be readable by
+  // anyone — including a crawler — without the app booting first.
+  "/legal/privacy.html", "/legal/terms.html",
 ]);
+
+/* Pretty, stable addresses for the two public documents.
+
+   These URLs are quoted on the Google OAuth consent screen, so they must not
+   change and must not depend on the single-page app's hash router. Note that
+   /privacy here is NOT the in-app "#/privacy" screen: that one is the clinic's
+   own ACTIVITY LOG, which names staff and the charts they opened and must never
+   be public. This is the policy document only. */
+const PUBLIC_PAGES = {
+  "/privacy": "/legal/privacy.html",
+  "/terms": "/legal/terms.html",
+};
 const CLIENT_DIRS = ["/icons/", "/assets/", "/marketing-screenshots/"];
 const isClientAsset = (webPath) =>
   CLIENT_FILES.has(webPath) || CLIENT_DIRS.some((d) => webPath.startsWith(d));
@@ -2142,7 +2158,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     /* ---------- static app ---------- */
-    let file = url.pathname === "/" ? "/index.html" : url.pathname;
+    let file = PUBLIC_PAGES[url.pathname]
+      || (url.pathname === "/" ? "/index.html" : url.pathname);
     file = path.normalize(file).replace(/^(\.\.[/\\])+/, "");
     const full = path.join(ROOT, file);
     const rel = path.relative(ROOT, full);

@@ -964,7 +964,10 @@
     <p>Already set up? Sign in with the account your administrator approved.<br>
       New here? Ask for an account from the same screen — or talk to us about setting up your clinic.</p>
     <button class="btn primary lp-cta-btn" id="lpStart2">Sign in</button>
-    <div class="lp-foot">TheraChart EMR · ${facility}</div>
+    <div class="lp-foot">TheraChart EMR · ${facility}
+      <span class="lp-foot-sep">·</span><a href="/privacy">Privacy Policy</a>
+      <span class="lp-foot-sep">·</span><a href="/terms">Terms of Service</a>
+    </div>
   </section>
 </div>
 ${walkthroughMarkup()}`;

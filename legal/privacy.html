@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — TheraChart</title>
+<meta name="description" content="How TheraChart handles clinic and patient information.">
+<style>
+  :root{
+    --bg:#f7faf9; --card:#ffffff; --ink:#1f2933; --muted:#52606d;
+    --line:#dfe3e8; --brand:#0b6b62; --accent:#eefaf8;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1715; --card:#161f1d; --ink:#e6edeb; --muted:#9fb0ab;
+           --line:#26332f; --brand:#5fd3c4; --accent:#12211f; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 80px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .logo{width:34px;height:34px;border-radius:9px;background:var(--brand);color:#fff;
+    display:grid;place-items:center;font-weight:700;font-size:17px;flex:none}
+  .brand{font-weight:700;font-size:18px;letter-spacing:-.01em}
+  .brand em{font-style:normal;color:var(--brand)}
+  h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:22px 0 6px}
+  .eff{color:var(--muted);font-size:14px;margin:0 0 26px}
+  h2{font-size:19px;margin:34px 0 10px;letter-spacing:-.01em}
+  h3{font-size:16px;margin:22px 0 6px}
+  p,li{color:var(--ink)}
+  ul{padding-left:20px}
+  li{margin:6px 0}
+  a{color:var(--brand)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:22px 0}
+  .lede{font-size:17px;color:var(--muted)}
+  .keyrow{display:flex;gap:10px;align-items:flex-start;margin:10px 0}
+  .keyrow b{flex:none;min-width:0}
+  footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:14px}
+  footer a{margin-right:16px}
+  code{background:var(--accent);padding:1px 5px;border-radius:4px;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">T</div>
+  <div class="brand">Thera<em>Chart</em></div>
+</header>
+
+<h1>Privacy Policy</h1>
+<p class="eff">Last updated 22 August 2026</p>
+
+<p class="lede">TheraChart is an electronic medical record for physical therapy clinics.
+This page explains, in plain language, what information the service holds, where it is
+kept, who can reach it, and what leaves the clinic.</p>
+
+<div class="card">
+  <div class="keyrow"><b>The short version.</b></div>
+  <ul style="margin:0">
+    <li>A clinic's records belong to that clinic. We hold them on the clinic's behalf.</li>
+    <li>No clinic can see another clinic's records. Neither can we, through the application.</li>
+    <li>There are <b>no cookies, no advertising and no third-party analytics</b> anywhere in the product.</li>
+    <li>Dictation audio is discarded as soon as it is transcribed, unless a clinic deliberately turns on consented review.</li>
+    <li>A clinic can export everything, or erase everything, without asking us.</li>
+  </ul>
+</div>
+
+<h2>Who we are</h2>
+<p>TheraChart is operated by Amador Moriles. For any question about this policy, or about
+information the service holds, write to
+<a href="mailto:amador.moriles@gmail.com">amador.moriles@gmail.com</a>.</p>
+<p>When a clinic uses TheraChart to keep patient records, the <b>clinic</b> decides what is
+recorded and why; we process that information on the clinic's instructions in order to
+provide the service.</p>
+
+<h2>What the service holds</h2>
+<h3>Information a clinic enters</h3>
+<ul>
+  <li><b>Patient records</b> — identity and contact details, clinical history, examination
+      findings and measurements, visit notes, plans of care, appointments, billing lines,
+      and any files the clinic uploads such as referrals or imaging.</li>
+  <li><b>Staff accounts</b> — name, email address, role, and professional licence number and
+      expiry where the role requires one.</li>
+</ul>
+
+<h3>Information created by using the service</h3>
+<ul>
+  <li><b>An activity log</b> — sign-ins, charts opened, notes signed and amendments made,
+      with who did it and when. This exists so a clinic can answer "who opened this chart?".</li>
+  <li><b>Dictation audio and transcripts</b> — see <a href="#dictation">Voice dictation</a>.</li>
+  <li><b>Usage counts</b> — tokens and audio seconds consumed, so a clinic can see what it
+      has spent. These are counts, not content.</li>
+</ul>
+
+<h3>If you sign in with Google</h3>
+<p>Google returns your <b>email address, name and Google account identifier</b>. We use them
+only to identify you and to match you to an approved account. We do not receive your Google
+password, and we ask for no access to your Gmail, Drive, Contacts or any other Google
+service — the sign-in requests basic profile information and nothing more.</p>
+
+<h2>Where the information is kept</h2>
+<p>TheraChart runs on <b>Google Cloud</b>, under a data protection agreement we have signed
+and hold, covering every service a record touches: Cloud Run, Cloud SQL, Cloud Storage,
+Speech-to-Text and Vertex AI. That agreement binds Google as a processor and limits what
+the data may be used for.</p>
+<ul>
+  <li>Records live in an <b>encrypted managed PostgreSQL database</b>, encrypted in transit
+      and at rest, reachable only by this application and never directly over the internet.</li>
+  <li>Uploaded files are kept in <b>Google Cloud Storage</b> and are streamed back only to a
+      signed-in member of the owning clinic.</li>
+  <li>Unless a clinic arranged otherwise at setup, the application and database run in a
+      <b>United States</b> region. For a clinic in the Philippines this means records are
+      stored and processed outside the country. A Singapore region is available instead;
+      a clinic administrator can confirm which one applies.</li>
+</ul>
+
+<h2>Keeping clinics apart</h2>
+<p>Every record carries the clinic it belongs to, and every read is filtered by the signed-in
+user's clinic <b>on the server</b> — not hidden in the page, where a determined browser could
+work around it. There is no account, including ours, that can open another clinic's charts
+through the application.</p>
+
+<h2 id="dictation">Voice dictation</h2>
+<p>When a clinician dictates, the audio streams to <b>Google Cloud Speech-to-Text</b>, which
+returns text. It is a paid Google Cloud service under the agreement above — not a consumer
+speech service.</p>
+<ul>
+  <li><b>By default the audio is held only in memory and discarded</b> once it has been
+      transcribed. Only the transcript is saved to the chart.</li>
+  <li>Silence is dropped on the device before anything is sent.</li>
+  <li>A clinic may turn on <b>session-audio review</b>, which is <b>off by default</b>. It
+      briefly keeps dictation audio, <b>only for patients who have consented</b>, so a
+      clinician can replay it to check the transcript. Kept audio is deleted when the note is
+      signed, or at the end of the clinic's retention window, whichever comes first. The
+      patient's consent is recorded in their chart.</li>
+</ul>
+
+<h2>Artificial intelligence</h2>
+<p>Where a clinic has AI features enabled, pressing <b>Review &amp; clean up</b>, asking for
+insights, using the patient assistant, or importing a scanned document sends the
+<b>text</b> — never the audio — to <b>Google Gemini on Vertex AI</b>.</p>
+<ul>
+  <li>That text can include a patient's name and clinical detail. It is health information
+      being sent out of the clinic's region for processing, and we say so plainly rather
+      than bury it.</li>
+  <li>Under Google's Vertex AI service terms, customer prompts and responses are
+      <b>not used to train Google's models</b> and are not sold.</li>
+  <li>The AI only ever suggests. Nothing enters a chart until a licensed clinician has
+      reviewed it and signed.</li>
+  <li>Where no AI is connected, no clinical text leaves the clinic for AI processing at all,
+      and those features are switched off rather than approximated.</li>
+</ul>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>We do not sell or rent information to anyone, ever.</li>
+  <li>We do not use patient information for advertising.</li>
+  <li>We do not use a clinic's records to train our own models.</li>
+  <li><b>There are no cookies</b>. A signed-in session is a token held in your own browser's
+      storage, which is cleared when you sign out.</li>
+  <li>There is <b>no third-party analytics, tracking or advertising code</b> in the product.
+      No Google Analytics, no tag managers, no social pixels, no session recorders.</li>
+</ul>
+
+<h2>Who can see what</h2>
+<ul>
+  <li>Everyone signs in with their own account and sees only what their role needs.</li>
+  <li>Expired licences and voided accounts lose access automatically.</li>
+  <li>Signed documents lock. A later change needs a signed, authorised amendment, and the
+      original stays readable.</li>
+  <li>Notable actions, including reads, are written to the clinic's activity log.</li>
+  <li>Our own access is limited to what is needed to operate and support the service, and we
+      do not open clinical records except at a clinic's request or where the law requires it.</li>
+</ul>
+
+<h2>How long information is kept</h2>
+<p>Clinical records are kept for as long as the clinic keeps using the service, because a
+medical record is meant to persist — retention periods for health records are set by the
+clinic's own regulator, not by us. A clinic can erase everything at any time. Dictation audio
+is the exception and is deleted as described above.</p>
+
+<h2>A clinic's control over its own data</h2>
+<ul>
+  <li><b>Export backup</b> takes the whole record set out in an open format.</li>
+  <li><b>Erase all data</b> removes it.</li>
+</ul>
+<p>Neither needs our permission and neither is throttled. There is no lock-in.</p>
+
+<h2>Individual rights</h2>
+<p>If you are a patient and want to know what a clinic holds about you, to correct it, or to
+have it erased, contact <b>the clinic that treated you</b> — the records are theirs and they
+are the ones who can act on the request. We will support them in doing so. Depending on where
+you live, laws such as the Philippine Data Privacy Act (RA 10173) give you those rights
+directly.</p>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes in a way that affects how information is handled, the date at the
+top changes and clinic administrators are told. A privacy page that has drifted out of date
+is worse than none, so we would rather over-communicate.</p>
+
+<h2>Contact</h2>
+<p>Questions, concerns or requests:
+<a href="mailto:amador.moriles@gmail.com">amador.moriles@gmail.com</a>.</p>
+
+<footer>
+  <a href="/">TheraChart</a>
+  <a href="/terms">Terms of Service</a>
+  <a href="mailto:amador.moriles@gmail.com">Contact</a>
+</footer>
+
+</div>
+</body>
+</html>
