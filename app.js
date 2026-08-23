@@ -289,7 +289,14 @@
   /* ---------------- router ---------------- */
 
   let activeDictation = null; // stop mic when leaving a document
-  let showLogin = false; // logged-out: false → marketing landing, true → login form
+  /* Logged-out: which of the two pages to draw. THREE states, not two:
+       null  → no explicit choice yet; fall back to the heuristic in render()
+       true  → the visitor asked for the sign-in form
+       false → the visitor asked for the landing (pressed "← Back")
+     It was a plain boolean, and `false` was indistinguishable from "never
+     chose" — so render() reached knowsAnAccount() either way and drew the form
+     straight back over the landing the visitor had just asked for. */
+  let showLogin = null;
 
   /* Has anyone ever signed in on this browser? That, and not "has been here
      before", is what decides whether a logged-out visitor sees the marketing
@@ -330,6 +337,20 @@
      Deliberately a list of routes rather than "any hash": a leftover #pricing
      from the landing page is not a request to sign in. */
   const APP_ROUTES = /^#\/(dashboard|drafts|patients|patient|intake|doc|calendar|privacy|facility|clinics|profile)\b/;
+
+  /* The sign-in card has its own address so the BROWSER's Back button works on
+     it. Landing and login are one page swapping its contents, so without a hash
+     of its own nothing is pushed onto history — pressing Back on the sign-in
+     screen left the site altogether instead of returning to the pitch. Not in
+     APP_ROUTES: those are screens that need an account, and this is the door. */
+  const SIGNIN_ROUTE = "#/signin";
+
+  /* Both directions go through the hash, so ONE mechanism drives the in-app
+     "← Back", the browser's Back button and a typed URL alike. Each guards the
+     no-op case: assigning the hash it already has fires no hashchange, so the
+     repaint has to be asked for directly or the screen freezes on the old one. */
+  const goSignIn = () => { if (location.hash !== SIGNIN_ROUTE) location.hash = SIGNIN_ROUTE; else render(); };
+  const goLanding = () => { if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); };
 
   const NAV = [
     // `short` is the compact label used in the mobile bottom tab bar.
@@ -373,7 +394,14 @@
     // flips to the login form. A browser that has signed in before, or a deep
     // link into an app screen, goes straight to sign-in instead.
     if (!user) {
-      return (showLogin || knowsAnAccount() || APP_ROUTES.test(location.hash || "")) ? renderLogin() : renderLanding();
+      /* An explicit "← Back" outranks knowsAnAccount(). That flag is a GUESS
+         about which page this visitor wants; a click is them saying it. A deep
+         link into an app route still wins over both, because those screens
+         cannot be drawn logged out — the form is the only honest answer. */
+      const deepLink = APP_ROUTES.test(location.hash || "");
+      if ((location.hash || "") === SIGNIN_ROUTE) return renderLogin();
+      if (showLogin === false && !deepLink) return renderLanding();
+      return (showLogin || knowsAnAccount() || deepLink) ? renderLogin() : renderLanding();
     }
     rememberAccount(); // signed in here at least once — see LS_KNOWN
     // New hires and admin-reset accounts must set their own password before doing anything.
@@ -940,7 +968,7 @@
   </section>
 </div>
 ${walkthroughMarkup()}`;
-    const go = () => { showLogin = true; render(); };
+    const go = () => { showLogin = true; goSignIn(); };
     ["lpSignIn", "lpStart", "lpStart2"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener("click", go);
@@ -1043,8 +1071,7 @@ ${walkthroughMarkup()}`;
        render() as well painted the sign-in card twice — the second pass ran
        after the one-shot note had already been consumed, so the "you've left
        the demo" line and the remembered email flashed and vanished. */
-    if (location.hash && location.hash !== "#/") location.hash = "#/";
-    else render();
+    goSignIn();
   }
 
   /* Kept in step with the server's own cap in /api/bug-report. */
@@ -1519,7 +1546,7 @@ ${walkthroughMarkup()}`;
     document.getElementById("wtPrev").addEventListener("click", () => show(at - 1));
     document.getElementById("wtNext").addEventListener("click", () => {
       // the last step hands straight over to signing in — the whole point
-      if (at === WALKTHROUGH.length - 1) { close(); showLogin = true; render(); return; }
+      if (at === WALKTHROUGH.length - 1) { close(); showLogin = true; goSignIn(); return; }
       show(at + 1);
     });
     dots.forEach((d) => d.addEventListener("click", () => show(Number(d.dataset.wtGo))));
@@ -1729,7 +1756,7 @@ ${walkthroughMarkup()}`;
     }
 
     const back = document.getElementById("backToLanding");
-    if (back) back.addEventListener("click", () => { showLogin = false; if (location.hash && location.hash !== "#/") location.hash = "#/"; else render(); });
+    if (back) back.addEventListener("click", () => { showLogin = false; goLanding(); });
     if (googleClientId) mountGoogleButton(googleClientId);
     emailEl.focus();
   }
@@ -8473,7 +8500,16 @@ ${accessRequestsCard()}
   /* ================= boot ================= */
 
   window.TheraRender = render; // the sync layer re-renders after remote pulls
-  window.addEventListener("hashchange", () => { render(); });
+  window.addEventListener("hashchange", () => {
+    /* Logged out, the hash is the visitor's explicit choice, so it outranks the
+       remembered showLogin. Without this, Back from #/signin to #/ left
+       showLogin === true and render() drew the login card over the landing —
+       the browser moved but the screen did not. */
+    const h = location.hash || "";
+    if (h === SIGNIN_ROUTE) showLogin = true;
+    else if (h === "" || h === "#/") showLogin = false;
+    render();
+  });
   // remember scroll position per screen so Back returns you where you were
   window.addEventListener("scroll", () => { scrollMem[location.hash || "#/dashboard"] = window.scrollY; }, { passive: true });
   render();
