@@ -93,6 +93,24 @@ if gcloud secrets describe "$SECRET" --project "$PROJ" >/dev/null 2>&1; then
 else
   printf '%s' "$DBURL" | gcloud secrets create "$SECRET" --data-file=- --project "$PROJ"
 fi
+
+# Every deploy rotates the password and adds a version, and Secret Manager bills
+# ~US$0.06 per ACTIVE version per month. Nothing pruned them, so 59 had piled up
+# by 2026-09-04 — ~US$3.50/mo, more than the stopped database was costing. Only
+# ":latest" is ever mounted (see --set-secrets below) and each rotation
+# invalidates the password every older version holds, so anything below the
+# newest two is dead weight. One prior version is kept as a rollback cushion.
+SECRET_KEEP="${SECRET_KEEP:-2}"
+STALE="$(gcloud secrets versions list "$SECRET" --project "$PROJ" \
+           --filter="state=ENABLED" --sort-by="~createTime" \
+           --format="value(name)" 2>/dev/null | tail -n +$((SECRET_KEEP + 1)) || true)"
+for V in $STALE; do
+  if gcloud secrets versions destroy "$V" --secret="$SECRET" --project "$PROJ" \
+       --quiet >/dev/null 2>&1; then
+    echo "    destroyed superseded secret version $V"
+  fi
+done
+
 unset DBPASS DBURL
 
 echo "==> 5/6  Ensuring the attachments bucket + service-account roles…"

@@ -45,11 +45,22 @@ export DATABASE_URL="postgresql://therachart:localdev@localhost:5432/therachart"
 # cache lapses, so a long session never loses AI or dictation. Nothing
 # long-lived is written to disk (service-account keys are disabled by org
 # policy on this project anyway).
-if [ -n "$GCLOUD" ] && "$GCLOUD" auth print-access-token >/dev/null 2>&1; then
+# THERACHART_NO_AI=1 keeps the cloud AI off even when gcloud is signed in.
+# Vertex and Speech-to-Text bill per use from your own project whether the
+# server is local or deployed, so this is the switch to flip while the project
+# is parked on a cost hold. The AI features then report "unavailable" rather
+# than substituting the heuristic — that is deliberate, see the comment above
+# the fallback in ai.js. Dictation drops to the browser speech engine. Charting,
+# scheduling, e-sign and everything else are unaffected.
+if [ -n "${THERACHART_NO_AI:-}" ] && [ "${THERACHART_NO_AI}" != "0" ]; then
+  echo "AI off (THERACHART_NO_AI) — review/insights/assistant report unavailable; no Vertex or STT charges."
+elif [ -n "$GCLOUD" ] && "$GCLOUD" auth print-access-token >/dev/null 2>&1; then
   export GCP_PROJECT="therachart-prod"
   export GEMINI_VERTEX=1
   export GCP_USE_GCLOUD=1
   export GCLOUD_PATH="$GCLOUD"
+  echo "AI on — Vertex Gemini + Speech-to-Text bill per use to therachart-prod."
+  echo "   Run with THERACHART_NO_AI=1 ./start.sh to work without those charges."
 else
   echo "⚠️  Not signed in to gcloud — starting without Vertex AI or Cloud dictation."
   echo "   Run: gcloud auth login"
