@@ -33,10 +33,16 @@ function lift(decl) {
   return SRC.slice(start, end + 5);
 }
 
-/* A stand-in store holding one patient's documents. chartReviewKey and
-   reviewMissesDraft both read S.docsFor(), and nothing else. */
+/* A stand-in store holding one patient's documents. chartReviewKey reads
+   S.docsFor() and S.patientPrecautions(); reviewMissesDraft reads the first
+   alone. patientPrecautions mirrors the real one, including the fallback to
+   the pre-rename `allergies` key. */
 let DOCS = [];
-const S = { docsFor: () => DOCS };
+const S = {
+  docsFor: () => DOCS,
+  patientPrecautions: (p) =>
+    String((p && (p.precautions != null ? p.precautions : p.allergies)) || "").trim(),
+};
 
 const M = new Function("S",
   lift("  function chartReviewKey(") + "\n" +
@@ -50,7 +56,7 @@ const check = (name, cond, detail) => {
   else failures.push(`✗ ${name}${detail ? `\n    ${detail}` : ""}`);
 };
 
-const PATIENT = { id: "p1", dob: "1980-04-02", sex: "F", referringPhysician: "Dr Cruz", pmh: "HTN", allergies: "" };
+const PATIENT = { id: "p1", dob: "1980-04-02", sex: "F", referringPhysician: "Dr Cruz", pmh: "HTN", precautions: "" };
 const doc = (over) => Object.assign({
   id: "d1", type: "daily", status: "draft",
   createdAt: "2026-08-20T01:00:00.000Z", _mod: "2026-08-20T01:00:00.000Z",

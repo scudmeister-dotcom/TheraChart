@@ -47,6 +47,30 @@ Sign in with any demo account (PIN **1234**):
 | Ana Dela Cruz | Front desk | Intake + scheduling, no clinical docs |
 | Grace Lim, PT | Admin | Facility settings, staff licenses |
 
+## Two ways to hold the microphone
+
+**Aim it at a section.** Every narrative box on a note carries its own
+**🎤 Dictate** button. Press the one on *Subjective* and what you say goes into
+Subjective — not wherever the classifier decides it belongs. The dictation bar
+says where the mic is pointed for as long as it is open, and pressing another
+section's button re-aims the same microphone rather than opening a second one.
+
+This answers the failure that costs the most time: when automatic filing puts
+a sentence in the wrong section, finding it and moving it costs more than
+typing the note would have — and it is wrong most often on the one question it
+cannot see, whether a line is the patient's report or the therapist's
+observation. A therapist holding the mic at a section has already answered
+that, so a stated target skips the classifier rather than being fed to it as
+one more hint.
+
+**Or let it roam.** The **Listen & dictate live** button in the dictation bar
+is unchanged, and still the right tool while the patient is talking and nobody
+is holding a screen: it routes sentence by sentence into every section a spoken
+paragraph touches. Measurements, body-map pins and outcome scores are extracted
+the same way whichever button is open — and a value that reached a table is
+never also written into the prose, so one finding can't sit in two places free
+to disagree.
+
 ## The core feature: talk → chart
 
 Open a patient, start a **Daily note / Evaluation / Progress report**, press
@@ -73,32 +97,67 @@ all three languages at once):
   An expired license or voided access automatically blocks the EMR and all
   document creation/editing/signing.
 - **Patient intake** (front desk) — personal info, referring physician,
-  **allergies**, **emergency contact**, insurance/payment, and the
-  **visit authorisation** (visits approved, expiry, reference). Allergies show
-  on the patient banner from every screen; visits used are counted from the
-  chart, and the app warns before an authorisation runs out or expires.
+  **precautions**, **emergency contact**, insurance/payment, and the
+  **visit authorisation** (visits approved, expiry, reference, guarantee
+  letter number, date the documents were submitted). Precautions carry
+  everything anyone must know before treating — drug reactions, weight-bearing
+  status, fall risk, a contraindicated modality — and show on the patient
+  banner from every screen; they are edited in place on the chart's Info tab.
+  Visits used are counted from the chart, the app warns before an
+  authorisation runs out or expires, and an **attendance record** for the
+  insurer prints every documented visit straight from the chart.
 - **Plan-of-care goals** — short- and long-term goals with a baseline, a
   target and a **target date**, set at the evaluation and reviewed in every
   progress report. Overdue goals surface on the chart's Needs-attention list.
+  The note **suggests goals from what it just measured** — a 3/5 muscle grade
+  prompts "4/5", a restricted range prompts the patient's own other side, a
+  7/10 pain prompts one NPRS MCID lower, an outcome score prompts one of its
+  MCID. Each prompt shows the rule that produced it, and pressing one **fills
+  the form rather than adding the goal**: a goal is a clinical commitment, and
+  nothing writes one for you.
 - **Outcome measures** — LEFS, DASH/QuickDASH, NDI, ODI, NPRS, PSFS, ABC and
   TUG, recorded per visit and **trended across the episode against each tool's
-  MCID**, so a change is reported as clinically meaningful or not.
-- **Billing** — a CPT charge sheet on every visit with treatment minutes and
-  units. Units are checked live against Medicare's **8-minute rule**: the app
-  says when a claim is over-billed, under-billed, or a couple of minutes short
-  of another unit, and can pre-fill the codes from the treatment text.
+  MCID**, so a change is reported as clinically meaningful or not. Each
+  questionnaire can be scored **item by item** rather than as one total: open
+  its answer sheet, enter what the patient marked, and the app applies the
+  instrument's own formula (sum, percentage, mean, or the DASH transform). A
+  part-filled form says so and is never reported as the instrument's score.
+  TheraChart holds each instrument's **structure and scoring, not its licensed
+  wording** — the clinic reads its own copy of the form alongside — except
+  PSFS, whose activities the patient names at the visit.
+- **Billing** — a charge sheet on each **daily treatment note**, billing the
+  clinic's own catalogue: PT/OT/ST initial evaluations and basic therapy in
+  the clinic, at home and inpatient (`PT01`–`PT06`, `OT01`–`OT06`,
+  `ST01`–`ST06`), plus the `A01`–`A04` equipment add-ons. A line is a code and
+  a number of units; the sheet totals to a **peso subtotal**. Prices are per
+  clinic and set by an **administrator with billing access** — they start
+  empty, and a code with no price is left out of the subtotal rather than
+  counted as free. The price is stamped onto each line as it is entered, so a
+  signed note keeps the money it was signed for when the price list moves.
+- **Doctor's communication log** — what the referring physician said and
+  when: a phone call, a letter carried in by the patient, a new order. An
+  **order stays outstanding on the chart until a clinician marks it actioned**,
+  which is the whole reason for writing it down. Anyone with chart access can
+  log one — the front desk is usually who takes the call — but signing off
+  that an order was carried out takes a licence.
 - **Patient center** — demographics, insurance, uploaded referrals/X-rays,
   and every therapy document (daily notes, evaluations, progress reports,
-  discharges). **Print or export the whole chart as a PDF.**
+  discharges). **Print or export the whole chart as a PDF.** The Files tab
+  takes a **photo straight from the device camera** — a wound, a posture, a
+  home setup — into the chart, so a patient's photograph never has to sit in
+  somebody's camera roll first. It is filed with the date and time it was
+  taken rather than as another `image.jpg`.
 - **Daily treatment notes** — a full SOAP note: subjective, treatment summary,
   objective measurements (voice-filled), assessment and plan, therapist name +
   time, **e-sign & lock**. Dictation is routed **sentence by sentence**, so one
   spoken paragraph fills every section it touches at once. Later edits require
   a signed amendment with an authorization reason.
 - **Evaluations** — full section set with voice auto-filing; e-sign & lock.
-- **Progress reports** — flagged automatically after the Nth visit
-  (facility-configurable, default 5); carries the evaluation's subjective
-  baseline forward; e-sign & lock.
+- **Progress reports** — written on demand, at whatever point in the episode
+  calls for one; carries the evaluation's subjective baseline forward; e-sign
+  & lock. The chart always shows how many visits in you are (every N visits,
+  facility-configurable, default 5); a clinic that wants to be **chased**
+  about it turns the reminder on in Facility Admin — it is off by default.
 - **Calendar** — facility-wide day grid of open slots, booking with
   creator/change history recorded, automatic reminders (3 days before +
   morning-of; simulated in this on-device build), per-therapist or full
@@ -119,6 +178,27 @@ Tagalog** (the default) or **English & Cebuano**. Each sends a single language
 code (`fil-PH` / `ceb-PH`) — Chirp 2 refuses a list of codes, and doesn't need
 one: it's a universal model that transcribes code-switched Taglish under the PH
 code, which is the point of the pairs.
+
+**The clinical vocabulary is boosted at the source.** Chirp 2 has never seen a
+physiotherapy chart, so it picks the ordinary English word over the
+abbreviation every time — `MMT` comes back as "MPT", `AROM` as "a ROM", `therex`
+as "there ex". The server sends a short **phrase-adaptation** list with each
+request (`MMT`, `AROM`, `PROM`, `goniometer`, the special-test names…) so the
+clinical reading wins. Chirp 2's feature support varies by region, so the list
+is probed once: if Google rejects it, the server says so in the log and
+transcribes without it from then on rather than failing or retrying every
+segment. A second, deterministic pass repairs the same handful of known
+misreadings in the recogniser's **output**, each one guarded by the words
+around it — "MPT" becomes `MMT` next to a muscle grade and stays "MPT" next to
+a therapist's name. The dictation bar names any word it changed.
+
+**Automatic gain control is off.** It is every browser's default and it is
+wrong in a clinic: it raises the microphone whenever the room goes quiet, which
+is exactly when the only thing left to amplify is the conversation at the next
+plinth — so a therapist pausing to think got the room brought up to meet them.
+It also moves the signal level `voiceGate()` measures, underneath the gate, on
+its own schedule. Echo cancellation and noise suppression stay on; both are
+narrow-band and neither rescales speech the way AGC does.
 
 **There is no English-only choice**, and that's measured rather than assumed. On
 a 148-word clinical script, `en-US` beats the PH codes only on *American*-accented
@@ -295,12 +375,12 @@ checked offline:
 node test/tenancy.test.js  # 73 checks: clinic isolation, authorization, asset exposure
 node test/workflow.test.js # 20 checks: a clinical journey across two synced devices
 node test/migration.test.js # 18 checks: today's code reading a pre-tenancy database
-node test/parser.test.js   # 82 checks: EN/TL/CEB parsing, measurements, classifier
+node test/parser.test.js   # 222 checks: EN/TL/CEB parsing, measurements, AROM/PROM, dictation repair
 node test/store.test.js    # 29 checks: licenses, e-sign locking, amendments, calendar
 node test/merge.test.js    # 13 checks: offline merge never loses records
 node test/refine.test.js   # 30 checks: speaker split, sections, measurements
 node test/insights.test.js # 15 checks: connections, red flags, recommendations
-node test/clinical.test.js # 84 checks: 8-minute rule, MCID trending, goal dates
+node test/clinical.test.js # 160 checks: service catalogue, outcome item scoring, goal prompts, MCID trending
 node test/import.test.js   # 38 checks: PDF-record extraction, history digest, imported docs
 ```
 
@@ -388,9 +468,10 @@ OCR. Handwritten fixtures are **advisory** — reported, never gating.
 - `parser.js` — multilingual body-part lexicon, symptom summarizer,
   measurement extraction, section classifier, speaker split + local refiner,
   coordinate-by-name (saved findings re-pin to the current mannequin)
-- `clinical.js` — billing rules (CPT catalogue, 8-minute rule), outcome-measure
-  catalogue and MCID trending, plan-of-care goal dates — DOM-free and checked
-  offline
+- `clinical.js` — billing (the clinic's service catalogue and the visit
+  subtotal; the legacy CPT catalogue and 8-minute rule are still exported and
+  tested but no longer reachable from the UI), outcome-measure catalogue and
+  MCID trending, plan-of-care goal dates — DOM-free and checked offline
 - `store.js` — on-device data layer: users, patients, documents, calendar,
   audit log, license gating
 - `app.js` — application: routing, views, dictation, body maps, printing

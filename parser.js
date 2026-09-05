@@ -393,6 +393,87 @@
   }
 
   /* ---------------------------------------------------------------- *
+   *  Speech-recognition repair
+   *
+   *  Chirp 2 is a general model. It has never seen a physiotherapy chart,
+   *  so a handful of abbreviations come back wrong the same way every time
+   *  — and always as a real English word, which is why they survive to the
+   *  note looking like something the therapist meant to say.
+   *
+   *  This runs on the recogniser's OUTPUT, before that output becomes the
+   *  transcript. It is not an edit to the record: the record is whatever
+   *  transcription we settled on, and this is part of settling on one. The
+   *  patient's words are not touched — every entry below rewrites an
+   *  abbreviation the CLINICIAN dictates, never a symptom or a complaint.
+   *
+   *  Every rule is guarded by the words around it, because each wrong
+   *  reading is a legitimate English word somewhere else: an unguarded
+   *  "empty" -> "MMT" would rewrite an empty bladder. A rule that cannot be
+   *  guarded tightly does not go in the list — leaving a therapist to fix
+   *  one word costs less than silently rewriting the right one.
+   * ---------------------------------------------------------------- */
+
+  /* Written as [wrong, right, guard]. The guard must match the SAME text,
+     and is what separates the clinical reading from the ordinary one. */
+  const DICTATION_FIXES = [
+    /* Kim's field test, both directions of the same failure. "MMT" is heard
+       as "MPT" — which is also a real credential (Master of Physical
+       Therapy), so it is only corrected next to a muscle grade or the word
+       strength, never next to a therapist's name. */
+    [/\bM\.?\s?P\.?\s?T\b/g, "MMT",
+      /\b(?:strength|grade[ds]?|lakas|kusog)\b|[0-5]\s*(?:out\s+of|over|\/)\s*5/i],
+    /* The same abbreviation with the letters said slowly, which is how a
+       therapist spells it when the first pass got it wrong. */
+    [/\b(?:em|m)\s+(?:pee|p)\s+(?:tee|t)\b/gi, "MMT",
+      /\b(?:strength|grade[ds]?)\b|[0-5]\s*(?:out\s+of|over|\/)\s*5/i],
+
+    /* AROM and PROM. The leading letter is unstressed, so "AROM shoulder
+       flexion" comes back as "a ROM" or "a rom", and PROM comes back as the
+       school dance. Guarded on a range-of-motion context, so an actual
+       promise and an actual prom are left alone. */
+    [/\ba[\s-]rom\b/gi, "AROM", /\b(?:rom|range of motion|flexion|extension|abduction|adduction|rotation)\b|\bdegrees?\b/i],
+    [/\bp[\s-]rom\b/gi, "PROM", /\b(?:rom|range of motion|flexion|extension|abduction|adduction|rotation)\b|\bdegrees?\b/i],
+    /* "prom" as one word only becomes PROM where the motion is explicitly
+       passive — "prom knee flexion" on its own is far likelier to be a
+       mis-heard "ROM" than a dance, but guessing between the two abbreviations
+       would put the wrong one in the chart. Passive has to be said. */
+    [/\bprom\b/g, "PROM", /\bpassive(?:ly)?\b/i],
+
+    /* "Ther-ex" is two syllables the model splits into words it knows. */
+    [/\b(?:there|their|the)\s+ex(?:ercise)?s?\b/gi, "therex",
+      /\b(?:did|performed|perform|completed|session|visit|reps?|sets?)\b/i],
+    [/\bther\s+ex\b/gi, "therex", null],
+
+    /* "HEP" (home exercise programme) is heard as "help", which reads as a
+       plausible sentence and so never looks wrong. Only corrected where a
+       programme is being reviewed or issued — never where somebody needs
+       help, which is the far commoner sentence in a clinic. */
+    [/\bhelp\b/gi, "HEP",
+      /\b(?:reviewed|issued|updated|progressed|compliance|adherence)\b/i],
+  ];
+
+  /**
+   * Repair known speech-recognition failures in one utterance.
+   * Returns { text, fixes: [{ from, to }] } — the fix list is reported so a
+   * caller can say what it changed rather than changing it silently.
+   */
+  function correctDictation(raw) {
+    let t = String(raw || "");
+    if (!t.trim()) return { text: t, fixes: [] };
+    const fixes = [];
+    for (const [wrong, right, guard] of DICTATION_FIXES) {
+      if (guard && !guard.test(t)) continue;
+      const re = new RegExp(wrong.source, wrong.flags);
+      t = t.replace(re, (hit) => {
+        if (hit === right) return hit;         // already correct; nothing to report
+        fixes.push({ from: hit, to: right });
+        return right;
+      });
+    }
+    return { text: t, fixes };
+  }
+
+  /* ---------------------------------------------------------------- *
    *  Clinical measurements (ROM, MMT, pain rating, special tests)
    * ---------------------------------------------------------------- */
 
@@ -616,8 +697,35 @@
       return t ? sideWord(t[1] || t[2] || t[3]) : null;
     };
 
-    const pushRom = (side, joint, motion, degrees) => {
-      const entry = { joint, motion, degrees };
+    /* ACTIVE vs PASSIVE. "AROM shoulder flexion 120" and "PROM shoulder
+       flexion 155" are two different findings about the same joint, and a
+       table that records only "shoulder flexion" collapses them into one
+       number that contradicts itself. The qualifier is stated once and then
+       governs the run that follows it — the same way the joint does — so it
+       is read from the nearest marker at or before the reading.
+
+       Left undefined when nobody said which, rather than defaulted to
+       active: an unqualified ROM is how most of them are dictated, and
+       labelling those "active" would put a word in the chart that the
+       therapist did not say. */
+    const ROM_QUALITY_RE = /\b(a\.?rom|active(?:\s+range(?:\s+of\s+motion)?)?|p\.?rom|passive(?:ly)?(?:\s+range(?:\s+of\s+motion)?)?)\b/gi;
+    const qualityMarks = [];
+    {
+      let q;
+      ROM_QUALITY_RE.lastIndex = 0;
+      while ((q = ROM_QUALITY_RE.exec(text)) !== null) {
+        qualityMarks.push({ at: q.index, quality: /^p/i.test(q[1]) ? "passive" : "active" });
+      }
+    }
+    const qualityBefore = (idx) => {
+      let found = null;
+      for (const qm of qualityMarks) { if (qm.at <= idx) found = qm.quality; else break; }
+      return found;
+    };
+
+    const pushRom = (side, joint, motion, degrees, at) => {
+      const quality = qualityBefore(at);
+      const entry = quality ? { joint, motion, degrees, quality } : { joint, motion, degrees };
       if (side === "both") rom.push({ side: "left", ...entry }, { side: "right", ...entry });
       else rom.push({ side, ...entry });
     };
@@ -632,7 +740,7 @@
       claimed.push([m.index, m.index + m[0].length]);
       if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
       pushRom(sideWord(m[1]) || trailSide(m.index + m[0].length),
-        normJoint(m[2]), normMotion(m[3]), degrees);
+        normJoint(m[2]), normMotion(m[3]), degrees, m.index);
     }
 
     // Pass 1b — the same reading with the joint AFTER the motion. Runs before
@@ -644,7 +752,7 @@
       const degrees = Number(m[4]);
       if (degrees > 180) continue;
       claimed.push([start, end]);
-      pushRom(sideWord(m[2]) || trailSide(end), normJoint(m[3]), normMotion(m[1]), degrees);
+      pushRom(sideWord(m[2]) || trailSide(end), normJoint(m[3]), normMotion(m[1]), degrees, start);
     }
 
     // Pass 2 — a motion with no joint of its own, inheriting the joint stated
@@ -660,7 +768,7 @@
         const anchor = anchorBefore(start) || anchorJustAfter(start);
         if (!anchor) continue;
         claimed.push([start, end]);
-        pushRom(sideWord(b[1]) || trailSide(end) || anchor.side, anchor.joint, normMotion(b[2]), degrees);
+        pushRom(sideWord(b[1]) || trailSide(end) || anchor.side, anchor.joint, normMotion(b[2]), degrees, start);
       }
     };
 
@@ -2026,6 +2134,8 @@
     coordForName,
     extractMeasurements,
     aggregateMeasurements,
+    correctDictation,
+    DICTATION_FIXES,
     classifyUtterance,
     guessSpeaker,
     reportedVoice,

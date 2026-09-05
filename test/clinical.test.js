@@ -1,5 +1,6 @@
-/* TheraChart clinical-rules checker — billing (8-minute rule), outcome
-   measure trending against MCID, and goal target dates.
+/* TheraChart clinical-rules checker — the service catalogue and its
+   subtotal, the legacy 8-minute rule, outcome measure trending against MCID,
+   and goal target dates.
    Run: node test/clinical.test.js */
 
 "use strict";
@@ -265,6 +266,224 @@ check("a malformed target date degrades to no-date",
   check("goal roll-up counts goals due soon", sum.dueSoon === 1, String(sum.dueSoon));
   check("an empty goal list rolls up to zero",
     C.goalSummary([], TODAY).total === 0 && C.goalSummary(null, TODAY).open === 0);
+}
+
+/* ---------------------------------------------------------------- *
+ *  Service catalogue and the visit subtotal
+ *
+ *  Money is the part of billing a clinic checks by hand, so the failures
+ *  that matter here are the quiet ones: a price that moved under a signed
+ *  note, or a subtotal that looks complete while a line is missing from it.
+ * ---------------------------------------------------------------- */
+
+{
+  const codes = C.SERVICE_CODES.map((c) => c.code);
+  check("every discipline carries its six codes",
+    ["PT", "OT", "ST"].every((d) => [1, 2, 3, 4, 5, 6].every((n) => codes.includes(`${d}0${n}`))),
+    codes.join(","));
+  check("the four add-ons are on the list",
+    ["A01", "A02", "A03", "A04"].every((c) => codes.includes(c)));
+  check("no code appears twice", new Set(codes).size === codes.length);
+  check("lookup is case-insensitive and trims", C.findService(" pt02 ").code === "PT02");
+  check("an unknown code is not invented", C.findService("97110") === null);
+  check("the groups keep catalogue order",
+    C.serviceGroups().map((g) => g.group).join("|") ===
+      "Physical therapy|Occupational therapy|Speech therapy|Add-ons");
+  check("every code lands in exactly one group",
+    C.serviceGroups().reduce((n, g) => n + g.codes.length, 0) === C.SERVICE_CODES.length);
+}
+
+{
+  const prices = { PT02: 850, A01: 150, A03: 75 };
+  check("a priced code returns its price", C.priceFor("PT02", prices) === 850);
+  check("an unpriced code is null, not zero", C.priceFor("PT01", prices) === null);
+  check("a blank price is null, not zero", C.priceFor("PT01", { PT01: "" }) === null);
+  check("a real zero price is kept", C.priceFor("PT01", { PT01: 0 }) === 0);
+  check("a negative price is refused", C.priceFor("PT01", { PT01: -5 }) === null);
+  check("no price list at all is null", C.priceFor("PT02", null) === null);
+}
+
+{
+  const prices = { PT02: 850, A01: 150 };
+  const s = C.serviceSummary([{ code: "PT02", units: 1 }, { code: "A01", units: 2 }], prices);
+  check("units total across the sheet", s.units === 3, String(s.units));
+  check("the subtotal is units x price", s.subtotal === 850 + 300, String(s.subtotal));
+  check("a fully priced sheet reads as complete", s.complete === true && s.unpriced === 0);
+  check("a priced sheet raises nothing", s.issues.length === 0, JSON.stringify(s.issues));
+  check("each line carries its own amount",
+    s.rows[0].amount === 850 && s.rows[1].amount === 300);
+}
+
+{
+  // An unpriced line must be visible, not silently worth nothing.
+  const s = C.serviceSummary([{ code: "PT02", units: 1 }, { code: "PT01", units: 1 }], { PT02: 850 });
+  check("the subtotal omits an unpriced line", s.subtotal === 850, String(s.subtotal));
+  check("the omission is counted", s.unpriced === 1);
+  check("an incomplete subtotal never reads as complete", s.complete === false);
+  check("the unpriced line says so", s.issues.some((i) => /no price set/i.test(i.text)));
+  check("an unpriced line has no amount", s.rows[1].amount === null && s.rows[1].price === null);
+}
+
+{
+  // The whole point of stamping the price onto the line: a signed note keeps
+  // the money it was signed for when the price list moves underneath it.
+  const s = C.serviceSummary([{ code: "PT02", units: 2, price: 600 }], { PT02: 850 });
+  check("a line's own price beats today's schedule", s.subtotal === 1200, String(s.subtotal));
+  const fell = C.serviceSummary([{ code: "PT02", units: 1, price: null }], { PT02: 850 });
+  check("a line with no price of its own falls back to the schedule", fell.subtotal === 850);
+  const zero = C.serviceSummary([{ code: "PT02", units: 1, price: 0 }], { PT02: 850 });
+  check("a line priced at zero stays at zero", zero.subtotal === 0 && zero.unpriced === 0);
+}
+
+{
+  const s = C.serviceSummary([{ code: "ZZ99", units: 1 }, { code: "PT02", units: 0 }], { PT02: 850 });
+  check("a code off the price list is flagged", s.issues.some((i) => /not on this clinic's price list/i.test(i.text)));
+  check("a line with no units is flagged", s.issues.some((i) => /no units/i.test(i.text)));
+  check("zero units contribute nothing", s.subtotal === 0, String(s.subtotal));
+  check("units are whole numbers", C.serviceSummary([{ code: "PT02", units: 2.6 }], { PT02: 100 }).units === 3);
+  check("negative units cannot credit a visit",
+    C.serviceSummary([{ code: "PT02", units: -4 }], { PT02: 100 }).subtotal === 0);
+}
+
+check("an empty charge sheet totals nothing",
+  C.serviceSummary([], {}).subtotal === 0 && C.serviceSummary(null, {}).lines === 0 &&
+  C.serviceSummary([], {}).complete === false);
+
+/* ---------------------------------------------------------------- *
+ *  Outcome measures, scored item by item
+ *
+ *  The failure that matters here is a HALF-FILLED form being reported as the
+ *  instrument's score: ten answered items of a twenty-item LEFS totals to a
+ *  number that reads as severe disability and is really an unanswered page.
+ * ---------------------------------------------------------------- */
+
+{
+  const full = (n, v) => Array.from({ length: n }, () => v);
+
+  check("LEFS sums its twenty items", C.scoreFromItems("lefs", full(20, 3)).score === 60);
+  check("…and says so is complete", C.scoreFromItems("lefs", full(20, 3)).complete === true);
+  check("a half-filled LEFS is NOT complete",
+    C.scoreFromItems("lefs", full(10, 3)).complete === false,
+    "a partial total reported as the score reads as severe disability");
+  check("…but still reports how far along it is",
+    C.scoreFromItems("lefs", full(10, 3)).answered === 10 && C.scoreFromItems("lefs", full(10, 3)).of === 20);
+
+  check("ODI reports a percentage of the possible", C.scoreFromItems("odi", full(10, 2)).score === 40);
+  check("NDI scores the same way", C.scoreFromItems("ndi", full(10, 5)).score === 100);
+  check("QuickDASH applies its own formula", C.scoreFromItems("quickdash", full(11, 3)).score === 50);
+  check("DASH applies it over thirty items", C.scoreFromItems("dash", full(30, 5)).score === 100);
+  check("ABC averages its sixteen items", C.scoreFromItems("abc", full(16, 80)).score === 80);
+
+  // PSFS: the patient names three to five activities, so any of them completes it
+  const psfs = C.scoreFromItems("psfs", [4, 6, 5]);
+  check("PSFS averages the activities the patient named", psfs.score === 5);
+  check("…and three of five counts as complete", psfs.complete === true,
+    "PSFS asks for three to five activities; requiring all five would never complete");
+
+  check("a single-reading measure has no answer sheet",
+    C.itemsFor("tug") === null && C.itemsFor("nprs") === null);
+  check("…and refuses to be scored as one",
+    C.scoreFromItems("tug", [12]).ok === false);
+  check("a questionnaire does have one",
+    C.itemsFor("lefs").count === 20 && C.itemsFor("lefs").max === 4);
+
+  const bad = C.scoreFromItems("lefs", [3, 99, 3]);
+  check("an out-of-range item is ignored rather than counted", bad.score === 6, String(bad.score));
+  check("…and it says one was dropped", /outside 0–4/.test(bad.error), bad.error);
+  check("nothing answered scores nothing",
+    C.scoreFromItems("lefs", []).ok === false && C.scoreFromItems("lefs", []).answered === 0);
+  check("gaps in the middle are skipped, not read as zero",
+    C.scoreFromItems("lefs", [4, null, 4]).score === 8);
+  check("an unknown tool is refused", C.scoreFromItems("nope", [1]).ok === false);
+  check("junk input never throws",
+    C.scoreFromItems("lefs", null).ok === false && C.scoreFromItems(null, null).ok === false);
+}
+
+/* ---------------------------------------------------------------- *
+ *  Goal suggestions
+ *
+ *  These are PROMPTS. The tests that matter are the ones proving nothing
+ *  clinically wrong is ever offered: software that suggests plausible goals
+ *  is writing the plan of care while appearing to help with it.
+ * ---------------------------------------------------------------- */
+
+{
+  const texts = (d, ex) => C.suggestGoals(d, ex || []).map((g) => g.text);
+
+  // --- muscle strength: the next whole grade ---
+  check("the next whole grade above 3 is 4", C.nextMmtGrade("3") === "4");
+  check("a plus grade still steps to the next whole one", C.nextMmtGrade("3+") === "4");
+  check("nothing is suggested above 5/5", C.nextMmtGrade("5") === null);
+  check("an unreadable grade suggests nothing", C.nextMmtGrade("banana") === null);
+  {
+    const g = C.suggestGoals({ mmt: [{ side: "right", context: "quad", grade: "3" }] }, []);
+    check("a weak muscle gets a goal one grade up",
+      g.length === 1 && g[0].target === "4/5" && g[0].baseline === "3/5", JSON.stringify(g));
+    check("…written in sentence case", g[0].text === "Right quad strength 4/5", g[0].text);
+    check("a 5/5 muscle gets nothing",
+      C.suggestGoals({ mmt: [{ side: "left", context: "quad", grade: "5" }] }, []).length === 0);
+  }
+
+  // --- range of motion: the patient's own other side, and only if it's better
+  {
+    const rom = [
+      { side: "right", joint: "shoulder", motion: "flexion", degrees: 120 },
+      { side: "left", joint: "shoulder", motion: "flexion", degrees: 165 },
+    ];
+    const g = C.suggestGoals({ rom }, []);
+    check("the restricted side is given the sound side as its target",
+      g.length === 1 && g[0].target === "165°" && /matching the left/.test(g[0].text), JSON.stringify(g));
+    check("THE SOUND SIDE IS NEVER ASKED TO REGRESS",
+      !g.some((x) => x.target === "120°"),
+      "offering to bring the good limb down to meet the injured one is a goal no therapist would write");
+    check("…and the sound side gets no goal of its own",
+      !g.some((x) => /left shoulder/i.test(x.text)),
+      "a goal for the reference limb filled the list with the sound side of every joint");
+  }
+  {
+    // no contralateral reading: the baseline goes out, the target does not
+    const g = C.suggestGoals({ rom: [{ side: "right", joint: "knee", motion: "flexion", degrees: 95 }] }, []);
+    check("a lone reading still prompts a goal", g.length === 1 && g[0].baseline === "95°");
+    check("…with the target left to the therapist", g[0].target === "",
+      "an invented normative end-range is a number nobody measured and nobody chose");
+    check("…and says why it is blank", /set the target yourself/.test(g[0].rule), g[0].rule);
+  }
+
+  // --- pain and outcome measures: the published MCID, not a guess ---
+  {
+    const g = C.suggestGoals({ pain: [{ score: 7, location: "right shoulder" }] }, []);
+    check("pain is targeted one NPRS MCID lower", g[0].target === "5/10", JSON.stringify(g));
+    check("…and names the rule", /clinically important difference of 2/.test(g[0].rule), g[0].rule);
+    check("pain already at or below the MCID prompts nothing",
+      C.suggestGoals({ pain: [{ score: 2 }] }, []).length === 0);
+  }
+  {
+    const g = C.suggestGoals({ outcomes: [{ toolId: "lefs", score: 52 }] }, []);
+    check("an outcome measure is targeted one MCID better", g[0].target === "61/80", JSON.stringify(g));
+    const down = C.suggestGoals({ outcomes: [{ toolId: "odi", score: 40 }] }, []);
+    check("…in the improving direction, whichever way the scale runs",
+      down[0].target === "30%", JSON.stringify(down));
+    check("a score already at the end of the scale prompts nothing",
+      C.suggestGoals({ outcomes: [{ toolId: "lefs", score: 80 }] }, []).length === 0);
+    check("an unknown tool is skipped rather than guessed at",
+      C.suggestGoals({ outcomes: [{ toolId: "nope", score: 5 }] }, []).length === 0);
+  }
+
+  // --- never offer what is already committed to ---
+  {
+    const data = { pain: [{ score: 7, location: "right shoulder" }] };
+    check("a goal already in the plan is not offered again",
+      C.suggestGoals(data, [{ text: "Pain in the right shoulder at or below 5/10" }]).length === 0);
+    check("…matched loosely enough to catch a reworded one",
+      C.suggestGoals(data, [{ text: "pain in the right shoulder at or below 5/10, walking" }]).length === 0);
+  }
+
+  check("nothing measured suggests nothing",
+    C.suggestGoals({}, []).length === 0 && C.suggestGoals(null, null).length === 0);
+  check("every suggestion carries the rule that produced it",
+    C.suggestGoals({ mmt: [{ side: "right", context: "quad", grade: "3" }],
+                     pain: [{ score: 8 }], outcomes: [{ toolId: "lefs", score: 40 }] }, [])
+      .every((g) => g.rule && g.text && g.baseline !== undefined));
 }
 
 /* ---------------------------------------------------------------- */

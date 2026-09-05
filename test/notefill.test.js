@@ -115,9 +115,12 @@ const check = (name, cond, detail) => {
   const ROUTER = new Function("PR", "CL", "TREAT_RE",
     [liftConst("PATIENT_VOICE_FIELDS"),
      liftConst("ABBREV_RE"),
+     liftBlock("  const DICTATABLE = {", "\n  };"),
+     liftConst("isDictatable"),
      lift("  function splitSentences("),
+     lift("  function aimedField("),
      lift("  function fieldForSentence(")].join("\n")
-    + "\n  return { splitSentences, fieldForSentence };")(PR, CL, TREAT_RE);
+    + "\n  return { splitSentences, fieldForSentence, aimedField, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
 
   const MAPS = new Function(
     [liftBlock("  const FIELD_SOURCES = {", "\n  };"),
@@ -174,6 +177,153 @@ const check = (name, cond, detail) => {
 }
 
 /* ================================================================== *
+ * 2b. Aiming the microphone at a section
+ *
+ *  The field test's headline complaint was not that the classifier is bad.
+ *  It is that when it puts a sentence in the wrong place, moving it costs
+ *  more than typing the note would have — and that it is wrong most often on
+ *  the one question it cannot see: whether a line is the patient's report or
+ *  the therapist's observation.
+ *
+ *  So a stated target has to WIN. These checks are about the target beating
+ *  the classifier, not agreeing with it.
+ * ================================================================== */
+{
+  // block 2's sandbox is scoped to block 2; this one builds its own
+  const R2 = new Function("PR", "CL", "TREAT_RE",
+    [liftConst("PATIENT_VOICE_FIELDS"),
+     liftConst("ABBREV_RE"),
+     liftBlock("  const DICTATABLE = {", "\n  };"),
+     liftConst("isDictatable"),
+     lift("  function splitSentences("),
+     lift("  function aimedField("),
+     lift("  function fieldForSentence(")].join("\n")
+    + "\n  return { splitSentences, fieldForSentence, aimedField, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
+  const { aimedField, fieldForSentence, isDictatable, DICTATABLE } = R2;
+
+  // Every section named as dictatable must be a field the note type has.
+  const FIELDS_OF = {
+    eval: ["reason", "precautions", "pmh", "subjective", "objectiveText", "assessment", "plan"],
+    daily: ["subjective", "summary", "assessment", "plan"],
+    progress: ["currentStatus", "updatedFindings", "assessment", "goalsProgress"],
+    discharge: ["summary", "outcome", "recommendations"],
+  };
+  for (const [type, fields] of Object.entries(DICTATABLE)) {
+    check(`${type}: every dictatable section is a real field of the note`,
+      fields.every((f) => FIELDS_OF[type].includes(f)),
+      `${fields.filter((f) => !FIELDS_OF[type].includes(f)).join(", ")} is not on a ${type}`);
+  }
+  check("a section from another note type cannot be aimed at",
+    !isDictatable("daily", "pmh") && !isDictatable("discharge", "subjective"),
+    "a stale target would file text into a field that isn't on the page");
+  check("the measurement table and the charge sheet are not dictated into",
+    !Object.values(DICTATABLE).flat().some((f) => ["charges", "measurements", "goals", "outcomes"].includes(f)));
+
+  /* THE CASE THIS WHOLE FEATURE EXISTS FOR. The classifier sends a
+     clinician-voiced sentence out of Subjective — correctly, when it is
+     guessing. Aimed at Subjective, the therapist has already answered it. */
+  const observed = "The right shoulder sits noticeably higher than the left";
+  check("the classifier keeps a clinician's observation out of Subjective",
+    fieldForSentence("eval", observed, "clinician") === "objectiveText",
+    String(fieldForSentence("eval", observed, "clinician")));
+  check("…but an aimed microphone files it where the therapist aimed it",
+    aimedField("eval", observed, "subjective") === "subjective");
+
+  // and the reverse: a patient-voiced line aimed at Objective stays there
+  const reported = "My shoulder has been aching for two weeks";
+  check("a patient-voiced line aimed at Objective goes to Objective",
+    aimedField("eval", reported, "objectiveText") === "objectiveText");
+
+  /* Small talk is trimmed by the caller, but noteWorthy() — which stops the
+     classifier defaulting a stray line into Subjective — is deliberately not
+     applied to an aimed mic. A therapist holding the mic at a section has
+     answered the question it exists to ask. */
+  const terse = "Doing better";
+  check("a terse line the classifier would drop still files when aimed at",
+    aimedField("daily", terse, "subjective") === "subjective",
+    "an aimed mic that silently drops a short sentence reads as a broken mic");
+
+  /* The one thing an aimed mic must still refuse: a value that already went
+     into a table. The same finding in two places is free to disagree. */
+  check("a ROM reading is not also written into the prose",
+    aimedField("eval", "Shoulder flexion 120 degrees", "objectiveText") === null);
+  check("an MMT grade is not either",
+    aimedField("daily", "Quad strength 4 out of 5", "summary") === null);
+  check("a special test is not either",
+    aimedField("eval", "Positive Neer test", "objectiveText") === null);
+  check("a standardised score goes to the outcome table, not the narrative",
+    aimedField("eval", "LEFS is 58 out of 80", "subjective") === null);
+
+  /* A pain rating is patient-reported prose AND a table row — it has always
+     been both, and aiming must not change that. */
+  check("a pain rating still reads as subjective prose",
+    aimedField("daily", "It is about a seven out of ten today", "subjective") === "subjective");
+}
+
+/* ================================================================== *
+ * 2c. Goal suggestions read what the parser actually writes
+ *
+ *  This exists because unit tests with invented fixtures did not catch the
+ *  bug it now guards. suggestGoals() was written against `grade: "3"`, the
+ *  parser has always stored `grade: "3/5"`, and every check passed while the
+ *  feature produced nothing at all for any real chart.
+ *
+ *  So these drive DICTATED SENTENCES through the real parser and into the
+ *  real suggester. Nothing here constructs a measurement by hand.
+ * ================================================================== */
+{
+  const from = (...sentences) => {
+    const m = PR.aggregateMeasurements(sentences);
+    return CL.suggestGoals({ rom: m.rom, mmt: m.mmt, pain: m.pain, outcomes: [] }, []);
+  };
+
+  {
+    const g = from("quad strength 3 out of 5 on the right");
+    check("a dictated muscle grade produces a goal", g.length === 1, JSON.stringify(g));
+    check("…one whole grade up", g[0].target === "4/5", JSON.stringify(g[0]));
+    check("…with the baseline as the parser wrote it", g[0].baseline === "3/5", g[0].baseline);
+    check("…and not doubled up ('3/5/5')", !/\/5\/5/.test(g[0].baseline + g[0].target));
+  }
+  {
+    const g = from("quad strength 4 plus out of 5");
+    check("a dictated plus-grade steps to the next WHOLE grade, not a half step",
+      (g[0] || {}).target === "5/5", JSON.stringify(g),
+    );
+  }
+  check("a dictated 5/5 produces nothing",
+    from("quad strength 5 out of 5 on the left").length === 0);
+
+  {
+    const g = from("right shoulder flexion 120 degrees", "left shoulder flexion 165 degrees");
+    check("a dictated ROM pair targets the sound side",
+      g.length === 1 && g[0].target === "165°", JSON.stringify(g));
+    check("…and never asks the sound side to regress",
+      !g.some((x) => x.target === "120°"));
+  }
+
+  {
+    const g = from("the pain is about a seven out of ten in the right shoulder");
+    check("a dictated pain rating produces a goal", g.length === 1, JSON.stringify(g));
+    check("…one NPRS MCID lower", g[0].target === "5/10", JSON.stringify(g[0]));
+  }
+
+  // and a whole visit at once, which is how it actually arrives
+  {
+    const g = from(
+      "right shoulder flexion 120 degrees, external rotation 45 degrees",
+      "left shoulder flexion 165 degrees",
+      "quad strength 3 out of 5 on the right",
+      "pain is a seven out of ten");
+    check("a whole visit's dictation produces usable prompts", g.length >= 3, JSON.stringify(g.map((x) => x.text)));
+    check("every prompt carries a baseline taken from the note",
+      g.every((x) => x.baseline && x.baseline !== "undefined" && !/NaN|undefined/.test(x.baseline)),
+      JSON.stringify(g.map((x) => x.baseline)));
+    check("no prompt carries a malformed target",
+      g.every((x) => !/NaN|undefined/.test(x.target)), JSON.stringify(g.map((x) => x.target)));
+  }
+}
+
+/* ================================================================== *
  * 3. The printed copy carries what the note holds
  * ================================================================== */
 {
@@ -188,7 +338,8 @@ const check = (name, cond, detail) => {
   };
 
   const PRINTER = new Function("S", "CL", "esc", "fmtDT", "fmtDate", "todayIso",
-    [lift("  function measurementTables("),
+    [liftConst("romLabel"),
+     lift("  function measurementTables("),
      lift("  function docPrintHtml(")].join("\n")
     + "\n  return { docPrintHtml };")(
     S, CL, esc,

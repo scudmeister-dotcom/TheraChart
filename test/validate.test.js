@@ -351,6 +351,71 @@ const roster = [
   check("no checker throws on null, junk or hostile input", !threw, threw && threw.stack);
 }
 
+/* ---------------------------------------------------------------- *
+ *  Precautions, and the insurer's two paperwork fields
+ *
+ *  Precautions were called "allergies" until the field started carrying
+ *  weight-bearing status and fall risk too. Records written before the
+ *  rename must still validate, and must come out under the new name.
+ * ---------------------------------------------------------------- */
+
+const patient = (over) => V.validatePatient(
+  Object.assign({ firstName: "Ana", lastName: "Bautista", dob: "1990-03-04", phone: "0917 555 0101" }, over),
+  { today: TODAY, existingPatients: [] });
+
+{
+  const r = patient({ precautions: "Fall risk. Weight-bearing as tolerated." });
+  check("precautions are kept as written", r.cleaned.precautions === "Fall risk. Weight-bearing as tolerated.");
+  check("a record with only precautions saves", r.ok, JSON.stringify(r.errors));
+
+  const legacy = patient({ allergies: "Penicillin — rash." });
+  check("a pre-rename record still validates", legacy.ok);
+  check("…and comes back under the new name", legacy.cleaned.precautions === "Penicillin — rash.");
+  check("…and is never written back under the old one", legacy.cleaned.allergies === undefined);
+
+  const both = patient({ precautions: "new", allergies: "old" });
+  check("where both keys exist the new one wins", both.cleaned.precautions === "new");
+
+  check("precautions hold a whole post-op protocol",
+    patient({ precautions: "x".repeat(600) }).ok && !patient({ precautions: "x".repeat(601) }).ok);
+  check("an over-long precaution says so, rather than truncating",
+    /too long/i.test(patient({ precautions: "x".repeat(601) }).errors.precautions || ""),
+    patient({ precautions: "x".repeat(601) }).errors.precautions);
+  check("precautions are optional", patient({}).ok && patient({}).cleaned.precautions === "");
+}
+
+{
+  const gl = patient({ authorization: { guaranteeLetter: "LOA-2026-0041", submittedOn: "2026-08-01" } });
+  check("a guarantee letter and its submission date save together", gl.ok, JSON.stringify(gl.errors));
+  check("the guarantee letter number is kept", gl.cleaned.authorization.guaranteeLetter === "LOA-2026-0041");
+  check("the submission date is kept", gl.cleaned.authorization.submittedOn === "2026-08-01");
+
+  const future = patient({ authorization: { submittedOn: "2026-12-25" } });
+  check("documents cannot have been submitted in the future", !future.ok);
+  check("…and it blocks rather than warns", /future/i.test(future.errors.authSubmitted || ""), future.errors.authSubmitted);
+
+  const lonely = patient({ authorization: { guaranteeLetter: "LOA-1" } });
+  check("a guarantee letter with no submission date warns", !!lonely.warnings.authSubmitted, JSON.stringify(lonely.warnings));
+  check("…but does not block the save", lonely.ok);
+
+  check("a submission date alone is fine", patient({ authorization: { submittedOn: "2026-08-01" } }).ok);
+  check("neither field is required", patient({ authorization: {} }).ok);
+  check("a junk submission date is refused",
+    !patient({ authorization: { submittedOn: "2026-02-31" } }).ok);
+  check("an over-long guarantee letter is refused",
+    !patient({ authorization: { guaranteeLetter: "L".repeat(61) } }).ok);
+}
+
+{
+  // checkPastDate on its own, since it is exported for reuse
+  check("a past date passes", V.checkPastDate("2026-01-01", { today: TODAY }).ok);
+  check("today passes", V.checkPastDate(TODAY, { today: TODAY }).ok);
+  check("tomorrow fails", !V.checkPastDate("2026-08-17", { today: TODAY }).ok);
+  check("blank passes unless required",
+    V.checkPastDate("", { today: TODAY }).ok && !V.checkPastDate("", { today: TODAY, required: true }).ok);
+  check("junk fails", !V.checkPastDate("not a date", { today: TODAY }).ok);
+}
+
 /* ---------------------------------------------------------------- */
 
 if (failures.length) {

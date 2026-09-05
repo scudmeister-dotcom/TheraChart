@@ -27,7 +27,136 @@
   "use strict";
 
   /* ================================================================== *
-   *  BILLING — CPT codes and the 8-minute rule
+   *  BILLING — the clinic's own service catalogue
+   *
+   *  What a Philippine clinic actually bills is a short list of its own
+   *  service codes with a peso price each, not a CPT code with minutes
+   *  behind it. A charge line is therefore a code and a number of units,
+   *  and the only arithmetic that matters is units x price = subtotal.
+   *
+   *  Prices are NOT in this table. They are per-clinic, they change, and
+   *  they are the one part of billing not every account may touch — so they
+   *  live in clinic settings (`servicePrices`) and are passed in. A code
+   *  with no price set yet reads as "no price", never as free.
+   * ================================================================== */
+
+  /* Six codes per discipline: an initial evaluation and a basic therapy
+     session, each in the clinic, at the patient's home, and inpatient. */
+  const SERVICE_CODES = [
+    { code: "PT01", desc: "PT — Initial evaluation", group: "Physical therapy" },
+    { code: "PT02", desc: "PT — Basic therapy", group: "Physical therapy" },
+    { code: "PT03", desc: "PT — Initial evaluation (home health)", group: "Physical therapy" },
+    { code: "PT04", desc: "PT — Basic therapy (home health)", group: "Physical therapy" },
+    { code: "PT05", desc: "PT — Initial evaluation (inpatient)", group: "Physical therapy" },
+    { code: "PT06", desc: "PT — Basic therapy (inpatient)", group: "Physical therapy" },
+
+    { code: "OT01", desc: "OT — Initial evaluation", group: "Occupational therapy" },
+    { code: "OT02", desc: "OT — Basic therapy", group: "Occupational therapy" },
+    { code: "OT03", desc: "OT — Initial evaluation (home health)", group: "Occupational therapy" },
+    { code: "OT04", desc: "OT — Basic therapy (home health)", group: "Occupational therapy" },
+    { code: "OT05", desc: "OT — Initial evaluation (inpatient)", group: "Occupational therapy" },
+    { code: "OT06", desc: "OT — Basic therapy (inpatient)", group: "Occupational therapy" },
+
+    { code: "ST01", desc: "ST — Initial evaluation", group: "Speech therapy" },
+    { code: "ST02", desc: "ST — Basic therapy", group: "Speech therapy" },
+    { code: "ST03", desc: "ST — Initial evaluation (home health)", group: "Speech therapy" },
+    { code: "ST04", desc: "ST — Basic therapy (home health)", group: "Speech therapy" },
+    { code: "ST05", desc: "ST — Initial evaluation (inpatient)", group: "Speech therapy" },
+    { code: "ST06", desc: "ST — Basic therapy (inpatient)", group: "Speech therapy" },
+
+    { code: "A01", desc: "Traction machine", group: "Add-ons" },
+    { code: "A02", desc: "Combi machine", group: "Add-ons" },
+    { code: "A03", desc: "TENS pad — large", group: "Add-ons" },
+    { code: "A04", desc: "TENS pad — small", group: "Add-ons" },
+  ];
+
+  const serviceIndex = {};
+  SERVICE_CODES.forEach((c) => { serviceIndex[c.code] = c; });
+  const findService = (code) => serviceIndex[String(code || "").trim().toUpperCase()] || null;
+
+  /** The order the codes are grouped in on screen, taken from the table
+      itself so adding a code to a new group never needs a second edit. */
+  function serviceGroups() {
+    const out = [];
+    SERVICE_CODES.forEach((c) => {
+      let g = out.find((x) => x.group === c.group);
+      if (!g) out.push((g = { group: c.group, codes: [] }));
+      g.codes.push(c);
+    });
+    return out;
+  }
+
+  /** The price a code carries today, from the clinic's own schedule.
+      Returns null — not 0 — when no price has been set, because "nobody has
+      priced this yet" and "this one is free" are different facts. */
+  function priceFor(code, prices) {
+    const known = findService(code);
+    if (!known) return null;
+    const raw = (prices || {})[known.code];
+    if (raw === "" || raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  /**
+   * Total up a visit's charges against the clinic's price list.
+   * charges: [{ code, units, price? }] — `price` is the peso amount the line
+   * was entered at. It is snapshotted onto the line so a signed note keeps
+   * the money it was signed for when the price list changes later; where a
+   * line has none, today's schedule fills in.
+   *
+   * Returns per-line amounts, the subtotal, and anything worth fixing before
+   * the note is signed. Never mutates the input.
+   */
+  function serviceSummary(charges, prices) {
+    const rows = [];
+    const issues = [];
+    let subtotal = 0;
+    let unpriced = 0;
+    let units = 0;
+
+    (charges || []).filter((c) => c && c.code).forEach((c) => {
+      const known = findService(c.code);
+      const u = Math.max(0, Math.round(Number(c.units) || 0));
+      /* The line's own price wins over the schedule: that is what makes a
+         signed note stable. Only a line that never carried one falls back. */
+      const own = c.price === "" || c.price == null ? null : Number(c.price);
+      const price = Number.isFinite(own) && own >= 0 ? own : priceFor(c.code, prices);
+      const amount = price == null ? null : price * u;
+
+      /* Worded so it reads correctly on a signed note as well as a draft.
+         Every visit documented before the clinic moved to this catalogue
+         carries codes from the old one, and those notes are locked — telling
+         their reader to "check it" points at a thing nobody can change. */
+      if (!known) issues.push({ level: "warn", text: `${c.code} is not on this clinic's price list, so it has no price and is not in the subtotal.` });
+      else if (price == null) { unpriced++; issues.push({ level: "warn", text: `${known.code} ${known.desc} has no price set. An administrator sets prices in Facility Admin.` }); }
+      if (known && !u) issues.push({ level: "warn", text: `${known.code} ${known.desc} is on the charge sheet with no units.` });
+
+      units += u;
+      if (amount != null) subtotal += amount;
+      rows.push({ code: c.code, desc: (known || {}).desc || c.desc || "", group: (known || {}).group || "", units: u, price, amount, known: !!known });
+    });
+
+    return {
+      lines: rows.length,
+      rows,
+      units,
+      subtotal,
+      /* A subtotal that silently omits an unpriced line is a wrong number
+         presented as a right one. Say how many are missing instead. */
+      unpriced,
+      complete: rows.length > 0 && unpriced === 0,
+      issues,
+    };
+  }
+
+  /* ================================================================== *
+   *  BILLING — CPT codes and the 8-minute rule  (legacy, US fee schedule)
+   *
+   *  Kept whole and still exported, but no longer wired into the note
+   *  editor: the charge sheet bills the service catalogue above. Nothing
+   *  here is reachable from the UI, and the 8-minute rule is a Medicare
+   *  rule that never applied to a Philippine clinic in the first place.
    * ================================================================== */
 
   /* The PT codes a clinic actually uses day to day. `timed` marks the
@@ -183,16 +312,46 @@
   /* `better` says which direction counts as improvement; `mcid` is the
      minimal clinically important difference — the change size below which a
      score move is noise rather than progress. */
+  /* Each tool carries how it is SCORED as well as what it scores, so a
+     therapist can record the form item by item and have the total computed,
+     rather than doing the arithmetic on paper and typing one number in.
+
+     `items` describes the instrument's own answer sheet:
+        count   how many items (null = a single reading, e.g. a stopwatch)
+        min/max the scale ONE item is answered on
+        scoring how the items become the reported score:
+                  "sum"     total of the items            (LEFS)
+                  "percent" total as a % of the possible  (NDI, ODI)
+                  "mean"    average of the items          (PSFS, ABC)
+                  "dash"    ((mean - 1) x 25)             (DASH, QuickDASH)
+        named   the patient names the items themselves    (PSFS)
+
+     What is deliberately NOT here is the wording of the items. Several of
+     these instruments are published under licence — the clinic holds the form
+     and we do not — so items are numbered and the clinic reads its own copy
+     alongside. The structure and the scoring formulas are plain facts about
+     the instruments and are safe to encode; the questions are not ours to
+     reproduce. PSFS is the exception because its items are named by the
+     patient at the visit rather than printed on a form. */
   const OUTCOME_TOOLS = [
-    { id: "lefs", name: "LEFS", full: "Lower Extremity Functional Scale", min: 0, max: 80, better: "up", mcid: 9, unit: "/80" },
-    { id: "dash", name: "DASH", full: "Disabilities of Arm, Shoulder & Hand", min: 0, max: 100, better: "down", mcid: 10, unit: "/100" },
-    { id: "quickdash", name: "QuickDASH", full: "QuickDASH", min: 0, max: 100, better: "down", mcid: 8, unit: "/100" },
-    { id: "ndi", name: "NDI", full: "Neck Disability Index", min: 0, max: 100, better: "down", mcid: 7.5, unit: "%" },
-    { id: "odi", name: "ODI", full: "Oswestry Disability Index", min: 0, max: 100, better: "down", mcid: 10, unit: "%" },
-    { id: "nprs", name: "NPRS", full: "Numeric Pain Rating Scale", min: 0, max: 10, better: "down", mcid: 2, unit: "/10" },
-    { id: "psfs", name: "PSFS", full: "Patient-Specific Functional Scale", min: 0, max: 10, better: "up", mcid: 2, unit: "/10" },
-    { id: "abc", name: "ABC", full: "Activities-specific Balance Confidence", min: 0, max: 100, better: "up", mcid: 13, unit: "%" },
-    { id: "tug", name: "TUG", full: "Timed Up and Go", min: 0, max: 120, better: "down", mcid: 3, unit: " s" },
+    { id: "lefs", name: "LEFS", full: "Lower Extremity Functional Scale", min: 0, max: 80, better: "up", mcid: 9, unit: "/80",
+      items: { count: 20, min: 0, max: 4, scoring: "sum" } },
+    { id: "dash", name: "DASH", full: "Disabilities of Arm, Shoulder & Hand", min: 0, max: 100, better: "down", mcid: 10, unit: "/100",
+      items: { count: 30, min: 1, max: 5, scoring: "dash" } },
+    { id: "quickdash", name: "QuickDASH", full: "QuickDASH", min: 0, max: 100, better: "down", mcid: 8, unit: "/100",
+      items: { count: 11, min: 1, max: 5, scoring: "dash" } },
+    { id: "ndi", name: "NDI", full: "Neck Disability Index", min: 0, max: 100, better: "down", mcid: 7.5, unit: "%",
+      items: { count: 10, min: 0, max: 5, scoring: "percent" } },
+    { id: "odi", name: "ODI", full: "Oswestry Disability Index", min: 0, max: 100, better: "down", mcid: 10, unit: "%",
+      items: { count: 10, min: 0, max: 5, scoring: "percent" } },
+    { id: "nprs", name: "NPRS", full: "Numeric Pain Rating Scale", min: 0, max: 10, better: "down", mcid: 2, unit: "/10",
+      items: null },
+    { id: "psfs", name: "PSFS", full: "Patient-Specific Functional Scale", min: 0, max: 10, better: "up", mcid: 2, unit: "/10",
+      items: { count: 5, min: 0, max: 10, scoring: "mean", named: true, optional: true } },
+    { id: "abc", name: "ABC", full: "Activities-specific Balance Confidence", min: 0, max: 100, better: "up", mcid: 13, unit: "%",
+      items: { count: 16, min: 0, max: 100, scoring: "mean" } },
+    { id: "tug", name: "TUG", full: "Timed Up and Go", min: 0, max: 120, better: "down", mcid: 3, unit: " s",
+      items: null },
   ];
 
   const toolIndex = {};
@@ -208,6 +367,61 @@
     if (!isFinite(v)) return { ok: false, error: "Score must be a number." };
     if (v < tool.min || v > tool.max) return { ok: false, error: `${tool.name} runs ${tool.min}–${tool.max}.` };
     return { ok: true, value: v };
+  }
+
+  /** The answer sheet for one tool, or null where it has none (a stopwatch
+      reading and a single pain rating are not questionnaires). */
+  const itemsFor = (toolId) => ((findTool(toolId) || {}).items) || null;
+
+  /**
+   * Compute a tool's reported score from its individual item answers.
+   *
+   * `answers` is a sparse array — a form is filled in over a couple of
+   * minutes and half-finished is the normal state — so this reports how many
+   * are answered as well as what they currently total. `complete` is what a
+   * caller should check before treating the score as the instrument's:
+   * scoring a half-filled LEFS gives a number that looks like severe
+   * disability and is really an unanswered form.
+   */
+  function scoreFromItems(toolId, answers) {
+    const tool = findTool(toolId);
+    const spec = tool && tool.items;
+    if (!spec) return { ok: false, error: "That measure is a single reading, not a questionnaire." };
+
+    const vals = [];
+    let outOfRange = 0;
+    for (let i = 0; i < spec.count; i++) {
+      const raw = (answers || [])[i];
+      if (raw === "" || raw === null || raw === undefined) continue;
+      const v = Number(raw);
+      if (!isFinite(v) || v < spec.min || v > spec.max) { outOfRange++; continue; }
+      vals.push(v);
+    }
+    /* An instrument the patient may leave items off — PSFS asks for three to
+       five activities — is complete as soon as it has any. Everything else
+       needs all of them. */
+    const complete = spec.optional ? vals.length > 0 : vals.length === spec.count;
+    const answered = vals.length;
+    if (!answered) {
+      return { ok: false, answered: 0, of: spec.count, complete: false, score: null,
+               error: outOfRange ? `Item scores run ${spec.min}–${spec.max}.` : "No items answered yet." };
+    }
+
+    const sum = vals.reduce((a, b) => a + b, 0);
+    const mean = sum / vals.length;
+    let score;
+    if (spec.scoring === "sum") score = sum;
+    else if (spec.scoring === "percent") score = (sum / (spec.count * spec.max)) * 100;
+    else if (spec.scoring === "mean") score = mean;
+    else if (spec.scoring === "dash") score = (mean - 1) * 25;
+    else score = sum;
+
+    // one decimal is what every one of these instruments is reported to
+    score = Math.round(score * 10) / 10;
+    return {
+      ok: true, score, answered, of: spec.count, complete,
+      error: outOfRange ? `${outOfRange} item score${outOfRange > 1 ? "s are" : " is"} outside ${spec.min}–${spec.max} and was ignored.` : "",
+    };
   }
 
   /**
@@ -333,13 +547,172 @@
     };
   }
 
+  /* ================================================================== *
+   *  GOAL SUGGESTIONS
+   *
+   *  A prompt, never a prescription. Every suggestion is built from numbers
+   *  ALREADY IN THIS NOTE, by a rule simple enough to state on screen, and
+   *  nothing reaches the plan of care until the therapist presses it and
+   *  edits it. That constraint is the whole design: a goal is a clinical
+   *  commitment, and software that invents plausible-looking ones would be
+   *  writing the plan of care while appearing to help with it.
+   *
+   *  So there is no rule here that needs clinical judgement we do not have.
+   *  Where a target cannot be derived honestly — a range of motion with
+   *  nothing to compare it to — the suggestion carries the baseline and
+   *  leaves the target blank for the therapist rather than guessing at one.
+   * ================================================================== */
+
+  const MMT_GRADES = ["0", "1", "2", "2+", "3-", "3", "3+", "4-", "4", "4+", "5-", "5"];
+
+  /** The next grade a muscle could reasonably be aiming at. Returns null at
+      5/5, where there is nothing left to gain.
+
+      Accepts the grade in the shape the PARSER stores it — "3/5", "4+/5" —
+      as well as bare ("3", "4+"). The two shapes are the reason this takes a
+      string at all: the measurement table has always written the denominator
+      into the value, and a suggestion engine that only understood the bare
+      form silently produced nothing for every muscle in every real chart. */
+  function nextMmtGrade(grade) {
+    const g = String(grade || "").trim().replace(/\s*\/\s*5$/, "");
+    const i = MMT_GRADES.indexOf(g);
+    if (i < 0 || i >= MMT_GRADES.length - 1) return null;
+    /* Whole grades, not half steps: "3/5 → 4/5" is how a goal is written, and
+       "3/5 → 3+/5" is a re-assessment note, not a plan of care. */
+    const whole = MMT_GRADES.slice(i + 1).find((x) => /^[0-5]$/.test(x));
+    return whole || null;
+  }
+
+  /* Sentence case, not title case: "Right shoulder flexion" is how a goal is
+     written down, and "Right Shoulder Flexion" reads like a heading. */
+  const sentenceCase = (s) => {
+    const t = String(s || "").trim();
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  };
+
+  /**
+   * Goals worth offering, from what this visit measured.
+   *
+   * data: { rom, mmt, pain, outcomes } — the note's own tables.
+   * existing: the patient's current goals, so nothing already committed to is
+   *           offered a second time.
+   *
+   * Returns [{ key, text, baseline, target, term, rule }] — `rule` is the
+   * one-line explanation shown beside the suggestion, because a therapist
+   * accepting a target should be able to see where the number came from.
+   */
+  function suggestGoals(data, existing) {
+    const d = data || {};
+    const out = [];
+    const taken = (existing || []).map((g) => String(g.text || "").toLowerCase());
+    const already = (text) => {
+      const t = text.toLowerCase();
+      return taken.some((x) => x === t || (x.length > 8 && (x.includes(t) || t.includes(x))));
+    };
+    const push = (s) => { if (!already(s.text) && !out.some((o) => o.key === s.key)) out.push(s); };
+
+    // --- muscle strength: the next whole grade up ---
+    for (const m of d.mmt || []) {
+      const next = nextMmtGrade(m.grade);
+      if (!next) continue;
+      const what = [m.side, m.context].filter(Boolean).join(" ").trim();
+      if (!what) continue;
+      push({
+        key: `mmt:${what}`.toLowerCase(),
+        text: `${sentenceCase(what)} strength ${next}/5`,
+        baseline: /\/\s*5$/.test(String(m.grade)) ? String(m.grade) : `${m.grade}/5`,
+        target: `${next}/5`,
+        term: "short",
+        rule: "the next whole muscle grade above today's",
+      });
+    }
+
+    /* --- range of motion: the patient's OTHER side ---
+       The uninvolved limb is the only target here that is a fact rather than
+       an opinion — it is this patient's own normal, measured today. With no
+       contralateral reading the suggestion still goes out, carrying the
+       baseline, with the target left for the therapist. Inventing a
+       normative end-range would be putting a number in the plan of care that
+       nobody measured and nobody chose. */
+    for (const r of d.rom || []) {
+      if (!r.joint || !r.motion) continue;
+      /* Only a BETTER other side is a target. Without this the rule fires
+         both ways round and offers to bring the sound limb down to meet the
+         injured one — a goal no therapist would write, in a list they are
+         being asked to trust. */
+      const other = (d.rom || []).find((x) =>
+        x.joint === r.joint && x.motion === r.motion && x.side && r.side && x.side !== r.side
+        && Number(x.degrees) > Number(r.degrees));
+      /* A reading whose counterpart is WORSE is the reference limb — it is
+         the target, not the problem. Offering to improve it as well filled
+         the list with a goal for the sound side of every joint measured. */
+      const counterpart = (d.rom || []).find((x) =>
+        x.joint === r.joint && x.motion === r.motion && x.side && r.side && x.side !== r.side);
+      if (!other && counterpart) continue;
+      const what = `${r.side ? r.side + " " : ""}${r.joint} ${r.motion}`;
+      push({
+        key: `rom:${what}`.toLowerCase(),
+        text: other
+          ? `${sentenceCase(what)} to ${other.degrees}°, matching the ${other.side}`
+          : `Improve ${what} range`,
+        baseline: `${r.degrees}°`,
+        target: other ? `${other.degrees}°` : "",
+        term: "short",
+        rule: other
+          ? `the ${other.side} side measured ${other.degrees}° today`
+          : "no reading on the other side to compare — set the target yourself",
+      });
+    }
+
+    // --- pain: down by the NPRS minimal clinically important difference ---
+    const nprsMcid = (findTool("nprs") || {}).mcid || 2;
+    for (const pnt of d.pain || []) {
+      const from = Number(pnt.score);
+      if (!isFinite(from) || from <= nprsMcid) continue;
+      const to = Math.max(0, from - nprsMcid);
+      const where = pnt.location ? ` in the ${pnt.location}` : "";
+      push({
+        key: `pain:${pnt.location || "general"}`.toLowerCase(),
+        text: `Pain${where} at or below ${to}/10`,
+        baseline: `${from}/10`,
+        target: `${to}/10`,
+        term: "short",
+        rule: `today's ${from}/10 less the NPRS clinically important difference of ${nprsMcid}`,
+      });
+    }
+
+    // --- outcome measures: one MCID in the improving direction ---
+    for (const o of d.outcomes || []) {
+      const tool = findTool(o.toolId);
+      const from = Number(o.score);
+      if (!tool || !isFinite(from)) continue;
+      const raw = tool.better === "up" ? from + tool.mcid : from - tool.mcid;
+      const to = Math.round(Math.min(tool.max, Math.max(tool.min, raw)) * 10) / 10;
+      if (to === from) continue;   // already at the end of the scale
+      push({
+        key: `outcome:${tool.id}`,
+        text: `${tool.name} ${tool.better === "up" ? "of at least" : "at or below"} ${to}${tool.unit}`,
+        baseline: `${from}${tool.unit}`,
+        target: `${to}${tool.unit}`,
+        term: "long",
+        rule: `one ${tool.name} clinically important difference (${tool.mcid}) from today's ${from}`,
+      });
+    }
+
+    return out;
+  }
+
   return {
-    // billing
+    // billing — the clinic's service catalogue
+    SERVICE_CODES, findService, serviceGroups, priceFor, serviceSummary,
+    // billing — legacy CPT / 8-minute rule, no longer used by the editor
     CPT_CODES, findCode, isTimedCode, unitsForMinutes, minutesForUnits,
     billingSummary, suggestCodes,
     // outcome measures
     OUTCOME_TOOLS, findTool, validateScore, outcomeTrends, extractOutcomes,
+    itemsFor, scoreFromItems,
     // goals
     GOAL_STATUS, goalStatus, goalSummary, isOpenGoal,
+    suggestGoals, nextMmtGrade,
   };
 });

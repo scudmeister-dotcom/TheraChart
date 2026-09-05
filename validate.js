@@ -40,8 +40,12 @@
   const MAX_AGE_YEARS = 120;
   const LIMITS = {
     name: 60, address: 200, email: 120, referringPhysician: 120,
-    allergies: 300, relationship: 40, provider: 80, memberId: 40,
-    notes: 300, reference: 60,
+    /* Was 300 while this field meant "allergies". It now carries the whole
+       safety picture — drug reactions, weight-bearing status, fall risk, a
+       contraindicated modality — and 300 characters ran out inside a single
+       post-operative protocol. */
+    precautions: 600, relationship: 40, provider: 80, memberId: 40,
+    notes: 300, reference: 60, guaranteeLetter: 60,
   };
 
   const str = (v) => (v == null ? "" : String(v));
@@ -259,6 +263,22 @@
     return out;
   }
 
+  /** A date that cannot be in the future — something that has already
+      happened, like the day documents were submitted to the insurer. The
+      future case is an error rather than a warning: paperwork sent next
+      Tuesday has not been sent. */
+  function checkPastDate(raw, opts) {
+    const o = opts || {};
+    const label = o.label || "Date";
+    const s = tidy(raw);
+    if (!s) {
+      return o.required ? { ok: false, value: "", error: `${label} is required.` } : { ok: true, value: "" };
+    }
+    if (!parseDate(s)) return { ok: false, value: s, error: `${label} isn't a real date.` };
+    if (s > todayIso(o.today)) return { ok: false, value: s, error: `${label} can't be in the future.` };
+    return { ok: true, value: s };
+  }
+
   /* ================================================================== *
    *  EMAIL
    *
@@ -386,7 +406,11 @@
       email: take("email", checkEmail(f.email)),
       referringPhysician: take("referringPhysician",
         checkName(f.referringPhysician, { label: "Referring physician" })),
-      allergies: take("allergies", checkText(f.allergies, { label: "Allergies", max: LIMITS.allergies })),
+      /* Accepts the old key on the way in, so a record written before the
+         rename validates unchanged; only the new one is ever written back. */
+      precautions: take("precautions", checkText(
+        f.precautions != null ? f.precautions : f.allergies,
+        { label: "Precautions", max: LIMITS.precautions })),
       emergencyContact: {
         name: take("ecName", checkName(ec.name, { label: "Emergency contact" })),
         relationship: take("ecRelationship",
@@ -405,6 +429,14 @@
           checkFutureDate(au.expiresOn, { label: "Authorisation expiry", today: o.today })),
         reference: take("authReference",
           checkText(au.reference, { label: "Authorisation reference", max: LIMITS.reference })),
+        /* The two numbers an HMO asks for by name when a claim is queried:
+           the letter of guarantee it issued, and the day the clinic's
+           paperwork went in. Kept beside the authorisation because that is
+           the conversation they belong to. */
+        guaranteeLetter: take("guaranteeLetter",
+          checkText(au.guaranteeLetter, { label: "Guarantee letter number", max: LIMITS.guaranteeLetter })),
+        submittedOn: take("authSubmitted",
+          checkPastDate(au.submittedOn, { label: "Date of submission", today: o.today })),
       },
     };
 
@@ -428,6 +460,12 @@
     if (cleaned.authorization.visitsAuthorized > 0 && !cleaned.authorization.expiresOn && !errors.authExpires) {
       warnings.authExpires = "Authorised visits are recorded with no expiry date.";
     }
+    /* A guarantee letter is the insurer's answer to a submission. Recording
+       one without the date it was applied for leaves the claim's timeline
+       unanswerable when the HMO asks how long it has been sitting there. */
+    if (cleaned.authorization.guaranteeLetter && !cleaned.authorization.submittedOn && !errors.authSubmitted) {
+      warnings.authSubmitted = "Guarantee letter recorded with no date of submission.";
+    }
 
     const duplicate = findDuplicate(cleaned, o.existingPatients, o.patientId);
     if (duplicate) {
@@ -449,15 +487,16 @@
 
   const FIELD_ORDER = [
     "firstName", "lastName", "preferredName", "dob", "address", "phone", "email", "referringPhysician",
-    "allergies", "ecName", "ecRelationship", "ecPhone",
+    "precautions", "ecName", "ecRelationship", "ecPhone",
     "provider", "memberId", "paymentNotes", "visitsAuthorized", "authExpires", "authReference",
+    "guaranteeLetter", "authSubmitted",
   ];
 
   return {
     // phone
     normalizePhone, formatPhone, formatPhoneAsTyped, checkPhone,
     // individual fields
-    checkName, checkDob, checkEmail, checkText, checkCount, checkFutureDate, checkPhilHealthId,
+    checkName, checkDob, checkEmail, checkText, checkCount, checkFutureDate, checkPastDate, checkPhilHealthId,
     // dates
     parseDate, ageOn,
     // whole record

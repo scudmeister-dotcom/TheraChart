@@ -36,7 +36,7 @@ const { startServer, reporter } = require("./helpers/server.js");
     const startingPatients = s.state.patients.length;
     s.state.patients.push({
       id: "p-workflow", firstName: "Ana", lastName: "Bautista", dob: "1990-03-04",
-      phone: "+63 917 555 9999", allergies: "Penicillin", attachments: [],
+      phone: "+63 917 555 9999", precautions: "Penicillin", attachments: [],
       createdAt: new Date().toISOString(), _mod: new Date().toISOString(),
     });
     const created = await push(A, s.rev, s.state);
@@ -46,7 +46,7 @@ const { startServer, reporter } = require("./helpers/server.js");
     const seen = (onB.state.patients || []).find((p) => p.id === "p-workflow");
     R.check("device B receives the new patient", !!seen);
     R.check("the intake detail survives the round trip",
-      !!seen && seen.allergies === "Penicillin" && seen.dob === "1990-03-04", JSON.stringify(seen));
+      !!seen && seen.precautions === "Penicillin" && seen.dob === "1990-03-04", JSON.stringify(seen));
     R.check("the new patient is stamped with the clinic",
       !!seen && (seen.clinicId || "clinic-demo") === "clinic-demo", seen && seen.clinicId);
 

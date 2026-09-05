@@ -56,6 +56,137 @@ const groundedInTranscript = (r, utterances) => {
   });
 };
 
+/* ---------------------------------------------------------------- *
+ *  Is the PROSE grounded?
+ *
+ *  groundedInTranscript() above grades the findings' quotes. Nothing graded
+ *  the SECTION PROSE — subjective, objective, assessment, reason,
+ *  precautions, pmh, treatment — and that is the free text the model writes
+ *  from scratch. It is also the largest surface for the failure a clinician
+ *  actually fears: a fluent, plausible clinical sentence that nobody said.
+ *
+ *  Word overlap is the wrong instrument here. The prompt asks for the
+ *  Subjective "in English" from a transcript that may be entirely Tagalog or
+ *  Cebuano, so legitimate output shares almost no words with its source.
+ *
+ *  So these grade the two things that are checkable across a translation and
+ *  are the ones that hurt if invented: WHICH BODY REGION, and WHICH NUMBER.
+ *  A note that says "left" for a right shoulder, or "8/10" for a 5/10, is
+ *  wrong in a way a reader cannot detect. Both are normalised through the
+ *  app's own multilingual lexicon, so "balikat" in the transcript and
+ *  "shoulder" in the prose are the same region and neither counts as
+ *  invented.
+ * ---------------------------------------------------------------- */
+
+const PR = require("../../parser.js");
+
+const SECTION_PROSE = (r) => SECTION_KEYS.map((k) => String((r || {})[k] || "")).join(" . ");
+
+/** Every body region named anywhere in a block of text, ignoring side. */
+const regionsIn = (text) => {
+  const out = new Set();
+  for (const line of String(text || "").split(/[.!?;\n]+/))
+    for (const m of PR.parseUtterance(line).mentions) out.add(String(m.partName || "").toLowerCase());
+  return out;
+};
+
+/* Regions the write-up names that the transcript never did.
+   Side is deliberately NOT part of this comparison, and that is a finding in
+   itself: measured against Vertex, every "invented" laterality this flagged
+   was the model correctly INHERITING a side nobody restated. "The back of my
+   left leg… mostly the back of the thigh" is a left thigh, and "both knees,
+   the left is worse, the left is a seven" is a left knee, though neither
+   phrase appears in the transcript. Grading those as fabrication would train
+   the prompt to stop doing the right thing. What laterality actually has to
+   be graded on is CONTRADICTION, below. */
+const inventedRegions = (r, utterances) => {
+  const said = regionsIn(utterances.join(" . "));
+  return [...regionsIn(SECTION_PROSE(r))].filter((x) => !said.has(x));
+};
+
+/** A side asserted in the write-up when that side was never spoken at all —
+    a right shoulder written up as the left. Inheritance is allowed; inventing
+    a side out of nothing is not. */
+const SIDE_WORDS_ANY = { left: /\b(?:left|kaliwa\w*|wala\w*)\b/i, right: /\b(?:right|kanan?\w*|tuo\w*)\b/i };
+const contradictedLaterality = (r, utterances) => {
+  const heard = utterances.join(" . ");
+  const prose = SECTION_PROSE(r);
+  return Object.entries(SIDE_WORDS_ANY)
+    .filter(([, re]) => re.test(prose) && !re.test(heard))
+    .map(([side]) => side);
+};
+
+/* Numbers, in any of the three languages, plus the digit forms — a rating
+   spoken "walo" and written "8" is one number and must not read as invented.
+
+   Tagalog and Cebuano attach a LINKER to a counting number before the noun
+   it counts: "tatlo" becomes "tatlong linggo", "isa" becomes "isang buwan".
+   Missing that was the checker's own bug, and it accused the model of
+   inventing a "3" that the patient had said out loud. */
+const SPOKEN_NUMBERS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40,
+  fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+  sero: 0, isa: 1, dalawa: 2, tatlo: 3, apat: 4, lima: 5, anim: 6, pito: 7, walo: 8,
+  siyam: 9, sampu: 10, usa: 1, duha: 2, tulo: 3, upat: 4, unom: 6, napulo: 10,
+};
+
+const numbersIn = (text) => {
+  const out = new Set();
+  const t = String(text || "").toLowerCase();
+  for (const m of t.match(/\d+(?:\.\d+)?/g) || []) out.add(Number(m));
+  for (const [word, n] of Object.entries(SPOKEN_NUMBERS)) {
+    // …ng / …g linker, and the standalone form
+    if (new RegExp(`\\b${word}(?:ng|g)?\\b`).test(t)) out.add(n);
+  }
+  return out;
+};
+
+/* Numbers in the write-up that the transcript never carried, in any form.
+   Two exemptions, or this reports scaffolding instead of fabrication:
+     - 0 and 10, which are the pain scale a clinician writes a rating onto;
+     - a YEAR, which is as often derived ("ten years ago") as quoted. */
+const inventedNumbers = (r, utterances) => {
+  const said = numbersIn(utterances.join(" . "));
+  const currentYear = new Date().getFullYear();
+  return [...numbersIn(SECTION_PROSE(r))].filter((n) => {
+    if (said.has(n)) return false;
+    if (n === 10 || n === 0) return false;
+    if (n >= 1900 && n <= currentYear) return false;
+    return true;
+  });
+};
+
+/* ---------------------------------------------------------------- *
+ *  A PLAN written where a record of the visit belongs
+ *
+ *  The prompt is explicit twice over: Treatment summarises interventions
+ *  "performed this visit… else ''", and "Do not write the Plan — frequency,
+ *  duration and progressions are the therapist's decision, not the
+ *  transcript's."
+ *
+ *  Measured against Vertex, a six-line transcript of a patient describing
+ *  where it hurts — no treatment performed, none discussed — came back with
+ *  a full programme in the Treatment field: a stretching plan, bridges,
+ *  eccentric loading, patient education, all in the future tense. It is the
+ *  most fluent thing the model writes and the least grounded, and it reads
+ *  exactly like a note a therapist would sign.
+ *
+ *  So this grades the specific shape of it. Future-tense recommendation
+ *  language in a field that is supposed to record what was DONE is the
+ *  signature, and it is checkable without judging clinical content.
+ * ---------------------------------------------------------------- */
+
+const PLANNING_VOICE = /\b(?:will be|will (?:begin|start|focus|emphasi[sz]e|include|initiate|progress)|are recommended|is recommended|recommend(?:ed|s)? (?:that|to|a|an)|should (?:be|begin|start|include|progress)|can be (?:gradually |slowly )?(?:introduced|progressed|added|initiated)|to be (?:introduced|initiated|progressed)|plan(?:ned)? to|as tolerated,|going forward)\b/i;
+
+/** Interventions the transcript actually narrates, in any of the three
+    languages. Reuses nothing from the model's own answer. */
+const INTERVENTION_SAID = /\b(?:ultrasound|e-?stim|tens|traction|manual therapy|massage|hilot|masahe|mobiliz\w*|stretch\w*|exercis\w*|therex|scaption|gait|balance|hot pack|cold pack|ice|heat|taping|hep|home (?:exercise )?program|educat\w*|ginawan|gitudloan|nag-?\w+|pag-?uunat|inunat|pinainit)\b/i;
+
+const treatmentIsAPlan = (r) => PLANNING_VOICE.test(String((r || {}).treatment || ""));
+const treatmentWithoutOne = (r, utterances) =>
+  !!String((r || {}).treatment || "").trim() && !INTERVENTION_SAID.test(utterances.join(" "));
+
 /** The cleanup pass may merge or drop empty turns, but must not fabricate a
     conversation — guard against a model padding the dialogue. */
 const dialogueNotInflated = (r, utterances) => (r.dialogue || []).length <= utterances.length + 1;
@@ -599,6 +730,16 @@ for (const c of REFINE_CASES) {
   c.assertions.push(
     { name: "every finding is traceable to the transcript", weight: 3, test: (r) => groundedInTranscript(r, c.input) },
     { name: "the dialogue is not padded with invented turns", weight: 2, test: (r) => dialogueNotInflated(r, c.input) },
+    { name: "no section names a body region nobody mentioned", weight: 3,
+      test: (r) => inventedRegions(r, c.input).length === 0 },
+    { name: "no section states a number nobody said", weight: 3,
+      test: (r) => inventedNumbers(r, c.input).length === 0 },
+    { name: "no section asserts a side that was never spoken", weight: 3,
+      test: (r) => contradictedLaterality(r, c.input).length === 0 },
+    { name: "the treatment field records what was done, not a plan for next time", weight: 3,
+      engines: ["gemini"], test: (r) => !treatmentIsAPlan(r) },
+    { name: "no treatment is written for a visit that describes none", weight: 3,
+      engines: ["gemini"], test: (r) => !treatmentWithoutOne(r, c.input) },
   );
 }
 

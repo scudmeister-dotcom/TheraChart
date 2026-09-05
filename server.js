@@ -912,6 +912,50 @@ async function jwtBearerToken(key) {
   return r.json();
 }
 
+/* ---- speech adaptation: the vocabulary Chirp 2 has never seen ----
+
+   Chirp 2 is a general model. The words it gets wrong in a physiotherapy
+   clinic are wrong the same way every time, because it is choosing between a
+   clinical abbreviation it does not know and an ordinary English word it does
+   — "MMT" against "MPT", "AROM" against "a ROM", "therex" against "there ex".
+
+   Boosting the clinical reading is the only fix available at the source.
+   Everything else we do about mis-transcription happens after the fact, on
+   text that has already lost the distinction.
+
+   Deliberately short. Every phrase here makes its own reading likelier at the
+   expense of the ordinary word, so the list holds terms that are almost never
+   anything else in a clinic — not "help", not "tens", not a body part the
+   model already knows. Boost 15 of a possible 20: firm, but not so hard that
+   a genuine "empty" comes back as "MMT". */
+const STT_PHRASES = [
+  "MMT", "AROM", "PROM", "ROM", "goniometer", "therex", "HEP",
+  "scaption", "abduction", "adduction", "dorsiflexion", "plantarflexion",
+  "supination", "pronation", "proprioception", "subacromial", "impingement",
+  "rotator cuff", "patellofemoral", "gastrocnemius", "quadriceps", "hamstring",
+  "gait training", "weight bearing", "ambulates", "transfers",
+  "Neer", "Hawkins", "Lachman", "McMurray", "Thomas test", "Ober",
+];
+const STT_BOOST = 15;
+
+/* Whether this deployment's model accepts an `adaptation` block at all.
+   Chirp 2's feature support varies by region, and a request carrying an
+   unsupported field is REJECTED rather than ignored — so this is probed once
+   and then remembered: if Google says no, every later request goes without it
+   instead of paying for a failed call and a retry on every segment. */
+let sttAdaptation = true;
+const ADAPTATION_UNSUPPORTED_RE = /adaptation|phrase[_ ]?set|unsupported|not supported|invalid[_ ]argument/i;
+
+function sttRequestBody(wavBuffer, model, language, withAdaptation) {
+  const config = { autoDecodingConfig: {}, model, languageCodes: [language] };
+  if (withAdaptation) {
+    config.adaptation = {
+      phraseSets: [{ inlinePhraseSet: { phrases: STT_PHRASES.map((value) => ({ value, boost: STT_BOOST })) } }],
+    };
+  }
+  return { config, content: wavBuffer.toString("base64") };
+}
+
 async function transcribe(wavBuffer, lang, modelKey) {
   if (!sttConfigured()) {
     throw Object.assign(new Error(
@@ -922,17 +966,28 @@ async function transcribe(wavBuffer, lang, modelKey) {
   const token = await gcpAccessToken();
   const host = STT_LOCATION === "global" ? "speech.googleapis.com" : `${STT_LOCATION}-speech.googleapis.com`;
   const url = `https://${host}/v2/projects/${GCP_PROJECT}/locations/${STT_LOCATION}/recognizers/_:recognize`;
-  const body = {
-    config: { autoDecodingConfig: {}, model, languageCodes: [language] },
-    content: wavBuffer.toString("base64"),
+
+  const call = async (withAdaptation) => {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(sttRequestBody(wavBuffer, model, language, withAdaptation)),
+      signal: AbortSignal.timeout(30000),
+    });
+    return { r, data: await r.json().catch(() => ({})) };
   };
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
-  });
-  const data = await r.json().catch(() => ({}));
+
+  let { r, data } = await call(sttAdaptation);
+  /* One retry, once, ever: if the phrase list is what this region refused,
+     drop it for the life of the process and transcribe without. Any other
+     failure is a real failure and is reported as one. */
+  if (!r.ok && sttAdaptation && r.status === 400
+      && ADAPTATION_UNSUPPORTED_RE.test((data.error && data.error.message) || "")) {
+    sttAdaptation = false;
+    console.warn("[stt] this model/region rejected the clinical phrase list — continuing without it:",
+      (data.error && data.error.message) || "");
+    ({ r, data } = await call(false));
+  }
   if (!r.ok) throw new Error(`Speech-to-Text failed: ${(data.error && data.error.message) || `HTTP ${r.status}`}`);
   const text = (data.results || [])
     .map((res) => (res.alternatives && res.alternatives[0] && res.alternatives[0].transcript) || "")

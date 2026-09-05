@@ -5,7 +5,8 @@
 
 "use strict";
 
-const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript } = require("../parser.js");
+const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
+        correctDictation, extractMeasurements } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -863,6 +864,95 @@ const meas = (t) => parseUtterance(t).measurements;
   const still = parseUtterance("it is about a six out of ten at night");
   check("idiom: a genuine follow-up still produces a loose signal",
     !!still.loose, JSON.stringify(still.loose));
+}
+
+/* ---------------------------------------------------------------- *
+ *  Speech-recognition repair
+ *
+ *  Every rule here rewrites a word, so the checks that matter most are the
+ *  ones proving it DOESN'T: each wrong reading is a real English word
+ *  somewhere else, and a correction that fires on the ordinary sentence is
+ *  worse than the mis-transcription it was meant to fix.
+ * ---------------------------------------------------------------- */
+
+{
+  const fix = (t) => correctDictation(t).text;
+
+  // MMT — Kim's field test
+  check("MPT next to a muscle grade is MMT", fix("MPT quad strength 4 out of 5") === "MMT quad strength 4 out of 5");
+  check("MPT with a slashed grade is MMT", fix("MPT 4/5 on the right") === "MMT 4/5 on the right");
+  check("the spelled-out letters are MMT too", fix("em pee tee grade 3 out of 5").startsWith("MMT"));
+  check("MPT as a credential is left alone",
+    fix("She was seen by Ana Cruz, MPT, last week") === "She was seen by Ana Cruz, MPT, last week");
+  check("MPT with no grade in sight is left alone",
+    fix("referred by the MPT at the other branch") === "referred by the MPT at the other branch");
+
+  // AROM / PROM
+  check("a mis-split AROM is put back together", fix("a rom shoulder flexion 120 degrees") === "AROM shoulder flexion 120 degrees");
+  check("a hyphenated one too", fix("a-rom knee extension 5 degrees") === "AROM knee extension 5 degrees");
+  check("p rom is PROM", fix("p rom knee flexion 130 degrees") === "PROM knee flexion 130 degrees");
+  check("prom becomes PROM only where the motion is passive",
+    fix("passive prom knee flexion 130") === "passive PROM knee flexion 130");
+  check("the school dance survives", fix("she is going to her prom on Friday") === "she is going to her prom on Friday");
+  check("an ordinary promise survives", fix("I promise to do the exercises") === "I promise to do the exercises");
+
+  // therex / HEP
+  check("split therex is rejoined", fix("we did there exercises today") === "we did therex today");
+  check("HEP is recovered where a programme is reviewed",
+    /\bHEP\b/.test(fix("reviewed help, compliance is good")));
+  check("somebody needing help still needs help",
+    fix("the patient needs help getting off the plinth") === "the patient needs help getting off the plinth");
+
+  // the reported fix list — a silent correction is one nobody can disagree with
+  const r = correctDictation("MPT quad strength 4 out of 5");
+  check("a correction reports what it changed", r.fixes.length === 1 && r.fixes[0].to === "MMT", JSON.stringify(r.fixes));
+  check("an untouched line reports nothing", correctDictation("shoulder flexion 120 degrees").fixes.length === 0);
+  check("empty and junk input never throw",
+    correctDictation("").text === "" && correctDictation(null).text === "" && correctDictation(undefined).fixes.length === 0);
+
+  /* THE REGRESSION BASELINE. Measurement strings were the one part of
+     dictation Kim's field test reported as already working, so nothing above
+     may touch them. */
+  const baselines = [
+    "abduction 90 degrees, external rotation 45",
+    "shoulder flexion measured at 130 degrees",
+    "quad strength 4 out of 5",
+    "pain 7 out of 10",
+    "positive Neer test",
+    "masakit ang kaliwang balikat ko",
+  ];
+  check("measurement dictation passes through untouched",
+    baselines.every((b) => fix(b) === b), JSON.stringify(baselines.filter((b) => fix(b) !== b)));
+}
+
+/* ---------------------------------------------------------------- *
+ *  Active vs passive range of motion
+ * ---------------------------------------------------------------- */
+
+{
+  const rom = (t) => extractMeasurements(correctDictation(t).text).rom;
+
+  const active = rom("AROM right shoulder flexion 120 degrees");
+  check("AROM records the reading as active", active.length === 1 && active[0].quality === "active", JSON.stringify(active));
+  check("…and keeps the joint, side and angle", active[0].joint === "shoulder" && active[0].side === "right" && active[0].degrees === 120);
+
+  const passive = rom("passive knee flexion 130 degrees");
+  check("passive records the reading as passive", passive[0].quality === "passive", JSON.stringify(passive));
+
+  check("an unqualified reading is left unqualified",
+    rom("shoulder flexion 120 degrees")[0].quality === undefined);
+
+  // the qualifier governs the run that follows it, like the joint does
+  const run = rom("AROM shoulder flexion 120 degrees, external rotation 45");
+  check("the qualifier carries down a run of motions",
+    run.length === 2 && run.every((r) => r.quality === "active"), JSON.stringify(run));
+
+  // …and stops at the next one
+  const both = rom("a rom shoulder flexion 120 degrees then PROM flexion 155 degrees");
+  check("a second qualifier takes over from the first",
+    both.length === 2 && both[0].quality === "active" && both[1].quality === "passive", JSON.stringify(both));
+  check("active and passive readings of one motion stay two findings",
+    both[0].degrees === 120 && both[1].degrees === 155);
 }
 
 const total = passed + failures.length;
