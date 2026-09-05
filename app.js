@@ -44,6 +44,16 @@
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
   const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B");
+  /* Money, always with its sign. Whole pesos read as whole pesos; a price
+     with centavos keeps both digits rather than being rounded into a figure
+     that won't reconcile with the receipt. */
+  const peso = (n) => {
+    const v = Number(n) || 0;
+    return `₱${v.toLocaleString("en-PH", {
+      minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+      maximumFractionDigits: 2,
+    })}`;
+  };
   // local calendar date (UTC slices shift the date near midnight in +/- zones)
   const localIso = (d) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -804,7 +814,6 @@
        figure is shown because it is the thing a clinic owner can actually check
        against their own book, and because it falls at every rung — the ladder
        has to reward growing into it. */
-    const peso = (n) => `₱${n.toLocaleString("en-PH")}`;
     const tier = (name, price, visits, who, featured) => `
       <div class="lp-tier${featured ? " featured" : ""}">
         ${featured ? '<div class="lp-tier-flag">Most clinics</div>' : ""}
@@ -1432,7 +1441,7 @@ ${walkthroughMarkup()}`;
       shot: "02-patient-overview",
       title: "The chart remembers, so you don't have to.",
       now: "\"How is this patient actually doing?\" means flipping back through months of paper and comparing numbers by eye.",
-      here: "One screen: what needs attention today, goals against their target dates, outcome scores trended across the episode, and allergies on a banner that follows you into every screen of the chart.",
+      here: "One screen: what needs attention today, goals against their target dates, outcome scores trended across the episode, and precautions on a banner that follows you into every screen of the chart.",
       where: "Any patient · <b>Overview</b> tab",
     },
     {
@@ -2092,7 +2101,9 @@ ${walkthroughMarkup()}`;
   <div class="field"><label>Referring physician</label><input id="in-ref" value="${v("referringPhysician")}" placeholder="Name and specialty" /></div>
 
   <h2 style="margin-top:16px">Safety &amp; emergency contact</h2>
-  <div class="field"><label>Allergies</label><input id="in-allergies" value="${v("allergies")}" placeholder="Drug, latex, adhesive… or leave blank if none known" /></div>
+  <div class="field"><label>Precautions</label>
+    <textarea id="in-precautions" rows="2" placeholder="Allergies, weight-bearing status, fall risk, contraindicated modalities… or leave blank if none known">${v("precautions")}</textarea>
+    <div class="field-hint">Everything anyone must know before treating this patient. Shows on the banner from every screen of the chart.</div></div>
   <div class="field-row">
     <div class="field"><label>Emergency contact</label><input id="in-ecname" value="${ec("name")}" placeholder="Full name" /></div>
     <div class="field"><label>Relationship</label><input id="in-ecrel" value="${ec("relationship")}" placeholder="Spouse, son, friend…" /></div>
@@ -2110,6 +2121,10 @@ ${walkthroughMarkup()}`;
     <div class="field"><label>Authorisation expires</label><input id="in-authexp" type="date" value="${au("expiresOn")}" /></div>
   </div>
   <div class="field"><label>Authorisation reference</label><input id="in-authref" value="${au("reference")}" placeholder="Approval / reference number" /></div>
+  <div class="field-row">
+    <div class="field"><label>Guarantee letter number</label><input id="in-authgl" value="${au("guaranteeLetter")}" placeholder="LOA / guarantee letter no." /></div>
+    <div class="field"><label>Date of submission of documents</label><input id="in-authsub" type="date" max="${todayIso()}" value="${au("submittedOn")}" /></div>
+  </div>
   <div id="intakeWarn"></div>
   <div style="display:flex; gap:8px; margin-top:6px">
     <button class="btn primary" id="intakeSave">${p ? "Save changes" : "Register patient"}</button>
@@ -2125,10 +2140,11 @@ ${walkthroughMarkup()}`;
      validator against a completely different set of ids. */
   const INTAKE_IDS = {
     firstName: "in-first", lastName: "in-last", preferredName: "in-preferred", dob: "in-dob", address: "in-address",
-    phone: "in-phone", email: "in-email", referringPhysician: "in-ref", allergies: "in-allergies",
+    phone: "in-phone", email: "in-email", referringPhysician: "in-ref", precautions: "in-precautions",
     ecName: "in-ecname", ecRelationship: "in-ecrel", ecPhone: "in-ecphone",
     provider: "in-prov", memberId: "in-member", paymentNotes: "in-paynotes",
     visitsAuthorized: "in-authvisits", authExpires: "in-authexp", authReference: "in-authref",
+    guaranteeLetter: "in-authgl", authSubmitted: "in-authsub",
   };
 
   /* The same keys again for the patient edit windows, which show one section
@@ -2139,12 +2155,17 @@ ${walkthroughMarkup()}`;
     address: "pe-address", phone: "pe-phone", email: "pe-email", referringPhysician: "pe-ref",
   };
   const SAFETY_IDS = {
-    allergies: "pe-allergies", ecName: "pe-ecname", ecRelationship: "pe-ecrel", ecPhone: "pe-ecphone",
+    precautions: "pe-precautions", ecName: "pe-ecname", ecRelationship: "pe-ecrel", ecPhone: "pe-ecphone",
   };
   const INSURANCE_IDS = {
     provider: "pe-prov", memberId: "pe-member", paymentNotes: "pe-paynotes",
     visitsAuthorized: "pe-authvisits", authExpires: "pe-authexp", authReference: "pe-authref",
+    guaranteeLetter: "pe-authgl", authSubmitted: "pe-authsub",
   };
+  /* The precautions box on the Info tab edits one field in place, so it maps
+     that field alone — everything else validatePatient looks at is off screen
+     and must not be surfaced or focused here. */
+  const PRECAUTIONS_IDS = { precautions: "ip-precautions" };
 
   function bindIntake(user) {
     const form = document.getElementById("intakeSave").closest(".card");
@@ -2164,11 +2185,12 @@ ${walkthroughMarkup()}`;
         firstName: g("in-first"), lastName: g("in-last"), preferredName: g("in-preferred"), dob: g("in-dob"),
         sex: g("in-sex"), address: g("in-address"), phone: g("in-phone"),
         email: g("in-email"), referringPhysician: g("in-ref"),
-        allergies: g("in-allergies"),
+        precautions: g("in-precautions"),
         emergencyContact: { name: g("in-ecname"), relationship: g("in-ecrel"), phone: g("in-ecphone") },
         insurance: { provider: g("in-prov"), memberId: g("in-member"), notes: g("in-paynotes") },
         authorization: {
           visitsAuthorized: g("in-authvisits"), expiresOn: g("in-authexp"), reference: g("in-authref"),
+          guaranteeLetter: g("in-authgl"), submittedOn: g("in-authsub"),
         },
       };
       const result = VD.validatePatient(raw, {
@@ -2211,7 +2233,7 @@ ${walkthroughMarkup()}`;
         </button>
         <button class="edit-choice" data-sec="safety" type="button">
           <span class="edit-choice-ico ec-safety">⚠️</span>
-          <b>Allergies &amp; emergency contact</b>
+          <b>Precautions &amp; emergency contact</b>
           <small>Shown on the patient banner before anyone treats them</small>
         </button>
         <button class="edit-choice" data-sec="insurance" type="button">
@@ -2232,9 +2254,9 @@ ${walkthroughMarkup()}`;
     const insur = p.insurance || {};
     const ec = p.emergencyContact || {};
     const au = p.authorization || {};
-    const TITLES = { personal: "Edit personal information", safety: "Edit allergies & emergency contact", insurance: "Edit insurance & authorisation" };
+    const TITLES = { personal: "Edit personal information", safety: "Edit precautions & emergency contact", insurance: "Edit insurance & authorisation" };
     const SAVE_LABELS = { personal: "Save personal info", safety: "Save safety details", insurance: "Save insurance" };
-    const SECTION_NAMES = { personal: "personal information", safety: "allergies & emergency contact", insurance: "insurance & authorisation" };
+    const SECTION_NAMES = { personal: "personal information", safety: "precautions & emergency contact", insurance: "insurance & authorisation" };
     const fieldsHtml = isPersonal ? `
       <div class="field-row">
         <div class="field"><label>First name *</label><input id="pe-first" value="${esc(p.firstName || "")}" /></div>
@@ -2257,8 +2279,8 @@ ${walkthroughMarkup()}`;
       </div>
       <div class="field"><label>Referring physician</label><input id="pe-ref" value="${esc(p.referringPhysician || "")}" /></div>`
     : isSafety ? `
-      <div class="field"><label>Allergies</label>
-        <input id="pe-allergies" value="${esc(p.allergies || "")}" placeholder="Drug, latex, adhesive… leave blank if none known" /></div>
+      <div class="field"><label>Precautions</label>
+        <textarea id="pe-precautions" rows="3" placeholder="Allergies, weight-bearing status, fall risk, contraindicated modalities… leave blank if none known">${esc(S.patientPrecautions(p))}</textarea></div>
       <p style="font-size:12.5px; color:var(--muted); margin:-4px 0 10px">Anything entered here shows on the patient banner, on every screen in the chart.</p>
       <div class="field-row">
         <div class="field"><label>Emergency contact</label><input id="pe-ecname" value="${esc(ec.name || "")}" placeholder="Full name" /></div>
@@ -2275,7 +2297,11 @@ ${walkthroughMarkup()}`;
         <div class="field"><label>Visits authorised</label><input id="pe-authvisits" type="number" min="0" value="${au.visitsAuthorized || ""}" placeholder="e.g. 12" /></div>
         <div class="field"><label>Authorisation expires</label><input id="pe-authexp" type="date" value="${esc(au.expiresOn || "")}" /></div>
       </div>
-      <div class="field"><label>Authorisation reference</label><input id="pe-authref" value="${esc(au.reference || "")}" placeholder="Approval / reference number" /></div>`;
+      <div class="field"><label>Authorisation reference</label><input id="pe-authref" value="${esc(au.reference || "")}" placeholder="Approval / reference number" /></div>
+      <div class="field-row">
+        <div class="field"><label>Guarantee letter number</label><input id="pe-authgl" value="${esc(au.guaranteeLetter || "")}" placeholder="LOA / guarantee letter no." /></div>
+        <div class="field"><label>Date of submission of documents</label><input id="pe-authsub" type="date" max="${todayIso()}" value="${esc(au.submittedOn || "")}" /></div>
+      </div>`;
 
     const m = showModal(`
       <h2>${TITLES[section] || TITLES.insurance}</h2>
@@ -2285,8 +2311,8 @@ ${walkthroughMarkup()}`;
       <div class="modal-actions" id="pe-actions"></div>`);
 
     const ids = isPersonal ? ["pe-first", "pe-last", "pe-preferred", "pe-dob", "pe-sex", "pe-address", "pe-phone", "pe-email", "pe-ref"]
-              : isSafety ? ["pe-allergies", "pe-ecname", "pe-ecrel", "pe-ecphone"]
-                         : ["pe-prov", "pe-member", "pe-paynotes", "pe-authvisits", "pe-authexp", "pe-authref"];
+              : isSafety ? ["pe-precautions", "pe-ecname", "pe-ecrel", "pe-ecphone"]
+                         : ["pe-prov", "pe-member", "pe-paynotes", "pe-authvisits", "pe-authexp", "pe-authref", "pe-authgl", "pe-authsub"];
     const snap = () => ids.map((id) => m.querySelector("#" + id).value).join("");
     const initial = snap();
     const isDirty = () => snap() !== initial;
@@ -2307,7 +2333,7 @@ ${walkthroughMarkup()}`;
       } else if (isSafety) {
         idFor = SAFETY_IDS;
         edited = {
-          allergies: g("pe-allergies"),
+          precautions: g("pe-precautions"),
           emergencyContact: { name: g("pe-ecname"), relationship: g("pe-ecrel"), phone: g("pe-ecphone") },
         };
       } else {
@@ -2316,6 +2342,7 @@ ${walkthroughMarkup()}`;
           insurance: { provider: g("pe-prov"), memberId: g("pe-member"), notes: g("pe-paynotes") },
           authorization: {
             visitsAuthorized: g("pe-authvisits"), expiresOn: g("pe-authexp"), reference: g("pe-authref"),
+            guaranteeLetter: g("pe-authgl"), submittedOn: g("pe-authsub"),
           },
         };
       }
@@ -2346,7 +2373,10 @@ ${walkthroughMarkup()}`;
         ? { firstName: c.firstName, lastName: c.lastName, dob: c.dob, sex: c.sex,
             address: c.address, phone: c.phone, email: c.email, referringPhysician: c.referringPhysician }
         : isSafety
-          ? { allergies: c.allergies, emergencyContact: c.emergencyContact }
+          /* `allergies: undefined` is how the rename lands in the record:
+             Object.assign copies the key, JSON.stringify drops it, and the
+             chart stops carrying two answers to the same question. */
+          ? { precautions: c.precautions, allergies: undefined, emergencyContact: c.emergencyContact }
           : { insurance: c.insurance, authorization: c.authorization };
 
       S.updatePatient(p.id, fields, user.id);
@@ -2427,11 +2457,12 @@ ${walkthroughMarkup()}`;
     </div>`;
 
     const sexBits = p.sex ? ` · ${esc(p.sex)}` : "";
-    // Allergies belong on the banner, not three clicks into a tab — they're
+    // Precautions belong on the banner, not three clicks into a tab — they're
     // the one thing that has to be seen before anyone touches the patient.
-    const allergyChip = (p.allergies || "").trim()
-      ? `<span class="pb-chip allergy" title="${esc(p.allergies)}"><span class="pb-k">⚠ Allergies</span>${esc(p.allergies)}</span>`
-      : `<span class="pb-chip"><span class="pb-k">Allergies</span>None recorded</span>`;
+    const precautions = S.patientPrecautions(p);
+    const precautionChip = precautions
+      ? `<span class="pb-chip precaution" title="${esc(precautions)}"><span class="pb-k">⚠ Precautions</span>${esc(precautions)}</span>`
+      : `<span class="pb-chip"><span class="pb-k">Precautions</span>None recorded</span>`;
     return `
 <div class="patient-banner">
   <div class="pb-avatar" aria-hidden="true">${esc(initials(S.patientName(p)))}</div>
@@ -2442,7 +2473,7 @@ ${walkthroughMarkup()}`;
       <span class="pb-chip"><span class="pb-k">Age</span>${age(p.dob)} · ${esc(p.dob)}${sexBits}</span>
       <span class="pb-chip"><span class="pb-k">Phone</span>${esc(p.phone || "—")}</span>
       <span class="pb-chip"><span class="pb-k">Referral</span>${esc(p.referringPhysician || "—")}</span>
-      ${allergyChip}
+      ${precautionChip}
     </div>
   </div>
   <div class="pb-actions">
@@ -2458,7 +2489,7 @@ ${tabStrip}
   function patientTabContent(tab, p, user) {
     if (tab === "documents") return documentsPanel(p, user);
     if (tab === "files") return filesPanel(p, user);
-    if (tab === "info") return infoPanel(p);
+    if (tab === "info") return infoPanel(p, user);
     if (tab === "schedule") return schedulePanel(p, user);
     return overviewPanel(p, user);
   }
@@ -2481,6 +2512,19 @@ ${tabStrip}
     const noteToday = docs.some((d) => d.type === "daily" && d.createdAt.slice(0, 10) === today);
     if (visitToday && !noteToday) items.push({ level: "info", text: "Visit booked today — no note started yet", tab: "documents", action: "Start a note" });
 
+    /* A doctor's order nobody has acted on. First in the list after the
+       drafts, because it can change what may be done to the patient today —
+       an unread "no overhead loading until cleared" is the one item here that
+       is a safety issue rather than a paperwork one. */
+    const orders = S.outstandingOrders(p.id);
+    if (orders.length) items.push({
+      level: "warn",
+      text: orders.length === 1
+        ? `Doctor's order not yet actioned — ${orders[0].text.slice(0, 70)}${orders[0].text.length > 70 ? "…" : ""}`
+        : `${orders.length} doctor's orders not yet actioned`,
+      tab: "info", action: "Open info",
+    });
+
     // Insurance authorisation — the clinic stops getting paid the moment this
     // runs out, and nobody notices until the claim is denied.
     const auth = S.authStatus(p);
@@ -2494,7 +2538,7 @@ ${tabStrip}
     if (!goals.total && hasEval) items.push({ level: "info", text: "No plan-of-care goals set", tab: "documents", action: "Open documents" });
 
     // A signed visit with no charges never becomes a claim
-    const unbilled = docs.filter((d) => d.status === "signed" && d.type !== "discharge" && !((d.data.charges || []).length));
+    const unbilled = docs.filter((d) => d.status === "signed" && d.type === "daily" && !((d.data.charges || []).length));
     if (unbilled.length) items.push({ level: "warn", text: `${unbilled.length} signed note${unbilled.length > 1 ? "s have" : " has"} no billing codes`, tab: "documents", status: "signed", action: "Open documents" });
 
     if (!(p.attachments || []).length) items.push({ level: "info", text: "No referral or imaging files uploaded", tab: "files", action: "Add files" });
@@ -2586,8 +2630,7 @@ ${tabStrip}
     const nextAppt = S.appointments()
       .filter((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date().toISOString())
       .sort((a, b) => (a.start < b.start ? -1 : 1))[0];
-    const every = S.settings().progressEvery || 5;
-    const toward = S.visitCount(p.id) % every;
+    const prog = S.progressToward(p.id);
     const auth = S.authStatus(p);
     const authRow = auth.hasAuth
       ? `<tr><td style="color:var(--muted)">Visits authorised</td><td>
@@ -2606,7 +2649,7 @@ ${tabStrip}
           <tr><td style="color:var(--muted)">Next visit</td><td>${nextAppt ? fmtDT(nextAppt.start) : "None booked"}</td></tr>
           <tr><td style="color:var(--muted)">Visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
           ${authRow}
-          <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${toward}/${every}</td></tr>
+          <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${prog.done}/${prog.every}</td></tr>
           ${dictationRow(p)}
         </tbody></table>
       </div>`;
@@ -2884,7 +2927,7 @@ ${tabStrip}
       .map((d) => `${d.id}:${d._mod || d.createdAt}:${d.type}`)
       .sort()
       .join("|");
-    const facts = [p.dob, p.sex, p.referringPhysician, p.pmh, p.allergies].join("~");
+    const facts = [p.dob, p.sex, p.referringPhysician, p.pmh, S.patientPrecautions(p)].join("~");
     // FNV-1a: not cryptographic, just a stable short digest of a long string
     let h = 0x811c9dc5;
     const str = docs + "#" + facts;
@@ -3038,6 +3081,13 @@ ${tabStrip}
 
   /* ---------- Files tab ---------- */
 
+  /* `capture="environment"` on the photo input opens the rear camera directly
+     on a phone or tablet instead of the file picker, which is the whole point:
+     a wound, a posture, a home setup — photographed and in the chart without
+     going through the camera roll, where a patient's photograph would
+     otherwise sit on somebody's personal device. On a desktop with no camera
+     the attribute is ignored and the control is a second file picker, so it
+     is safe to show everywhere rather than sniffing for a device. */
   function filesPanel(p, user) {
     const canDoc = S.canDocument(user);
     return `
@@ -3051,6 +3101,9 @@ ${tabStrip}
           <label class="btn small" style="position:relative; overflow:hidden">
             Upload file<input id="fileUpload" type="file" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
           </label>
+          <label class="btn small" style="position:relative; overflow:hidden" title="Opens the camera on a phone or tablet — the photo goes straight into the chart, not into your camera roll">
+            📷 Take a photo<input id="photoCapture" type="file" accept="image/*" capture="environment" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
+          </label>
           ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
             ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
           </label>` : ""}
@@ -3061,7 +3114,8 @@ ${tabStrip}
 
   /* ---------- Info tab ---------- */
 
-  function infoPanel(p) {
+  function infoPanel(p, user) {
+    const au = p.authorization || {};
     return `
       <div class="cards-2">
         <div class="card">
@@ -3083,14 +3137,14 @@ ${tabStrip}
             <tr><td style="color:var(--muted)">Member ID</td><td class="num">${esc((p.insurance || {}).memberId || "—")}</td></tr>
             <tr><td style="color:var(--muted)">Notes</td><td>${esc((p.insurance || {}).notes || "—")}</td></tr>
             ${authInfoRows(p)}
+            <tr><td style="color:var(--muted)">Guarantee letter</td><td class="num">${esc(au.guaranteeLetter || "—")}</td></tr>
+            <tr><td style="color:var(--muted)">Documents submitted</td><td>${au.submittedOn ? esc(au.submittedOn) : "—"}</td></tr>
           </tbody></table>
+          <div style="margin-top:10px">
+            <button class="btn small" id="attendanceBtn" type="button" title="Every documented visit, formatted for the insurer">🖨 Attendance record</button>
+          </div>
         </div>
-        <div class="card">
-          <h2>Allergies</h2>
-          ${(p.allergies || "").trim()
-            ? `<div class="allergy-box">⚠ ${esc(p.allergies)}</div>`
-            : `<div class="empty-state" style="padding:12px">None recorded. If the patient has none, that's worth writing down explicitly.</div>`}
-        </div>
+        ${precautionsCard(p)}
         <div class="card">
           <h2>Emergency contact</h2>
           ${(p.emergencyContact || {}).name
@@ -3101,7 +3155,258 @@ ${tabStrip}
               </tbody></table>`
             : `<div class="empty-state" style="padding:12px">No emergency contact on file.</div>`}
         </div>
+      </div>
+      ${doctorCommsCard(p, user)}`;
+  }
+
+  /* ---------- Doctor's communication log ----------
+
+     The referring physician rings the front desk, or sends a note in with the
+     patient: a new order, a lifted restriction, a change of frequency. It had
+     nowhere to live except somebody's memory or the middle of a treatment
+     note, where the next therapist would not find it.
+
+     An ORDER stays outstanding until a clinician says they have acted on it,
+     and shows on the chart's Needs-attention list until they do. That is the
+     whole point of writing it down. */
+  function doctorCommsCard(p, user) {
+    const entries = S.doctorComms(p.id).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+    const canLog = S.canAccessEmr(user);
+    const canSign = S.canDocument(user);
+
+    const rows = entries.map((e) => `
+      <div class="dc-row ${e.kind === "order" && !e.acknowledged ? "open" : ""}">
+        <div class="dc-main">
+          <div class="dc-head">
+            <span class="chip ${e.kind === "order" ? (e.acknowledged ? "good" : "warn") : "muted"}">${e.kind === "order" ? "Order" : "Note"}</span>
+            <b>${esc(e.date)}</b>
+            ${e.physician ? `<span style="color:var(--muted)">· ${esc(e.physician)}</span>` : ""}
+            ${e.via ? `<span style="color:var(--muted)">· ${esc(e.via)}</span>` : ""}
+          </div>
+          <div class="dc-text">${esc(e.text)}</div>
+          <div class="dc-foot">
+            logged by ${esc((S.getUser(e.createdBy) || {}).name || "—")} ${fmtDT(e.createdAt)}
+            ${e.acknowledged ? ` · <b>actioned</b> by ${esc((S.getUser(e.acknowledgedBy) || {}).name || "—")} ${fmtDT(e.acknowledgedAt)}` : ""}
+          </div>
+        </div>
+        <div class="dc-actions">
+          ${e.kind === "order" && !e.acknowledged && canSign
+            ? `<button class="btn small primary" data-dcack="${esc(e.id)}">Mark actioned</button>` : ""}
+          ${canSign ? `<button class="btn small" data-dcdel="${esc(e.id)}" title="Remove">✕</button>` : ""}
+        </div>
+      </div>`).join("");
+
+    return `
+      <div class="card" id="doctorCommsCard">
+        <div class="ins-head"><h2>Doctor's communication</h2></div>
+        <p style="font-size:12.5px; color:var(--muted); margin:0 0 10px">
+          New orders and messages from the referring physician. An order stays on the chart's needs-attention list until a clinician marks it actioned.
+        </p>
+        <div class="dc-list">${rows || `<div class="empty-state" style="padding:12px">Nothing logged yet.</div>`}</div>
+        ${canLog ? `<details class="dc-add">
+          <summary>＋ Log a communication</summary>
+          <div class="dc-add-body">
+            <div class="field-row">
+              <div class="field"><label>Date</label><input id="dc-date" type="date" max="${todayIso()}" value="${todayIso()}" /></div>
+              <div class="field"><label>Kind</label><select id="dc-kind">
+                <option value="order">New order — needs actioning</option>
+                <option value="note">Note — for the record</option>
+              </select></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Physician</label><input id="dc-doc" value="${esc(p.referringPhysician || "")}" placeholder="Who it was from" /></div>
+              <div class="field"><label>How it came in</label><input id="dc-via" placeholder="Phone, letter, with the patient…" /></div>
+            </div>
+            <div class="field"><label>What was said</label>
+              <textarea id="dc-text" rows="3" placeholder="e.g. Cleared for overhead loading. Increase to 3x/week for 4 weeks."></textarea></div>
+            <div style="display:flex; gap:8px; align-items:center">
+              <button class="btn primary small" id="dc-save" type="button">Log it</button>
+              <span class="outcome-err" id="dc-err"></span>
+            </div>
+          </div>
+        </details>` : ""}
       </div>`;
+  }
+
+  /* Precautions are the one field on this tab that changes mid-episode — a
+     surgeon lifts a weight-bearing restriction, a patient starts a new
+     anticoagulant — so they are edited where they are read, rather than
+     behind Edit info and a section chooser. Everything else on the tab is
+     registration data that belongs in the focused windows. */
+  function precautionsCard(p) {
+    const text = S.patientPrecautions(p);
+    return `
+      <div class="card" id="precautionsCard">
+        <div class="ins-head">
+          <h2>Precautions</h2>
+          <button class="btn small" id="precEdit" type="button">${text ? "Edit" : "Add"}</button>
+        </div>
+        <div id="precRead">
+          ${text
+            ? `<div class="precaution-box">⚠ ${esc(text)}</div>`
+            : `<div class="empty-state" style="padding:12px">None recorded. If the patient has none, that's worth writing down explicitly.</div>`}
+        </div>
+        <div id="precEditor" hidden>
+          <div class="field" style="margin-bottom:6px">
+            <textarea id="ip-precautions" rows="4" placeholder="Allergies, weight-bearing status, fall risk, contraindicated modalities…">${esc(text)}</textarea>
+            <div class="field-hint">Shows on the patient banner, on every screen in the chart.</div>
+          </div>
+          <div id="ip-warn"></div>
+          <div class="error" id="ip-err" style="color:var(--danger); font-size:12.5px; min-height:16px"></div>
+          <div style="display:flex; gap:8px">
+            <button class="btn primary small" id="precSave" type="button">Save precautions</button>
+            <button class="btn small" id="precCancel" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function bindInfo(p, user) {
+    const att = document.getElementById("attendanceBtn");
+    if (att) att.addEventListener("click", () => printAttendanceRecord(p));
+
+    const reopen = () => renderShell(location.hash, patientView(user), user, bindPatient);
+    const dcSave = document.getElementById("dc-save");
+    if (dcSave) dcSave.addEventListener("click", () => {
+      const g = (id) => (document.getElementById(id).value || "").trim();
+      const res = S.addDoctorComm(p.id, {
+        date: g("dc-date"), kind: g("dc-kind"), physician: g("dc-doc"),
+        via: g("dc-via"), text: g("dc-text"),
+      }, user);
+      if (res.error) { document.getElementById("dc-err").textContent = res.error; return; }
+      alertBanner(res.entry.kind === "order" ? "Order logged — it stays on the chart until it's actioned." : "Note logged.");
+      reopen();
+    });
+    document.querySelectorAll("[data-dcack]").forEach((b) => b.addEventListener("click", () => {
+      const res = S.acknowledgeDoctorComm(p.id, b.dataset.dcack, user);
+      if (res.error) return alertBanner(res.error);
+      reopen();
+    }));
+    document.querySelectorAll("[data-dcdel]").forEach((b) => b.addEventListener("click", () => {
+      const res = S.deleteDoctorComm(p.id, b.dataset.dcdel, user);
+      if (res.error) return alertBanner(res.error);
+      reopen();
+    }));
+
+    const editBtn = document.getElementById("precEdit");
+    if (!editBtn) return;
+    const read = document.getElementById("precRead");
+    const editor = document.getElementById("precEditor");
+    const box = document.getElementById("ip-precautions");
+    const errEl = document.getElementById("ip-err");
+    const warnEl = document.getElementById("ip-warn");
+
+    const show = (editing) => {
+      read.hidden = editing;
+      editor.hidden = !editing;
+      editBtn.hidden = editing;
+      if (editing) { box.focus(); box.selectionStart = box.value.length; }
+    };
+    editBtn.addEventListener("click", () => show(true));
+    document.getElementById("precCancel").addEventListener("click", () => {
+      box.value = S.patientPrecautions(p);
+      errEl.textContent = ""; warnEl.innerHTML = "";
+      show(false);
+    });
+
+    let acknowledged = false;
+    box.addEventListener("input", () => { acknowledged = false; });
+
+    document.getElementById("precSave").addEventListener("click", () => {
+      /* Validate the whole patient so the length ceiling and the duplicate
+         check behave exactly as they do in the edit window; only this one
+         field is surfaced, so a record that predates a rule elsewhere can
+         still have its precautions corrected. */
+      const result = VD.validatePatient({ ...p, precautions: box.value }, {
+        today: todayIso(),
+        existingPatients: S.patients(),
+        patientId: p.id,
+      });
+      const verdict = applyValidation(document.getElementById("precautionsCard"), result, PRECAUTIONS_IDS, {
+        summaryEl: errEl,
+        confirmEl: warnEl,
+        warningsAcknowledged: acknowledged,
+        saveLabel: "Save precautions",
+      });
+      if (verdict === "errors") return;
+      if (verdict === "confirm") { acknowledged = true; return; }
+
+      // `allergies: undefined` retires the pre-rename key — see doSave().
+      S.updatePatient(p.id, { precautions: result.cleaned.precautions, allergies: undefined }, user.id);
+      alertBanner("Precautions saved.");
+      renderShell(location.hash, patientView(user), user, bindPatient);
+    });
+  }
+
+  /* ---------- Attendance record ----------
+
+     What an insurer asks for when it wants proof the visits it is being
+     billed for happened: one line per documented visit, with the date, what
+     was done, and who signed it. Built from the chart rather than typed, so
+     it cannot disagree with the notes it summarises.
+
+     Unsigned drafts are listed and marked as such rather than left out — a
+     record that quietly omitted visits would understate the episode, and the
+     clinic would rather see the gap than discover it at the claim. */
+  function attendanceRows(p) {
+    return S.docsFor(p.id)
+      .slice()
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .map((d) => {
+        const sig = d.signatures[0];
+        const charges = (d.data.charges || []).filter((c) => c && c.code);
+        return {
+          date: (d.date || d.createdAt).slice(0, 10),
+          type: docMeta(d.type).label || d.type,
+          therapist: sig ? sig.name : (S.getUser(d.createdBy) || {}).name || "—",
+          license: sig ? sig.license || "" : ((S.getUser(d.createdBy) || {}).license || {}).number || "",
+          signed: d.status === "signed",
+          codes: charges.map((c) => `${c.code}${Number(c.units) > 1 ? ` ×${Number(c.units)}` : ""}`).join(", "),
+        };
+      });
+  }
+
+  function printAttendanceRecord(p) {
+    const rows = attendanceRows(p);
+    const au = p.authorization || {};
+    const ins = p.insurance || {};
+    const a = S.authStatus(p);
+    const signed = rows.filter((r) => r.signed).length;
+    const period = rows.length ? `${rows[0].date} to ${rows[rows.length - 1].date}` : "—";
+
+    const html = `
+<h1>${esc(S.currentClinicName())}</h1>
+<div class="print-muted">Attendance record — printed ${fmtDT(new Date().toISOString())}</div>
+<h2>Patient &amp; authorisation</h2>
+<table>
+  <tr><th>Patient</th><td>${esc(S.patientName(p))}</td><th>Date of birth</th><td>${esc(p.dob)} (age ${age(p.dob)})</td></tr>
+  <tr><th>Insurer</th><td>${esc(ins.provider || "—")}</td><th>Member / policy ID</th><td>${esc(ins.memberId || "—")}</td></tr>
+  <tr><th>Guarantee letter</th><td>${esc(au.guaranteeLetter || "—")}</td><th>Documents submitted</th><td>${esc(au.submittedOn || "—")}</td></tr>
+  <tr><th>Authorisation reference</th><td>${esc(au.reference || "—")}</td><th>Authorisation expires</th><td>${esc(a.expiresOn || "—")}${a.expired ? " (expired)" : ""}</td></tr>
+  <tr><th>Visits authorised</th><td>${a.hasAuth ? `${a.used} of ${a.authorized || "—"} used` : "None recorded"}
+        <span class="print-muted">(treatment sessions)</span></td>
+      <th>Referring physician</th><td>${esc(p.referringPhysician || "—")}</td></tr>
+  ${/* Two counts sit side by side here meaning different things, and a
+        claims clerk reconciling them deserves to be told which is which:
+        the authorisation counts treatment sessions, this table counts every
+        attendance — the evaluation and the discharge visit included. */""}
+  <tr><th>Period covered</th><td>${esc(period)}</td>
+      <th>Attendances listed</th><td>${rows.length}${signed < rows.length ? ` (${signed} signed, ${rows.length - signed} still draft)` : ""}
+        <span class="print-muted">(every documented visit, evaluation and discharge included)</span></td></tr>
+</table>
+<h2>Visits attended</h2>
+${rows.length ? `<table>
+  <tr><th>#</th><th>Date</th><th>Service</th><th>Codes</th><th>Therapist</th><th>License</th><th>Status</th></tr>
+  ${rows.map((r, i) => `<tr>
+    <td>${i + 1}</td><td>${esc(r.date)}</td><td>${esc(r.type)}</td><td>${esc(r.codes || "—")}</td>
+    <td>${esc(r.therapist)}</td><td>${esc(r.license || "—")}</td>
+    <td>${r.signed ? "Signed" : "Draft — not yet signed"}</td></tr>`).join("")}
+</table>` : `<p class="print-muted">No visits documented for this patient yet.</p>`}
+<p class="print-muted">Every line above is taken from a document in this patient's chart. Nothing on this page is entered by hand.</p>
+<div class="sig-line" style="margin-top:28px">Certified by: ______________________________  &nbsp;&nbsp; License no.: ________________  &nbsp;&nbsp; Date: ____________</div>`;
+
+    S.audit(S.currentUser().id, "attendance-printed", `${S.patientName(p)} — ${rows.length} visit(s)`);
+    printHTML(html);
   }
 
   /* Authorisation is only meaningful next to what's been used, so the two are
@@ -3279,6 +3584,7 @@ ${tabStrip}
     if (patientTab === "overview") { bindOverviewActions(p, user); mountAiReview(p, user); }
     if (patientTab === "documents") { bindNewDoc(p, user); bindDocFilters(p, user); }
     if (patientTab === "files") bindFiles(p, user);
+    if (patientTab === "info") bindInfo(p, user);
     if (patientTab === "schedule") bindSchedule(p, user);
   }
 
@@ -3310,6 +3616,52 @@ ${tabStrip}
         picker.hidden = false;
         wirePicker();
       }));
+  }
+
+  /* Shrink a camera capture before it is stored.
+
+     A phone photograph is 3-5 MB straight off the sensor, and the sizes that
+     matters at are not obvious:
+
+       - OFFLINE, an attachment is held as a data URL inside the synced state,
+         and anything over ~2 MB is refused outright (see sync.storeBytes). A
+         home visit is exactly where the camera is most useful and exactly
+         where the upload has nowhere to go, so an un-shrunk photo fails in
+         the one place the feature was added for.
+       - ONLINE it uploads fine and then every device pulls it.
+
+     1600px on the long edge at JPEG 0.8 is a wound, a posture or a home
+     setup at diagnostic quality for roughly 200-400 KB. Anything the browser
+     cannot decode is passed through untouched rather than dropped — an
+     unshrunk photo is worth more than no photo. */
+  const PHOTO_MAX_EDGE = 1600;
+  const PHOTO_QUALITY = 0.8;
+
+  async function shrinkPhoto(file) {
+    if (!/^image\//i.test(file.type) || /svg/i.test(file.type)) return file;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      // already small enough, and re-encoding would only lose quality
+      if (scale === 1 && file.size <= 1.5 * 1024 * 1024) { bitmap.close(); return file; }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", PHOTO_QUALITY));
+      if (!blob || blob.size >= file.size) return file;   // no gain; keep the original
+      return new File([blob], file.name, { type: "image/jpeg", lastModified: file.lastModified });
+    } catch (e) {
+      console.error("[photo] could not resize, storing as taken:", e);
+      return file;
+    }
+  }
+
+  /* "2026-09-04 1432" — sortable, and readable in a list of attachments. */
+  function photoStamp(now) {
+    const d = now || new Date();
+    return `${localIso(d)} ${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
   }
 
   function bindDocFilters(p, user) {
@@ -3353,9 +3705,10 @@ ${tabStrip}
   }
 
   function bindFiles(p, user) {
-    const up = document.getElementById("fileUpload");
-    if (up) up.addEventListener("change", async () => {
-      const f = up.files[0];
+    /* One upload path. The camera button and the file picker differ only in
+       what the browser puts in front of the user; everything after the bytes
+       arrive is identical, so a photo is an attachment like any other. */
+    const upload = async (f, rename) => {
       if (!f) return;
       if (f.size > 20 * 1024 * 1024) return alertBanner("File is too large (limit 20 MB).");
       try {
@@ -3365,13 +3718,31 @@ ${tabStrip}
         // object, and a push to the stale copy would be silently lost
         const cur = S.getPatient(p.id) || p;
         (cur.attachments || (cur.attachments = [])).push({
-          id: S.uid("a"), name: f.name, type: f.type, size: f.size,
+          id: S.uid("a"), name: rename || f.name, type: f.type, size: f.size,
           ...ref, uploadedBy: user.id, uploadedAt: new Date().toISOString(),
         });
         S.save();
-        S.audit(user.id, "attachment-added", `${f.name} → ${S.patientName(cur)}`);
+        S.audit(user.id, "attachment-added", `${rename || f.name} → ${S.patientName(cur)}`);
         render();
       } catch (e) { alertBanner(e.message || "Upload failed."); }
+    };
+
+    const up = document.getElementById("fileUpload");
+    if (up) up.addEventListener("change", () => upload(up.files[0]));
+
+    const cam = document.getElementById("photoCapture");
+    if (cam) cam.addEventListener("change", () => {
+      const f = cam.files[0];
+      if (!f) return;
+      /* A camera capture arrives called "image.jpg", or on some Androids with
+         no useful name at all. Three of those in a chart is a chart nobody can
+         read, so it is named for the moment it was taken before it is stored. */
+      /* Named from what actually comes back, not from what we hoped: a
+         capture the browser could not decode is stored as taken, and calling
+         a PNG ".jpg" would put a wrong file name in the chart. */
+      shrinkPhoto(f).then((small) =>
+        upload(small, `Photo ${photoStamp()}${/jpe?g/i.test(small.type) ? ".jpg" : (small.name.match(/\.[a-z0-9]+$/i) || [".jpg"])[0]}`));
+      cam.value = ""; // so the same camera button works twice running
     });
     document.querySelectorAll("[data-dl-att]").forEach((b) =>
       b.addEventListener("click", async () => {
@@ -3498,7 +3869,7 @@ ${tabStrip}
               <input data-fsum="${i}:${j}" value="${esc(x.summary)}" style="flex:1"/>
             </div>`).join("")}` : ""}
           ${(v.rom.length + v.mmt.length + v.pain.length + v.special.length) ? `<label class="imp-label">Measurements</label>
-            ${v.rom.map((r, j) => measRow(i, "rom", j, `ROM ${r.side || ""} ${r.joint} ${r.motion}`,
+            ${v.rom.map((r, j) => measRow(i, "rom", j, `${romLabel(r)} ${r.side || ""} ${r.joint} ${r.motion}`,
               `<input type="number" data-mval="${i}:rom:${j}" value="${r.degrees}" style="width:74px"/><span>°</span>`)).join("")}
             ${v.mmt.map((r, j) => measRow(i, "mmt", j, `MMT ${r.side ? r.side + " " : ""}${r.context || ""}`,
               `<input data-mval="${i}:mmt:${j}" value="${esc(r.grade)}" style="width:64px"/>`)).join("")}
@@ -3624,8 +3995,8 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
   /* ---------- patient chart printing / PDF export ---------- */
 
   function measurementTables(d) {
-    const rom = (d.rom || []).length ? `<h3>Range of motion</h3><table><tr><th>Side</th><th>Joint</th><th>Motion</th><th>Degrees</th></tr>
-      ${d.rom.map((r) => `<tr><td>${esc(r.side || "—")}</td><td>${esc(r.joint)}</td><td>${esc(r.motion)}</td><td>${r.degrees}°</td></tr>`).join("")}</table>` : "";
+    const rom = (d.rom || []).length ? `<h3>Range of motion</h3><table><tr><th>Type</th><th>Side</th><th>Joint</th><th>Motion</th><th>Degrees</th></tr>
+      ${d.rom.map((r) => `<tr><td>${romLabel(r)}</td><td>${esc(r.side || "—")}</td><td>${esc(r.joint)}</td><td>${esc(r.motion)}</td><td>${r.degrees}°</td></tr>`).join("")}</table>` : "";
     const mmt = (d.mmt || []).length ? `<h3>Manual muscle testing</h3><table><tr><th>Side</th><th>Muscle / context</th><th>Grade</th></tr>
       ${d.mmt.map((r) => `<tr><td>${esc(r.side || "—")}</td><td>${esc(r.context || "—")}</td><td>${esc(r.grade)}</td></tr>`).join("")}</table>` : "";
     const sp = (d.special || []).length ? `<h3>Special tests</h3><table><tr><th>Test</th><th>Result</th></tr>
@@ -3671,14 +4042,12 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
         }).join("")}</table>`);
     }
     if ((d.charges || []).length) {
-      const sum = CL.billingSummary(d.charges);
-      secs.push(`<h3>Billing</h3><table><tr><th>CPT</th><th>Description</th><th>Minutes</th><th>Units</th></tr>
-        ${d.charges.map((c) => {
-          const known = CL.findCode(c.code);
-          return `<tr><td>${esc(c.code)}</td><td>${esc(c.desc || (known || {}).desc || "")}</td>
-            <td>${known && !known.timed ? "—" : Number(c.minutes) || 0}</td><td>${Number(c.units) || 0}</td></tr>`;
-        }).join("")}
-        <tr><th colspan="2">Total</th><th>${sum.timedMinutes} timed min</th><th>${sum.totalUnits} units</th></tr></table>`);
+      const sum = CL.serviceSummary(d.charges, S.settings().servicePrices || {});
+      secs.push(`<h3>Billing</h3><table><tr><th>Code</th><th>Service</th><th>Units</th><th>Price</th><th>Amount</th></tr>
+        ${sum.rows.map((r) => `<tr><td>${esc(r.code)}</td><td>${esc(r.desc)}</td><td>${r.units}</td>
+            <td>${r.price == null ? "—" : peso(r.price)}</td><td>${r.amount == null ? "—" : peso(r.amount)}</td></tr>`).join("")}
+        <tr><th colspan="4">Subtotal</th><th>${peso(sum.subtotal)}</th></tr></table>
+        ${sum.unpriced ? `<div class="print-muted">${sum.unpriced} line(s) have no price on the clinic's schedule and are not in the subtotal.</div>` : ""}`);
     }
 
     /* The plan of care. Goals live on the patient, not the note, so a
@@ -3735,7 +4104,7 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
   <tr><th>Address</th><td colspan="3">${esc(p.address || "—")}</td></tr>
   <tr><th>Referring physician</th><td>${esc(p.referringPhysician || "—")}</td>
       <th>Insurance</th><td>${esc((p.insurance || {}).provider || "—")} ${esc((p.insurance || {}).memberId || "")}</td></tr>
-  <tr><th>Allergies</th><td>${esc(p.allergies || "None recorded")}</td>
+  <tr><th>Precautions</th><td>${esc(S.patientPrecautions(p) || "None recorded")}</td>
       <th>Emergency contact</th><td>${esc((p.emergencyContact || {}).name || "—")}${(p.emergencyContact || {}).phone ? ` · ${esc(p.emergencyContact.phone)}` : ""}</td></tr>
   ${(() => {
     const a = S.authStatus(p);
@@ -3768,6 +4137,18 @@ ${(() => {
       <td>${t.improvement > 0 ? "+" : ""}${Math.round(t.improvement * 10) / 10} toward better</td>
       <td>${t.mcid}</td>
       <td>${t.n < 2 ? "baseline only" : t.meaningful ? "Yes" : "No"}</td></tr>`).join("")}</table>`;
+})()}
+${(() => {
+  const comms = S.doctorComms(p.id);
+  if (!comms.length) return "";
+  return `<h2>Doctor's communication</h2>
+    <table><tr><th>Date</th><th>Kind</th><th>From</th><th>What was said</th><th>Actioned</th></tr>
+    ${comms.slice().sort((a, b) => (a.date < b.date ? -1 : 1)).map((e) => `<tr>
+      <td>${esc(e.date)}</td><td>${e.kind === "order" ? "Order" : "Note"}</td>
+      <td>${esc(e.physician || "—")}</td><td>${esc(e.text)}</td>
+      <td>${e.kind !== "order" ? "—" : e.acknowledged
+        ? `${esc((S.getUser(e.acknowledgedBy) || {}).name || "—")}, ${fmtDate(e.acknowledgedAt)}`
+        : "Not yet actioned"}</td></tr>`).join("")}</table>`;
 })()}
 ${p.attachments.length ? `<h2>Files on record</h2><ul>${p.attachments.map((a) => `<li>${esc(a.name)} (added ${fmtDate(a.uploadedAt)})</li>`).join("")}</ul>` : ""}
 ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)}</div>`).join("")}`;
@@ -3812,12 +4193,34 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     /* Each label says who fills it. An empty box that dictation is about to
        fill and an empty box waiting for the therapist look identical, and
        that ambiguity is what got notes signed with an empty Plan. */
+    /* Every narrative section carries its own microphone.
+
+       One long dictation that the software then sorts into sections was the
+       single biggest thing Kim's field test asked us to change: not because
+       the sorting is bad, but because when it puts a sentence in the wrong
+       place the therapist has to find it and move it, and doing that four
+       times costs more than typing the note would have. Aiming the mic at a
+       section removes the guess — the therapist has already answered the
+       question the classifier was trying to infer.
+
+       The whole-visit mic in the dictation bar stays exactly as it was. It is
+       the right tool while the patient is talking and nobody is holding a
+       screen; this is the right one when the therapist is writing up. */
     const ta = (field, label, placeholder, rows) => {
       const src = fieldSourceOf(doc.type, field);
       const meta = SOURCE_META[src];
+      /* Labelled, not a bare icon. This is a new affordance on a screen that
+         already has several, and a therapist who does not notice it goes on
+         re-sorting one long dictation by hand — which is the thing it exists
+         to end. The word costs a few pixels the label row has to spare. */
+      const mic = editable && isDictatable(doc.type, field)
+        ? `<button type="button" class="field-mic" data-fieldmic="${field}"
+             title="Dictate straight into ${esc(label)} — what you say goes here, not wherever the app guesses"
+             aria-label="Dictate into ${esc(label)}"><span class="field-mic-dot"></span>🎤 <span class="field-mic-word">Dictate</span></button>`
+        : "";
       return `
-      <div class="field field-src-${src}"><label>${label}
-        <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span></label>
+      <div class="field field-src-${src}" data-fieldwrap="${field}"><label>${label}
+        <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span>${mic}</label>
       <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
     };
 
@@ -3867,10 +4270,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         group("Plan &amp; goals", "Where care goes from here",
           ["plan", "@goals"],
           ta("plan", "Plan", "Frequency, duration, interventions") +
-          goalsEditor(doc, editable)) +
-        group("Billing", "Codes, minutes and units",
-          ["@charges"],
-          billingEditor(doc, editable));
+          goalsEditor(doc, editable));
     } else if (doc.type === "daily") {
       sections =
         group("Subjective", "How the patient reports they are today",
@@ -3886,7 +4286,12 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         group("Plan", "Next visit and home programme",
           ["plan"],
           ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2)) +
-        group("Billing", "Codes, minutes and units",
+        /* Only the daily note carries charges. An evaluation, a progress
+           report and a discharge summary describe an episode of care; a
+           treatment session is the thing a clinic actually bills for, and
+           putting a charge sheet on the other three invited the same visit
+           to be billed twice. */
+        group("Billing", "Service codes and units",
           ["@charges"],
           billingEditor(doc, editable));
     } else if (doc.type === "progress") {
@@ -3907,10 +4312,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         group("Goals &amp; progress", "Where care goes from here",
           ["@goals", "goalsProgress"],
           goalsEditor(doc, editable) +
-          ta("goalsProgress", "Progress toward goals — narrative", "")) +
-        group("Billing", "Codes, minutes and units",
-          ["@charges"],
-          billingEditor(doc, editable));
+          ta("goalsProgress", "Progress toward goals — narrative", ""));
     } else if (doc.type === "discharge") {
       sections =
         group("Summary of care", "What happened across the episode",
@@ -3925,10 +4327,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("outcome", "Outcome", "")) +
         group("Recommendations", "What happens after discharge",
           ["recommendations"],
-          ta("recommendations", "Recommendations", "")) +
-        group("Billing", "Codes, minutes and units",
-          ["@charges"],
-          billingEditor(doc, editable));
+          ta("recommendations", "Recommendations", ""));
     }
 
     const sigBlock = `
@@ -3978,6 +4377,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <i class="mic-level-fill" id="micLevelFill"></i><i class="mic-level-bar" id="micLevelBar"></i>
       </span>` : ""}
       <span class="dict-meter" id="dictMeter" hidden></span>
+      <span class="dict-fixes" id="dictFixes" hidden title="A known speech-recognition misreading, corrected before it reached the note"></span>
     </div>
     ${dictationLine(doc)}
     <div class="figures">
@@ -4110,11 +4510,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   /* ---- measurement tables ---- */
 
+  /* ROM, AROM or PROM — one spelling, used everywhere a reading is shown,
+     so the table, the printed note and the cleanup screen cannot disagree
+     about which kind of range a number is. */
+  const romLabel = (r) => (r && r.quality === "active" ? "AROM" : r && r.quality === "passive" ? "PROM" : "ROM");
+
   function measurementEditor(doc, editable) {
     const d = doc.data;
     const del = (kind, i) => editable ? `<button class="btn small" data-delmeas="${kind}:${i}" title="Remove">✕</button>` : "";
     const rows = [];
-    (d.rom || []).forEach((r, i) => rows.push(`<tr><td>ROM</td><td>${esc(r.side || "—")} ${esc(r.joint)} ${esc(r.motion)}</td><td class="num">${r.degrees}°</td><td>${del("rom", i)}</td></tr>`));
+    /* AROM and PROM are different findings about the same joint, so the
+       qualifier is part of the row's TYPE — "shoulder flexion 120" under one
+       and "155" under the other are not a contradiction once you can see
+       which is which. An unqualified reading still reads as plain ROM. */
+    (d.rom || []).forEach((r, i) => rows.push(`<tr><td>${romLabel(r)}</td><td>${esc(r.side || "—")} ${esc(r.joint)} ${esc(r.motion)}</td><td class="num">${r.degrees}°</td><td>${del("rom", i)}</td></tr>`));
     (d.mmt || []).forEach((r, i) => rows.push(`<tr><td>MMT</td><td>${esc(r.side ? r.side + " " : "")}${esc(r.context || "—")}</td><td class="num">${esc(r.grade)}</td><td>${del("mmt", i)}</td></tr>`));
     (d.special || []).forEach((r, i) => rows.push(`<tr><td>Special test</td><td>${esc(r.name)}</td><td>${esc(r.result)}</td><td>${del("special", i)}</td></tr>`));
     (d.pain || []).forEach((r, i) => rows.push(`<tr><td>Pain</td><td>${esc(r.location || "—")}</td><td class="num">${r.score}/10</td><td>${del("pain", i)}</td></tr>`));
@@ -4130,55 +4539,59 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 </div>`;
   }
 
-  /* ---------- Billing: CPT codes, minutes, units ---------- */
+  /* ---------- Billing: service codes, units, subtotal ---------- */
 
-  /* A visit only becomes a claim once the interventions carry codes. The
-     8-minute rule is computed live from the minutes so the therapist can see
-     the claim balance before signing, rather than hearing about it from
-     billing a week later. */
+  /* A visit only becomes a claim once it carries codes. The charge sheet is
+     the clinic's own service catalogue — a code and how many of it — and the
+     only sum that matters is what the visit comes to in pesos.
+
+     Prices are read from clinic settings, never typed here: a therapist
+     records what was delivered, an administrator decides what it costs. The
+     price is copied onto each line as it is entered, so a note signed at
+     last quarter's rates keeps them. */
   function billingEditor(doc, editable) {
     const charges = doc.data.charges || [];
-    const sum = CL.billingSummary(charges);
-    const codeOptions = (sel) => CL.CPT_CODES.map((c) =>
-      `<option value="${c.code}" ${c.code === sel ? "selected" : ""}>${c.code} — ${esc(c.desc)}${c.timed ? "" : " (untimed)"}</option>`).join("");
+    const prices = S.settings().servicePrices || {};
+    const sum = CL.serviceSummary(charges, prices);
+    const codeOptions = (sel) => CL.serviceGroups().map((g) =>
+      `<optgroup label="${esc(g.group)}">${g.codes.map((c) =>
+        `<option value="${c.code}" ${c.code === sel ? "selected" : ""}>${c.code} — ${esc(c.desc)}</option>`).join("")}</optgroup>`).join("");
 
-    const rows = charges.map((c, i) => {
-      const known = CL.findCode(c.code);
-      const timed = known ? known.timed : false;
-      return `<tr>
+    const rows = sum.rows.map((r, i) => `<tr>
         <td>${editable
-          ? `<select data-charge="${i}" data-k="code" class="charge-code">${codeOptions(c.code)}</select>`
-          : `<b>${esc(c.code)}</b> ${esc(c.desc || (known || {}).desc || "")}`}</td>
-        <td class="num">${timed
-          ? (editable ? `<input type="number" min="0" max="240" data-charge="${i}" data-k="minutes" value="${Number(c.minutes) || 0}" class="charge-num" />` : `${Number(c.minutes) || 0}`)
-          : `<span class="charge-na" title="Untimed code — minutes don't affect the units">—</span>`}</td>
+          ? `<select data-charge="${i}" data-k="code" class="charge-code">${codeOptions(r.code)}</select>`
+          : `<b>${esc(r.code)}</b> ${esc(r.desc)}`}</td>
         <td class="num">${editable
-          ? `<input type="number" min="0" max="20" data-charge="${i}" data-k="units" value="${Number(c.units) || 0}" class="charge-num" />`
-          : `${Number(c.units) || 0}`}</td>
+          ? `<input type="number" min="0" max="99" step="1" data-charge="${i}" data-k="units" value="${r.units}" class="charge-num" />`
+          : `${r.units}`}</td>
+        <td class="num charge-price">${r.price == null
+          ? `<span class="charge-na" title="No price set for this code">no price</span>`
+          : peso(r.price)}</td>
+        <td class="num charge-amount">${r.amount == null ? "—" : `<b>${peso(r.amount)}</b>`}</td>
         <td>${editable ? `<button class="btn small" data-delcharge="${i}" title="Remove">✕</button>` : ""}</td>
-      </tr>`;
-    }).join("");
+      </tr>`).join("");
 
     const issues = sum.issues.map((i) =>
       `<div class="bill-issue ${i.level}">${i.level === "bad" ? "✕" : i.level === "warn" ? "△" : "ⓘ"} ${esc(i.text)}</div>`).join("");
 
     return `
 <div class="field billing-field">
-  <label>Billing — CPT codes, treatment minutes and units</label>
+  <label>Billing — service codes and units</label>
   <div class="table-scroll"><table class="list bill-table">
-    <colgroup><col /><col class="c-min" /><col class="c-unit" /><col class="c-del" /></colgroup>
-    <thead><tr><th>Code</th><th class="num">Min</th><th class="num">Units</th><th></th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">No charges yet.${editable ? " Add the interventions performed, or pull them from the treatment text." : ""}</div></td></tr>`}</tbody>
+    <colgroup><col /><col class="c-unit" /><col class="c-price" /><col class="c-amount" /><col class="c-del" /></colgroup>
+    <thead><tr><th>Code</th><th class="num">Units</th><th class="num">Price</th><th class="num">Amount</th><th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="5"><div class="empty-state" style="padding:10px">No charges yet.${editable ? " Add the services delivered this visit." : ""}</div></td></tr>`}</tbody>
   </table></div>
   ${editable ? `<div class="bill-actions">
     <button class="btn small" id="addChargeBtn" type="button">＋ Add charge</button>
-    <button class="btn small" id="suggestChargeBtn" type="button" title="Read the treatment summary and add the codes it describes">✦ Suggest from treatment</button>
   </div>` : ""}
   <div class="bill-totals">
-    <span><b>${sum.timedMinutes}</b> timed min</span>
-    <span><b>${sum.timedUnitsClaimed}</b>/${sum.timedUnitsAllowed} timed units</span>
-    <span><b>${sum.untimedUnits}</b> untimed</span>
-    <span class="bill-total-units ${sum.balanced ? "ok" : "off"}"><b>${sum.totalUnits}</b> total units</span>
+    <span><b>${sum.lines}</b> line${sum.lines === 1 ? "" : "s"}</span>
+    <span><b>${sum.units}</b> unit${sum.units === 1 ? "" : "s"}</span>
+    <span class="bill-subtotal ${sum.complete ? "ok" : "off"}">Subtotal <b>${peso(sum.subtotal)}</b>${
+      /* A subtotal that quietly leaves out an unpriced line is a wrong
+         number wearing a right one's clothes. Say what is missing. */
+      sum.unpriced ? ` <span class="hint">· ${sum.unpriced} line${sum.unpriced > 1 ? "s" : ""} unpriced</span>` : ""}</span>
   </div>
   ${issues ? `<div class="bill-issues">${issues}</div>` : ""}
 </div>`;
@@ -4186,6 +4599,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   function bindBillingEditor(doc, user) {
     const persist = () => { S.updateDocData(doc.id, doc.data, user); render(); };
+    const prices = S.settings().servicePrices || {};
 
     document.querySelectorAll("[data-delcharge]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -4197,14 +4611,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       el.addEventListener("change", () => {
         const c = doc.data.charges[Number(el.dataset.charge)];
         if (!c) return;
-        const k = el.dataset.k;
-        if (k === "code") {
-          const known = CL.findCode(el.value);
+        if (el.dataset.k === "code") {
+          const known = CL.findService(el.value);
           c.code = el.value;
           c.desc = known ? known.desc : "";
-          if (known && !known.timed) c.minutes = 0;
+          // a different service is a different price — re-stamp it
+          c.price = CL.priceFor(el.value, prices);
         } else {
-          c[k] = Math.max(0, Number(el.value) || 0);
+          c.units = Math.max(0, Math.round(Number(el.value) || 0));
         }
         persist();
       }));
@@ -4212,31 +4626,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const add = document.getElementById("addChargeBtn");
     if (add) add.addEventListener("click", () => {
       if (!doc.data.charges) doc.data.charges = [];
-      const first = CL.CPT_CODES.find((c) => c.code === "97110") || CL.CPT_CODES[0];
-      doc.data.charges.push({ code: first.code, desc: first.desc, minutes: first.timed ? 15 : 0, units: 1 });
-      persist();
-    });
-
-    const sug = document.getElementById("suggestChargeBtn");
-    if (sug) sug.addEventListener("click", () => {
-      // every field a treatment sentence could have landed in, per note type
-      const text = [doc.data.summary, doc.data.plan, doc.data.currentStatus,
-                    doc.data.updatedFindings, doc.data.objectiveText, doc.data.recommendations]
-        .filter(Boolean).join(". ");
-      const found = CL.suggestCodes(text);
-      if (!found.length) return alertBanner("Nothing in the treatment text matched a billable code — add them by hand.");
-      if (!doc.data.charges) doc.data.charges = [];
-      let added = 0;
-      found.forEach((f) => {
-        if (doc.data.charges.some((c) => c.code === f.code)) return;
-        // minutes and units stay at zero: only the clinician knows how long
-        // each intervention actually took, and guessing would be a false claim
-        doc.data.charges.push({ code: f.code, desc: f.desc, minutes: 0, units: 0 });
-        added++;
+      /* Default to basic PT therapy: it is the line on nearly every daily
+         note, and the codes are grouped so anything else is one pick away. */
+      const first = CL.findService("PT02") || CL.SERVICE_CODES[0];
+      doc.data.charges.push({
+        code: first.code, desc: first.desc, units: 1, price: CL.priceFor(first.code, prices),
       });
-      if (!added) return alertBanner("Those codes are already on the charge sheet.");
       persist();
-      alertBanner(`${added} code${added > 1 ? "s" : ""} added — set the minutes and units for each.`);
     });
   }
 
@@ -4245,18 +4641,74 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   /* Standardised scores are what a payer or referrer actually reads as proof
      of progress. Recorded here per visit; trended across the episode on the
      patient's Overview. */
+  /* Which outcome rows are showing their answer sheet. Per note, and held
+     outside the doc so opening one to check an item never counts as an edit
+     to the record. */
+  let openOutcomeItems = {};
+
   function outcomeEditor(doc, editable) {
     const list = doc.data.outcomes || [];
+
     const rows = list.map((o, i) => {
       const tool = CL.findTool(o.toolId);
       if (!tool) return "";
-      return `<tr>
-        <td><b>${esc(tool.name)}</b> <span style="color:var(--muted)">${esc(tool.full)}</span></td>
-        <td class="num"><span class="score-cell">${editable
+      const spec = CL.itemsFor(o.toolId);
+      const answers = o.items || [];
+      const scored = spec ? CL.scoreFromItems(o.toolId, answers) : null;
+      const open = !!openOutcomeItems[o.toolId];
+
+      /* A score COMPUTED from the answer sheet is not typeable — the sum is
+         the instrument's, and letting it be overwritten by hand is how a
+         total stops matching the items printed underneath it. Recorded as a
+         single number (the usual case, and every older record) it stays a
+         plain input. */
+      const fromItems = !!(scored && scored.ok && answers.length);
+      const scoreCell = fromItems
+        ? `<b>${scored.score}</b>`
+        : editable
           ? `<input type="number" step="0.5" min="${tool.min}" max="${tool.max}" data-outcome="${i}" value="${o.score}" class="charge-num" />`
-          : `${o.score}`}<span class="score-unit">${esc(tool.unit)}</span></span></td>
+          : `${o.score}`;
+
+      const itemGrid = !open || !spec ? "" : `
+        <tr class="om-items-row"><td colspan="3">
+          <div class="om-items">
+            <div class="om-items-head">
+              <b>${esc(tool.name)} answer sheet</b>
+              <span class="hint">${spec.count} item${spec.count > 1 ? "s" : ""}, each ${spec.min}–${spec.max}${spec.named ? " · name the activity the patient chose" : ""}</span>
+            </div>
+            <div class="om-grid">
+              ${Array.from({ length: spec.count }, (_, n) => `
+                <label class="om-item">
+                  ${spec.named
+                    ? `<input class="om-label" data-omlabel="${i}:${n}" value="${esc((o.labels || [])[n] || "")}" placeholder="Activity ${n + 1}" ${editable ? "" : "disabled"} />`
+                    : `<span class="om-n">${n + 1}</span>`}
+                  <input type="number" class="om-score" data-omitem="${i}:${n}" min="${spec.min}" max="${spec.max}"
+                    value="${answers[n] === undefined || answers[n] === null ? "" : answers[n]}" ${editable ? "" : "disabled"} />
+                </label>`).join("")}
+            </div>
+            <div class="om-items-foot">
+              ${scored && scored.answered
+                ? `<b>${scored.answered}</b> of ${scored.of} answered · scores <b>${scored.score}${esc(tool.unit)}</b>${
+                    /* A half-filled questionnaire totals to a number that
+                       looks like severe disability and is really an unanswered
+                       form. Never let that pass as the instrument's score. */
+                    scored.complete ? "" : ` <span class="om-partial">— incomplete, not the ${esc(tool.name)} score yet</span>`}`
+                : `Nothing answered yet.`}
+              ${/* only where it adds something the line above hasn't already
+                     said — "Nothing answered yet. No items answered yet." */
+                scored && scored.error && scored.answered
+                  ? `<span class="om-partial"> ${esc(scored.error)}</span>` : ""}
+            </div>
+          </div>
+        </td></tr>`;
+
+      return `<tr>
+        <td><b>${esc(tool.name)}</b> <span style="color:var(--muted)">${esc(tool.full)}</span>
+          ${spec ? `<button class="btn small om-toggle" data-omopen="${esc(o.toolId)}" type="button">${open ? "Hide items" : `Items (${(scored && scored.answered) || 0}/${spec.count})`}</button>` : ""}
+        </td>
+        <td class="num"><span class="score-cell">${scoreCell}<span class="score-unit">${esc(tool.unit)}</span></span></td>
         <td>${editable ? `<button class="btn small" data-deloutcome="${i}" title="Remove">✕</button>` : ""}</td>
-      </tr>`;
+      </tr>${itemGrid}`;
     }).join("");
 
     return `
@@ -4270,8 +4722,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <select id="outcomeTool">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
     <input type="number" step="0.5" id="outcomeScore" placeholder="Score" class="charge-num" />
     <button class="btn small" id="addOutcomeBtn" type="button">＋ Record</button>
+    <button class="btn small" id="addOutcomeItemsBtn" type="button" title="Add the measure and open its answer sheet — the score is worked out from the items">＋ Score item by item</button>
     <span class="outcome-err" id="outcomeErr"></span>
-  </div>` : ""}
+  </div>
+  <div class="hint" style="margin-top:6px">Item scores are entered from the clinic's own copy of the form — TheraChart holds each instrument's structure and scoring, not its licensed wording.</div>` : ""}
 </div>`;
   }
 
@@ -4294,9 +4748,48 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         persist();
       }));
 
+    // opening an answer sheet is a view, not an edit — no write, no re-render
+    // of the whole note
+    document.querySelectorAll("[data-omopen]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.omopen;
+        openOutcomeItems[id] = !openOutcomeItems[id];
+        refreshOutcomes(doc, user);
+      }));
+
+    document.querySelectorAll("[data-omitem]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const [oi, n] = el.dataset.omitem.split(":").map(Number);
+        const o = doc.data.outcomes[oi];
+        const spec = o && CL.itemsFor(o.toolId);
+        if (!o || !spec) return;
+        if (!o.items) o.items = [];
+        const raw = el.value.trim();
+        o.items[n] = raw === "" ? null : Number(raw);
+        /* The reported score follows the items the moment one changes. It is
+           the instrument's arithmetic, not the therapist's, and a total left
+           behind by an edited item is the bug this whole feature exists to
+           remove. Held at the last complete value while the form is being
+           filled, so the row does not read as a plummeting score mid-entry. */
+        const out = CL.scoreFromItems(o.toolId, o.items);
+        if (out.ok && out.complete) o.score = out.score;
+        persist();
+      }));
+
+    document.querySelectorAll("[data-omlabel]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const [oi, n] = el.dataset.omlabel.split(":").map(Number);
+        const o = doc.data.outcomes[oi];
+        if (!o) return;
+        if (!o.labels) o.labels = [];
+        o.labels[n] = el.value.trim();
+        persist();
+      }));
+
+    const addTool = () => document.getElementById("outcomeTool").value;
     const add = document.getElementById("addOutcomeBtn");
     if (add) add.addEventListener("click", () => {
-      const toolId = document.getElementById("outcomeTool").value;
+      const toolId = addTool();
       const raw = document.getElementById("outcomeScore").value;
       const err = document.getElementById("outcomeErr");
       const v = CL.validateScore(toolId, raw);
@@ -4308,9 +4801,42 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       else doc.data.outcomes.push({ toolId, score: v.value });
       persist();
     });
+
+    const addItems = document.getElementById("addOutcomeItemsBtn");
+    if (addItems) addItems.addEventListener("click", () => {
+      const toolId = addTool();
+      const err = document.getElementById("outcomeErr");
+      if (!CL.itemsFor(toolId)) {
+        err.textContent = `${(CL.findTool(toolId) || {}).name || "That measure"} is a single reading, not a questionnaire.`;
+        return;
+      }
+      if (!doc.data.outcomes) doc.data.outcomes = [];
+      if (!doc.data.outcomes.some((o) => o.toolId === toolId)) {
+        doc.data.outcomes.push({ toolId, score: 0, items: [] });
+      }
+      openOutcomeItems[toolId] = true;
+      persist();
+    });
+  }
+
+  /* Repaint the outcome table alone. Opening an answer sheet must not redraw
+     the note — a therapist mid-sentence in Assessment would lose their
+     cursor to a control that changed nothing about the record. */
+  function refreshOutcomes(doc, user) {
+    const table = document.querySelector("[data-omopen], [data-omitem]");
+    const holder = table && table.closest(".field");
+    if (!holder) return render();
+    const temp = document.createElement("div");
+    temp.innerHTML = outcomeEditor(doc, doc.status !== "signed" && S.canDocument(S.currentUser()));
+    holder.replaceWith(temp.firstElementChild);
+    bindOutcomeEditor(doc, user);
   }
 
   /* ---------- Plan-of-care goals (patient-level, edited from a note) ---------- */
+
+  // whether the suggestions panel is expanded — a view preference, kept out
+  // of the document so opening it is never an edit
+  let goalSuggestOpen = false;
 
   function goalsEditor(doc, editable) {
     const p = S.getPatient(doc.patientId);
@@ -4335,10 +4861,39 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         </div>
       </div>`).join("");
 
+    /* Prompts built from what THIS note measured. Nothing here reaches the
+       plan of care until the therapist presses it, and pressing it fills the
+       form below rather than committing the goal — so the wording, the target
+       and the date are theirs before anything is written. Each carries the
+       rule that produced it, because a therapist accepting a number should be
+       able to see where it came from. */
+    const suggestions = canEdit
+      ? CL.suggestGoals({
+          rom: doc.data.rom, mmt: doc.data.mmt, pain: doc.data.pain,
+          outcomes: doc.data.outcomes,
+        }, goals)
+      : [];
+    const suggestHtml = suggestions.length ? `
+      <details class="goal-suggest" ${goalSuggestOpen ? "open" : ""}>
+        <summary>✦ ${suggestions.length} goal${suggestions.length > 1 ? "s" : ""} this visit's measurements suggest</summary>
+        <div class="goal-suggest-body">
+          ${suggestions.map((g, i) => `
+            <div class="goal-suggest-row">
+              <div class="goal-suggest-main">
+                <div class="goal-suggest-text">${esc(g.text)}</div>
+                <div class="goal-suggest-rule">${esc(g.baseline)}${g.target ? ` → ${esc(g.target)}` : ""} · ${esc(g.rule)}</div>
+              </div>
+              <button class="btn small" type="button" data-usegoal="${i}">Use it</button>
+            </div>`).join("")}
+          <div class="hint">These are prompts from today's numbers, not a plan. Pressing one fills the form below — edit it before you add it.</div>
+        </div>
+      </details>` : "";
+
     return `
 <div class="field">
   <label>Plan-of-care goals${sum.total ? ` — ${sum.met}/${sum.total} met` : ""}</label>
   <div class="goal-edit-list">${rows || `<div class="empty-state" style="padding:10px">No goals set${canEdit ? " — add the first one below." : "."}</div>`}</div>
+  ${suggestHtml}
   ${canEdit ? `<div class="goal-add">
     <input id="goalText" placeholder="Goal — e.g. “Climb a flight of stairs without the rail”" />
     <div class="goal-add-row">
@@ -4355,6 +4910,27 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   function bindGoalsEditor(doc, user) {
     const redraw = () => render();
+
+    const panel = document.querySelector(".goal-suggest");
+    if (panel) panel.addEventListener("toggle", () => { goalSuggestOpen = panel.open; });
+
+    /* Fills the form; does NOT add the goal. A suggestion the software
+       committed on its own would be the software writing the plan of care. */
+    const suggestions = CL.suggestGoals({
+      rom: doc.data.rom, mmt: doc.data.mmt, pain: doc.data.pain, outcomes: doc.data.outcomes,
+    }, S.goalsFor(doc.patientId));
+    document.querySelectorAll("[data-usegoal]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const g = suggestions[Number(b.dataset.usegoal)];
+        if (!g) return;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        set("goalText", g.text);
+        set("goalBaseline", g.baseline);
+        set("goalTarget", g.target);
+        set("goalTerm", g.term);
+        const text = document.getElementById("goalText");
+        if (text) { text.focus(); text.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+      }));
 
     document.querySelectorAll("[data-goal]").forEach((sel) =>
       sel.addEventListener("change", () => {
@@ -4968,6 +5544,32 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      The ambient estimate is a MINIMUM rather than a mean: if someone happens
      to be talking during calibration, the mean is their voice, but the quietest
      frame in half a second is still the room. */
+  /* What we ask the browser for when we open the microphone.
+
+     `autoGainControl` is OFF, and that is the change that matters in a busy
+     clinic. Left on — which is every browser's default — the mic ramps its
+     own gain up whenever the room goes quiet, which is exactly when the only
+     thing left to amplify is the conversation at the next plinth. A therapist
+     pausing to think had the room brought up to meet them, and the pause came
+     back transcribed as somebody else's consultation.
+
+     It also breaks the gate. voiceGate() decides speech from an RMS level
+     against a rolling estimate of the room, and AGC moves both of those
+     underneath it on its own schedule — the estimator is reading a signal
+     something else is actively rescaling. With AGC off the level means what
+     the gate assumes it means.
+
+     Echo cancellation and noise suppression stay ON: both are narrow-band and
+     do not rescale speech the way AGC does. */
+  function micConstraints() {
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: false,
+      channelCount: 1,
+    };
+  }
+
   function voiceGate() {
     const FLOOR = 0.012;          // a silent room's bar; never gate below this
     /* The bar may never sit on top of ordinary speech. 0.05 did: a therapist
@@ -5078,8 +5680,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       chunks: () => chunks,
       async start() {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-        } catch (_) { return false; }
+          stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+        } catch (e) { console.error("[recorder] microphone unavailable:", e); return false; }
         ctx = new (window.AudioContext || window.webkitAudioContext)();
         const src = ctx.createMediaStreamSource(stream);
         proc = ctx.createScriptProcessor(4096, 1, 1);
@@ -5220,6 +5822,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      instead of the patient, which is the opposite of what dictation is for.
      The number is real and the therapist is entitled to it — just afterwards,
      when reading it can no longer shorten the visit it is describing. */
+  /* A correction the therapist cannot see is a correction they cannot
+     disagree with. These are narrow and deterministic, but they are still the
+     software changing a word, so it says which one — on the same line that
+     already reports where dictation was filed. */
+  function noteDictationFixes(fixes) {
+    const el = document.getElementById("dictFixes");
+    if (!el || !fixes.length) return;
+    const seen = new Map();
+    for (const f of fixes) seen.set(`${f.from}→${f.to}`, f);
+    el.hidden = false;
+    el.innerHTML = `heard <b>${[...seen.values()].map((f) => `${esc(f.from)}</b> → <b>${esc(f.to)}`).join("</b>, <b>")}</b>`;
+  }
+
   function dictationLine(doc) {
     const s = Number((doc.data || {})._dictationSeconds) || 0;
     if (!s || doc.status !== "signed") return "";
@@ -5388,10 +6003,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       async start() {
         release(); // never stack a second graph on a live one
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true },
-          });
-        } catch (_) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+        } catch (e) {
+          /* Logged, not just reported. Every ordinary cause of this is a
+             permission or a device problem the message covers — but a
+             programming error inside the try lands here too, and a silent
+             "Mic blocked" is how one hides for a week. */
+          console.error("[dictation] microphone unavailable:", e);
           onStatus("Mic blocked — allow microphone access and retry.", false);
           return false;
         }
@@ -5599,7 +6217,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
           // Route it line by line exactly as typed dictation does, so
           // measurements, the body map and the SOAP fields all fill the same way.
-          out.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
+          const repaired = PR.correctDictation(out.text);
+          if (repaired.fixes.length) noteDictationFixes(repaired.fixes);
+          repaired.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
             .forEach((line) => routeUtterance(doc, user, line, dstate));
           /* Only discard the audio once ALL of it was transcribed. A partial
              failure used to clear the recording anyway, so the words in the
@@ -5632,7 +6252,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     let liveSeconds = Number(doc.data._dictationSeconds) || 0; // incl. earlier runs on this visit
     // deliver a finished utterance, but only draw into the note if it's still
     // the one on screen — a cloud segment can land just after we navigate away
-    const deliver = (text) => {
+    /* Everything the recogniser hands back passes through here first.
+       Correcting a known mis-transcription is part of arriving at a
+       transcript, not an edit to one — see PR.correctDictation(). Typed
+       dictation deliberately does NOT go through it: a therapist who typed
+       "MPT" typed what they meant. */
+    const deliver = (raw) => {
+      const fixed = PR.correctDictation(raw);
+      const text = fixed.text;
+      if (fixed.fixes.length) noteDictationFixes(fixed.fixes);
       const seg = location.hash.split("/");
       const open = seg[1] === "doc" && seg[2] === doc.id;
       // route into the LIVE doc object — a sync pull may have replaced the
@@ -5640,7 +6268,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // would be lost); the doc can also have been signed in the meantime
       const live = S.getDoc(doc.id);
       if (!live || live.status === "signed") return;
-      routeUtterance(live, user, text, open ? currentDocState : null, !open);
+      routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
     };
     const callbacks = {
       docId: doc.id,
@@ -5661,7 +6289,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         levelFill.classList.toggle("voiced", !!voiced);
         levelBar.style.left = pct(threshold) + "%";
       },
-      onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
+      onStatus: (msg, isListening) => { statusEl.textContent = withAim(msg); if (isListening === false && !listening) setUI(); },
       /* A backstop stopped the mic itself; put the button back in step so the
          therapist can see it happened and tap once to resume. The REASON is
          carried through rather than just printed: onStatus writes it to the
@@ -5704,9 +6332,24 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     makeEngine();
 
+    /* Which section the open microphone is aimed at, or null for the
+       whole-visit mic. There is only ever ONE microphone: pressing a second
+       button re-aims the same engine rather than opening another, because two
+       live audio graphs on one device is the doubled-audio bug the cloud
+       engine's release() exists to prevent. */
+    let aimedAt = null;
+
+    const sectionBtns = () => document.querySelectorAll("[data-fieldmic]");
+
     const setUI = () => {
-      micBtn.classList.toggle("listening", listening);
-      micLabel.textContent = listening ? "Stop listening" : "Listen & dictate live";
+      micBtn.classList.toggle("listening", listening && !aimedAt);
+      micLabel.textContent = listening && !aimedAt ? "Stop listening" : "Listen & dictate live";
+      sectionBtns().forEach((b) => {
+        const on = listening && aimedAt === b.dataset.fieldmic;
+        b.classList.toggle("listening", on);
+        const wrap = b.closest("[data-fieldwrap]");
+        if (wrap) wrap.classList.toggle("dictating", on);
+      });
       if (levelEl) {
         levelEl.hidden = !listening;
         if (!listening) levelFill.style.width = "0%";
@@ -5718,23 +6361,49 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // the cloud engine writes its own richer status (model + queue); only the
       // browser engine needs setUI to set the "Listening…" line
       if (listening && !useCloud) {
-        statusEl.textContent = `Listening… (${langSel.selectedOptions[0].text})`;
+        statusEl.textContent = withAim(`Listening… (${langSel.selectedOptions[0].text})`);
       }
     };
 
-    micBtn.addEventListener("click", async () => {
+    /* Where an open microphone is filing, appended to whatever the engine had
+       to say for itself. It has to ride ON the engine's status line rather
+       than sit beside it: the cloud engine rewrites that line every time a
+       segment goes out, so anything written separately survives about a
+       second. Getting this wrong is expensive in the one way that matters —
+       a therapist who cannot see where the mic is pointed will dictate a
+       paragraph into the wrong section. */
+    const withAim = (msg) =>
+      listening && aimedAt ? `${msg} — filing into ${fieldLabel(doc.type, aimedAt)}` : msg;
+
+    /** Point the microphone at `target` (a field name, or null for the whole
+        visit). Pressing the button that is already lit turns it off; pressing
+        a different one re-aims without closing and reopening the mic, so the
+        therapist can walk down the note section by section without a
+        permission prompt or a lost half-second between each. */
+    async function aimMic(target) {
       if (!engine) return;
       autoStopNotice = ""; // the therapist has seen it and acted
-      if (!listening) {
-        listening = true;
-        const ok = await Promise.resolve(engine.start());
-        if (ok === false) listening = false;
-      } else {
+      if (listening && aimedAt === target) {   // same button again: stop
         listening = false;
         engine.stop();
+      } else if (listening) {                  // already open: just re-aim it
+        aimedAt = target;
+      } else {
+        aimedAt = target;
+        listening = true;
+        const ok = await Promise.resolve(engine.start());
+        if (ok === false) { listening = false; aimedAt = null; }
       }
       setUI();
-    });
+      if (listening && aimedAt) {
+        statusEl.textContent = withAim(statusEl.textContent.split(" — filing into ")[0]);
+        const wrap = document.querySelector(`[data-fieldwrap="${aimedAt}"]`);
+        if (wrap) wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+
+    micBtn.addEventListener("click", () => aimMic(null));
+    sectionBtns().forEach((b) => b.addEventListener("click", () => aimMic(b.dataset.fieldmic)));
 
     langSel.addEventListener("change", () => {
       localStorage.setItem("therachart-lang", langSel.value);
@@ -5743,7 +6412,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
 
     activeDictation = {
-      stop() { if (engine) engine.stop(); listening = false; },
+      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; },
     };
   }
 
@@ -5930,7 +6599,49 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return field;
   }
 
-  function routeUtterance(doc, user, raw, dstate, silent) {
+  /* Which sections a therapist can aim the microphone at, per note type.
+     The narrative fields only: a measurement table and a charge sheet are
+     filled from what was said, not dictated into. */
+  const DICTATABLE = {
+    eval: ["reason", "precautions", "pmh", "subjective", "objectiveText", "assessment", "plan"],
+    daily: ["subjective", "summary", "assessment", "plan"],
+    progress: ["currentStatus", "updatedFindings", "assessment", "goalsProgress"],
+    discharge: ["summary", "outcome", "recommendations"],
+  };
+  const isDictatable = (type, field) => (DICTATABLE[type] || []).includes(field);
+
+  /**
+   * File one spoken utterance into the note.
+   *
+   * `target` is the section the microphone was aimed at, or null for the
+   * whole-visit mic that works the section out for itself. Aiming it is the
+   * fix for the thing no classifier gets right often enough: whether a
+   * sentence is the patient's report or the therapist's observation. When
+   * the therapist has said which section they are filling, that answer beats
+   * anything this code can infer from the words — so a target skips the
+   * classifier entirely rather than being one more hint fed into it.
+   */
+  /* The targeted counterpart of fieldForSentence(). The section is already
+     decided, so the only question left is whether this sentence belongs in
+     PROSE at all — and there is exactly one case where it does not: a value
+     that has already been filed into a table. "Shoulder flexion 120 degrees"
+     is a row in the measurement table; typing it into the objective narrative
+     as well puts the same finding in the chart twice, in two places that can
+     then disagree with each other.
+
+     Everything else goes in. Small talk was already trimmed by the caller,
+     and the noteWorthy() gate that guards the untargeted path is deliberately
+     NOT applied here: it exists to stop the classifier defaulting a stray
+     sentence into Subjective, and a therapist holding the microphone at a
+     section has answered that question themselves. */
+  function aimedField(type, sentence, target) {
+    if (CL.extractOutcomes(sentence).length) return null;   // → outcome table
+    const meas = PR.extractMeasurements(sentence);
+    if (meas.rom.length + meas.mmt.length + meas.special.length) return null; // → measurement table
+    return target;
+  }
+
+  function routeUtterance(doc, user, raw, dstate, silent, target) {
     const parsed = PR.parseUtterance(raw);
     if (!parsed.text) return;
     const time = nowTime();
@@ -5988,6 +6699,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // the whole utterance to one field meant everything but the first match
     // was dropped: a daily note that mentioned any measurement lost its
     // subjective and treatment text entirely.
+    const aimed = target && isDictatable(doc.type, target) ? target : null;
     const filedTo = [];
     let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
@@ -5995,12 +6707,18 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          that is documentation and leave the wedding in the transcript. */
       const clinical = PR.trimToClinical(sentence);
       if (!clinical) { heldBack += 1; continue; }
-      const field = fieldForSentence(doc.type, clinical, voice);
+      const field = aimed ? aimedField(doc.type, clinical, aimed) : fieldForSentence(doc.type, clinical, voice);
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
+    /* An aimed microphone that filed nothing needs to say so more loudly than
+       the roaming one does: the therapist spoke AT a section and watched it
+       stay empty, and "transcript only" alone reads as the mic not working. */
+    if (aimed && !filedTo.length && !nMeas && !nOut) {
+      routed.push(`nothing to file into ${fieldLabel(doc.type, aimed)} — it's in the transcript`);
+    }
     /* Say so out loud. A sentence that reaches the transcript and no section
        is the normal, correct outcome for small talk — but silence about it
        reads exactly like the mic missing a real complaint. */
@@ -6106,7 +6824,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     outcomes: { label: "Outcome measures", source: "filled", types: ["eval", "progress", "discharge"] },
     bodymap: { label: "Body chart findings", source: "filled", types: ["eval", "daily", "progress"] },
     goals: { label: "Goals", source: "yours", types: ["eval", "progress", "discharge"] },
-    charges: { label: "Billing / charges", source: "yours", types: ["eval", "daily", "progress"] },
+    charges: { label: "Billing / charges", source: "yours", types: ["daily"] },
   };
 
   /* One row per source, and every surface naming a source reads from here: the
@@ -6512,7 +7230,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
     const measCount = meas.rom.length + meas.mmt.length + meas.special.length + meas.pain.length;
     const measList = [
-      ...meas.rom.map((r) => `ROM · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`),
+      ...meas.rom.map((r) => `${romLabel(r)} · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`),
       ...meas.mmt.map((r) => `MMT · ${r.side ? r.side + " " : ""}${r.context || ""} ${r.grade}`),
       ...meas.special.map((r) => `${r.name} — ${r.result}`),
       ...meas.pain.map((r) => `Pain · ${r.location || "—"} ${r.score}/10`),
@@ -7500,6 +8218,11 @@ ${ths.map((t) => {
     "doc-imported": { emoji: "📥", label: "imported a document", tone: "tone-doc" },
     "doc-discarded": { emoji: "🗑", label: "discarded an empty draft", tone: "tone-doc" },
     "chart-printed": { emoji: "🖨", label: "printed a chart", tone: "tone-doc" },
+    "attendance-printed": { emoji: "🖨", label: "printed an attendance record", tone: "tone-doc" },
+    "doctor-order-logged": { emoji: "📋", label: "logged a doctor's order", tone: "tone-patient" },
+    "doctor-note-logged": { emoji: "📋", label: "logged a doctor's note", tone: "tone-patient" },
+    "doctor-order-actioned": { emoji: "✅", label: "actioned a doctor's order", tone: "tone-patient" },
+    "doctor-entry-removed": { emoji: "🗑", label: "removed a doctor's entry", tone: "tone-patient" },
     "schedule-printed": { emoji: "🖨", label: "printed the schedule", tone: "tone-doc" },
     "ai-chart-review": { emoji: "✦", label: "ran an AI chart review", tone: "tone-ai" },
     "transcript-refined": { emoji: "✦", label: "cleaned up a transcript", tone: "tone-ai" },
@@ -7906,7 +8629,6 @@ ${privacyInfoAccordion(geminiOn)}
     const mTone = minsOver ? "bad" : mPct >= 85 ? "warn" : "good";
     const resets = new Date(u.resetsOn + "T00:00:00")
       .toLocaleDateString(undefined, { day: "numeric", month: "long" });
-    const peso = (n) => `₱${n.toLocaleString()}`;
     /* Two meters, each in its own unit. An earlier version folded dictation
        into the visit count as fractional "visit units" — same arithmetic, but
        it made the reader reverse a conversion to check their own bill. */
@@ -7983,6 +8705,7 @@ ${privacyInfoAccordion(geminiOn)}
   ${allowanceCard()}
   ${planCard()}
 </div>
+${pricesCard(user)}
 <div class="cards-2">
   <div class="card">
     <h2>Facility settings</h2>
@@ -7990,6 +8713,12 @@ ${privacyInfoAccordion(geminiOn)}
     <div class="field-row">
       <div class="field"><label>Progress report every N visits</label><input id="st-prog" type="number" min="1" max="30" value="${st.progressEvery}" /></div>
       <div class="field"><label>Slot length (minutes)</label><input id="st-slot" type="number" min="15" max="120" step="5" value="${st.slotMinutes}" /></div>
+    </div>
+    <div class="field">
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px">
+        <input type="checkbox" id="st-progremind" ${st.progressReminder ? "checked" : ""}/>
+        Chase a progress report once that many visits are documented</label>
+      <div class="hint" style="margin:4px 0 0">Off by default. The chart always shows how many visits in you are; with this on it also raises the report as outstanding on the dashboard, the patient list and the chart until one is written. A progress report can be started at any time either way.</div>
     </div>
     <div class="field-row">
       <div class="field"><label>Day starts (hour)</label><input id="st-start" type="number" min="5" max="12" value="${st.dayStartHour}" /></div>
@@ -8055,8 +8784,12 @@ ${privacyInfoAccordion(geminiOn)}
           <b>${esc(u.name)}</b> <span class="chip muted">${esc(roleLabel(u))}</span>
           ${!u.active ? '<span class="chip bad">voided</span>' : S.licenseExpired(u) ? '<span class="chip bad">expired</span>' : S.licenseExpiresSoon(u) ? '<span class="chip warn">expiring soon</span>' : u.license ? '<span class="chip good">active</span>' : ""}
           ${u.mustChangePassword ? '<span class="chip warn">must set password</span>' : ""}
+          ${u.role === "admin" && S.canSetPrices(u) ? '<span class="chip muted">billing access</span>' : ""}
         </div>
         <div style="margin-top:6px"><div class="field" style="margin-bottom:4px"><label>Login email</label><input data-email="${u.id}" type="email" autocapitalize="off" spellcheck="false" value="${esc(u.email || "")}" /></div></div>
+        ${u.role === "admin" ? `<label style="display:flex; gap:8px; align-items:center; font-size:13px; margin-top:6px">
+          <input type="checkbox" data-billing="${u.id}" ${S.canSetPrices(u) ? "checked" : ""} ${S.canSetPrices(user) ? "" : "disabled"}/>
+          Can set service prices</label>` : ""}
         ${u.role !== "frontdesk" ? `<div class="field-row" style="margin-top:8px">
           <div class="field" style="margin-bottom:4px"><label>License number</label><input data-lic-num="${u.id}" value="${esc((u.license && u.license.number) || "")}" placeholder="e.g. PT-0012345" /></div>
           <div class="field" style="margin-bottom:4px"><label>Expires</label><input data-lic-exp="${u.id}" type="date" value="${esc((u.license && u.license.expires) || "")}" /></div>
@@ -8074,11 +8807,63 @@ ${privacyInfoAccordion(geminiOn)}
 </div>`;
   }
 
+  /* What the clinic charges. A commercial decision rather than a clinical
+     one, so it is gated separately from documenting: a therapist puts a code
+     on a note, an administrator decides what that code costs. Read-only for
+     everyone else, because a therapist still needs to see what they are
+     billing even when they cannot change it. */
+  function pricesCard(user) {
+    const prices = S.settings().servicePrices || {};
+    const editable = S.canSetPrices(user);
+    const groups = CL.serviceGroups().map((g) => `
+      <div class="price-group">
+        <h3>${esc(g.group)}</h3>
+        <table class="list price-table"><tbody>
+          ${g.codes.map((c) => {
+            const v = CL.priceFor(c.code, prices);
+            return `<tr>
+              <td><b>${esc(c.code)}</b> ${esc(c.desc)}</td>
+              <td class="num">${editable
+                ? `<input type="number" min="0" step="0.01" class="charge-num" data-price="${c.code}" value="${v == null ? "" : v}" placeholder="—" />`
+                : v == null ? `<span class="charge-na">no price</span>` : peso(v)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody></table>
+      </div>`).join("");
+
+    return `
+<div class="card">
+  <div class="ins-head"><h2>Service prices</h2></div>
+  <p style="font-size:12.5px; color:var(--muted); margin:0 0 10px">
+    What each code adds to a visit's subtotal, in pesos. A code left blank has no price and is left out of the subtotal rather than counted as free.
+    ${editable ? "Changing a price here affects notes written from now on — a signed note keeps the price it was signed at." : "Only an administrator with billing access can change these."}
+  </p>
+  <div class="price-grid">${groups}</div>
+  ${editable ? `<button class="btn primary" id="pricesSave" style="margin-top:10px">Save prices</button>
+    <span id="pricesMsg" style="font-size:12.5px; margin-left:8px"></span>` : ""}
+</div>`;
+  }
+
   function bindFacility(user) {
+    const ps = document.getElementById("pricesSave");
+    if (ps) ps.addEventListener("click", () => {
+      const next = {};
+      document.querySelectorAll("[data-price]").forEach((el) => {
+        const raw = el.value.trim();
+        if (raw === "") return; // blank means "not priced", not zero
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 0) next[el.dataset.price] = Math.round(n * 100) / 100;
+      });
+      S.updateSettings({ servicePrices: next }, user);
+      const msg = document.getElementById("pricesMsg");
+      if (msg) { msg.style.color = "var(--muted)"; msg.textContent = `Saved — ${Object.keys(next).length} of ${CL.SERVICE_CODES.length} codes priced.`; }
+    });
+
     document.getElementById("stSave").addEventListener("click", () => {
       S.renameClinic(document.getElementById("st-name").value.trim() || "TheraChart Clinic", user);
       const patch = {
         progressEvery: Math.max(1, Number(document.getElementById("st-prog").value) || 5),
+        progressReminder: document.getElementById("st-progremind").checked,
         slotMinutes: Math.max(15, Number(document.getElementById("st-slot").value) || 45),
         dayStartHour: Number(document.getElementById("st-start").value) || 8,
         dayEndHour: Number(document.getElementById("st-end").value) || 17,
@@ -8108,6 +8893,10 @@ ${privacyInfoAccordion(geminiOn)}
         const patch = {};
         if (num && exp) patch.license = { number: num.value.trim(), expires: exp.value };
         if (emailEl) patch.email = emailEl.value.trim();
+        /* Only somebody who holds the permission may hand it out — otherwise
+           an admin without billing access grants it to themselves. */
+        const bill = document.querySelector(`[data-billing="${id}"]`);
+        if (bill && S.canSetPrices(user)) patch.billingAccess = bill.checked;
         const res = S.updateUser(id, patch, user);
         if (res && res.error) { const m = document.querySelector(`[data-msg="${id}"]`); if (m) { m.style.color = "var(--danger)"; m.textContent = res.error; } return; }
         render();

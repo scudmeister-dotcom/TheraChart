@@ -1472,23 +1472,26 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 }
 .slot-appt:hover { filter: brightness(0.97); }
 .slot-appt small { display: block; font-weight: 400; color: var(--muted); }
-/* ---- allergies: the one thing that must be seen before treating ----
+/* ---- precautions: the one thing that must be seen before treating ----
    This used to truncate with an ellipsis and rely on a hover title for the
    rest. Phones and tablets have no hover, so on the devices a therapist
    actually carries around the ward, "Penicillin — rash. Latex sensitivity"
    was cut to "Penicillin — rash. Latex sensit" with no way to read the rest.
    It wraps now: a two-line banner is a fair price for the one field that
    exists to stop someone being harmed. */
-.pb-chip.allergy {
+.pb-chip.precaution {
   background: var(--danger-soft, #fdecec); color: var(--danger);
   font-weight: 600; max-width: 560px;
   white-space: normal; overflow-wrap: anywhere; align-items: flex-start;
 }
 @media (max-width: 620px) {
-  .pb-chip.allergy { max-width: 100%; width: 100%; }
+  .pb-chip.precaution { max-width: 100%; width: 100%; }
 }
-.pb-chip.allergy .pb-k { color: inherit; opacity: .85; }
-.allergy-box {
+/* The chip wraps its VALUE (see above) but must not wrap its KEY: with
+   `overflow-wrap: anywhere` inherited from the chip, the longer word broke
+   as "PRECAUTIO / NS" down the side of the banner. */
+.pb-chip.precaution .pb-k { color: inherit; opacity: .85; white-space: nowrap; }
+.precaution-box {
   background: var(--danger-soft, #fdecec); color: var(--danger);
   border-radius: 8px; padding: 10px 14px; font-weight: 600;
 }
@@ -1515,10 +1518,10 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .otrend.worse .spark, .otrend.worse .otrend-to { color: var(--danger); }
 .otrend-foot { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-/* ---- billing: CPT charge sheet + 8-minute-rule readout ----
+/* ---- billing: the charge sheet and its subtotal ----
    The charge sheet lives in the note's narrow right-hand column, so the table
    is fixed-layout: the code cell absorbs the slack and the number cells keep a
-   predictable width instead of a long CPT description forcing a scrollbar. */
+   predictable width instead of a long service name forcing a scrollbar. */
 /* Every selector below is deliberately over-weighted, and dropping the leading
    `table` / `.bill-table` from any of them silently breaks this table. The
    charge sheet sits inside a `.field` and its rows are `table.list` rows, so
@@ -1529,15 +1532,16 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 
    With the plain selectors the cells kept 10px of padding and the inputs 11px
    instead of the 6px/5px written here, leaving 12px of usable width — not
-   enough for two digits, so a 15-minute charge rendered as a clipped "15". */
+   enough for two digits, so a two-digit figure rendered clipped. */
 .bill-table { table-layout: fixed; width: 100%; }
 table.bill-table td, table.bill-table th { padding-left: 6px; padding-right: 6px; }
-.bill-table .c-min, .bill-table .c-unit { width: 54px; }
+.bill-table .c-unit { width: 54px; }
+.bill-table .c-price, .bill-table .c-amount { width: 76px; }
 .bill-table .c-del { width: 40px; }
 table.bill-table td { vertical-align: middle; overflow: hidden; }
 .bill-table .charge-num, .bill-table .charge-code { box-sizing: border-box; }
 .bill-table .charge-num { width: 100%; text-align: right; padding: 4px 5px; font-variant-numeric: tabular-nums; }
-/* the spin buttons eat half a narrow cell and nobody nudges minutes one at a time */
+/* the spin buttons eat half a narrow cell and nobody nudges units one at a time */
 .charge-num::-webkit-outer-spin-button, .charge-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .charge-num[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .bill-table .charge-code { width: 100%; min-width: 0; padding-left: 8px; padding-right: 4px; }
@@ -1551,9 +1555,19 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 .bill-totals b { color: var(--text); font-size: 14px; }
-.bill-total-units { margin-left: auto; padding: 2px 10px; border-radius: 999px; }
-.bill-total-units.ok { background: var(--good-soft, var(--accent-soft)); color: var(--accent); }
-.bill-total-units.off { background: var(--warn-soft, var(--accent-soft)); }
+.bill-table .charge-price, .bill-table .charge-amount { font-variant-numeric: tabular-nums; }
+.bill-subtotal { margin-left: auto; padding: 2px 10px; border-radius: 999px; }
+.bill-subtotal.ok { background: var(--good-soft, var(--accent-soft)); color: var(--accent); }
+/* "off" here means the subtotal is incomplete — an unpriced line is missing
+   from it — not that a rule was broken. */
+.bill-subtotal.off { background: var(--warn-soft, var(--accent-soft)); }
+.bill-subtotal .hint { font-weight: 400; }
+
+/* ---- the clinic's price list, in Facility Admin ---- */
+.price-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.price-group h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.price-table td { padding-top: 5px; padding-bottom: 5px; }
+.price-table .charge-num { width: 92px; text-align: right; padding: 4px 6px; }
 .bill-issues { display: grid; gap: 4px; margin-top: 8px; }
 .bill-issue { font-size: 12.5px; padding: 5px 9px; border-radius: 6px; background: var(--accent-soft); }
 .bill-issue.warn { background: var(--warn-soft, var(--accent-soft)); }
@@ -2482,6 +2496,106 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .src-badge.src-filled { background: rgba(108, 92, 231, 0.13); color: var(--accent, #6c5ce7); }
 .src-badge.src-drafted { background: rgba(217, 131, 36, 0.15); color: var(--warn, #d98324); }
 .src-badge.src-yours { background: rgba(138, 138, 153, 0.15); color: var(--muted, #8a8a99); }
+
+/* ---- the microphone on a section ----
+   Sits at the right-hand end of the field's own label, so the thing it fills
+   is unambiguous — a mic floating between two fields belongs to neither. It
+   is quiet until pressed: a note has up to seven of these, and seven brand-
+   coloured buttons down the column would read as the primary action on the
+   page rather than as an alternative to typing. */
+.field label:has(.field-mic) { display: flex; align-items: center; gap: 0; }
+.field-mic {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font-size: 11px; line-height: 1.7;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 999px;
+  cursor: pointer; white-space: nowrap;
+  /* A therapist taps this with a gloved hand on a tablet propped on a
+     plinth. The visible pill stays small so seven of them down the column
+     read as a row of quiet options; the TARGET is grown past it. */
+  min-height: 30px;
+}
+@media (pointer: coarse) { .field-mic { min-height: 40px; padding-left: 12px; padding-right: 12px; } }
+.field-mic:hover { color: var(--accent); border-color: var(--accent); }
+.field-mic-dot { display: none; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+.field-mic.listening {
+  background: var(--point); color: #fff; border-color: var(--point);
+  animation: pulse 1.6s infinite;
+}
+.field-mic.listening .field-mic-dot { display: inline-block; }
+/* The word turns into what the button will DO next, so a lit button never
+   reads as an invitation to start something that is already running. */
+.field-mic.listening .field-mic-word::after { content: " — stop"; }
+/* The field being dictated into is outlined, so the answer to "where is this
+   going" is visible from the textarea as well as from the button. */
+.field.dictating textarea {
+  border-color: var(--point);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--point) 18%, transparent);
+}
+@media (prefers-reduced-motion: reduce) { .field-mic.listening { animation: none; } }
+
+/* What the recogniser got wrong and we put right, on the dictation bar. */
+.dict-fixes {
+  font-size: 11.5px; color: var(--muted);
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-soft);
+}
+.dict-fixes b { color: var(--text); font-weight: 600; }
+
+/* ---- doctor's communication log ---- */
+.dc-list { display: grid; gap: 8px; }
+.dc-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px;
+}
+/* An order nobody has acted on yet can change what may be done to the patient
+   today, so it is the one row here that is coloured. */
+.dc-row.open { border-color: var(--warn, #d98324); background: var(--warn-soft, var(--accent-soft)); }
+.dc-main { min-width: 0; flex: 1; }
+.dc-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+.dc-text { margin: 4px 0 3px; line-height: 1.5; overflow-wrap: anywhere; }
+.dc-foot { font-size: 11.5px; color: var(--muted); }
+.dc-actions { flex: none; display: flex; gap: 6px; align-items: center; }
+.dc-add { margin-top: 10px; }
+.dc-add > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.dc-add-body { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 8px; }
+
+/* ---- outcome measures: the instrument's own answer sheet ---- */
+.om-toggle { margin-left: 8px; --pad-x: 8px; font-weight: 500; }
+.om-items { padding: 10px 2px 4px; }
+.om-items-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.om-items-head .hint { font-size: 11.5px; }
+/* Auto-fit rather than a fixed column count: this table sits in the note's
+   narrow right-hand column on a laptop and full width on a tablet, and a
+   30-item DASH has to stay readable in both. */
+.om-grid { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+.om-item { display: flex; align-items: center; gap: 5px; }
+.om-n {
+  flex: none; width: 22px; text-align: right;
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.om-item .om-score {
+  width: 100%; min-width: 0; padding: 4px 5px; text-align: right;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+}
+.om-item .om-label { min-width: 0; flex: 1; padding: 4px 6px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.om-items-foot { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.om-partial { color: var(--warn, #d98324); font-weight: 600; }
+
+/* ---- goal suggestions ---- */
+.goal-suggest { margin-top: 10px; border: 1px dashed var(--border); border-radius: 10px; }
+.goal-suggest > summary {
+  cursor: pointer; padding: 8px 11px; font-size: 12.5px; font-weight: 600; color: var(--accent);
+}
+.goal-suggest-body { padding: 0 11px 10px; display: grid; gap: 7px; }
+.goal-suggest-row { display: flex; gap: 10px; align-items: flex-start; }
+.goal-suggest-main { flex: 1; min-width: 0; }
+.goal-suggest-text { font-size: 13px; overflow-wrap: anywhere; }
+.goal-suggest-rule { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.goal-suggest .hint { font-size: 11.5px; }
 
 /* a section row in the review modal — same shape as a finding row, so the
    two tabs read the same way */

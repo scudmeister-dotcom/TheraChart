@@ -110,10 +110,22 @@
           address: "12 Mabini St, Cebu City",
           phone: "+63 917 555 0101", email: "juan.reyes@example.com",
           referringPhysician: "Dr. R. Cruz (Ortho)",
-          allergies: "Penicillin — rash. Latex sensitivity (use nitrile gloves).",
+          precautions: "Penicillin — rash. Latex sensitivity (use nitrile gloves). No overhead loading past 90° until cleared by Dr. Cruz.",
           emergencyContact: { name: "Marites Bautista", relationship: "Spouse", phone: "+63 917 555 0111" },
           insurance: { provider: "PhilHealth", memberId: "PH-4451-2231", notes: "Co-pay ₱150/visit" },
           authorization: { visitsAuthorized: 18, expiresOn: t(46, 12, 0).slice(0, 10), reference: "AUTH-88213" },
+          /* One actioned order and one still outstanding, so the chart shows
+             both states and the needs-attention item has something to raise. */
+          doctorComms: [
+            { id: "dc-juan-1", date: t(-12, 9, 0).slice(0, 10), physician: "Dr. R. Cruz (Ortho)", via: "Phone",
+              kind: "order", text: "Start PT 2-3x/week. No overhead loading past 90° until reviewed.",
+              acknowledged: true, acknowledgedBy: "u-maria", acknowledgedAt: t(-12, 10, 15),
+              createdBy: "u-ana", createdAt: t(-12, 9, 5) },
+            { id: "dc-juan-2", date: t(-1, 14, 0).slice(0, 10), physician: "Dr. R. Cruz (Ortho)", via: "Letter with the patient",
+              kind: "order", text: "Cleared for overhead loading. Add resisted external rotation.",
+              acknowledged: false, acknowledgedBy: null, acknowledgedAt: null,
+              createdBy: "u-ana", createdAt: t(-1, 14, 10) },
+          ],
           goals: [
             { id: "g-juan-1", term: "short", text: "Reach the top shelf without sharp pain",
               baseline: "Unable — 7/10 pain at 105° flexion", target: "Pain ≤3/10 through full reach",
@@ -143,7 +155,7 @@
           address: "88 Osmeña Blvd, Cebu City",
           phone: "+63 917 555 0202", email: "liza.mercado@example.com",
           referringPhysician: "Dr. A. Tan (Family Med)",
-          allergies: "",
+          precautions: "",
           emergencyContact: { name: "Ramon Gonzales", relationship: "Son", phone: "+63 917 555 0222" },
           insurance: { provider: "Maxicare", memberId: "MX-99-887766", notes: "" },
           // deliberately near the end of the authorisation, so the warning shows
@@ -168,7 +180,7 @@
           address: "5 Lapu-Lapu Ave, Mandaue City",
           phone: "+63 917 555 0303", email: "mateo.villanueva@example.com",
           referringPhysician: "Dr. L. Gomez (Ortho)",
-          allergies: "NSAIDs — gastric upset.",
+          precautions: "NSAIDs — gastric upset. Fall risk — uses a single-point cane outdoors.",
           emergencyContact: { name: "Elena Villanueva", relationship: "Wife", phone: "+63 917 555 0333" },
           insurance: { provider: "PhilHealth", memberId: "PH-7781-4420", notes: "" },
           authorization: { visitsAuthorized: 12, expiresOn: t(30, 12, 0).slice(0, 10), reference: "PH-AUTH-2091" },
@@ -206,7 +218,9 @@
             assessment: "Findings consistent with right rotator cuff strain / subacromial impingement. Good rehab potential.",
             plan: "PT 2-3x/week × 6 weeks: therex, manual therapy, modalities as needed.",
             outcomes: [{ toolId: "dash", score: 58 }, { toolId: "nprs", score: 7 }],
-            charges: [{ code: "97162", desc: "PT evaluation — moderate complexity", minutes: 45, units: 1 }],
+            /* An evaluation no longer carries a charge sheet — the daily
+               note for the same visit does. See the note editor's sections. */
+            charges: [],
             mapPoints: [{
               key: "Shoulder|right", part: "Shoulder", side: "right", view: "front", x: 60, y: 86,
               notes: [{ time: "", summary: "Sharp pain · rated 7/10 · worse reaching overhead", quote: "", uttId: null, marks: [] }],
@@ -229,9 +243,9 @@
             pain: [{ score: i < 2 ? 6 : 4, location: "right shoulder" }],
             // 38 timed minutes → exactly the 3 units claimed under the 8-minute rule
             charges: [
-              { code: "97110", desc: "Therapeutic exercise", minutes: 23, units: 2 },
-              { code: "97140", desc: "Manual therapy", minutes: 15, units: 1 },
-              { code: "97010", desc: "Hot or cold packs", minutes: 0, units: 1 },
+              { code: "PT02", desc: "PT — Basic therapy", units: 1, price: 850 },
+              { code: "A02", desc: "Combi machine", units: 1, price: 300 },
+              { code: "A03", desc: "TENS pad — large", units: 2, price: 150 },
             ],
             // DASH re-measured at the midpoint and again near the end
             outcomes: i === 1 ? [{ toolId: "dash", score: 44 }] : i === 3 ? [{ toolId: "dash", score: 30 }, { toolId: "nprs", score: 4 }] : [],
@@ -288,8 +302,8 @@
             subjective: "Knee less stiff.", rom: [], mmt: [], special: [],
             pain: [{ score: 4, location: "left knee" }],
             charges: [
-              { code: "97110", desc: "Therapeutic exercise", minutes: 22, units: 1 },
-              { code: "97116", desc: "Gait training", minutes: 16, units: 1 },
+              { code: "PT02", desc: "PT — Basic therapy", units: 1, price: 850 },
+              { code: "A01", desc: "Traction machine", units: 1, price: 250 },
             ],
             outcomes: [], mapPoints: [], transcript: [],
           },
@@ -305,9 +319,9 @@
             subjective: "Stairs easier this week, 3/10.",
             rom: [{ side: "left", joint: "knee", motion: "flexion", degrees: 125 }],
             mmt: [], special: [], pain: [{ score: 3, location: "left knee" }],
-            // left deliberately unbalanced: 30 timed minutes support 2 units,
-            // only 1 is claimed — the billing check should say so
-            charges: [{ code: "97110", desc: "Therapeutic exercise", minutes: 30, units: 1 }],
+            // left deliberately incomplete: a line with no units, so the
+            // charge sheet's "no units recorded" warning has something to say
+            charges: [{ code: "PT02", desc: "PT — Basic therapy", units: 0, price: 850 }],
             outcomes: [],
             mapPoints: [], transcript: [],
           },
@@ -381,7 +395,25 @@
       ],
       sessionUserId: null,
       clinics: {
-        "clinic-demo": { id: "clinic-demo", name: "Physical Therapy Center", createdAt: t(-120, 9, 0), active: true },
+        "clinic-demo": {
+          id: "clinic-demo", name: "Physical Therapy Center", createdAt: t(-120, 9, 0), active: true,
+          /* A worked price list, so the showcase's charge sheet adds up to
+             money rather than to a column of dashes.
+
+             It belongs to THIS CLINIC and not to the global `settings` block
+             above: that block is the pre-tenancy default every clinic falls
+             back to, so a price list left there would quietly become the
+             opening prices of every clinic that signs up. A real clinic
+             starts empty — see SETTING_DEFAULTS.servicePrices. */
+          settings: {
+            servicePrices: {
+              PT01: 1200, PT02: 850, PT03: 1800, PT04: 1400, PT05: 1500, PT06: 1100,
+              OT01: 1200, OT02: 850, OT03: 1800, OT04: 1400, OT05: 1500, OT06: 1100,
+              ST01: 1300, ST02: 900, ST03: 1900, ST04: 1500, ST05: 1600, ST06: 1200,
+              A01: 250, A02: 300, A03: 150, A04: 100,
+            },
+          },
+        },
         "clinic-fresh": { id: "clinic-fresh", name: "New Clinic", createdAt: t(-1, 9, 0), active: true },
       },
     };
@@ -1273,6 +1305,24 @@
   const SETTING_DEFAULTS = {
     facilityName: "TheraChart Clinic",
     progressEvery: 5,
+    /* Whether the app CHASES a progress report, or merely counts toward one.
+       Off: the count still shows on the chart, and a therapist writes the
+       report whenever the episode calls for one. On: the chart, the patient
+       list and the dashboard all raise it as outstanding once the Nth visit
+       is documented.
+
+       Default off. A prompt every N visits was read as the app requiring a
+       report it has no way to know is clinically due — a caseload of
+       twice-weekly patients generated a queue of warnings nobody had asked
+       for, and the warning that is always there is the one that stops being
+       read. `progressEvery` still decides the count either way. */
+    progressReminder: false,
+    /* The clinic's own price list: { PT01: 850, A01: 150, … } in pesos, keyed
+       by service code. Empty by default and deliberately so — we do not know
+       what a clinic charges, and a made-up default would be billed. A code
+       with no entry here reads as "no price set" everywhere it appears.
+       Only an admin with billing access may write this; see canSetPrices(). */
+    servicePrices: {},
     slotMinutes: 45,
     dayStartHour: 8,
     dayEndHour: 17,
@@ -1408,6 +1458,19 @@
      without one reads exactly as it did before. */
   const patientPreferred = (p) => (p ? (String(p.preferredName || "").trim() || p.firstName || "") : "Unknown");
 
+  /* What has to be true before anyone lays hands on this patient. Renamed
+     from "allergies" once the field started carrying the rest of it — fall
+     risk, weight-bearing status, a contraindicated modality — which is what
+     therapists were already typing into a box labelled for drugs alone.
+
+     Read through this rather than off `p.precautions`: records written before
+     the rename carry the text under `allergies`, and this codebase migrates
+     by falling back rather than by rewriting the database (see load()). A
+     write sets `precautions` and drops `allergies`, so a record converts the
+     first time anyone edits it and never holds two answers at once. */
+  const patientPrecautions = (p) =>
+    String((p && (p.precautions != null ? p.precautions : p.allergies)) || "").trim();
+
   /* "Bong Bautista" — how the front desk would say it out loud. For the
      schedule and the reminder, where the point is that the patient recognises
      their own appointment. */
@@ -1513,6 +1576,87 @@
     audit(byUser.id, "goal-removed", `${patientName(p)} — ${gone.text}`);
     return { ok: true };
   }
+
+  /* ---------------------------------------------------------------- *
+   *  Doctor's communication log
+   *
+   *  What the referring physician said, and when. In a Philippine clinic
+   *  this is nearly always a phone call or a note carried in by the patient
+   *  — a new order, a changed restriction, a cleared precaution — and until
+   *  now the only place it could live was somebody's memory or the middle of
+   *  a treatment note, where the next therapist would not find it.
+   *
+   *  An ORDER is the entry that matters: it changes what may be done to the
+   *  patient, so it stays outstanding on the chart until a clinician says
+   *  they have acted on it. A plain note is a record and needs no answer.
+   * ---------------------------------------------------------------- */
+
+  const doctorComms = (patientId) => (getPatient(patientId) || {}).doctorComms || [];
+
+  function addDoctorComm(patientId, fields, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    /* Logged by whoever took the call. The front desk is who the doctor's
+       office usually rings, so this is EMR access rather than a licence —
+       writing down what was said is not a clinical act. Acting on it is, and
+       that is gated separately below. */
+    if (!canAccessEmr(byUser)) return { error: "Your account can’t open this chart." };
+    const text = String((fields || {}).text || "").trim();
+    if (!text) return { error: "Write down what the doctor said." };
+    const kind = fields.kind === "order" ? "order" : "note";
+    const entry = {
+      id: uid("dc"),
+      date: String(fields.date || "").trim() || new Date().toISOString().slice(0, 10),
+      physician: String(fields.physician || "").trim() || p.referringPhysician || "",
+      via: String(fields.via || "").trim(),
+      kind, text,
+      acknowledged: false, acknowledgedBy: null, acknowledgedAt: null,
+      createdBy: byUser.id, createdAt: new Date().toISOString(),
+    };
+    if (!p.doctorComms) p.doctorComms = [];
+    p.doctorComms.push(entry);
+    touch(p);
+    save();
+    audit(byUser.id, kind === "order" ? "doctor-order-logged" : "doctor-note-logged",
+      `${patientName(p)} — ${text.slice(0, 60)}`);
+    return { entry };
+  }
+
+  /** Mark an order as acted on. A clinical decision — the person signing off
+      that a new order has been carried out has to be someone who could have
+      carried it out. */
+  function acknowledgeDoctorComm(patientId, id, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t sign off a doctor's order." };
+    const e = (p.doctorComms || []).find((x) => x.id === id);
+    if (!e) return { error: "Entry not found." };
+    if (e.acknowledged) return { entry: e };
+    e.acknowledged = true;
+    e.acknowledgedBy = byUser.id;
+    e.acknowledgedAt = new Date().toISOString();
+    touch(p);
+    save();
+    audit(byUser.id, "doctor-order-actioned", `${patientName(p)} — ${e.text.slice(0, 60)}`);
+    return { entry: e };
+  }
+
+  function deleteDoctorComm(patientId, id, byUser) {
+    const p = getPatient(patientId);
+    if (!p) return { error: "Patient not found." };
+    if (!canDocument(byUser)) return { error: "Your account can’t remove a doctor's entry." };
+    const i = (p.doctorComms || []).findIndex((x) => x.id === id);
+    if (i === -1) return { error: "Entry not found." };
+    const [gone] = p.doctorComms.splice(i, 1);
+    touch(p);
+    save();
+    audit(byUser.id, "doctor-entry-removed", `${patientName(p)} — ${gone.text.slice(0, 60)}`);
+    return { ok: true };
+  }
+
+  /** Orders nobody has said they acted on yet. The reason the log exists. */
+  const outstandingOrders = (patientId) =>
+    doctorComms(patientId).filter((e) => e.kind === "order" && !e.acknowledged);
 
   /* ---------------------------------------------------------------- *
    *  Outcome measures & authorisation — both derived, never stored twice
@@ -1826,15 +1970,48 @@
 
   /** Does this patient need a progress report? Triggered every N daily
       visits (N is facility-configurable) until one is written after the
-      Nth visit. */
+      Nth visit.
+
+      Only ever true when the clinic has asked to be reminded. With the
+      reminder off — the default — a progress report is written on demand and
+      nothing about the chart says one is overdue. `progressToward()` still
+      reports the count, because knowing where you are in the episode is
+      useful whether or not anyone is being chased about it. */
   function progressDue(patientId) {
     load();
+    if (!settings().progressReminder) return false;
     const every = settings().progressEvery || 5;
     const dailies = docsFor(patientId).filter((d) => d.type === "daily");
     if (dailies.length < every) return false;
     const milestones = Math.floor(dailies.length / every);
     const reports = docsFor(patientId).filter((d) => d.type === "progress").length;
     return reports < milestones;
+  }
+
+  /** Where this patient sits in the progress-report cycle, whether or not the
+      clinic wants to be reminded: { done, every, written }. */
+  function progressToward(patientId) {
+    load();
+    const every = settings().progressEvery || 5;
+    return {
+      every,
+      done: visitCount(patientId) % every,
+      written: docsFor(patientId).filter((d) => d.type === "progress").length,
+    };
+  }
+
+  /** Who may change what the clinic charges. Prices are the one part of
+      billing that is a commercial decision rather than a clinical one, so
+      entering a code on a note and setting what that code costs are separate
+      permissions: any licensed clinician does the first, an administrator
+      does the second.
+
+      Granted to administrators and revocable per account, rather than
+      withheld until granted — an install whose admins predate this flag must
+      not find its price list locked with nobody able to open it. */
+  function canSetPrices(user) {
+    if (!user || !user.active) return false;
+    return user.role === "admin" && user.billingAccess !== false;
   }
 
   function createDoc(patientId, type, byUser) {
@@ -2250,6 +2427,20 @@
       u.email = e;
     }
     if (patch.license) Object.assign(u.license || (u.license = {}), patch.license);
+    /* Only somebody who already holds billing access may hand it out or take
+       it away — enforced here rather than only in the form, so an admin
+       without it cannot grant it to themselves by posting the field. */
+    if ("billingAccess" in patch) {
+      if (!canSetPrices(byUser)) return { error: "Only an administrator with billing access can change that." };
+      /* Same shape as the last-administrator guard: taking it from the only
+         account that has it leaves a price list nobody can open, and the
+         permission can only be granted by someone who holds it. */
+      if (!patch.billingAccess && canSetPrices(u)) {
+        const others = state.users.filter((x) => x.id !== userId && recClinic(x) === recClinic(u) && canSetPrices(x));
+        if (!others.length) return { error: "Can't remove billing access from the last administrator who has it." };
+      }
+      u.billingAccess = !!patch.billingAccess;
+    }
     for (const k of ["name", "active", "pin"]) if (k in patch) u[k] = patch[k];
     touch(u);
     save();
@@ -2364,23 +2555,25 @@
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
     users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, stripDemoCredentials, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
-    licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument,
+    licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument, canSetPrices,
     // which accounts are seeded demo logins (never infer this from the email domain)
     SEEDED_DEMO_USER_IDS,
     // patients — patients() is clinic-scoped; allPatients() is unscoped (server-side lookups)
     patients: () => load().patients.filter(mine), allPatients: () => load().patients, getPatient, patientName, addPatient, updatePatient, saveAiReview,
     // what to CALL a patient, vs. what legally identifies them — see above
-    patientPreferred, patientCallName, patientNameWithPreferred,
+    patientPreferred, patientCallName, patientNameWithPreferred, patientPrecautions,
     // patient action items / care history (accepted AI recommendations)
     acceptRecommendation, dismissRecommendation, addActionItem, completeActionItem, deleteActionItem,
     actionItems, careHistory, resolvedRecKeys,
     // plan-of-care goals, outcome-measure history, insurance authorisation
     goalsFor, addGoal, updateGoal, deleteGoal, outcomeSeries, authStatus,
+    // the referring physician's orders and messages
+    doctorComms, addDoctorComm, acknowledgeDoctorComm, deleteDoctorComm, outstandingOrders,
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
     documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     // trashed drafts: recoverable, hidden from the chart, still on the bill
     deletedDocsFor, deletedDocs: () => load().documents.filter((d) => mine(d) && isTrashed(d)), trashDoc, restoreDoc, docConsumption, recordDocAiCall,
-    visitCount, progressDue,
+    visitCount, progressDue, progressToward,
     // plan allowance vs. what has actually been consumed this month
     monthUsage,
     // how long this patient takes to dictate — a scheduling input, not a score

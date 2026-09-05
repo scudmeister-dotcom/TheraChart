@@ -49,10 +49,11 @@ function lift(decl) {
 
 const SANDBOX = new Function(
   "STT_LANG", "STT_LANG_DEFAULT", "STT_MODEL", "window", "navigator", "fetch",
-  [lift("  function voiceGate() {"),
+  [lift("  function micConstraints() {"),
+   lift("  function voiceGate() {"),
    lift("  function encodeWav("),
    lift("  function cloudEngine(")].join("\n")
-  + "\n  return { voiceGate, encodeWav, cloudEngine };"
+  + "\n  return { micConstraints, voiceGate, encodeWav, cloudEngine };"
 );
 
 /* ---- a microphone that isn't there ---- */
@@ -406,6 +407,104 @@ const settle = () => new Promise((r) => setImmediate(r));
       "the Process handler no longer gates clearing the audio on a clean run");
     r.check("…and the message says the recording is still there",
       /chunk\(s\) failed\.[^`]*recording is still here/.test(SRC));
+  }
+
+  /* ---------------- the microphone we ask for ----------------
+
+     Automatic gain control is the browser default, and in a busy clinic it is
+     the setting that puts the next plinth's conversation into this patient's
+     note: it raises the mic whenever the room goes quiet, which is exactly
+     when the only thing left to amplify is somebody else. It also rescales the
+     signal voiceGate() is measuring, underneath the gate, on its own
+     schedule. */
+  {
+    const { micConstraints } = SANDBOX({}, "fil-PH", "chirp_2", {}, {}, async () => { });
+    const c = micConstraints();
+    r.check("automatic gain control is off",
+      c.autoGainControl === false,
+      "AGC amplifies the room in every pause, and moves the level the voice gate measures");
+    r.check("echo cancellation and noise suppression stay on",
+      c.echoCancellation === true && c.noiseSuppression === true,
+      "both are narrow-band; neither rescales speech the way AGC does");
+    r.check("the mic is asked for one channel", c.channelCount === 1);
+
+    /* The engines must actually USE it. This is not a style check: the
+       constraints once lived inline in each engine, and the lifted sandbox
+       swallowed a reference error in the getUserMedia try/catch and reported
+       it as "Mic blocked" — a whole suite passing against an engine that
+       never started. */
+    r.check("both engines open the mic through it",
+      (SRC.match(/getUserMedia\(\{ audio: micConstraints\(\) \}\)/g) || []).length === 2,
+      "an engine with its own inline constraints is one that silently keeps AGC");
+    r.check("a microphone that won't open is logged, not just reported",
+      /console\.error\("\[dictation\] microphone unavailable:"/.test(SRC)
+        && /console\.error\("\[recorder\] microphone unavailable:"/.test(SRC),
+      "the catch is broad enough to swallow a coding error — it must not be the last anyone hears of one");
+  }
+
+  /* ---------------- aiming the microphone at a section ----------------
+
+     The field test's biggest ask: dictate INTO Subjective rather than into
+     one long recording that the app then sorts. What makes it work is that a
+     stated target beats anything the classifier can infer — so these check
+     the target is honoured, and that there is still only ever one mic. */
+  {
+    r.check("every note type declares which sections can be dictated into",
+      /const DICTATABLE = \{/.test(SRC)
+        && /eval: \[/.test(SRC) && /daily: \[/.test(SRC)
+        && /progress: \[/.test(SRC) && /discharge: \[/.test(SRC),
+      "a type missing from the map silently loses its section microphones");
+
+    r.check("an aimed utterance skips the classifier entirely",
+      /const field = aimed \? aimedField\(doc\.type, clinical, aimed\) : fieldForSentence\(/.test(SRC),
+      "feeding the target to the classifier as a hint is exactly what this replaces");
+
+    r.check("only a section this note type actually has can be aimed at",
+      /const aimed = target && isDictatable\(doc\.type, target\) \? target : null;/.test(SRC),
+      "a stale target from another note type would file text into a field that isn't on the page");
+
+    r.check("a value that reached a table is not also written into the prose",
+      /function aimedField\([\s\S]*?extractOutcomes\(sentence\)\.length\) return null;[\s\S]*?meas\.rom\.length \+ meas\.mmt\.length \+ meas\.special\.length\) return null;/.test(SRC),
+      "the same finding in the table and in the narrative is the same finding twice, free to disagree");
+
+    r.check("pressing a second section re-aims one mic instead of opening another",
+      /\} else if \(listening\) \{\s*\/\/ already open: just re-aim it\s*aimedAt = target;/.test(SRC),
+      "two live audio graphs on one device is the doubled-audio bug release() exists to prevent");
+
+    r.check("pressing the lit button again stops the mic",
+      /if \(listening && aimedAt === target\) \{\s*\/\/ same button again: stop\s*listening = false;\s*engine\.stop\(\);/.test(SRC));
+
+    r.check("a failed start leaves nothing aimed",
+      /if \(ok === false\) \{ listening = false; aimedAt = null; \}/.test(SRC),
+      "an aim left set on a closed mic sends the next utterance somewhere nobody chose");
+
+    r.check("stopping dictation from outside clears the aim too",
+      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; \}/.test(SRC));
+
+    /* Where the mic is pointed has to ride ON the engine's status line: the
+       cloud engine rewrites that line every time a segment goes out, so
+       anything written beside it survives about a second. */
+    r.check("where the mic is filing rides on the engine's own status line",
+      /onStatus: \(msg, isListening\) => \{ statusEl\.textContent = withAim\(msg\);/.test(SRC),
+      "written separately it is overwritten by the next segment, and a therapist dictates into the wrong section");
+
+    r.check("the whole-visit button reads as off while a section is aimed",
+      /micBtn\.classList\.toggle\("listening", listening && !aimedAt\);/.test(SRC),
+      "two mic buttons both lit is two microphones as far as the therapist can tell");
+  }
+
+  /* ---------------- corrections are visible ---------------- */
+  {
+    r.check("recogniser output is repaired before it becomes the transcript",
+      /const fixed = PR\.correctDictation\(raw\);/.test(SRC)
+        && /const repaired = PR\.correctDictation\(out\.text\);/.test(SRC),
+      "live dictation and record-then-process must arrive at the same transcript");
+    r.check("typed dictation is NOT put through the corrector",
+      !/correctDictation\(text\)/.test(SRC),
+      "a therapist who typed MPT typed what they meant");
+    r.check("a correction says which word it changed",
+      /function noteDictationFixes\(/.test(SRC) && /id="dictFixes"/.test(SRC),
+      "a correction nobody can see is one nobody can disagree with");
   }
 
   r.done();

@@ -182,6 +182,118 @@ for clinics that file PhilHealth and HMO, and **nothing collects money** — the
 app meters visits, minutes and overage and can suspend a clinic, but there is
 no payment integration at all.
 
+> **The first of those is now done** (2026-09-04), out of Kim's field test.
+> The charge sheet bills the clinic's own catalogue — PT01–PT06, OT01–OT06,
+> ST01–ST06 and the A01–A04 add-ons — as a code, a number of units and a peso
+> subtotal, and it appears on daily treatment notes only. Prices are per
+> clinic, set by an admin with billing access, and **start empty**: we do not
+> know what a clinic charges and a default would be billed to a patient. The
+> CPT catalogue and the 8-minute rule stay in `clinical.js`, exported and
+> tested, but nothing in the UI reaches them any more.
+>
+> **Nothing collects money is still true**, and unchanged by the above: a
+> subtotal on a note is what the clinic invoices, not something we charge.
+
+### Dictation after Kim's field test (2026-09-04)
+
+Four of the six things the field test raised are done; the fifth is measured
+and the sixth was already correct.
+
+- **Per-section microphone** — every narrative box on a note has its own
+  Dictate button, and an aimed mic skips the classifier rather than hinting to
+  it. One engine, re-aimed; never two.
+- **Patient-vs-therapist attribution** — largely dissolved by the above. When
+  the therapist states the section, the voice question the classifier was
+  guessing at no longer has to be answered. The classifier is unchanged and
+  still runs for the roaming mic.
+- **Abbreviations** — Google phrase adaptation on the request (probed once,
+  dropped for the process if the region refuses it) plus a guarded correction
+  pass on the output. `MMT`, `AROM`/`PROM`, `therex`, `HEP`.
+- **Ambient noise** — `autoGainControl: false`. It was the browser default and
+  it is the setting that amplifies the next plinth's conversation into this
+  patient's note during every pause. It was also quietly fighting the voice
+  gate, which measures a level something else was rescaling.
+- **Measurements** — untouched on purpose, and pinned as a regression baseline
+  in `test/parser.test.js`. The field test reported them as already correct.
+
+**Mid-sentence language switching is NOT fixed, and is not a bug we can fix
+in the parser.** The bar sends one language code per request — `fil-PH` or
+`ceb-PH` — because Chirp 2 refuses a list. A therapist who code-switches
+between English, Tagalog AND Bisaya in one sentence is therefore always
+outside one of the two pairings, and that is where the garbling comes from.
+Three things are worth knowing before anyone picks this up:
+
+1. The choice is stored per DEVICE (`localStorage: therachart-lang`) and set
+   once. A tablet left on English & Tagalog in a Bisaya-speaking clinic
+   degrades every Cebuano utterance, and nothing on screen says so. That is
+   the cheapest available win and it is a UX change, not a model one.
+2. Chirp 2 has no multi-language recognition in `us-central1` — the regions
+   that offer it do not carry chirp_2. Verified in `test/transport.test.js`.
+3. The AI clean-up pass is what currently repairs code-switched garbling, and
+   it re-reads the whole transcript. It is the right place for this, not the
+   live pass.
+
+### Clinical workflow after Kim's field test (2026-09-04)
+
+- **Doctor's communication log** on the Info tab. An order is outstanding
+  until a clinician marks it actioned, and shows on Needs attention until
+  then. Logging is EMR access (the front desk takes the call); signing off is
+  `canDocument`, because whoever says an order was carried out has to be
+  someone who could have carried it out.
+- **Outcome measures scored item by item.** `clinical.js` now carries each
+  instrument's answer sheet — item count, per-item scale, and which formula
+  turns items into the reported score (sum / percent / mean / the DASH
+  transform). A part-filled form reports `complete: false` and is never shown
+  as the instrument's score.
+
+  **The item WORDING is deliberately not in the codebase.** LEFS, DASH,
+  QuickDASH, NDI, ODI and ABC are published under licence and the clinic holds
+  the form, not us. Items are numbered and the therapist reads their own copy
+  alongside. PSFS is the exception and is fully modelled: its activities are
+  named by the patient at the visit, not printed on a form. If a clinic wants
+  their licensed wording in the app, that is a per-clinic content decision and
+  a conversation with them — do not "helpfully" paste the questionnaires in.
+- **Goal prompts** from the note's own measurements. Every rule is derived
+  from data already in the chart and states itself on screen; pressing one
+  fills the form and adds nothing. There is deliberately NO rule that needs
+  clinical judgement we do not have — a range of motion with no contralateral
+  reading gets a baseline and a blank target rather than an invented
+  normative end-range.
+- **Photo capture** on the Files tab (`capture="environment"`), through the
+  same upload path as any attachment, named for the moment it was taken.
+
+**A bug worth remembering.** `suggestGoals()` was written and unit-tested
+against `grade: "3"`. The parser has always stored `grade: "3/5"`. Every test
+passed and the feature produced nothing at all for any real chart. The fix is
+in `nextMmtGrade()`, and the guard is in `test/notefill.test.js` §2c, which
+drives *dictated sentences* through the real parser into the real suggester
+rather than constructing measurements by hand. Fixtures that invent a shape
+test the fixture.
+
+### The AI eval baselines are STALE, on purpose
+
+`test/eval/cases.js` gained six assertions on 2026-09-04 (section-prose
+grounding: invented region, invented number, unspoken side; plus the two that
+catch a Plan written into the Treatment field). `baseline.vertex.json` and
+`baseline.local.json` predate all of them, so **the next run will report a
+regression that isn't one** — it is scoring more assertions than the baseline
+recorded.
+
+They were deliberately not re-saved. A baseline is only worth having if the
+run behind it was clean, and no single run covered the final assertion set
+without falling back:
+
+- the one clean Vertex pass (98.8%, `FELL BACK: 0`) predates the last two
+  assertions;
+- every run after it fell back to the local heuristic for 14-18 case-runs and
+  scored nonsense, including one that reported 79.7%.
+
+**Vertex rate-limits hard when the eval is run back to back.** Always check
+`grep -c "FELL BACK"` is 0 before believing a number, and leave several
+minutes between runs. Re-save the baseline from one clean full pass:
+
+    GEMINI_VERTEX=1 GCP_PROJECT=therachart-prod node test/eval/run.js --save-baseline
+
 ### Expect this, and don't read it as a fault
 
 With the offline reviewer gone, **a failed AI review now shows the clinician a

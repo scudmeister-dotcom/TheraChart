@@ -67,12 +67,112 @@ check("amendment keeps original intact", amended.doc.data.summary === "TherEx an
 
 // --- progress report trigger ---------------------------------------------
 // Seed has 4 signed dailies for Bautista; the one created above makes 5.
-check("progress due after 5th visit", store.progressDue("p-juan") === true);
+// Chasing one is opt-in: with the reminder off, nothing is ever "due".
+const grace = store.staff().find((u) => u.role === "admin");
+check("nothing is due while the reminder is off", store.progressDue("p-juan") === false);
+check("the count is reported either way",
+  store.progressToward("p-juan").done === 0 && store.progressToward("p-juan").every === 5,
+  JSON.stringify(store.progressToward("p-juan")));
+
+store.updateSettings({ progressReminder: true }, grace);
+check("progress due after 5th visit once the reminder is on", store.progressDue("p-juan") === true);
 const prog = store.createDoc("p-juan", "progress", maria);
 check("progress report carries over eval subjective",
   /sharp pain/i.test(prog.doc.data.baselineSubjective || ""), prog.doc.data.baselineSubjective);
 check("progress no longer due once written", store.progressDue("p-juan") === false);
 check("liza (1 visit) not due", store.progressDue("p-liza") === false);
+store.updateSettings({ progressReminder: false }, grace);
+
+// --- who may set what the clinic charges ----------------------------------
+// Entering a code on a note and deciding what that code costs are separate
+// permissions: the first is clinical, the second is commercial.
+check("an admin can set prices", store.canSetPrices(grace) === true);
+check("a licensed therapist cannot", store.canSetPrices(maria) === false);
+check("the front desk cannot", store.canSetPrices(ana) === false);
+check("nobody at all cannot", store.canSetPrices(null) === false);
+check("an admin who predates the flag is not locked out",
+  store.canSetPrices({ role: "admin", active: true }) === true);
+check("a therapist cannot grant themselves billing access",
+  !!(store.updateUser(maria.id, { billingAccess: true }, maria) || {}).error);
+check("…and did not get it", store.canSetPrices(store.getUser(maria.id)) === false);
+// Grace is the only admin in the demo clinic, so she cannot strand the
+// price list by revoking her own access.
+check("the last admin with billing access can't revoke their own",
+  !!(store.updateUser(grace.id, { billingAccess: false }, grace) || {}).error);
+check("…and still has it", store.canSetPrices(store.getUser(grace.id)) === true);
+// With a second admin holding it, revoking the first is allowed again.
+check("billing access can be revoked once someone else holds it", (() => {
+  const st = JSON.parse(store.exportAll());
+  st.users.push({ id: "u-admin2", clinicId: grace.clinicId, name: "Second Admin", email: "second@demo",
+                  role: "admin", active: true, pin: "1234", license: null });
+  store.importAll(st);
+  const r = store.updateUser(grace.id, { billingAccess: false }, store.getUser("u-admin2"));
+  return !(r || {}).error && store.canSetPrices(store.getUser(grace.id)) === false;
+})());
+store.updateUser(grace.id, { billingAccess: true }, store.getUser("u-admin2"));
+check("…and given back", store.canSetPrices(store.getUser(grace.id)) === true);
+{
+  const voided = Object.assign({}, store.getUser(grace.id), { active: false });
+  check("a voided admin sets nothing", store.canSetPrices(voided) === false);
+}
+
+// The price list is per clinic. The demo clinic ships with a worked one so
+// the showcase adds up; every other clinic starts empty, because we do not
+// know what a clinic charges and a made-up default would be billed to a
+// patient. The demo's list must not leak through the legacy global block.
+check("the demo clinic ships with a worked price list",
+  store.settings().servicePrices.PT02 === 850, JSON.stringify(store.settings().servicePrices));
+check("a clinic that has set nothing has no prices",
+  JSON.stringify(store.settingsFor("clinic-fresh").servicePrices) === "{}",
+  JSON.stringify(store.settingsFor("clinic-fresh").servicePrices));
+store.updateSettings({ servicePrices: { PT02: 900 } }, grace);
+check("a saved price survives a read", store.settings().servicePrices.PT02 === 900);
+
+// --- doctor's communication log ------------------------------------------
+// An ORDER changes what may be done to the patient, so it stays outstanding
+// until a clinician says they acted on it. A note is just a record.
+{
+  const before = store.outstandingOrders("p-juan").length;
+  check("the seeded chart carries an outstanding order", before === 1, String(before));
+
+  const note = store.addDoctorComm("p-juan", { kind: "note", text: "Copy of the MRI report received." }, ana);
+  check("the front desk can log what the doctor said", !note.error, note.error);
+  check("a note never becomes outstanding work",
+    store.outstandingOrders("p-juan").length === before, "a record is not a task");
+
+  const order = store.addDoctorComm("p-juan", { kind: "order", text: "Reduce to 1x/week." }, ana);
+  check("…and can log a new order too", !order.error, order.error);
+  check("an order IS outstanding the moment it is logged",
+    store.outstandingOrders("p-juan").length === before + 1);
+  check("an order defaults to today when no date is given",
+    /^\d{4}-\d{2}-\d{2}$/.test(order.entry.date), order.entry.date);
+  check("an empty entry is refused", !!store.addDoctorComm("p-juan", { text: "  " }, ana).error);
+
+  // acting on an order is a clinical act, logging one is not
+  check("the front desk cannot sign off an order",
+    !!store.acknowledgeDoctorComm("p-juan", order.entry.id, ana).error,
+    "whoever says an order was carried out has to be someone who could have carried it out");
+  check("…and it is still outstanding", store.outstandingOrders("p-juan").length === before + 1);
+
+  const ack = store.acknowledgeDoctorComm("p-juan", order.entry.id, maria);
+  check("a licensed clinician can", !ack.error && ack.entry.acknowledged === true, ack.error);
+  check("…which clears it from the outstanding list",
+    store.outstandingOrders("p-juan").length === before);
+  check("…and records who did it and when",
+    ack.entry.acknowledgedBy === maria.id && !!ack.entry.acknowledgedAt);
+
+  check("acknowledging twice is harmless",
+    !store.acknowledgeDoctorComm("p-juan", order.entry.id, maria).error);
+  check("an unknown entry is refused",
+    !!store.acknowledgeDoctorComm("p-juan", "dc-nope", maria).error);
+  check("the front desk cannot delete an entry",
+    !!store.deleteDoctorComm("p-juan", order.entry.id, ana).error);
+  check("a clinician can", !store.deleteDoctorComm("p-juan", order.entry.id, maria).error);
+  check("a patient with no log reads as empty, not undefined",
+    Array.isArray(store.doctorComms("p-liza")) && store.doctorComms("p-liza").length === 0);
+}
+check("…and does not reach another clinic",
+  JSON.stringify(store.settingsFor("clinic-fresh").servicePrices) === "{}");
 
 // --- calendar --------------------------------------------------------------
 // use the next working day (slotsForDay is empty on non-work days)
