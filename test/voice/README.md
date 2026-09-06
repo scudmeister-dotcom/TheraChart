@@ -210,11 +210,41 @@ result, not broken plumbing. Aliases tried: `tu-ong`, `tuo nga`, `tuóng`,
 resting on it is reporting a coin toss. That is a limit of synthetic Cebuano, not
 of TheraChart — the fix is to know it, which is what `--takes` is for.
 
-**What would actually settle it:** two minutes of a real Bisaya speaker reading
-`knee/cebuano-heavy`. Everything above measures ElevenLabs and Chirp 2 together
-and cannot separate them — nothing here establishes how good Chirp 2's `ceb-PH`
-is, which is the part that matters to a Visayas clinic. The harness takes any
-16 kHz mono WAV, so a human take drops straight in.
+### Which half is actually failing
+
+Everything above measures the speaker and the transcriber together, so it cannot
+say which one is weak. ElevenLabs' own speech-to-text (Scribe) gives a second
+pair of ears on the identical audio file, which separates them.
+
+Median of 4 takes, `eleven_v3` + Pedro, the same WAV sent to both:
+
+| | Google Chirp 2 | ElevenLabs Scribe |
+|---|---|---|
+| Cebuano (`knee/cebuano-heavy`) | 26.1% | **15.2%** |
+| Tagalog (`shoulder/tagalog-heavy`) | **1.7%** | 5.1% |
+
+**The ranking flips.** Google is three times better than Scribe on Tagalog and
+nearly twice as bad on Cebuano — same audio, same takes. Both things are true at
+once:
+
+- **The audio is genuinely harder in Cebuano.** Even Scribe, which handles it
+  best, does 3× worse on Cebuano than on Tagalog (15.2% vs 5.1%). So ElevenLabs'
+  Cebuano really is weaker than its Tagalog, as suspected.
+- **But Google's `ceb-PH` is disproportionately weak.** It degrades 15× from its
+  own Tagalog (1.7% → 26.1%) and loses to a competitor on audio it wins on in
+  Tagalog. That is a fact about the transcriber TheraChart actually ships, not
+  about the test rig.
+
+**This is the part that matters to a Visayas clinic**, and it points the opposite
+way from what the rest of this file assumed. Treat it as suggestive rather than
+settled: it is one script, four takes, on synthetic speech that is itself harder
+in Cebuano. A human Bisaya reading would give Chirp 2 a cleaner signal and might
+close the gap.
+
+**What would settle it:** two minutes of a real Bisaya speaker reading
+`knee/cebuano-heavy`. The harness takes any 16 kHz mono WAV, so a human take
+drops straight in — and running it through both transcribers would answer, for
+real audio, whether `ceb-PH` is good enough to offer in the dictation menu.
 
 Note the scorer knows Tagalog and Cebuano numerals (`isa`…`sampu`,
 `usa`…`napulo`), because a patient asked "kung isa hanggang sampu?" answers in
