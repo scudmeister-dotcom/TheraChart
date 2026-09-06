@@ -130,12 +130,33 @@
      laterality bug that only ever lost the LEFT side: "masakit ang kaliwa kong
      tuhod" charted a knee with no side, and "kanan" charted a right one. */
   const SIDE_WORDS = "left|right|both|bilateral(?:ly)?|pareho(?:ng)?|kaliwa(?:ng)?|kanan(?:g)?|wala(?:ng)?|tuo(?:ng)?";
+  /* The written shorthand — "R knee", "L ankle" — which is how a typed note
+     spells laterality most of the time. It read as no side at all, so the
+     angle reached the chart unsided and could not aggregate into the per-side
+     trend that is most of what a ROM measurement is for.
+
+     It is deliberately NOT part of SIDE_WORDS. A bare letter is an initial
+     ("R. Santos"), a spinal level ("L5") and a unit ("mg/L") as often as it
+     is a side, so it is spliced in only where a JOINT or a BODY PART follows
+     it and settles the reading — never on its own, and never in a trailing
+     position, where even the spelled-out word is as often discourse as
+     anatomy ("…110 degrees, right, let's move on"). Every splice is followed
+     by \s+, which is what keeps "L5" and "R." out: the letter has to stand as
+     its own word. Every pattern it goes into is case-insensitive, so it reads
+     "R knee" and "r knee" alike. */
+  const SIDE_ABBREV = "[rl]";
+  const SIDE_WORDS_ABBR = `${SIDE_WORDS}|${SIDE_ABBREV}`;
   const LEFT_RE = /^(left|kaliwa|wala)/i;
   const BOTH_RE = /^(both|bilateral|pareho)/i;
+  /* "L" is not a prefix of "left", so without a test of its own it fell
+     through to the right-hand default below and charted the OPPOSITE side —
+     worse than the missing side the abbreviation is here to fix. */
+  const ABBREV_LEFT_RE = /^l$/i;
 
   function sideWord(raw) {
     if (!raw) return null;
     if (BOTH_RE.test(raw)) return "both";
+    if (ABBREV_LEFT_RE.test(raw)) return "left";
     return LEFT_RE.test(raw) ? "left" : "right";
   }
 
@@ -148,7 +169,15 @@
      no side at all. Group 2 is the trailing form ("my butt on the left side"),
      which patients use just as often. Whichever fired, sideWord() normalizes
      it the same way. */
-  const SIDE_PREFIX = `(?:(${SIDE_WORDS})\\s+(?:sides?\\s+of\\s+(?:my|the|his|her|your)\\s+)?(?:nga\\s+)?(?:\\w+\\s+)??)?`;
+  /* Built per part, because the abbreviation needs the part's own keyword to
+     guard it. The spelled-out words may sit ANY one filler word away from the
+     part ("left lateral knee"); a bare letter that far out is an initial as
+     easily as a side ("R Cruz knee"), so it only reaches over a word that is
+     itself anatomy — "R lateral knee" — and is otherwise glued to the part. */
+  const ANAT_QUALIFIER = "lateral|medial|anterior|posterior|upper|lower|distal|proximal";
+  const sidePrefix = (kw) =>
+    `(?:((?:${SIDE_WORDS})|${SIDE_ABBREV}(?=\\s+(?:(?:${ANAT_QUALIFIER})\\s+)?(?:${kw})\\b))` +
+    `\\s+(?:sides?\\s+of\\s+(?:my|the|his|her|your)\\s+)?(?:nga\\s+)?(?:\\w+\\s+)??)?`;
   /* Two trailing shapes. The first spells out "side", so it can stand alone.
      The second ("on the right") must keep the word "on" — without it "my knee
      right now" would read as a right knee. */
@@ -158,7 +187,7 @@
      side sat a filler word away from the part and was thrown away. */
   const SIDE_SUFFIX = `(?:[,\\s]+(?:(?:on\\s+)?(?:the\\s+)?(${SIDE_WORDS})\\s+sides?\\b|on\\s+(?:the\\s+)?(${SIDE_WORDS})\\b|(?:the\\s+)?(?:\\w+[,\\s]+){0,2}?(${SIDE_WORDS})\\s+ones?\\b))?`;
   for (const part of BODY_PARTS) {
-    part.re = new RegExp(`\\b${SIDE_PREFIX}(?:${part.kw})\\b${SIDE_SUFFIX}`, "gi");
+    part.re = new RegExp(`\\b${sidePrefix(part.kw)}(?:${part.kw})\\b${SIDE_SUFFIX}`, "gi");
   }
 
   /* ---------------------------------------------------------------- *
@@ -731,7 +760,7 @@
   const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
 
   const JOINT_ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   const BARE_ROM_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   /* Motion first, joint after it — the ordinary Tagalog and Cebuano word order,
@@ -755,12 +784,12 @@
   const MOTION_JOINT_ROM_RE = new RegExp(
     `\\b(${ROM_MOTIONS})[\\s,]+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
     `(?:the|his|her|their|ang|akong|among|imong|iyang|yung|aking)?\\s*` +
-    `(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   const BARE_ROM_NOUNIT_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_BARE_NUM}`, "gi");
   // where a joint (with any side stated on it) is named, so a bare motion can
   // look backwards and inherit it
-  const JOINT_ANCHOR_RE = new RegExp(`\\b(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})\\b`, "gi");
+  const JOINT_ANCHOR_RE = new RegExp(`\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\b`, "gi");
 
   /* Abbreviations normalise to the full motion name so "ER 45" and "external
      rotation 45" aggregate as the same measurement rather than two. */
@@ -1048,7 +1077,10 @@
          the trailing "on the right" form, then fall back to the joint anchor. */
       let context = (m[1] || "").trim();
       const start = m.index, end = start + m[0].length;
-      const leadSide = new RegExp(`^(${SIDE_WORDS})\\b\\s*`, "i").exec(context);
+      /* The abbreviation needs a muscle after it to count — a lone "R" in the
+         three words before the grade is not a side. */
+      const leadSide = new RegExp(
+        `^((?:${SIDE_WORDS})|${SIDE_ABBREV}(?=\\s+[A-Za-z]))\\b\\s*`, "i").exec(context);
       if (leadSide) context = context.slice(leadSide[0].length).trim();
       // strip the grading verb itself — it names no muscle
       context = context.replace(/\b(?:strength|mmt|lakas|kusog|is|was|at|graded?|ang|ng|nga|sa|og|ug)\b/gi, "").replace(/\s+/g, " ").trim();

@@ -909,6 +909,12 @@ function mention(result, partName, side = undefined) {
   check("side: 'tennis elbow on the right'", sideOf("tennis elbow on the right", "Elbow") === "right");
   check("side: 'my shoulder, on the left,'", sideOf("my shoulder, on the left, has been aching", "Shoulder") === "left");
   check("side: 'right now' still doesn't side the knee", sideOf("my knee right now is fine", "Knee") === null);
+  /* The written shorthand a typed note uses. A bare letter is only a side
+     with the part right behind it — over an anatomy word at the most. */
+  check("side: 'R shoulder' is the shorthand for right", sideOf("R shoulder is sore", "Shoulder") === "right");
+  check("side: 'L lateral knee' reaches over the anatomy word", sideOf("L lateral knee pain", "Knee") === "left");
+  check("side: an initial before a part is not a side", sideOf("assessed by R Cruz, knee pain", "Knee") === null);
+  check("side: 'L5' is a spinal level, not a left", sideOf("L5-S1 disc, pain down the leg", "Leg") === null);
   const both = parseUtterance("both butt cheeks are tight").mentions.map((m) => m.side).sort();
   check("side: 'both butt cheeks' pins each side", both.join() === "left,right", JSON.stringify(both));
 }
@@ -978,6 +984,41 @@ const meas = (t) => parseUtterance(t).measurements;
   const disc = meas("knee flexion 110 degrees, right, let's move on").rom;
   check("rom: a trailing discourse 'right' is not a side",
     disc.length === 1 && disc[0].side === null, JSON.stringify(disc));
+
+  /* "R knee" is how a typed note spells laterality, and the single letter was
+     no side at all: the angle reached the chart unsided, where it cannot join
+     the per-side trend it was measured for. */
+  for (const [text, side] of [
+    ["R ankle dorsiflexion 10 degrees", "right"],
+    ["L knee flexion 120 degrees", "left"],
+    ["r hip flexion 100 degrees", "right"],             // typed in lower case
+    ["flexion of the L knee 120 degrees", "left"],      // motion stated first
+  ]) {
+    const r = meas(text).rom;
+    check(`rom side abbrev: ${text}`, r.length === 1 && r[0].side === side, JSON.stringify(r));
+  }
+  /* "L" is not a prefix of "left", so read as a spelled-out word it would
+     default to the RIGHT side — the opposite reading, which is worse in a
+     chart than the missing one. */
+  check("rom: 'L' reads as left, not as the right-hand default",
+    meas("L knee flexion 120 degrees").rom[0].side === "left");
+  // an abbreviated side governs the run that follows it, like a spelled-out one
+  const abbrRun = meas("R shoulder abduction 90 degrees, ER 45, flexion 120").rom;
+  check("rom: an abbreviated side carries down the run",
+    abbrRun.length === 3 && abbrRun.every((x) => x.side === "right"), JSON.stringify(abbrRun));
+
+  /* A bare letter is an initial, a spinal level and a discourse marker at
+     least as often as it is a side, so it only counts with a joint behind
+     it — never on its own, and never trailing the number. */
+  for (const text of [
+    "L5 radiculopathy, knee flexion 120 degrees",
+    "seen by R. Cruz, knee flexion 120 degrees",
+    "knee flexion 120 degrees, R, let's move on",
+  ]) {
+    const r = meas(text).rom;
+    check(`rom: a bare letter with no joint behind it is not a side: ${text}`,
+      r.length === 1 && r[0].side === null, JSON.stringify(r));
+  }
 }
 
 {
@@ -998,6 +1039,12 @@ const meas = (t) => parseUtterance(t).measurements;
   check("mmt: a trailing Cebuano side is read",
     meas("hamstring strength tulo sa lima sa tuo").mmt[0].side === "right",
     JSON.stringify(meas("hamstring strength tulo sa lima sa tuo").mmt));
+  /* The same shorthand on a grade. Unread, the letter was not just a lost
+     side — it was filed as part of the muscle's name ("R deltoid"). */
+  const abbrMmt = meas("R deltoid strength is 4 out of 5").mmt;
+  check("mmt: an abbreviated side is read, and is not left in the muscle name",
+    abbrMmt.length === 1 && abbrMmt[0].side === "right" && abbrMmt[0].context === "deltoid",
+    JSON.stringify(abbrMmt));
   // the context guard still holds — not every "out of 5" is a muscle grade
   check("mmt: '5 out of 5 kids' is not a strength grade",
     meas("he has 5 out of 5 kids").mmt.length === 0);
