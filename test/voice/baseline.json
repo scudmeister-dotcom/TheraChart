@@ -7,24 +7,25 @@
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 391.91712499999994,
-  "billedSeconds": 408,
-  "sttUsd": 0.1088,
+  "audioSeconds": 389.08400000000006,
+  "billedSeconds": 402,
+  "sttUsd": 0.1072,
   "refineCalls": 15,
-  "meanWer": 0.054726012035890566,
-  "earned": 130,
+  "meanWer": 0.055938436861759276,
+  "earned": 131,
   "possible": 142,
-  "overall": 0.9154929577464789,
+  "overall": 0.9225352112676056,
   "cases": [
     {
       "id": "shoulder/clinical-vocab",
       "why": "the boosted phrase list, spoken — MMT, AROM, Neer, Hawkins, scaption, subacromial, therex, HEP",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.10975609756097561,
+      "advisory": false,
+      "wer": 0.036585365853658534,
       "refWords": 82,
-      "edits": 9,
-      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about 7 out of 10 worse at night left shoulder arom inflexion is 120° abduction 110 mmt is 4 out of 5 on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for their and i'm giving you a free pass ship to do twice a day",
+      "edits": 3,
+      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom flexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a hep to do twice a day",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -75,6 +76,7 @@
       "why": "a mid-sentence laterality correction has to move the pin, not add a second one",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0.05660377358490566,
       "refWords": 53,
       "edits": 3,
@@ -115,6 +117,7 @@
       "why": "code-switched speech, and a Tagalog negation that must not become a positive finding",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0.01818181818181818,
       "refWords": 55,
       "edits": 1,
@@ -155,10 +158,11 @@
       "why": "the ceb-PH language code, spoken — the Visayas clinic's whole dictation path",
       "lang": "ceb-PH",
       "chunks": 1,
-      "wer": 0.08108108108108109,
+      "advisory": false,
+      "wer": 0.16216216216216217,
       "refWords": 37,
-      "edits": 3,
-      "heard": "kumusta na ang imong tiil ang right ankle sakit pa gihapon kung mula ko ug taas mga six out of 10 right ankle dorsiflexion is limited about 10 degrees swelling is mild oh manghubag gihapon sa gabi",
+      "edits": 6,
+      "heard": "kumusta na ang imong tiil ang right ankle sakit pa gihapon kung mulakaw ko ug taas mga six out of 10 right ankle dorsiflexion is limited about 10 degrees swelling is mild",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -181,29 +185,25 @@
         {
           "name": "dorsiflexion ROM survived",
           "weight": 1,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "rom: []"
+          "detail": ""
         }
       ],
-      "earned": 5,
+      "earned": 6,
       "possible": 6,
-      "failed": [
-        {
-          "name": "dorsiflexion ROM survived",
-          "detail": "rom: []"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "hip/not-the-patient",
       "why": "hypotheticals and third parties are transcribed faithfully — they must not become findings",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.029850746268656716,
+      "advisory": false,
+      "wer": 0.014925373134328358,
       "refWords": 67,
-      "edits": 2,
-      "heard": "your left shoulder is doing well range is nearly full now it still catches a little when i reach behind my back maybe three out of 10 my last patient this morning had a hip replacement completely different case if this were a liberal tear we would be seeing pain at end range but we are not we will keep the same program for two more weeks",
+      "edits": 1,
+      "heard": "your left shoulder is doing well range is nearly full now it still catches a little when i reach behind my back maybe three out of 10 my last patient this morning had a hip replacement completely different case if this were a labral tear we would be seeing pain at end range but we are not we will keep the same program for two more weeks",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -240,10 +240,11 @@
       "why": "near-monolingual Tagalog — laterality from \"kanang\", a rating, and a denial, with no English to lean on",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.01694915254237288,
+      "advisory": false,
+      "wer": 0.1016949152542373,
       "refWords": 59,
-      "edits": 1,
-      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon doc masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pababa sa braso wala naman po sakit lang po talaga sa balikat",
+      "edits": 6,
+      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon doc masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pa ba sa braso so wala naman po ano sasakit lang po talaga sa balikat",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -266,9 +267,9 @@
         {
           "name": "the 7/10 rating survived Tagalog",
           "weight": 2,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "pain: []"
+          "detail": ""
         },
         {
           "name": "\"wala naman po\" is not offered as a pin",
@@ -278,24 +279,20 @@
           "detail": ""
         }
       ],
-      "earned": 9,
+      "earned": 11,
       "possible": 11,
-      "failed": [
-        {
-          "name": "the 7/10 rating survived Tagalog",
-          "detail": "pain: []"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "knee/cebuano-heavy",
-      "why": "near-monolingual Cebuano — a language ElevenLabs does not officially speak, so this is the take to listen to",
+      "why": "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 loses 6 times out of 6",
       "lang": "ceb-PH",
       "chunks": 1,
-      "wer": 0.17391304347826086,
-      "refWords": 46,
-      "edits": 8,
-      "heard": "maayong buntag unsa may imong gibati karon sakit akong tuong tuhod doc labi na kung mutungas ko sa hagdanan pila kasakit kung isa hangtod na pulo mga unom dili ko kaayo maka lakaw ug taas na bay manghubag o mamanhid wala man sakit ra gyud sa tuhod",
+      "advisory": true,
+      "wer": 0.1,
+      "refWords": 40,
+      "edits": 4,
+      "heard": "unsa may imong gibati sa imong tuhod sakit ang tuhod kung musaka ko ug hagdan pila ka sakit gikan sa usa hangtod napulo nga unom sa napulo naa bay hubag sa tuhod gamay ra doc wala may pamanhid",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -304,9 +301,9 @@
         {
           "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
           "weight": 3,
-          "ok": true,
+          "ok": false,
           "thrown": null,
-          "detail": ""
+          "detail": "pinned: Knee|"
         },
         {
           "name": "\"wala man\" was read as a denial, not as the left knee",
@@ -318,17 +315,17 @@
         {
           "name": "the 6/10 rating survived Cebuano",
           "weight": 1,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "pain: []"
+          "detail": ""
         }
       ],
-      "earned": 6,
+      "earned": 4,
       "possible": 7,
       "failed": [
         {
-          "name": "the 6/10 rating survived Cebuano",
-          "detail": "pain: []"
+          "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
+          "detail": "pinned: Knee|"
         }
       ]
     },
@@ -337,6 +334,7 @@
       "why": "degrees, grades and scores — the one class of error that leaves the sentence looking fine",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0.061224489795918366,
       "refWords": 49,
       "edits": 3,
@@ -398,10 +396,11 @@
       "why": "a full-length visit — the multi-chunk stitch, and a note built from minutes rather than seconds",
       "lang": "fil-PH",
       "chunks": 2,
-      "wer": 0.04186046511627907,
+      "advisory": false,
+      "wer": 0.046511627906976744,
       "refWords": 215,
-      "edits": 9,
-      "heard": "good morning po let us start with how the week went medyo mas okay na po doc pero masakit pa rin ang kanang balikat ko kapag umaabot ako sa taas how would you rate it now out of 10 mga lima na lang po dati po kasi pito kaya medyo bumuti that is good progress any night pain still konti na lang po nakakatulog na po ako ngayon hindi na po ako nagigising any numbness or tingling going down the arm wala naman po sakit lang po talaga sa balikat let me measure right shoulder active flexion is 140° today up from 120 last week abduction is 130 external rotation is 55° rotator cuff,mmt is four out of five and that is better than the three plus we had at evaluation neer is still mildly positive but hawkins is negative now ibig sabihin po ba gumagaling na yes the impingement signs are settling and your range is close to normal today we did scapsion to 90° three sets of 10 and prone rose with a yellow band we also did soft tissue work to the upper trapezius and posterior continue the home program twice daily and add the doorway stretch plan is to continue twice weekly for two more weeks then reassess",
+      "edits": 10,
+      "heard": "good morning po let us start with how the week went medyo mas okay na po doc pero masakit pa rin ang kanang balikat ko kapag umaabot ako sa taas how would you rate it now out of 10 mga lima na lang po dati po kasi pito kaya medyo bumuti that is good progress any night pain still konti na lang po nakakatulog na po ako ngayon hindi na po ako nagigising any numbness or tingling going down the arm so wala naman po ang sakit lang po talaga sa balikat let me measure right shoulder active flexion is 140° today up from 120 last week abduction is 130 external rotation is 55° rotator cuff mmt is 4 out of 5 and that is better than the 3 plus we had at evaluation neer is still mildly positive but hawkins is negative now ibig sabihin po ba gumagaling na yes the impingement signs are settling and your range is close to normal today we did scapion to 90° three sets of 10 and prone rows with a yellow band we also did soft tissue work to the upper trapezius and posterior cuff continue the home program twice daily and add the doorway stretch plan is to continue twice weekly for two more weeks then reassess",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -471,10 +470,11 @@
       "why": "thirteen/thirty, fifteen/fifty, forty/fourteen — mishearings that leave the sentence intact",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.0847457627118644,
+      "advisory": false,
+      "wer": 0.06779661016949153,
       "refWords": 59,
-      "edits": 5,
-      "heard": "let us record today's measurements for the left knee left knee flexion is 30° today up from before left knee extension is 15° hip abduction is 40° on that side shoulder flexion on the right is 60° the pain is 4 out of 10 today though good we will measure again in two weeks",
+      "edits": 4,
+      "heard": "let us record today's measurements for the left knee left knee flexion is 30° today up from before left knee extension is 15° hip abduction is 40° on that side shoulder flexion on the right is 60° the pain is 4 out of 10 today doc good we will measure again in two weeks",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -523,10 +523,11 @@
       "why": "two separate complaints must stay two — merging or dropping one is invisible in a tidy note",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.06,
+      "advisory": false,
+      "wer": 0.02,
       "refWords": 50,
-      "edits": 3,
-      "heard": "what is bothering you today dalawa po ang kaliwang balikat ko tapos ang lower back ko rin tell me about the shoulder velder first masakit po kapag nag-aabot ako sa likod mga 8 out of 10 and the back matigas po sa umaga mga tatlo out of 10 lang naman po",
+      "edits": 1,
+      "heard": "what is bothering you today dalawa po ang kaliwang balikat ko tapos ang lower back ko rin tell me about the shoulder first masakit po kapag nag-aabot ako sa likod mga anim out of 10 and the back matigas po sa umaga mga tatlo out of 10 lang naman po",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -563,6 +564,7 @@
       "why": "a note dictated entirely in the third person — the complaint is still the patient's",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0.04878048780487805,
       "refWords": 41,
       "edits": 2,
@@ -617,10 +619,11 @@
       "why": "a weight-bearing limit and an anticoagulant must reach Precautions, where an omission reads as clearance",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.016666666666666666,
+      "advisory": false,
+      "wer": 0.08333333333333333,
       "refWords": 60,
-      "edits": 1,
-      "heard": "this is post-operative day 12 after her right knee replacement she is partial weight bearing only no more than 25 through the right leg she is on warfarin so no aggressive soft tissue work and watch for bruising masakit pa rin po kapag yumuyuko mga lima out of 10 understood we will keep to the protocol range today",
+      "edits": 5,
+      "heard": "this is post-operative day 12 after her right knee replacement she is partial weight bearing only no more than 25 through the right leg she is on warfare and so no aggressive soft tissue work and watch for bruising masakit pa rin po kapag yumuyo ko mga lima out of 10 understood we will keep to the protocol range today",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -657,6 +660,7 @@
       "why": "nothing clinical was said — an empty findings array is the correct answer, not a failure",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0.02127659574468085,
       "refWords": 47,
       "edits": 1,
@@ -697,6 +701,7 @@
       "why": "a bilateral complaint must pin BOTH sides — recording one reads as a unilateral problem",
       "lang": "fil-PH",
       "chunks": 1,
+      "advisory": false,
       "wer": 0,
       "refWords": 37,
       "edits": 0,
