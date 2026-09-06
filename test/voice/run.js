@@ -50,6 +50,7 @@ const val = (f, d) => {
 const LIST_VOICES = has("--list-voices");
 const SWEEP = has("--sweep");
 const SWEEP_VOICES = val("--sweep", "");
+const TAKES = Math.max(1, Number(val("--takes", "1")) || 1);
 const SAY_ONLY = has("--say-only");
 const NO_REFINE = has("--no-refine");
 const JSON_OUT = has("--json");
@@ -190,10 +191,13 @@ async function sweep(scripts, key) {
   for (const id of ids) {
     for (const sc of scripts) {
       process.stdout.write(`  ${byId.get(id).name.split(" - ")[0]} · ${sc.id}… `);
-      const t = await say.speakScript(sc, { key, voices: { clinician: id, patient: id },
-        modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
-      takes.set(`${id}|${sc.id}`, t);
-      console.log(`${t.seconds.toFixed(0)}s${t.cached ? " (cached)" : ""}`);
+      for (let k = 0; k < TAKES; k++) {
+        const t = await say.speakScript(sc, { key, voices: { clinician: id, patient: id },
+          modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL, take: k });
+        takes.set(`${id}|${sc.id}|${k}`, t);
+        if (k === 0) process.stdout.write(`${t.seconds.toFixed(0)}s${t.cached ? " (cached)" : ""}`);
+      }
+      console.log(TAKES > 1 ? ` ×${TAKES} takes` : "");
     }
   }
 
@@ -210,20 +214,30 @@ async function sweep(scripts, key) {
 
     for (const id of ids) {
       for (const sc of scripts) {
-        const t = takes.get(`${id}|${sc.id}`);
-        const parts = await Promise.all(t.wavs.map(async (wav) => {
-          const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
-            method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body: wav,
-          });
-          const d = await r.json().catch(() => ({}));
-          if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
-          return r.ok ? (d.text || "") : null;
-        }));
-        if (parts.every((x) => x === null)) { cell.set(`${id}|${sc.id}`, null); continue; }
-        const heard = parts.filter((x) => x !== null).join(" ").replace(/\s+/g, " ").trim();
-        const w = wer(spokenText(sc), heard);
-        const missing = (sc.heard.must || []).filter((m) => !new RegExp(`\\b${m}`, "i").test(heard));
-        cell.set(`${id}|${sc.id}`, { wer: w.wer, missing, heard });
+        const samples = [];
+        for (let k = 0; k < TAKES; k++) {
+          const t = takes.get(`${id}|${sc.id}|${k}`);
+          const parts = await Promise.all(t.wavs.map(async (wav) => {
+            const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
+              method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body: wav,
+            });
+            const d = await r.json().catch(() => ({}));
+            if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
+            return r.ok ? (d.text || "") : null;
+          }));
+          if (parts.every((x) => x === null)) continue;
+          const heard = parts.filter((x) => x !== null).join(" ").replace(/\s+/g, " ").trim();
+          const missing = (sc.heard.must || []).filter((m) => !new RegExp(`\\b${m}`, "i").test(heard));
+          samples.push({ wer: wer(spokenText(sc), heard).wer, missing, heard });
+        }
+        if (!samples.length) { cell.set(`${id}|${sc.id}`, null); continue; }
+        // the cell reports the MEDIAN take, so one lucky or unlucky generation
+        // cannot speak for the voice
+        const sorted = [...samples].map((x) => x.wer).sort((a, b) => a - b);
+        cell.set(`${id}|${sc.id}`, {
+          wer: sorted[Math.floor(sorted.length / 2)],
+          missing: samples[0].missing, samples, heard: samples[0].heard,
+        });
       }
     }
   } finally { s.stop(); }
@@ -258,7 +272,13 @@ async function sweep(scripts, key) {
   const systematic = rows.filter((r) => r.spread < SPREAD_HI && r.mean >= 0.15).sort((a, b) => b.mean - a.mean);
 
   if (systematic.length) {
-    console.log(`\n  BAD IN EVERY VOICE — the product's problem, not the speaker's:`);
+    /* "Not one speaker's fault" is all a low spread proves. It does NOT single
+       out the app: a limit of the speech model itself shows up here too, evenly
+       across every voice it renders. knee/cebuano-heavy sits in this list at
+       ~22% because eleven_multilingual_v2 does not speak Cebuano, which is a
+       fact about the harness, not about the chart. */
+    console.log(`\n  BAD IN EVERY VOICE — not one speaker's fault. Could be the app, the`);
+    console.log(`  transcriber, or the speech model's grasp of the language:`);
     for (const r of systematic) console.log(`    ${pct(r.mean).padStart(6)} mean, ${pct(r.spread)} spread  ${r.sc.id}`);
   }
   if (voiceSensitive.length) {
@@ -276,16 +296,32 @@ async function sweep(scripts, key) {
   const lost = [];
   for (const sc of scripts) {
     for (const m of sc.heard.must || []) {
-      const missIn = ids.filter((i) => { const c = cell.get(`${i}|${sc.id}`); return c && c.missing.includes(m); });
-      if (missIn.length) lost.push({ id: sc.id, word: m, missIn, of: ids.length });
+      let heardIn = 0, total = 0;
+      for (const i of ids) {
+        const c = cell.get(`${i}|${sc.id}`);
+        if (!c) continue;
+        for (const smp of c.samples) { total += 1; if (!smp.missing.includes(m)) heardIn += 1; }
+      }
+      if (total && heardIn < total) lost.push({ id: sc.id, word: m, heardIn, total });
     }
   }
   if (lost.length) {
-    console.log(`\n  WORDS THAT NEVER ARRIVED:`);
+    console.log(`\n  WORDS THAT DID NOT ALWAYS ARRIVE (across every voice × take):`);
     for (const l of lost) {
-      console.log(`    "${l.word}" in ${l.id} — lost in ${l.missIn.length}/${l.of} voice(s): ${l.missIn.map(nameOf).join(", ")}`
-        + (l.missIn.length === l.of ? "   (every voice — vocabulary, not pronunciation)" : "   (not all — pronunciation)"));
+      const rate = l.heardIn / l.total;
+      /* Never vs sometimes is the whole distinction. A word that never arrives
+         is a vocabulary failure worth fixing at the source. A word that arrives
+         half the time is a COIN FLIP, and any assertion resting on it is
+         reporting the toss rather than the product. */
+      const verdict = l.heardIn === 0 ? "NEVER — vocabulary, fix at the source"
+        : rate < 0.9 ? "A COIN FLIP — no assertion should rest on this"
+          : "usually";
+      console.log(`    "${l.word}" in ${l.id} — heard in ${l.heardIn}/${l.total} (${pct(rate)})  ${verdict}`);
     }
+  }
+  if (TAKES > 1) {
+    console.log(`\n  Each cell is the MEDIAN of ${TAKES} independent recordings, so a single`);
+    console.log(`  lucky or unlucky generation cannot speak for a voice.`);
   }
 
   console.log([``, `  BILL FOR THIS SWEEP`,

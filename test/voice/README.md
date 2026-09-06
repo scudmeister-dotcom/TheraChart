@@ -73,15 +73,19 @@ shoulder/tagalog-heavy            3.4%       1.7%      5.1%     1.7%     3.4%
 MEAN                              6.6%       5.1%      5.3%     4.7%
 ```
 
-**One script is voice-sensitive and it is the Cebuano one.** Nearly twenty
-points of spread on identical words, with the transcriber held constant. Chirp 2
-was never the weak link — the original 26% reading was an artefact of casting
-Juvy as the patient, who speaks every Cebuano clinical term in that script.
+That table reads as though one script is voice-sensitive and it is the Cebuano
+one — twenty points of spread on identical words. **It is not. That spread was
+noise, and the table above is one take per cell.**
 
-Switching the default voices to the two best-measured (Pedro, Mang Jose) took
-`knee/cebuano-heavy` from **42.9% to 85.7%**, and *"the RIGHT knee is pinned
-from tuong tuhod"* started passing. TheraChart had been reading Cebuano
-laterality correctly the whole time.
+Re-measured with `--takes 5`, reporting the median of five independent
+recordings, `knee/cebuano-heavy` is **21.7% for Pedro and 23.9% for Mang Jose**
+— a 2.2% spread. Pedro's headline 10.9% was a single lucky generation. Cebuano
+sits near 22% for every voice, because `eleven_multilingual_v2` does not speak
+Cebuano; the voice was never the variable.
+
+This is the single most important thing to know about this harness: **one take
+is one sample.** Anything the number of takes can move, the number of takes will
+move. Use `--takes` before believing a Cebuano or Tagalog result.
 
 **Five scripts show 0.0% spread** — identical word error across four different
 voices. That is not luck; it means those errors are deterministic properties of
@@ -165,6 +169,27 @@ So read `knee/cebuano-heavy` as a test of ElevenLabs first and TheraChart
 second. `--keep-wav` plus a native ear is the only thing that settles which
 half is at fault, and a real Bisaya speaker would very likely do better than
 this take does. Do not conclude from it that `ceb-PH` dictation is broken.
+
+### Why Cebuano is not "fixed", and what was tried
+
+Four levers, measured rather than assumed. The target was the word `tuong`
+(Cebuano for *right*), which decides which knee reaches the chart:
+
+| lever | result |
+|---|---|
+| `eleven_v3` (natively supports `ceb`) | **worse** — 19.6–21.7% vs multilingual's ~22%, no gain |
+| `stability` 0.5 → 0.85 | no help — 1/5 → 2/5 survival |
+| fixed `seed` | **does not reproduce** — same byte length, different audio |
+| pronunciation dictionary | **applied and confirmed, but no gain** — 2/8 → 3/8 |
+
+The dictionary was verified working with a sentinel rule (`tuong` → `kaliwang`,
+which came back as "kaliwang" on both models), so that is a real negative
+result, not broken plumbing. Aliases tried: `tu-ong`, `tuo nga`, `tuóng`,
+`too-ong`, `twong`.
+
+`tuong` survives roughly **half the time**, and nothing moved it. An assertion
+resting on it is reporting a coin toss. That is a limit of synthetic Cebuano, not
+of TheraChart — the fix is to know it, which is what `--takes` is for.
 
 Note the scorer knows Tagalog and Cebuano numerals (`isa`…`sampu`,
 `usa`…`napulo`), because a patient asked "kung isa hanggang sampu?" answers in

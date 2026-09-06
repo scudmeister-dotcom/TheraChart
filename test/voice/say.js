@@ -115,9 +115,13 @@ async function listVoices(key) {
 }
 
 /** One line of speech as raw 16 kHz PCM, cached on disk by content hash. */
-async function speak({ key, text, voiceId, modelId, settings }) {
+async function speak({ key, text, voiceId, modelId, settings, take = 0 }) {
+  /* `take` is part of the cache key so N independent recordings of the SAME
+     line can be held side by side. Without it the harness could only ever hold
+     one sample per script, which quietly turned every borderline assertion into
+     whatever that one generation happened to produce — see --takes. */
   const sig = crypto.createHash("sha1")
-    .update(JSON.stringify({ text, voiceId, modelId, settings, RATE }))
+    .update(JSON.stringify({ text, voiceId, modelId, settings, RATE, take }))
     .digest("hex").slice(0, 16);
   const file = path.join(CACHE, `${sig}.pcm`);
   if (fs.existsSync(file)) return { pcm: fs.readFileSync(file), cached: true };
@@ -169,7 +173,7 @@ const CHUNK_MAX_SECONDS = 50;
     from a single stitched transcript, so a gap that is realistic is part of the
     test rather than presentation. */
 async function speakScript(script, opts) {
-  const { key, voices, modelId, settings, gapMs = 500, leadMs = 400, roomRms = 0.004, level = 1 } = opts;
+  const { key, voices, modelId, settings, gapMs = 500, leadMs = 400, roomRms = 0.004, level = 1, take = 0 } = opts;
   const maxBytes = CHUNK_MAX_SECONDS * RATE * 2;
 
   const chunks = [];
@@ -184,7 +188,7 @@ async function speakScript(script, opts) {
 
   for (const turn of script.turns) {
     const voiceId = voices[turn.who] || voices.clinician;
-    const { pcm, cached } = await speak({ key, text: turn.text, voiceId, modelId, settings });
+    const { pcm, cached } = await speak({ key, text: turn.text, voiceId, modelId, settings, take });
     cachedAll = cachedAll && cached;
     // close BEFORE adding, so the cut lands in the gap that precedes this turn
     if (curBytes && curBytes + pcm.length > maxBytes) close();
