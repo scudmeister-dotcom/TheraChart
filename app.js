@@ -7298,7 +7298,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const bare = !t && isEmpty(f.summary);
       const inLive = liveKeys.has(f.key);
       rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
-        summary: f.summary, quote: f.quote, include: !t && !bare,
+        summary: f.summary, quote: f.quote, include: !t && !bare, section: "",
         note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
         origin: t ? t.kind || "corrected" : bare ? "empty" : inLive ? "confirmed" : "added" });
     }
@@ -7312,7 +7312,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const bare = !t && (p.notes || []).every((n) => isEmpty(n.summary));
       rows.push({ key: p.key, part: p.part, side: p.side, view: p.view, x: p.x, y: p.y,
         summary: sum, quote: (p.notes[0] || {}).quote || "",
-        include: !t && !bare,
+        include: !t && !bare, section: "",
         note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
         origin: t ? t.kind || "corrected" : bare ? "empty" : "live-only" });
     }
@@ -7442,26 +7442,71 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       "not-the-patient": ["bad", "not the patient speaking"],
       misheard: ["bad", "misheard by dictation"],
       empty: ["warn", "nothing was reported"],
+      manual: ["good", "you added this"],
     };
+    /* Where a finding's own words are written, on top of pinning it.
+
+       "Body map only" is the default for anything the AI found, and it is not
+       a cop-out: the drafted Subjective above was written from the very same
+       sentences, so filing the finding's summary as well would say the same
+       thing twice in one note. A finding the therapist ADDS has no drafted
+       prose behind it — nothing else in the review knows it exists — so it
+       needs a real section or its text never reaches the note at all. */
+    const SECTION_CHOICES = [["", "Body map only"]]
+      .concat(REVIEW_SECTIONS.map(([key, field]) => [key, fieldLabel(doc.type, field)]));
+    // what a newly added finding starts on: Subjective where the note has one
+    const ADD_DEFAULT = (SECTION_CHOICES.find(([v]) => v === "subjective")
+      || SECTION_CHOICES[1] || SECTION_CHOICES[0])[0];
+
+    const sectionSelect = (i, value) => `<select class="rev-sec" data-sec-of="${i}"
+      title="Where this finding's words are written. Body map only pins the region without adding a line to the note.">
+      ${SECTION_CHOICES.map(([v, lbl]) =>
+        `<option value="${esc(v)}"${(value || "") === v ? " selected" : ""}>${esc(lbl)}</option>`).join("")}
+    </select>`;
+
     const findingRow = (r, i) => {
       const [cls, label] = ORIGIN[r.origin] || ORIGIN.confirmed;
       return `
-      <div class="rev-finding${r.include ? "" : " dropping"}">
+      <div class="rev-finding${r.include ? "" : " dropping"}" data-sec="${esc(r.section || "map")}">
         <label class="rev-inc"><input type="checkbox" data-inc="${i}" ${r.include ? "checked" : ""}/></label>
         <div class="rev-fbody">
           <div class="rev-fhead"><b>${esc(r.side ? cap(r.side) + " " : "")}${esc(r.part)}</b>
-            <span class="chip ${cls}">${label}</span></div>
+            <span class="chip ${cls}">${label}</span>
+            ${sectionSelect(i, r.section)}</div>
           ${r.note ? `<div class="rev-why">${esc(r.note)} — leave it unticked and it comes off the note and the body map. Tick it to keep it.</div>` : ""}
           <textarea data-fsum="${i}" rows="1" class="rev-text">${esc(r.summary)}</textarea>
         </div>
       </div>`;
     };
 
+    const findingListHtml = () => rows.map(findingRow).join("")
+      || `<div class="empty-state">No patient findings detected.</div>`;
+
+    /* The therapist was in the room and the microphone was not. Until now the
+       review could only subtract — untick what the AI got wrong — with no way
+       to record a region it missed entirely, which is the one correction a
+       clinician is best placed to make. */
+    const addFormHtml = `
+      <div class="rev-add">
+        <div class="rev-add-head">＋ Add something the visit missed</div>
+        <div class="rev-add-fields">
+          <input type="text" id="revAddPart" autocomplete="off"
+            placeholder="Body area — “left shoulder”, “lower back”, “kaliwang tuhod”" />
+          ${sectionSelect("new", ADD_DEFAULT)}
+        </div>
+        <textarea id="revAddSummary" rows="2" class="rev-text"
+          placeholder="What was found or reported — e.g. “Tenderness on palpation, 4/10”"></textarea>
+        <div class="rev-add-actions">
+          <span class="rev-add-err" id="revAddErr"></span>
+          <button class="btn small" id="revAddBtn" type="button">Add finding</button>
+        </div>
+      </div>`;
+
     const m = showModal(`
 <h2>What the visit said ${engineChip}</h2>
 <p style="font-size:12.5px; color:var(--muted); margin-top:-4px">Nothing here is on the chart yet. Tick what belongs, edit any wording, and only then does it reach the note and the body map.</p>
 <div class="rev-tabs">
-  <button class="rev-tab active" data-tab="findings">Findings (${rows.length})</button>
+  <button class="rev-tab active" data-tab="findings">Findings (<span id="revFindCount">${rows.length}</span>)</button>
   <button class="rev-tab" data-tab="sections">Note sections</button>
   <button class="rev-tab" data-tab="dialogue">Conversation</button>
 </div>
@@ -7470,8 +7515,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   ${dialogueHtml || `<div class="empty-state">No dialogue.</div>`}
 </div>
 <div class="rev-pane" data-pane="findings">
-  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements, read across the whole visit — so a region they corrected later never reaches the map at all. Uncheck any you don't want; edit the wording freely. Anything the patient corrected, said only as an example, or named without reporting anything starts unticked.</div>
-  ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
+  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements, read across the whole visit — so a region they corrected later never reaches the map at all. Uncheck any you don't want; edit the wording freely. Anything the patient corrected, said only as an example, or named without reporting anything starts unticked. The dropdown on each row says where its words are written — <b>Body map only</b> pins the region without repeating it in a section the drafted text already covers.</div>
+  <div id="revFindingList">${findingListHtml()}</div>
+  ${addFormHtml}
 </div>
 <div class="rev-pane" data-pane="sections" style="display:none">${sectionsHtml}</div>
 <div class="modal-actions">
@@ -7495,13 +7541,41 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // live edits back into the working copies
     m.querySelectorAll("[data-spk]").forEach((s) => s.addEventListener("change", () => { result.dialogue[Number(s.dataset.spk)].speaker = s.value; }));
     m.querySelectorAll("[data-turn]").forEach((t) => t.addEventListener("input", () => { result.dialogue[Number(t.dataset.turn)].text = t.value; }));
-    m.querySelectorAll("[data-fsum]").forEach((t) => t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; }));
     const repaintMeas = () => { const el = m.querySelector("#revMeas"); if (el) el.innerHTML = measBlockHtml(); };
-    m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => {
-      rows[Number(c.dataset.inc)].include = c.checked;
-      c.closest(".rev-finding").classList.toggle("dropping", !c.checked);
-      repaintMeas();   // a retracted region takes its readings with it
-    }));
+
+    /* Re-bound rather than bound once: adding a finding re-renders the list,
+       and listeners attached to the elements it replaced would go with them.
+       Scoped to #revFindingList so the add form's own controls — which share
+       the data-sec-of attribute — are never caught by it. */
+    const list = () => m.querySelector("#revFindingList");
+    const bindFindingRows = () => {
+      const root = list();
+      if (!root) return;
+      root.querySelectorAll("[data-fsum]").forEach((t) => {
+        t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; fit(t); });
+        fit(t);
+      });
+      root.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => {
+        rows[Number(c.dataset.inc)].include = c.checked;
+        c.closest(".rev-finding").classList.toggle("dropping", !c.checked);
+        repaintMeas();   // a retracted region takes its readings with it
+      }));
+      root.querySelectorAll("[data-sec-of]").forEach((sel) => sel.addEventListener("change", () => {
+        const row = rows[Number(sel.dataset.secOf)];
+        row.section = sel.value;
+        // the colour follows the choice without a re-render
+        sel.closest(".rev-finding").dataset.sec = sel.value || "map";
+      }));
+    };
+    const renderFindings = () => {
+      const root = list();
+      if (!root) return;
+      root.innerHTML = findingListHtml();
+      bindFindingRows();
+      const count = m.querySelector("#revFindCount");
+      if (count) count.textContent = String(rows.length);
+      repaintMeas();
+    };
     m.querySelectorAll("[data-keep]").forEach((c) => c.addEventListener("change", () => {
       result.dialogue[Number(c.dataset.keep)].keep = c.checked;
       c.closest(".rev-turn").classList.toggle("dropping", !c.checked);
@@ -7514,9 +7588,58 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       c.closest(".rev-section").classList.toggle("dropping", !c.checked);
     }));
 
+    bindFindingRows();
+
+    /* Adding a finding the microphone never got. The therapist was in the
+       room and it was not, and until now the review could only SUBTRACT —
+       untick what the AI got wrong — with no way to record a region it missed
+       entirely, which is the one correction a clinician is best placed to
+       make.
+
+       The typed area is resolved through the same lexicon that reads
+       dictation, so "kaliwang tuhod" and "left knee" reach the same pin. An
+       area it cannot place is refused out loud rather than dropped onto
+       coordForName's "Back" fallback, which would put a finding on the lumbar
+       spine because of a typo. */
+    const addBtn = m.querySelector("#revAddBtn");
+    if (addBtn) addBtn.addEventListener("click", () => {
+      const partEl = m.querySelector("#revAddPart");
+      const sumEl = m.querySelector("#revAddSummary");
+      const secEl = m.querySelector('[data-sec-of="new"]');
+      const errEl = m.querySelector("#revAddErr");
+      const fail = (msg) => { errEl.textContent = msg; };
+      errEl.textContent = "";
+      const said = String(partEl.value || "").trim();
+      const summary = String(sumEl.value || "").trim();
+      if (!said) return fail("Name the body area first.");
+      if (!summary) return fail("Say what was found there.");
+      const mention = PR.parseUtterance(said).mentions[0];
+      if (!mention) return fail(`“${said}” isn't a body area the map recognises — try the region on its own, like “left shoulder” or “lower back”.`);
+      const c = PR.coordForName(mention.partName, mention.side);
+      const key = `${c.part}|${c.side || ""}`;
+      const existing = rows.find((r) => r.key === key);
+      if (existing) {
+        /* One region is one pin. addDocMapPoint merges a repeat into the same
+           point anyway, so showing that now beats letting the therapist
+           approve two rows and find one pin afterwards. */
+        existing.summary = existing.summary.trim() ? `${existing.summary.trim()} · ${summary}` : summary;
+        existing.include = true;
+        if (secEl) existing.section = secEl.value;
+      } else {
+        rows.push({
+          key, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y,
+          summary, quote: "", include: true, note: "", origin: "manual",
+          section: secEl ? secEl.value : "",
+        });
+      }
+      partEl.value = ""; sumEl.value = "";
+      renderFindings();
+      partEl.focus();
+    });
+
     m.querySelector("#revCancel").addEventListener("click", closeModal);
     m.querySelector("#revApply").addEventListener("click", () => {
-      applyRefinement(doc, user, dstate, result, rows, { sectionRows });
+      applyRefinement(doc, user, dstate, result, rows, { sectionRows, sections: REVIEW_SECTIONS });
       closeModal();
     });
   }
@@ -7645,6 +7768,36 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         detail: r.current ? "rewritten from the cleaned transcript" : "filled from the cleaned transcript",
       });
     }
+    /* Findings the therapist routed into a section.
+
+       Runs AFTER the section writes above, so a routed finding lands at the
+       end of the drafted paragraph instead of being wiped by it. Most
+       findings are "Body map only" and skip this entirely: the drafted prose
+       was written from the same sentences, so filing the summary as well
+       would say the same thing twice in one note. What mostly reaches here is
+       what the therapist ADDED — nothing else in the review knows it exists,
+       so this is the only way its words get into the note. */
+    const fieldOfSection = new Map(((fields || {}).sections || []).map(([key, field]) => [key, field]));
+    for (const r of kept) {
+      const field = r.section && fieldOfSection.get(r.section);
+      if (!field) continue;
+      const text = cap(r.summary.trim());
+      if (!text) continue;
+      /* Never twice. Re-running the review on the same note would otherwise
+         stack another copy of the finding onto the paragraph each time. */
+      if (String(doc.data[field] || "").toLowerCase().includes(text.toLowerCase())) continue;
+      appendField(doc, field, text, true);
+      /* appendField marks the field AI-filled; this is not. A therapist put
+         it there deliberately, so the next review has to OFFER to replace the
+         paragraph rather than overwriting it unannounced. */
+      markAiFilled(doc, field, false);
+      sectionChanges.push({
+        tag: "section",
+        label: fieldLabel(doc.type, field),
+        detail: `“${text}” filed from the ${r.side ? r.side + " " : ""}${r.part} finding`,
+      });
+    }
+
     /* Readings ALREADY on the note that the retraction contradicts.
 
        Filtering only what the review is about to ADD is not enough: the live

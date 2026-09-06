@@ -475,6 +475,67 @@ for (const t of [
     !/90 degrees/.test(r.subjective), r.subjective);
 }
 
+/* ---- a finding says where its own words go ----
+
+   Findings and section prose are two different paths: a finding becomes a
+   body-map pin, while the section text is drafted by the model from the whole
+   dialogue. So an AI finding defaults to "body map only" — filing its summary
+   as well would say the same thing twice in one note. A finding the THERAPIST
+   adds has no drafted prose behind it, so a section is the only way its words
+   reach the note at all. */
+{
+  const fs4 = require("fs"), path4 = require("path");
+  const APP4 = fs4.readFileSync(path4.join(__dirname, "..", "app.js"), "utf8");
+  const REVIEW = APP4.slice(APP4.indexOf("  function openReviewModal("),
+                            APP4.indexOf("  function applyRefinement("));
+  const APPLY4 = APP4.slice(APP4.indexOf("  function applyRefinement("),
+                            APP4.indexOf("/* ================= AI clinical insights ================= */"));
+  check("the review modal and apply blocks were found", REVIEW.length > 2000 && APPLY4.length > 2000,
+    `review ${REVIEW.length} / apply ${APPLY4.length} chars`);
+
+  check("an AI finding starts on the body map, not in a section",
+    /include: !t && !bare, section: "",/.test(REVIEW),
+    "defaulting to a section duplicates the drafted prose on every note");
+  check("\"Body map only\" is the first choice offered",
+    /const SECTION_CHOICES = \[\["", "Body map only"\]\]/.test(REVIEW));
+  check("…and a finding the therapist ADDS defaults to a real section",
+    /const ADD_DEFAULT = \(SECTION_CHOICES\.find\(\(\[v\]\) => v === "subjective"\)/.test(REVIEW),
+    "an added finding left on 'body map only' would never reach the note");
+
+  check("apply writes a routed finding into its chosen field",
+    /const field = r\.section && fieldOfSection\.get\(r\.section\);\s*\n\s*if \(!field\) continue;/.test(APPLY4),
+    "and skips every finding still on body-map-only");
+  check("…without stacking a second copy on a re-run",
+    /if \(String\(doc\.data\[field\] \|\| ""\)\.toLowerCase\(\)\.includes\(text\.toLowerCase\(\)\)\) continue;/.test(APPLY4),
+    "re-reviewing the same note would otherwise append the finding again each time");
+  check("…and the field is then marked as NOT AI-filled",
+    /appendField\(doc, field, text, true\);[\s\S]{0,320}markAiFilled\(doc, field, false\);/.test(APPLY4),
+    "a therapist placed it, so the next review must offer to replace it rather than overwrite it");
+
+  /* coordForName falls back to "Back" for anything it cannot place, so the
+     add form has to reject an unrecognised area rather than pass it through —
+     a typo would otherwise put a finding on the lumbar spine. */
+  check("an unrecognised body area is refused, not placed on the fallback region",
+    /const mention = PR\.parseUtterance\(said\)\.mentions\[0\];\s*\n\s*if \(!mention\) return fail\(/.test(REVIEW));
+  check("the same region twice merges into one finding, not two pins",
+    /const existing = rows\.find\(\(r\) => r\.key === key\);/.test(REVIEW));
+
+  // the add form resolves through the real lexicon, in every language it reads
+  for (const [said, part, side] of [
+    ["left shoulder", "Shoulder", "left"],
+    ["kaliwang tuhod", "Knee", "left"],
+    ["lower back", "Lower back", null],
+    ["tuo nga abaga", "Shoulder", "right"],
+  ]) {
+    const mn = PR.parseUtterance(said).mentions[0];
+    check(`add-a-finding resolves "${said}" to ${side || ""} ${part}`,
+      !!mn && mn.partName === part && (mn.side || null) === side,
+      JSON.stringify(mn && { part: mn.partName, side: mn.side }));
+  }
+  check("add-a-finding refuses a body area that is not one",
+    PR.parseUtterance("qwertyuiop").mentions.length === 0);
+}
+
 /* ---- a reading must not survive the region it was taken on ----
 
    The refine pass corrects findings but not measurements: findings are the

@@ -22,6 +22,8 @@
   --review-soft: #fdf3dd;
   --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
   --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #d98a1e; --dt-discharge: #2f9e6f;
+  --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
+  --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
   --good: #1a7f4b;
   --good-soft: #e2f4e9;
   --danger: #c22f43;
@@ -55,6 +57,8 @@
     --review-soft: #39301a;
   --sev-high: #f0645e; --sev-mid: #efab4a; --sev-low: #46c47f; --sev-none: #9aa9b6;
   --dt-eval: #9b8bff; --dt-daily: #3ab6c0; --dt-progress: #efab4a; --dt-discharge: #56c99b;
+  --sec-subjective: #7aa5f5; --sec-objective: #3ab6c0; --sec-assessment: #9b8bff;
+  --sec-treatment: #4cc98a; --sec-reason: #e0a355; --sec-precautions: #ef7285; --sec-pmh: #93a5b5;
     --good: #4cc98a;
     --good-soft: #14331f;
     --danger: #ef7285;
@@ -76,6 +80,8 @@
   --review: #b9820a; --review-soft: #fdf3dd;
   --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
   --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #d98a1e; --dt-discharge: #2f9e6f;
+  --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
+  --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
   --good: #1a7f4b; --good-soft: #e2f4e9;
   --danger: #c22f43; --danger-soft: #fde8ea; --danger-border: #f2b8c0;
   --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
@@ -91,6 +97,8 @@
   --review: #e3b341; --review-soft: #39301a;
   --sev-high: #f0645e; --sev-mid: #efab4a; --sev-low: #46c47f; --sev-none: #9aa9b6;
   --dt-eval: #9b8bff; --dt-daily: #3ab6c0; --dt-progress: #efab4a; --dt-discharge: #56c99b;
+  --sec-subjective: #7aa5f5; --sec-objective: #3ab6c0; --sec-assessment: #9b8bff;
+  --sec-treatment: #4cc98a; --sec-reason: #e0a355; --sec-precautions: #ef7285; --sec-pmh: #93a5b5;
   --good: #4cc98a; --good-soft: #14331f;
   --danger: #ef7285; --danger-soft: #45242b; --danger-border: #7a3c47;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.28);
@@ -2666,3 +2674,43 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .rec-stage-back { margin-top: 2px; }
 /* The page behind must not scroll under the stage. */
 body.recording-stage { overflow: hidden; }
+
+/* ---- findings: where each one is written ----
+
+   One colour per note section, carried on the row so the eye can group a long
+   findings list by destination without reading every dropdown. "Body map
+   only" is deliberately the muted one: it is the default for anything the AI
+   found, and it should read as the quiet option rather than a warning. */
+.rev-finding { --sec: var(--muted); border-left: 3px solid transparent; padding-left: 9px; }
+.rev-finding[data-sec="subjective"]  { --sec: var(--sec-subjective); }
+.rev-finding[data-sec="objective"]   { --sec: var(--sec-objective); }
+.rev-finding[data-sec="assessment"]  { --sec: var(--sec-assessment); }
+.rev-finding[data-sec="treatment"]   { --sec: var(--sec-treatment); }
+.rev-finding[data-sec="reason"]      { --sec: var(--sec-reason); }
+.rev-finding[data-sec="precautions"] { --sec: var(--sec-precautions); }
+.rev-finding[data-sec="pmh"]         { --sec: var(--sec-pmh); }
+.rev-finding:not([data-sec="map"]) { border-left-color: var(--sec); }
+
+.rev-sec {
+  margin-left: auto; font-size: 11.5px; font-weight: 600;
+  padding: 2px 6px; border-radius: 999px;
+  color: var(--sec);
+  border: 1px solid color-mix(in srgb, var(--sec) 45%, transparent);
+  background: color-mix(in srgb, var(--sec) 12%, transparent);
+  max-width: 46%;
+}
+/* An unrouted finding must not shout — it is the common case. */
+.rev-finding[data-sec="map"] .rev-sec { font-weight: 500; }
+
+/* ---- adding a finding the microphone missed ---- */
+.rev-add {
+  margin-top: 14px; padding: 12px; border: 1px dashed var(--border);
+  border-radius: 11px; background: var(--hover);
+}
+.rev-add-head { font-size: 12px; font-weight: 700; color: var(--ink); margin-bottom: 9px; }
+.rev-add-fields { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.rev-add-fields input { flex: 1 1 220px; min-width: 0; }
+.rev-add-fields .rev-sec { margin-left: 0; flex: 0 0 auto; max-width: none; }
+.rev-add textarea { width: 100%; }
+.rev-add-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.rev-add-err { flex: 1; font-size: 12px; color: var(--danger); line-height: 1.4; }
