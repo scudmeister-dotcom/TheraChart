@@ -1,0 +1,395 @@
+{
+  "tts": {
+    "model": "eleven_multilingual_v2",
+    "voices": {
+      "clinician": "iyZZ2rpPw5XY3ZQltAWV",
+      "patient": "sfEqHIAPrP82grzla9Ji"
+    }
+  },
+  "project": "therachart-prod",
+  "audioSeconds": 193.273875,
+  "billedSeconds": 198,
+  "sttUsd": 0.0528,
+  "refineCalls": 8,
+  "meanWer": 0.07686006386522927,
+  "earned": 59,
+  "possible": 69,
+  "overall": 0.855072463768116,
+  "cases": [
+    {
+      "id": "shoulder/clinical-vocab",
+      "why": "the boosted phrase list, spoken — MMT, AROM, Neer, Hawkins, scaption, subacromial, therex, HEP",
+      "lang": "fil-PH",
+      "wer": 0.07317073170731707,
+      "refWords": 82,
+      "edits": 6,
+      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom flexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a fee pay ship to do twice a day",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the left shoulder is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right shoulder invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "shoulder flexion ROM survived transcription",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 7/10 pain score reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the home programme reached a prose section",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "knee/laterality-correction",
+      "why": "a mid-sentence laterality correction has to move the pin, not add a second one",
+      "lang": "fil-PH",
+      "wer": 0.05660377358490566,
+      "refWords": 53,
+      "edits": 3,
+      "heard": "so the right knee is the one giving you trouble no doctor sorry it is the left one the left knee the right one is fine let me correct that left knee pain is 5 out of 10 going downstairs yes 5 out of 10 and it feels unstable when i go down",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT knee is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the retracted RIGHT knee is not left standing on the chart",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 5/10 score survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 7,
+      "possible": 7,
+      "failed": []
+    },
+    {
+      "id": "back/taglish-negation",
+      "why": "code-switched speech, and a Tagalog negation that must not become a positive finding",
+      "lang": "fil-PH",
+      "wer": 0.01818181818181818,
+      "refWords": 55,
+      "edits": 1,
+      "heard": "kumusta po ang likod ninyo ngayon masakit pa rin po ang lower back ko lalo na pagkagising sa umaga medyo matigas may numbness ba or tingling na bumababa sa binti wala po walang numbness walang tingling yung sakit lang po sa likod okay lumbar flexion is limited and we will start with core stability exercises",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the low back is pinned",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the denial is not offered as a pin on the body map",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the denial is recorded as a denial where it is written up",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 7,
+      "possible": 7,
+      "failed": []
+    },
+    {
+      "id": "ankle/cebuano",
+      "why": "the ceb-PH language code, spoken — the Visayas clinic's whole dictation path",
+      "lang": "ceb-PH",
+      "wer": 0.08108108108108109,
+      "refWords": 37,
+      "edits": 3,
+      "heard": "kumusta na ang imong tiil ang right ankle sakit pa gihapon kung mulakaw ko ug taas mga six out of 10 right ankle dorsiflexion is limited about 10 degrees swelling is mild oh manghubag gihapon sa gabi",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the right ankle is pinned",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no left ankle invented from the Cebuano",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "dorsiflexion ROM survived",
+          "weight": 1,
+          "ok": false,
+          "thrown": null,
+          "detail": "rom: []"
+        }
+      ],
+      "earned": 5,
+      "possible": 6,
+      "failed": [
+        {
+          "name": "dorsiflexion ROM survived",
+          "detail": "rom: []"
+        }
+      ]
+    },
+    {
+      "id": "hip/not-the-patient",
+      "why": "hypotheticals and third parties are transcribed faithfully — they must not become findings",
+      "lang": "fil-PH",
+      "wer": 0.029850746268656716,
+      "refWords": 67,
+      "edits": 2,
+      "heard": "your left shoulder is doing well range is nearly full now it still catches a little when i reach behind my back maybe three out of 10 my last patient this morning had a hip replacement completely different case if this were a liberal tear we would be seeing pain at end range but we are not we will keep the same program for two more weeks",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the other patient's hip is not on this chart",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the hypothetical labral tear is not asserted as a finding",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the shoulder this visit was actually about is still pinned",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 8,
+      "possible": 8,
+      "failed": []
+    },
+    {
+      "id": "shoulder/tagalog-heavy",
+      "why": "near-monolingual Tagalog — laterality from \"kanang\", a rating, and a denial, with no English to lean on",
+      "lang": "fil-PH",
+      "wer": 0.03389830508474576,
+      "refWords": 59,
+      "edits": 2,
+      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon dak masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pababa sa braso wala naman po sakit lang po talaga sa balikat",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the RIGHT shoulder is pinned from \"kanang balikat\"",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no left shoulder invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 7/10 rating survived Tagalog",
+          "weight": 2,
+          "ok": false,
+          "thrown": null,
+          "detail": "pain: []"
+        },
+        {
+          "name": "\"wala naman po\" is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 9,
+      "possible": 11,
+      "failed": [
+        {
+          "name": "the 7/10 rating survived Tagalog",
+          "detail": "pain: []"
+        }
+      ]
+    },
+    {
+      "id": "knee/cebuano-heavy",
+      "why": "near-monolingual Cebuano — a language ElevenLabs does not officially speak, so this is the take to listen to",
+      "lang": "ceb-PH",
+      "wer": 0.2608695652173913,
+      "refWords": 46,
+      "edits": 12,
+      "heard": "maayong buntag unsa may imong gibati karon sakit akong tungtuhod doc labi na kung mutungas ko sa hagdanan pila kasakit kung isa hangtod na pulo mga unom dili ko kay maka lakaw ug taas na bay manghubag o mamanhid wala man sakit ra gyud sa tungtuhod",
+      "heardFailed": [
+        "\"tuhod\" never made it into the transcript"
+      ],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
+          "weight": 3,
+          "ok": false,
+          "thrown": null,
+          "detail": "pinned: Knee|"
+        },
+        {
+          "name": "\"wala man\" was read as a denial, not as the left knee",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating survived Cebuano",
+          "weight": 1,
+          "ok": false,
+          "thrown": null,
+          "detail": "pain: []"
+        }
+      ],
+      "earned": 3,
+      "possible": 7,
+      "failed": [
+        {
+          "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
+          "detail": "pinned: Knee|"
+        },
+        {
+          "name": "the 6/10 rating survived Cebuano",
+          "detail": "pain: []"
+        }
+      ]
+    },
+    {
+      "id": "numbers/dense",
+      "why": "degrees, grades and scores — the one class of error that leaves the sentence looking fine",
+      "lang": "fil-PH",
+      "wer": 0.061224489795918366,
+      "refWords": 49,
+      "edits": 3,
+      "heard": "right knee flexion is 130° extension is 5 quadriceps mmt is 4 out of 5 hamstring is 4 plus out of 5 pain today is 3 out of 10 much better than last week good girth measurement is 42 cm on the right 44 on the left",
+      "heardFailed": [
+        "\"negative\" never made it into the transcript"
+      ],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "knee flexion ROM was captured",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the flexion value is 130, not a misheard neighbour",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 3/10 pain score reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no pain score appears that nobody said",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the negative sign on extension was not lost",
+          "weight": 3,
+          "ok": false,
+          "thrown": null,
+          "detail": "rom: [{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":130},{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":5}]"
+        }
+      ],
+      "earned": 9,
+      "possible": 12,
+      "failed": [
+        {
+          "name": "the negative sign on extension was not lost",
+          "detail": "rom: [{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":130},{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":5}]"
+        }
+      ]
+    }
+  ]
+}

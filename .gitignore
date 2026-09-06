@@ -19,3 +19,7 @@ node_modules/
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Voice eval: generated speech is cached by content hash and rebuilt on demand
+# from ElevenLabs. Bulky, and regenerating it is the cheap half of a run.
+/test/voice/audio/
