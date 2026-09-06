@@ -41,9 +41,15 @@ const say = require("./say.js");
 /* ---------- args ---------- */
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
-const val = (f, d) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+const val = (f, d) => {
+  const i = argv.indexOf(f);
+  const v = i >= 0 ? argv[i + 1] : null;
+  return v && !v.startsWith("--") ? v : d;
+};
 
 const LIST_VOICES = has("--list-voices");
+const SWEEP = has("--sweep");
+const SWEEP_VOICES = val("--sweep", "");
 const SAY_ONLY = has("--say-only");
 const NO_REFINE = has("--no-refine");
 const JSON_OUT = has("--json");
@@ -144,6 +150,149 @@ function gcloudToken() {
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); return "█".repeat(n) + "░".repeat(20 - n); };
 
+/* ---------- the voice sweep ----------
+
+   One voice pair produces one number, and a single number cannot tell you
+   whether a script failed because the SYSTEM is weak there or because that
+   particular synthetic speaker mangled a word. A clinic is many speakers; the
+   baseline is one.
+
+   So this speaks every script in several voices — one voice playing both parts,
+   which keeps the attribution clean — and prints the spread. A row that is bad
+   in every voice is the product's problem. A row that is bad in one voice is
+   that voice's problem, and on a Cebuano script that usually means the speech
+   model rather than the transcriber.
+
+   Transcription only, deliberately. Grading fifteen notes once per voice would
+   multiply the Vertex bill to answer a question about hearing. */
+async function sweep(scripts, key) {
+  const all = await say.listVoices(key);
+  const byId = new Map(all.map((v) => [v.id, v]));
+
+  let ids = SWEEP_VOICES && SWEEP_VOICES !== "true"
+    ? SWEEP_VOICES.split(",").map((x) => x.trim()).filter(Boolean)
+    : all.filter((v) => /filipino/i.test(v.labels.accent || "")).map((v) => v.id);
+  ids = ids.filter((id) => byId.has(id));
+  if (ids.length < 2) {
+    console.error("The sweep needs at least two voices. Pass them explicitly: --sweep id1,id2,id3");
+    process.exit(2);
+  }
+
+  const gc = gcloudToken();
+  if (!gc) { console.error("Not signed in to gcloud — run: gcloud auth login"); process.exit(2); }
+  const project = process.env.GCP_PROJECT || "therachart-prod";
+
+  const settings = { stability: 0.5, similarity_boost: 0.75 };
+  console.log(`\n  Sweeping ${scripts.length} script(s) across ${ids.length} voice(s): ${ids.map((i) => byId.get(i).name.split(" - ")[0]).join(", ")}\n`);
+
+  // speak everything first — a TTS failure should cost nothing at Google
+  const takes = new Map();
+  for (const id of ids) {
+    for (const sc of scripts) {
+      process.stdout.write(`  ${byId.get(id).name.split(" - ")[0]} · ${sc.id}… `);
+      const t = await say.speakScript(sc, { key, voices: { clinician: id, patient: id },
+        modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
+      takes.set(`${id}|${sc.id}`, t);
+      console.log(`${t.seconds.toFixed(0)}s${t.cached ? " (cached)" : ""}`);
+    }
+  }
+
+  const s = await startServer({
+    GCP_PROJECT: project, GCP_USE_GCLOUD: "1", GCLOUD_PATH: gc.bin,
+    GEMINI_VERTEX: "", THERACHART_DEMO_LOGINS: "1",
+  });
+  let billed = 0;
+  const cell = new Map();   // "voice|script" -> { wer, missing[] }
+  try {
+    const login = await s.demoSignIn("u-maria");
+    const token = login.data && login.data.token;
+    if (!token) throw new Error(`demo sign-in failed: ${JSON.stringify(login.data)}`);
+
+    for (const id of ids) {
+      for (const sc of scripts) {
+        const t = takes.get(`${id}|${sc.id}`);
+        const parts = await Promise.all(t.wavs.map(async (wav) => {
+          const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
+            method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body: wav,
+          });
+          const d = await r.json().catch(() => ({}));
+          if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
+          return r.ok ? (d.text || "") : null;
+        }));
+        if (parts.every((x) => x === null)) { cell.set(`${id}|${sc.id}`, null); continue; }
+        const heard = parts.filter((x) => x !== null).join(" ").replace(/\s+/g, " ").trim();
+        const w = wer(spokenText(sc), heard);
+        const missing = (sc.heard.must || []).filter((m) => !new RegExp(`\\b${m}`, "i").test(heard));
+        cell.set(`${id}|${sc.id}`, { wer: w.wer, missing, heard });
+      }
+    }
+  } finally { s.stop(); }
+
+  /* ---------- the table ---------- */
+  const nameOf = (id) => byId.get(id).name.split(" - ")[0].slice(0, 9);
+  const W = 10;
+  console.log(`\nTheraChart voice sweep — ${MODEL_ID} → Chirp 2 (${project}) · transcription only\n`);
+  console.log("  " + "script".padEnd(32) + ids.map((i) => nameOf(i).padStart(W)).join("") + "spread".padStart(W));
+  console.log("  " + "─".repeat(32 + W * (ids.length + 1)));
+
+  const rows = [];
+  for (const sc of scripts) {
+    const vals = ids.map((i) => { const c = cell.get(`${i}|${sc.id}`); return c ? c.wer : null; });
+    const ok = vals.filter((v) => v !== null);
+    const spread = ok.length ? Math.max(...ok) - Math.min(...ok) : 0;
+    rows.push({ sc, vals, spread, mean: ok.reduce((n, v) => n + v, 0) / (ok.length || 1) });
+    console.log("  " + sc.id.padEnd(32)
+      + vals.map((v) => (v === null ? "—" : pct(v)).padStart(W)).join("")
+      + pct(spread).padStart(W));
+  }
+  console.log("  " + "─".repeat(32 + W * (ids.length + 1)));
+  const means = ids.map((i) => {
+    const vs = scripts.map((sc) => cell.get(`${i}|${sc.id}`)).filter(Boolean).map((c) => c.wer);
+    return vs.reduce((n, v) => n + v, 0) / (vs.length || 1);
+  });
+  console.log("  " + "MEAN".padEnd(32) + means.map((m) => pct(m).padStart(W)).join(""));
+
+  /* What the spread is actually for. */
+  const SPREAD_HI = 0.10;
+  const voiceSensitive = rows.filter((r) => r.spread >= SPREAD_HI).sort((a, b) => b.spread - a.spread);
+  const systematic = rows.filter((r) => r.spread < SPREAD_HI && r.mean >= 0.15).sort((a, b) => b.mean - a.mean);
+
+  if (systematic.length) {
+    console.log(`\n  BAD IN EVERY VOICE — the product's problem, not the speaker's:`);
+    for (const r of systematic) console.log(`    ${pct(r.mean).padStart(6)} mean, ${pct(r.spread)} spread  ${r.sc.id}`);
+  }
+  if (voiceSensitive.length) {
+    console.log(`\n  VOICE-SENSITIVE — one speaker is doing much worse than another here.`);
+    console.log(`  On a Tagalog or Cebuano script that points at the SPEECH model, not the transcriber:`);
+    for (const r of voiceSensitive) {
+      const best = ids[r.vals.indexOf(Math.min(...r.vals.filter((v) => v !== null)))];
+      const worst = ids[r.vals.indexOf(Math.max(...r.vals.filter((v) => v !== null)))];
+      console.log(`    ${pct(r.spread).padStart(6)} spread  ${r.sc.id.padEnd(30)} best ${nameOf(best)}, worst ${nameOf(worst)}`);
+    }
+  }
+
+  // words that never survived, and in which voices — a word lost by ALL of them
+  // is a vocabulary problem; lost by one is a pronunciation problem
+  const lost = [];
+  for (const sc of scripts) {
+    for (const m of sc.heard.must || []) {
+      const missIn = ids.filter((i) => { const c = cell.get(`${i}|${sc.id}`); return c && c.missing.includes(m); });
+      if (missIn.length) lost.push({ id: sc.id, word: m, missIn, of: ids.length });
+    }
+  }
+  if (lost.length) {
+    console.log(`\n  WORDS THAT NEVER ARRIVED:`);
+    for (const l of lost) {
+      console.log(`    "${l.word}" in ${l.id} — lost in ${l.missIn.length}/${l.of} voice(s): ${l.missIn.map(nameOf).join(", ")}`
+        + (l.missIn.length === l.of ? "   (every voice — vocabulary, not pronunciation)" : "   (not all — pronunciation)"));
+    }
+  }
+
+  console.log([``, `  BILL FOR THIS SWEEP`,
+    `    Speech-to-Text  ${billed}s billed  ·  $${((billed / 60) * STT_PER_MIN).toFixed(3)}`,
+    `    Vertex          nothing — a sweep grades hearing, not notes`, ``].join("\n"));
+}
+
 /* ---------- run ---------- */
 
 (async () => {
@@ -177,6 +326,12 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
     return;
   }
 
+  if (SWEEP) {
+    const swept = SCRIPTS.filter((sc) => !ONLY || sc.id.startsWith(ONLY));
+    if (!swept.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
+    return sweep(swept, key);
+  }
+
   const voices = {
     clinician: val("--voice-clinician", process.env.ELEVENLABS_VOICE_CLINICIAN || ""),
     patient: val("--voice-patient", process.env.ELEVENLABS_VOICE_PATIENT || ""),
@@ -192,6 +347,7 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
 
   const scripts = SCRIPTS.filter((s) => !ONLY || s.id.startsWith(ONLY));
   if (!scripts.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
+
 
   /* ---- speak everything first, so a TTS failure costs nothing at Google ---- */
   const settings = { stability: 0.5, similarity_boost: 0.75 };

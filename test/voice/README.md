@@ -38,6 +38,40 @@ Other flags: `--case knee/` to filter, `--keep-wav out/` to listen to the takes,
 `--save-baseline` to record the bar, `--json`, `--room 0.004` for the noise
 floor, `--gap 500` for the pause between speakers.
 
+## The voice sweep
+
+```bash
+node test/voice/run.js --sweep              # every Filipino-accented voice on the account
+node test/voice/run.js --sweep id1,id2,id3  # voices you choose
+node test/voice/run.js --sweep --case knee/cebuano-heavy
+```
+
+One voice pair produces one number, and a single number cannot tell you whether
+a script failed because the **system** is weak there or because that particular
+synthetic speaker mangled a word. A clinic is many speakers; the baseline is one.
+
+The sweep speaks every script in several voices — one voice playing both parts,
+which keeps attribution clean — and prints the spread, then sorts the rows into
+**bad in every voice** (the product's problem) and **voice-sensitive** (the
+speaker's). It also reports which `must` words never arrived, and in how many
+voices: a word lost by *every* voice is a vocabulary problem, a word lost by one
+is a pronunciation problem.
+
+It grades transcription only. Running fifteen notes once per voice would
+multiply the Vertex bill to answer a question about hearing.
+
+**This is what settled the Cebuano question.** The same Cebuano script, same
+text, four voices:
+
+| Juvy | Juan Tamad | Mang Jose | Pedro |
+|---|---|---|---|
+| 28.3% | 23.9% | 17.4% | **10.9%** |
+
+17.4 points of spread on identical words. Chirp 2 is not the weak link —
+**ElevenLabs' Cebuano pronunciation varies enormously by voice**, and the
+original 26% reading was an artefact of using Juvy as the patient, who speaks
+every Cebuano clinical term in that script.
+
 ## What it costs
 
 The ElevenLabs half is **cached on disk by content hash**, so only the first run
