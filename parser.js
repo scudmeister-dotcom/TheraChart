@@ -2088,7 +2088,13 @@
       .map((x) => x.turn));
 
     const drafts = sectionDrafts(dialogue, { skipSubjective });
-    return {
+    /* The local pass gets a grounding report too. It cannot invent — every
+       finding here is cut from a sentence that was actually said — so the
+       report is nearly always empty. It is attached anyway because the SHAPE
+       is the contract: a caller that reads `result.grounding` must not have
+       to know which engine produced the result, or the check silently does
+       nothing on whichever path someone forgets. */
+    const out = {
       dialogue, findings, measurements, source: "local",
       corrections: [...corrections.values()],
       /* Every section the visit supports, all drafted from the same cleaned
@@ -2104,6 +2110,7 @@
       subjective: drafts.subjective,
       treatment: treatmentSentences.join(" "),
     };
+    return { ...out, grounding: groundingReport(out, (utterances || []).map(String)) };
   }
 
   // run measurement extraction across every turn and de-duplicate
@@ -2125,6 +2132,191 @@
       }
     }
     return out;
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Grounding — did the write-up say something nobody said?
+   *
+   *  These were written as eval assertions and lived in test/eval/cases.js,
+   *  where they graded the model but never guarded a real note. They are the
+   *  only deterministic defence the product has against the failure a
+   *  clinician actually fears: a fluent, plausible clinical sentence that
+   *  nobody in the room said. So they run at request time now, and the eval
+   *  imports them from here — one implementation, so a checker that gets
+   *  better in one place cannot quietly stay worse in the other.
+   *
+   *  What they can and cannot do is worth being precise about. A regex has no
+   *  understanding, and it is wrong exactly where the lexicon is thin, which
+   *  is code-switched speech. So this is not a second opinion on the model's
+   *  judgement — it is a check on literal fact: were these words, this region
+   *  and this number actually present? Nothing here decides anything on its
+   *  own; it marks a row for the therapist, who is already the last word.
+   * ---------------------------------------------------------------- */
+
+  const SECTION_KEYS = ["reason", "precautions", "pmh", "objective", "assessment", "subjective", "treatment"];
+
+  // came across with the checkers from test/eval/cases.js
+  const groundNorm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  /* Shown back to the therapist so they can check it against what was said,
+     so it must not stop mid-word — "…last Tuesda" reads as a bug in the app
+     rather than as a quotation that was too long to print. */
+  const clipQuote = (t) => {
+    const q = String(t || "").trim();
+    if (q.length <= 60) return q;
+    const cut = q.slice(0, 60);
+    const space = cut.lastIndexOf(" ");
+    return (space > 30 ? cut.slice(0, space) : cut) + "…";
+  };
+
+  const WORDS = (s) => groundNorm(s).replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+  const groundedInTranscript = (r, utterances) => {
+    /* Word overlap, not substring. A quote is legitimately CLEANED before it is
+       stored — filler dropped, stammer collapsed, punctuation added, an ellipsis
+       put on a clipped edge — so "my my knee, the um, the right one" is quoted
+       back as "My knee, the right one" and a substring test called the real
+       finding ungrounded. What must not happen is a quote carrying words nobody
+       said, and that is what this measures. */
+    const haystack = new Set(WORDS(utterances.join(" ")));
+    return (r.findings || []).every((f) => {
+      if (!f.quote) return true;                       // local engine may not quote
+      const w = WORDS(f.quote);
+      if (!w.length) return true;
+      const seen = w.filter((x) => haystack.has(x)).length;
+      return seen / w.length >= 0.8;
+    });
+  };
+
+  /* Per-finding, for the review screen. groundedInTranscript() above answers
+     "is the whole result clean?", which is the right question for a score and
+     the wrong one for a row the therapist has to act on. */
+  function ungroundedFindings(r, utterances) {
+    const haystack = new Set(WORDS((utterances || []).join(" ")));
+    const out = [];
+    for (const f of ((r || {}).findings) || []) {
+      const w = WORDS(f.quote || "");
+      /* A model that was ASKED to quote and returned nothing leaves nothing
+         to check. That is not proof of invention, but it is not evidence of
+         grounding either, so it is surfaced rather than waved through. Only
+         for the AI path: the local pass never promised a quote. */
+      if (!w.length) {
+        if (String((r || {}).source || "").startsWith("gemini")) {
+          out.push({ key: f.key, reason: "The AI didn't quote anything from the transcript for this." });
+        }
+        continue;
+      }
+      const seen = w.filter((x) => haystack.has(x)).length;
+      if (seen / w.length < 0.8) {
+        out.push({ key: f.key, reason: `Quoted “${clipQuote(f.quote)}”, which isn't in the transcript.` });
+      }
+    }
+    return out;
+  }
+
+  const SECTION_PROSE = (r) => SECTION_KEYS.map((k) => String((r || {})[k] || "")).join(" . ");
+  
+  /** Every body region named anywhere in a block of text, ignoring side. */
+  const regionsIn = (text) => {
+    const out = new Set();
+    for (const line of String(text || "").split(/[.!?;\n]+/))
+      for (const m of parseUtterance(line).mentions) out.add(String(m.partName || "").toLowerCase());
+    return out;
+  };
+  
+  /* Regions the write-up names that the transcript never did.
+     Side is deliberately NOT part of this comparison, and that is a finding in
+     itself: measured against Vertex, every "invented" laterality this flagged
+     was the model correctly INHERITING a side nobody restated. "The back of my
+     left leg… mostly the back of the thigh" is a left thigh, and "both knees,
+     the left is worse, the left is a seven" is a left knee, though neither
+     phrase appears in the transcript. Grading those as fabrication would train
+     the prompt to stop doing the right thing. What laterality actually has to
+     be graded on is CONTRADICTION, below. */
+  const inventedRegions = (r, utterances) => {
+    const said = regionsIn(utterances.join(" . "));
+    return [...regionsIn(SECTION_PROSE(r))].filter((x) => !said.has(x));
+  };
+  
+  /** A side asserted in the write-up when that side was never spoken at all —
+      a right shoulder written up as the left. Inheritance is allowed; inventing
+      a side out of nothing is not. */
+  const SIDE_WORDS_ANY = { left: /\b(?:left|kaliwa\w*|wala\w*)\b/i, right: /\b(?:right|kanan?\w*|tuo\w*)\b/i };
+  const contradictedLaterality = (r, utterances) => {
+    const heard = utterances.join(" . ");
+    const prose = SECTION_PROSE(r);
+    return Object.entries(SIDE_WORDS_ANY)
+      .filter(([, re]) => re.test(prose) && !re.test(heard))
+      .map(([side]) => side);
+  };
+  
+  /* Numbers, in any of the three languages, plus the digit forms — a rating
+     spoken "walo" and written "8" is one number and must not read as invented.
+  
+     Tagalog and Cebuano attach a LINKER to a counting number before the noun
+     it counts: "tatlo" becomes "tatlong linggo", "isa" becomes "isang buwan".
+     Missing that was the checker's own bug, and it accused the model of
+     inventing a "3" that the patient had said out loud. */
+  const SPOKEN_NUMBERS = {
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40,
+    fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+    sero: 0, isa: 1, dalawa: 2, tatlo: 3, apat: 4, lima: 5, anim: 6, pito: 7, walo: 8,
+    siyam: 9, sampu: 10, usa: 1, duha: 2, tulo: 3, upat: 4, unom: 6, napulo: 10,
+  };
+  
+  const numbersIn = (text) => {
+    const out = new Set();
+    const t = String(text || "").toLowerCase();
+    for (const m of t.match(/\d+(?:\.\d+)?/g) || []) out.add(Number(m));
+    for (const [word, n] of Object.entries(SPOKEN_NUMBERS)) {
+      // …ng / …g linker, and the standalone form
+      if (new RegExp(`\\b${word}(?:ng|g)?\\b`).test(t)) out.add(n);
+    }
+    return out;
+  };
+  
+  /* Numbers in the write-up that the transcript never carried, in any form.
+     Two exemptions, or this reports scaffolding instead of fabrication:
+       - 0 and 10, which are the pain scale a clinician writes a rating onto;
+       - a YEAR, which is as often derived ("ten years ago") as quoted. */
+  const inventedNumbers = (r, utterances) => {
+    const said = numbersIn(utterances.join(" . "));
+    const currentYear = new Date().getFullYear();
+    return [...numbersIn(SECTION_PROSE(r))].filter((n) => {
+      if (said.has(n)) return false;
+      if (n === 10 || n === 0) return false;
+      if (n >= 1900 && n <= currentYear) return false;
+      return true;
+    });
+  };
+
+  const PLANNING_VOICE = /\b(?:will be|will (?:begin|start|focus|emphasi[sz]e|include|initiate|progress)|are recommended|is recommended|recommend(?:ed|s)? (?:that|to|a|an)|should (?:be|begin|start|include|progress)|can be (?:gradually |slowly )?(?:introduced|progressed|added|initiated)|to be (?:introduced|initiated|progressed)|plan(?:ned)? to|as tolerated,|going forward)\b/i;
+  
+  /** Interventions the transcript actually narrates, in any of the three
+      languages. Reuses nothing from the model's own answer. */
+  const INTERVENTION_SAID = /\b(?:ultrasound|e-?stim|tens|traction|manual therapy|massage|hilot|masahe|mobiliz\w*|stretch\w*|exercis\w*|therex|scaption|gait|balance|hot pack|cold pack|ice|heat|taping|hep|home (?:exercise )?program|educat\w*|ginawan|gitudloan|nag-?\w+|pag-?uunat|inunat|pinainit)\b/i;
+  
+  const treatmentIsAPlan = (r) => PLANNING_VOICE.test(String((r || {}).treatment || ""));
+  const treatmentWithoutOne = (r, utterances) =>
+    !!String((r || {}).treatment || "").trim() && !INTERVENTION_SAID.test(utterances.join(" "));
+
+  /** The cleanup pass may merge or drop empty turns, but must not fabricate a
+      conversation — guard against a model padding the dialogue. */
+  const dialogueNotInflated = (r, utterances) => (r.dialogue || []).length <= utterances.length + 1;
+
+  /** Everything the deterministic pass can say about one refinement, in the
+      shape the review screen renders. */
+  function groundingReport(r, utterances) {
+    const u = utterances || [];
+    return {
+      findings: ungroundedFindings(r, u),
+      regions: inventedRegions(r, u),
+      numbers: inventedNumbers(r, u),
+      laterality: contradictedLaterality(r, u),
+      treatmentIsAPlan: treatmentIsAPlan(r),
+      treatmentWithoutOne: treatmentWithoutOne(r, u),
+      dialogueInflated: !dialogueNotInflated(r, u),
+    };
   }
 
   return {
@@ -2152,5 +2344,15 @@
     hypotheticalRanges,
     withoutHypotheticals,
     BODY_PARTS,
+    SECTION_KEYS,
+    groundedInTranscript,
+    ungroundedFindings,
+    inventedRegions,
+    inventedNumbers,
+    contradictedLaterality,
+    treatmentIsAPlan,
+    treatmentWithoutOne,
+    dialogueNotInflated,
+    groundingReport,
   };
 });

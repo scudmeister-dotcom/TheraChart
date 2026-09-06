@@ -7348,6 +7348,47 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         origin: t ? t.kind || "corrected" : bare ? "empty" : "live-only" });
     }
 
+    /* What the deterministic pass makes of what the model wrote.
+
+       It has no understanding and is not a second opinion on the model's
+       clinical judgement — it checks literal fact: were these words, this
+       region and this number actually said? That is exactly where a language
+       model is weakest and a regex is strongest, and it is the only automatic
+       defence the note has against a fluent sentence nobody spoke.
+
+       It decides nothing. An untraceable finding is unticked and labelled,
+       and the therapist — who was in the room — has the last word. */
+    const grounding = result.grounding || {};
+    const ungrounded = new Map((grounding.findings || []).map((g) => [g.key, g.reason]));
+    for (const r of rows) {
+      const why = ungrounded.get(r.key);
+      /* A row that already carries a reason keeps it. "The patient corrected
+         this" tells the therapist something specific; replacing it with the
+         generic grounding note would be a downgrade. */
+      if (!why || r.note) continue;
+      r.include = false;
+      r.origin = "ungrounded";
+      r.note = why;
+    }
+
+    /* The two eval failures that survived every model bump were both here,
+       in the PROSE rather than the findings: a body region named that nobody
+       mentioned, and a treatment written for a visit that describes none. The
+       drafted paragraphs have no sourceQuote to check, so they are flagged as
+       a whole and left for the therapist to re-read. */
+    const proseWarnings = [];
+    const commas = (xs) => xs.join(", ");
+    if ((grounding.regions || []).length)
+      proseWarnings.push(`names a body region nobody mentioned (${commas(grounding.regions)})`);
+    if ((grounding.numbers || []).length)
+      proseWarnings.push(`states a number nobody said (${commas(grounding.numbers)})`);
+    if ((grounding.laterality || []).length)
+      proseWarnings.push(`asserts a side that was never spoken (${commas(grounding.laterality)})`);
+    if (grounding.treatmentWithoutOne)
+      proseWarnings.push("records a treatment for a visit that describes none");
+    if (grounding.treatmentIsAPlan)
+      proseWarnings.push("writes a plan for next time into the record of what was done");
+
     /* Only ONE thing can reach this modal now. A failed call and an
        unconfigured server are both turned away in runRefine, and there is no
        longer a second engine that could have produced this, so the chip has
@@ -7445,6 +7486,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const yoursNow = outstandingWork(doc);
 
     const sectionsHtml = `
+      ${proseWarnings.length ? `<div class="banner warn rev-grounding">
+        <b>Read these lines before you approve.</b> Checked word for word against the transcript, the drafted text below ${esc(proseWarnings.join("; "))}.
+        <span class="hint">This is a literal check, not a clinical one — an inherited side or a number you worked out yourself will show up here too. It flags what to re-read, not what is wrong.</span>
+      </div>` : ""}
       <div class="rev-legend">Every section the review can write, each with its own tick. Ticked sections <b>replace</b> what is in the note — all still editable afterwards. Anything you typed by hand starts unticked.</div>
       ${sectionRows.length ? sectionRows.map(sectionRowHtml).join("") : `<div class="empty-state">The visit said nothing that belongs in a note section.</div>`}
       <div class="field" id="revMeas">${measBlockHtml()}</div>
@@ -7474,6 +7519,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       misheard: ["bad", "misheard by dictation"],
       empty: ["warn", "nothing was reported"],
       manual: ["good", "you added this"],
+      ungrounded: ["bad", "not traceable to the transcript"],
     };
     /* Where a finding's own words are written, on top of pinning it.
 

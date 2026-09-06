@@ -68,10 +68,15 @@
         speaker: { type: "string", enum: ["patient", "clinician"] }, text: { type: "string" },
         keep: { type: "boolean" }, dropReason: { type: "string" },
       }, required: ["speaker", "text"] } },
+      /* sourceQuote is REQUIRED, and that is the cheapest anti-invention
+         lever available. A model asked to point at the words it drew a
+         finding from fabricates less than one free to summarise from
+         memory — and without a quote the grounding check has nothing to
+         test, so an unquoted finding used to pass it for free. */
       findings: { type: "array", items: { type: "object", properties: {
         bodyPart: { type: "string" }, side: { type: "string", enum: ["left", "right", "none"] },
         summary: { type: "string" }, sourceQuote: { type: "string" },
-      }, required: ["bodyPart", "summary"] } },
+      }, required: ["bodyPart", "summary", "sourceQuote"] } },
       /* Things the live pass pinned that should come back off the chart.
          One channel, four reasons — the therapist sees the same review row
          whichever way the live pass went wrong. */
@@ -339,7 +344,13 @@
     const corrected = new Set(corrections.map((t) => t.key));
     findings.forEach((f) => { f.corrected = corrected.has(f.key); });
 
-    return {
+    /* What the regexes make of what the model wrote. Attached here rather
+       than computed in the browser so every caller — clinic server and
+       serverless alike — gets the same verdict, and so a future non-browser
+       consumer cannot skip it by forgetting to ask. */
+    const grounding = (out) => parser.groundingReport({ ...out, source }, utterances);
+
+    const base = {
       dialogue, findings, corrections, source,
       measurements: parser.aggregateMeasurements(dialogue.filter((d) => d.keep !== false).map((d) => d.text)),
       subjective: String(parsed.subjective || "").trim(),
@@ -363,6 +374,7 @@
         };
       })(),
     };
+    return { ...base, grounding: grounding(base) };
   }
 
   /* ---------------- generic Gemini JSON ---------------- */

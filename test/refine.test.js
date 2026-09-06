@@ -475,6 +475,72 @@ for (const t of [
     !/90 degrees/.test(r.subjective), r.subjective);
 }
 
+/* ---- grounding: the note may be re-worded, never invented ---- */
+{
+  const utt = ["my right shoulder is about a seven out of ten", "sorry not the right, the left one"];
+  const grounded = { source: "gemini", findings: [{ key: "Shoulder|left", quote: "sorry not the right, the left one" }] };
+  const invented = { source: "gemini", findings: [{ key: "Knee|left", quote: "my left knee has been swollen for weeks" }],
+                     subjective: "Left knee swelling rated 9/10 on the right side." };
+
+  check("a finding quoting the transcript is not flagged",
+    PR.ungroundedFindings(grounded, utt).length === 0,
+    JSON.stringify(PR.ungroundedFindings(grounded, utt)));
+  check("a finding quoting words nobody said IS flagged",
+    PR.ungroundedFindings(invented, utt).length === 1);
+  check("…and the flag names the quote, so the therapist can check it",
+    /swollen for weeks/.test((PR.ungroundedFindings(invented, utt)[0] || {}).reason || ""));
+
+  /* The hole that required sourceQuote closes: with no quote there is nothing
+     to test, and the check used to wave the finding through for free. */
+  check("an AI finding with no quote is surfaced, not waved through",
+    PR.ungroundedFindings({ source: "gemini", findings: [{ key: "X|", quote: "" }] }, utt).length === 1);
+  check("…but the local pass, which never promised a quote, is not accused",
+    PR.ungroundedFindings({ source: "local", findings: [{ key: "X|", quote: "" }] }, utt).length === 0);
+
+  // prose has no quote to check, so it is graded on region and number instead
+  check("a body region the transcript never named is caught in the prose",
+    PR.inventedRegions(invented, utt).join() === "knee", JSON.stringify(PR.inventedRegions(invented, utt)));
+  check("a number nobody said is caught in the prose",
+    PR.inventedNumbers(invented, utt).join() === "9", JSON.stringify(PR.inventedNumbers(invented, utt)));
+  check("a faithful write-up trips none of it",
+    PR.inventedRegions({ subjective: "Left shoulder pain 7/10." }, utt).length === 0
+      && PR.inventedNumbers({ subjective: "Left shoulder pain 7/10." }, utt).length === 0);
+
+  /* Word overlap, not substring: a quote is legitimately cleaned before it is
+     stored, so an exact-match test would call real findings invented. */
+  check("a cleaned-up quote still counts as grounded",
+    PR.ungroundedFindings({ source: "gemini",
+      findings: [{ key: "Shoulder|right", quote: "My right shoulder is about a seven out of ten." }] }, utt).length === 0);
+
+  const report = PR.groundingReport(invented, utt);
+  check("the report carries every check the review screen renders",
+    ["findings", "regions", "numbers", "laterality", "treatmentIsAPlan", "treatmentWithoutOne", "dialogueInflated"]
+      .every((k) => k in report), Object.keys(report).join());
+
+  /* The shape is the contract. A caller reading result.grounding must not
+     have to know which engine produced the result. */
+  check("the local refiner attaches a report too",
+    !!PR.refineTranscript(utt).grounding);
+
+  const fs5 = require("fs"), path5 = require("path");
+  const AI5 = fs5.readFileSync(path5.join(__dirname, "..", "ai.js"), "utf8");
+  check("the schema REQUIRES a source quote for every finding",
+    /required: \["bodyPart", "summary", "sourceQuote"\]/.test(AI5),
+    "a model free to summarise from memory invents more than one asked to point at the words");
+  check("…and the AI path attaches the report as well",
+    /return \{ \.\.\.base, grounding: grounding\(base\) \};/.test(AI5));
+
+  const APP5 = fs5.readFileSync(path5.join(__dirname, "..", "app.js"), "utf8");
+  const REVIEW5 = APP5.slice(APP5.indexOf("  function openReviewModal("), APP5.indexOf("  function applyRefinement("));
+  check("an untraceable finding starts unticked in the review",
+    /r\.include = false;\s*\n\s*r\.origin = "ungrounded";/.test(REVIEW5));
+  check("…without overwriting a more specific reason it already had",
+    /if \(!why \|\| r\.note\) continue;/.test(REVIEW5),
+    "\"the patient corrected this\" tells the therapist more than the generic note");
+  check("prose warnings are shown where the drafted text is",
+    /rev-grounding/.test(REVIEW5) && /Read these lines before you approve/.test(REVIEW5));
+}
+
 /* ---- a finding says where its own words go ----
 
    Findings and section prose are two different paths: a finding becomes a
