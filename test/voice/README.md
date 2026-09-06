@@ -210,38 +210,66 @@ result, not broken plumbing. Aliases tried: `tu-ong`, `tuo nga`, `tuóng`,
 resting on it is reporting a coin toss. That is a limit of synthetic Cebuano, not
 of TheraChart — the fix is to know it, which is what `--takes` is for.
 
-### Which half is actually failing
+### Which half is actually failing — settled
 
-Everything above measures the speaker and the transcriber together, so it cannot
-say which one is weak. ElevenLabs' own speech-to-text (Scribe) gives a second
-pair of ears on the identical audio file, which separates them.
+Everything else here measures the speaker and the transcriber in series and
+cannot say which one is weak. ElevenLabs' own speech-to-text (Scribe) gives a
+second pair of ears on the *identical WAV*, which separates them.
 
-Median of 4 takes, `eleven_v3` + Pedro, the same WAV sent to both:
+**The decisive test.** One line — `"Sakit ang tuo nga tuhod"`, Cebuano for "the
+right knee hurts" — six fresh takes, the same audio sent to both:
 
-| | Google Chirp 2 | ElevenLabs Scribe |
+```
+laterality survived    Google Chirp 2: 0/6      ElevenLabs Scribe: 6/6
+```
+
+Scribe recovers `tuo` in **every** take. Chirp 2 loses it in every take,
+rendering it as "tuhod ug", "tuwang-tuhod", "tuon nga", "tulog na". The word is
+plainly present in the audio; one transcriber hears it and the other does not.
+
+Over a wider sample — 4 scripts × 3 takes, 480 reference words, errors
+classified by hand into real mishearings versus Cebuano spelling variation:
+
+| | real errors | spelling variants |
 |---|---|---|
-| Cebuano (`knee/cebuano-heavy`) | 26.1% | **15.2%** |
-| Tagalog (`shoulder/tagalog-heavy`) | **1.7%** | 5.1% |
+| Google Chirp 2 | 14.6% | 3.5% |
+| ElevenLabs Scribe | **8.3%** | 5.0% |
 
-**The ranking flips.** Google is three times better than Scribe on Tagalog and
-nearly twice as bad on Cebuano — same audio, same takes. Both things are true at
-once:
+And Chirp 2 is not a weak transcriber in general — on Tagalog it beats Scribe
+(1.7% vs 5.1%). It is specifically weak on Cebuano.
 
-- **The audio is genuinely harder in Cebuano.** Even Scribe, which handles it
-  best, does 3× worse on Cebuano than on Tagalog (15.2% vs 5.1%). So ElevenLabs'
-  Cebuano really is weaker than its Tagalog, as suspected.
-- **But Google's `ceb-PH` is disproportionately weak.** It degrades 15× from its
-  own Tagalog (1.7% → 26.1%) and loses to a competitor on audio it wins on in
-  Tagalog. That is a fact about the transcriber TheraChart actually ships, not
-  about the test rig.
+**So the shortcoming is Google's `ceb-PH`, not the synthetic audio.** Three
+things were wrongly blamed along the way, and all three are corrected above:
 
-**This is the part that matters to a Visayas clinic**, and it points the opposite
-way from what the rest of this file assumed. Treat it as suggestive rather than
-settled: it is one script, four takes, on synthetic speech that is itself harder
-in Cebuano. A human Bisaya reading would give Chirp 2 a cleaner signal and might
-close the gap.
+1. **Not ElevenLabs.** Scribe recovering 92% of the same audio proves the speech
+   is intelligible Cebuano.
+2. **Partly the scripts.** The first Cebuano script used the contracted `tuong`
+   and `motungas ko sa hagdanan`, which no transcriber held together. Ordinary
+   written Cebuano — `tuo nga tuhod`, `mosaka ko ug hagdan` — cut word error
+   from 26.1% to **7.5%**.
+3. **Partly the scoring.** Roughly 3.5% of what this harness called "error" is
+   standard Cebuano spelling variation, not mishearing: `o~u` (*mosaka/musaka*),
+   `h~y` (*gihapon/giyapon*), and the routinely-dropped apostrophe in
+   *naa ba'y* → *nabay*. Cebuano orthography is not standardised and a
+   word-level scorer cannot tell a variant from a mistake.
 
-**What would settle it:** two minutes of a real Bisaya speaker reading
+### What this means for the product
+
+**Cebuano laterality does not survive dictation.** A Visayas patient saying
+`tuo nga tuhod` gets a knee pinned with **no side at all** — the transcript
+never carries the word, so the model has nothing to read it from. That is not a
+harness artefact; it is what a real clinic would get today, and the dictation
+menu offers `ceb-PH`.
+
+Two levers were tried and neither worked:
+
+- **Speech adaptation.** Adding `tuo/tuong/wala/kanan/kaliwa` to `STT_PHRASES`
+  at boost 15 changed nothing: still 0/6. Not committed — an ineffective phrase
+  only dilutes the list.
+- **A different language code.** `fil-PH` on the same Cebuano audio scores 13.2%
+  against `ceb-PH`'s 14.9% real errors. Within noise, no basis to switch.
+
+**What would settle it:****What would settle it:** two minutes of a real Bisaya speaker reading
 `knee/cebuano-heavy`. The harness takes any 16 kHz mono WAV, so a human take
 drops straight in — and running it through both transcribers would answer, for
 real audio, whether `ceb-PH` is good enough to offer in the dictation menu.

@@ -303,17 +303,23 @@ const SCRIPTS = [
        with English, it holds 8.1% with 0.0% spread across both models AND both
        voices. Real Bisaya audio is what would retire this caveat. */
     advisory: true,
-    why: "near-monolingual Cebuano — laterality from \"tuong tuhod\", in a language the speech model only half speaks",
+    why: "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 loses 6 times out of 6",
+    /* Rewritten after measuring the first version word by word. That one used
+       the contracted "tuong" (which elides into the word before it and survived
+       about half the time) and "motungas ko sa hagdanan" (which no transcriber
+       held together). Ordinary written Cebuano — "tuo nga tuhod", "mosaka ko ug
+       hagdan" — is both more natural and markedly more robust: 9.4% real errors
+       against the old script's 13.8%, on the same voice and model. */
     turns: [
-      { who: "clinician", text: "Maayong buntag. Unsa may imong gibati karon?" },
-      { who: "patient", text: "Sakit akong tuong tuhod, doc. Labi na kung motungas ko sa hagdanan." },
-      { who: "clinician", text: "Pila ka sakit, kung isa hangtod napulo?" },
-      { who: "patient", text: "Mga unom. Dili ko kaayo makalakaw ug taas." },
-      { who: "clinician", text: "Naa bay manghubag o mamanhid?" },
-      { who: "patient", text: "Wala man. Sakit ra gyud sa tuhod." },
+      { who: "clinician", text: "Unsa may imong gibati sa imong tuhod?" },
+      { who: "patient", text: "Sakit ang tuo nga tuhod kung mosaka ko ug hagdan." },
+      { who: "clinician", text: "Pila ka sakit, gikan sa usa hangtod napulo?" },
+      { who: "patient", text: "Mga unom sa napulo." },
+      { who: "clinician", text: "Naa bay hubag sa tuhod?" },
+      { who: "patient", text: "Gamay ra, doc. Wala may pamanhid." },
     ],
     heard: {
-      wer: 0.45,
+      wer: 0.30,
       must: ["tuhod"],
     },
     expect: [
