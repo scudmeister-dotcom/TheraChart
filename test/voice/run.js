@@ -152,6 +152,26 @@ function gcloudToken() {
   catch { return null; }
 }
 
+/* One retry on a transport failure.
+
+   A POST to our own localhost server occasionally rejects with a bare
+   "fetch failed" — no status, no body — and it has now killed three otherwise
+   good runs partway through, each forfeiting the Google spend already incurred.
+   It is a transport hiccup rather than a result, so the honest handling is to
+   try once more; a second failure is reported as itself. */
+async function postWav(url, token, body) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, { method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body });
+    } catch (e) {
+      if (attempt) throw e;
+      console.log(`    (transport hiccup, retrying once: ${e.message})`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); return "█".repeat(n) + "░".repeat(20 - n); };
 
@@ -222,9 +242,7 @@ async function sweep(scripts, key) {
         for (let k = 0; k < TAKES; k++) {
           const t = takes.get(`${id}|${sc.id}|${k}`);
           const parts = await Promise.all(t.wavs.map(async (wav) => {
-            const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
-              method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body: wav,
-            });
+            const r = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
             const d = await r.json().catch(() => ({}));
             if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
             return r.ok ? (d.text || "") : null;
@@ -413,7 +431,16 @@ async function sweep(scripts, key) {
   const takes = [];
   for (const s of scripts) {
     process.stdout.write(`  speaking ${s.id}… `);
-    const take = await say.speakScript(s, { key, voices, modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
+    /* A script may name its own voices. Only one does, and it earned it: on
+       knee/cebuano-heavy the patient voice was deciding the result. Measured
+       over 12 takes, Pedro speaking both parts keeps the laterality word 12/12
+       at 1.7% real word error; Pedro with Mang Jose as the patient — who says
+       the "tuo nga tuhod" line — keeps it 7/12 at 6.0%. Same script, same
+       transcriber, same model. A script that swings on which synthetic voice
+       reads it is measuring ElevenLabs, and this one is supposed to be
+       measuring the chart. */
+    const take = await say.speakScript(s, { key, voices: { ...voices, ...(s.voices || {}) },
+      modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
     takes.push({ script: s, ...take });
     console.log(`${take.seconds.toFixed(1)}s${take.wavs.length > 1 ? ` in ${take.wavs.length} chunks` : ""}${take.cached ? " (cached)" : ""} peak ${take.peak.toFixed(2)}`);
     if (take.peak < 0.05) console.log(`    ⚠ that take is almost silent — check the voice id and --level`);
@@ -475,11 +502,7 @@ async function sweep(scripts, key) {
          product worth testing, not an implementation detail worth skipping. */
       const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
       const parts = await Promise.all(t.wavs.map(async (wav) => {
-        const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" },
-          body: wav,
-        });
+        const r = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
         const d = await r.json().catch(() => ({}));
         // billed outside the ok branch: a chunk that failed AT Google is still billed
         if (typeof d.billedSeconds === "number") billedSeconds += d.billedSeconds;

@@ -512,9 +512,12 @@
      It exists because a finding on a paired region with NO side is a specific
      kind of incomplete — the note names a knee without saying which — and the
      review can ask about it instead of pinning the figure's centre and hoping.
-     Cebuano dictation makes this concrete: Chirp 2 drops "tuo" (right) in
-     roughly 3 takes out of 10, so a Visayas visit can reach review with the
-     side simply absent even though the patient said it. */
+     Dictation is where it comes from, in any language: a side that is spoken
+     but not transcribed cannot be recovered downstream, and the figure's
+     centre is not an answer. It is not a Cebuano-specific guard — measured
+     through test/voice, clean Cebuano keeps its laterality word 12 takes out
+     of 12 — but any language loses a word sometimes, and this is the one word
+     whose loss puts a finding on the wrong half of the body. */
   const isPaired = (name) => {
     const l = coordForName(name, "left"), r = coordForName(name, "right");
     return !!(l && r && l.x !== r.x);

@@ -246,11 +246,11 @@ const SCRIPTS = [
      "mosaka ko ug hagdan") took the same script to 7.5%, and took "tuo" from a
      coin flip to 7 takes in 10.
 
-     What remains is a real but much smaller gap: on identical audio Chirp 2
-     keeps "tuo" 7 times in 10 where ElevenLabs' own Scribe keeps it 10 times
-     in 10. The script is fine and the speech is fine; the transcriber is
-     modestly weaker in Cebuano than in Tagalog. Three visits in ten reaching
-     review without a side is why the review asks (see PR.isPaired). */
+     What looked like a residual Chirp 2 weakness turned out to be the VOICE.
+     Read by Pedro, this script keeps the laterality word 12 takes out of 12 at
+     1.7% real word error — level with the Tagalog script. Read with Mang Jose
+     as the patient it drops to 7/12 at 6.0%, and that gap is ElevenLabs, not
+     Google. Hence the per-script voice override below. */
   {
     id: "shoulder/tagalog-heavy",
     lang: "fil-PH",
@@ -302,7 +302,13 @@ const SCRIPTS = [
        with English, it holds 8.1% with 0.0% spread across both models AND both
        voices. Real Bisaya audio is what would retire this caveat. */
     advisory: true,
-    why: "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 drops about 3 takes in 10",
+    /* Both parts read by Pedro. Not cosmetic: the patient voice was the whole
+       residual failure on this script — 12/12 laterality at 1.7% real error
+       with Pedro, 7/12 at 6.0% when Mang Jose reads the patient turns. See
+       run.js. With a voice that says the word, Cebuano transcribes about as
+       well as Tagalog does. */
+    voices: { clinician: "iyZZ2rpPw5XY3ZQltAWV", patient: "iyZZ2rpPw5XY3ZQltAWV" },
+    why: "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", in the language with no English to lean on",
     /* Rewritten after measuring the first version word by word. That one used
        the contracted "tuong" (which elides into the word before it and survived
        about half the time) and "motungas ko sa hagdanan" (which no transcriber

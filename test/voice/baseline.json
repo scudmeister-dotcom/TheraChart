@@ -7,14 +7,14 @@
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 389.08400000000006,
-  "billedSeconds": 402,
-  "sttUsd": 0.1072,
+  "audioSeconds": 389.50193750000005,
+  "billedSeconds": 403,
+  "sttUsd": 0.1075,
   "refineCalls": 15,
-  "meanWer": 0.055938436861759276,
-  "earned": 131,
+  "meanWer": 0.05228816815568238,
+  "earned": 130,
   "possible": 142,
-  "overall": 0.9225352112676056,
+  "overall": 0.9154929577464789,
   "cases": [
     {
       "id": "shoulder/clinical-vocab",
@@ -22,10 +22,10 @@
       "lang": "fil-PH",
       "chunks": 1,
       "advisory": false,
-      "wer": 0.036585365853658534,
+      "wer": 0.04878048780487805,
       "refWords": 82,
-      "edits": 3,
-      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom flexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a hep to do twice a day",
+      "edits": 4,
+      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom inflexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a hep to do twice a day",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -48,16 +48,16 @@
         {
           "name": "shoulder flexion ROM survived transcription",
           "weight": 2,
-          "ok": true,
+          "ok": false,
           "thrown": null,
-          "detail": ""
+          "detail": "rom: []"
         },
         {
           "name": "the 7/10 pain score reached the chart",
           "weight": 2,
-          "ok": true,
+          "ok": false,
           "thrown": null,
-          "detail": ""
+          "detail": "pain: []"
         },
         {
           "name": "the home programme reached a prose section",
@@ -67,9 +67,18 @@
           "detail": ""
         }
       ],
-      "earned": 11,
+      "earned": 7,
       "possible": 11,
-      "failed": []
+      "failed": [
+        {
+          "name": "shoulder flexion ROM survived transcription",
+          "detail": "rom: []"
+        },
+        {
+          "name": "the 7/10 pain score reached the chart",
+          "detail": "pain: []"
+        }
+      ]
     },
     {
       "id": "knee/laterality-correction",
@@ -241,10 +250,10 @@
       "lang": "fil-PH",
       "chunks": 1,
       "advisory": false,
-      "wer": 0.1016949152542373,
+      "wer": 0.0847457627118644,
       "refWords": 59,
-      "edits": 6,
-      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon doc masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pa ba sa braso so wala naman po ano sasakit lang po talaga sa balikat",
+      "edits": 5,
+      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon doc masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pa ba sa braso sa wala naman po ang sakit lang po talaga sa balikat",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -285,14 +294,14 @@
     },
     {
       "id": "knee/cebuano-heavy",
-      "why": "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 loses 6 times out of 6",
+      "why": "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", in the language with no English to lean on",
       "lang": "ceb-PH",
       "chunks": 1,
       "advisory": true,
-      "wer": 0.1,
+      "wer": 0.05,
       "refWords": 40,
-      "edits": 4,
-      "heard": "unsa may imong gibati sa imong tuhod sakit ang tuhod kung musaka ko ug hagdan pila ka sakit gikan sa usa hangtod napulo nga unom sa napulo naa bay hubag sa tuhod gamay ra doc wala may pamanhid",
+      "edits": 2,
+      "heard": "unsa may imong gibati sa imong tuhod sakit ang tuo nga tuhod kung musaka ko ug hagdan pila ka sakit gikan sa usa hangtod napulo mga unom sa napulo naa bay hubag sa tuhod gamay ra dak wala may pamanhid",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -301,9 +310,9 @@
         {
           "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
           "weight": 3,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "pinned: Knee|"
+          "detail": ""
         },
         {
           "name": "\"wala man\" was read as a denial, not as the left knee",
@@ -320,14 +329,9 @@
           "detail": ""
         }
       ],
-      "earned": 4,
+      "earned": 7,
       "possible": 7,
-      "failed": [
-        {
-          "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
-          "detail": "pinned: Knee|"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "numbers/dense",

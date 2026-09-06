@@ -212,77 +212,73 @@ of TheraChart — the fix is to know it, which is what `--takes` is for.
 
 ### Which half is actually failing — settled
 
-Everything else here measures the speaker and the transcriber in series and
-cannot say which one is weak. ElevenLabs' own speech-to-text (Scribe) gives a
-second pair of ears on the *identical WAV*, which separates them.
+Two things were blamed here before the measurement was done properly, and
+neither was at fault.
 
-**Most of the Cebuano problem was the script, not either engine.** The first
-version of `knee/cebuano-heavy` used the contracted `tuong tuhod` and
-`motungas ko sa hagdanan`, and scored 26.1% word error. Ordinary written
-Cebuano — `tuo nga tuhod`, `mosaka ko ug hagdan` — took the same script to
-**7.5%**, and took the laterality word from a coin flip to 7 takes in 10.
+**Most of it was the script.** The first `knee/cebuano-heavy` used the
+contracted `tuong tuhod` and `motungas ko sa hagdanan`, and scored 26.1% word
+error. Ordinary written Cebuano — `tuo nga tuhod`, `mosaka ko ug hagdan` — took
+the same script to **7.5%**.
 
-What is left is a real but modest gap. One line, `"Sakit ang tuo nga tuhod"`,
-10 fresh takes on the harness's default voice and model, same WAV to both:
+**The rest was one voice.** Twelve takes of the rewritten script, same
+transcriber, same model, same phrase list — only the reader changes:
 
-```
-"tuo" (right) survived    Google Chirp 2: 7/10     ElevenLabs Scribe: 10/10
-```
-
-Over a wider sample — 4 scripts × 3 takes, 480 reference words, errors
-classified by hand into real mishearings versus Cebuano spelling variation:
-
-| | real errors | spelling variants |
+| audio | real word error | laterality kept |
 |---|---|---|
-| Google Chirp 2 | 14.6% | 3.5% |
-| ElevenLabs Scribe | **8.3%** | 5.0% |
+| Pedro reads both parts | **1.7%** | **12/12** |
+| Mang Jose reads the patient | 6.0% | 7/12 |
 
-And Chirp 2 is not a weak transcriber in general — on Tagalog it beats Scribe
-(1.7% vs 5.1%). It is specifically, and moderately, weaker on Cebuano.
+Mang Jose speaks the `tuo nga tuhod` line, and he is the reason it went missing.
+With a voice that says the word, **Cebuano transcribes about as well as Tagalog**
+(the Tagalog script sits at 1.7%). That is why the script carries a per-script
+voice override.
 
-**A correction worth keeping.** An earlier version of this file reported that
-figure as **0/6 for Chirp 2 against 6/6 for Scribe**, and concluded that Cebuano
-laterality simply does not survive dictation. That measurement was taken on
-`eleven_v3` audio, which had been switched on while investigating whether v3
-helped — and v3 is *worse* at this word than the default `multilingual_v2`
-(0/10 against 7/10). The number described the wrong speech model, not the
-transcriber. Check which TTS model a take came from before drawing a conclusion
-from it; `--sweep` and `--takes` exist for exactly this reason and neither was
-used for that test.
+The phrase list turned out to be near-neutral here — 6.0% with it, 5.4% without,
+on the two-voice audio — so it stays on, as it is measurably worth having on
+clinical English.
+
+**Two corrections worth keeping**, because both were confident and both were
+wrong:
+
+1. This file once reported **0/6 for Chirp 2 against 6/6 for Scribe** and
+   concluded Cebuano laterality does not survive dictation. That was measured on
+   `eleven_v3` audio, switched on while investigating whether v3 helped. It does
+   not — v3 scores 0/10 on that word where the default `multilingual_v2` scores
+   7/10. The number described the wrong speech model.
+2. It then reported **7/10, "three visits in ten lose the side."** That was
+   measured on two-voice audio and was really 12/12 for a good voice against
+   7/12 for a poor one. The number described the wrong voice.
+
+Both mistakes have the same shape: a single configuration measured once and
+generalised. `--takes` and `--sweep` exist to prevent exactly that, and neither
+was used before drawing the conclusion.
 
 ### What this means for the product
 
-**About three Cebuano visits in ten lose the side.** A patient saying `tuo nga
-tuhod` gets a knee pinned with no side whenever the word does not survive — the
-transcript never carries it, so the model has nothing to read it from. Usually
-it does survive; sometimes it does not, and nothing downstream can tell the
-difference. That is not a harness artefact, and the dictation menu offers
-`ceb-PH` today.
+**Less than it appeared.** Cebuano dictation reads about as well as Tagalog when
+the speech is clean. The review-time "which side?" prompt stays, but it is a
+general guard rather than a Cebuano patch: a side that was spoken and not
+transcribed cannot be recovered downstream in any language, and that is the one
+word whose loss puts a finding on the wrong half of the body.
 
-Four levers were tried. **None is worth shipping**, and `chirp_2` + the phrase
-list stays exactly as it was.
+Four levers were tried against the Cebuano gap while it still looked large.
+**None is worth shipping**, and `chirp_2` + the phrase list stays exactly as it
+was.
 
 - **Speech adaptation.** Adding `tuo/tuong/wala/kanan/kaliwa` to `STT_PHRASES`
-  at boost 15 changed nothing: still 0/6. An ineffective phrase only dilutes a
-  list whose own comment says so.
-- **A different language code.** `fil-PH` on Cebuano audio scores 13.2% against
-  `ceb-PH`'s 14.9% real errors. Noise.
-- **A newer model.** Probed live across every model and region this project can
-  reach. `chirp_3` is **unsupported or has no `ceb-PH`** in all four regions
-  tried; `latest_long`, `long`, `short` and `telephony` have no `ceb-PH` at all.
-  `chirp_2` and `chirp` are the only two options that exist.
-- **The older model.** `chirp` v1 looked like the answer — it keeps `tuo` **8
-  takes out of 8** where `chirp_2` gets 0, and scores better on pure Cebuano.
-  It was implemented, measured against the real scripts, and **reverted**: it
-  silently drops whole utterances. On `ankle/cebuano` it lost the entire first
-  half of the visit, and on `knee/cebuano-heavy` it dropped the pain rating.
-  That is the same failure the `STT_LANGS` comment describes for `en-US` on
-  Tagalog, and a note missing whole sentences is worse than one missing a side.
-
-**So `chirp_2` is the best available**, and the gap it leaves is handled in the
-review screen instead: a finding on a region that has a left and a right,
-arriving with no side, is now labelled *"which side?"* rather than pinned at the
-figure's centre as though that were an answer. See `PR.isPaired` in parser.js.
+  at boost 15 changed nothing.
+- **A different language code.** `fil-PH` on Cebuano audio scores level with
+  `ceb-PH`. Noise.
+- **`chirp_3`.** Probed live across nine regions. It **does not exist** in
+  us-central1, us-east1, us-west1, europe-west4 or global; in asia-southeast1
+  and asia-south1 it returns *403 "no longer generally available"* for this
+  project; and in `us` and `eu` it **has no Cebuano at all** — both `ceb-PH` and
+  `ceb` are refused. Reachable only as `fil-PH` in `us`, where it scores 10.9%
+  real error against `chirp_2`'s 3.1% on the same audio. Worse, and without the
+  language.
+- **`chirp` v1.** Keeps the laterality word well, but silently drops whole
+  utterances — it lost the entire first half of `ankle/cebuano`. Implemented,
+  measured, reverted. A note missing sentences is worse than one missing a side.
 
 **What would settle it:****What would settle it:** two minutes of a real Bisaya speaker reading
 `knee/cebuano-heavy`. The harness takes any 16 kHz mono WAV, so a human take
