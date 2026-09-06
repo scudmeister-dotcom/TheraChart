@@ -2295,7 +2295,6 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
    live listening is the default. Quieter than the mic bar on purpose: it is
    there to be found, not to compete for the first tap. */
 .rec-bar { border: 1px solid var(--border); border-radius: 11px; padding: 11px 13px; margin-top: 14px; background: var(--bg); }
-.rec-alt-head { font-size: 11.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
 .rec-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rec-btn { display: inline-flex; align-items: center; gap: 8px; }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; }
@@ -2664,7 +2663,6 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .rec-stage-meters .mic-level { flex: none; width: 100%; max-width: 320px; height: 10px; }
 .rec-stage-slot { width: 100%; }
 .rec-stage-slot .rec-bar { margin-top: 0; border: 0; background: transparent; padding: 0; }
-.rec-stage-slot .rec-alt-head { display: none; }
 .rec-stage-slot .rec-main { justify-content: center; }
 .rec-stage-slot .rec-meta { flex: 0 1 100%; text-align: center; }
 .rec-stage-slot .rec-btn { font-size: 15px; padding: 12px 20px; }
@@ -2714,3 +2712,33 @@ body.recording-stage { overflow: hidden; }
 .rev-add textarea { width: 100%; }
 .rev-add-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .rev-add-err { flex: 1; font-size: 12px; color: var(--danger); line-height: 1.4; }
+
+/* ---- recording is the way in; live dictation is a choice ----
+
+   The order on screen is the argument. The live pass files each sentence as
+   it hears it and cannot take one back, so a patient who corrects themselves
+   leaves a mark the therapist has to hunt down. Recording and reading the
+   visit once has no such failure mode, so it gets the panel and live gets a
+   disclosure the therapist has to open on purpose. */
+.rec-primary {
+  margin-top: 14px; padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 11px; background: var(--panel);
+}
+.rec-primary-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  font-size: 13px; font-weight: 700; color: var(--ink);
+}
+.rec-primary-head select { margin-left: auto; }
+.rec-primary .rec-bar { margin-top: 0; border: 0; padding: 0; background: transparent; }
+
+.live-dict { margin-top: 10px; }
+.live-dict > summary {
+  cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted);
+  padding: 6px 2px; list-style: revert;
+}
+.live-dict > summary:hover { color: var(--ink); }
+.live-dict-why {
+  font-size: 12px; color: var(--muted); line-height: 1.5; margin: 2px 0 8px 2px;
+}
+.live-dict .dict-bar { margin-top: 0; }

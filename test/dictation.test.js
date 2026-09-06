@@ -507,6 +507,53 @@ const settle = () => new Promise((r) => setImmediate(r));
       "a correction nobody can see is one nobody can disagree with");
   }
 
+  /* ---------------- recording is the default, live is a choice ----------------
+
+     The order on screen is the argument, so it is worth a test: the live pass
+     files each sentence as it hears it and cannot take one back, while
+     recording and reading the visit once has no such failure mode. If a later
+     edit quietly promotes live dictation back to the top, the product goes
+     back to making the mistake the whole record-first flow removed. */
+  {
+    const recAt = SRC.indexOf('<div class="rec-primary">');
+    const liveAt = SRC.indexOf('<details class="live-dict">');
+    r.check("the recorder is offered before live dictation",
+      recAt > 0 && liveAt > 0 && recAt < liveAt,
+      `rec-primary at ${recAt}, live-dict at ${liveAt}`);
+
+    r.check("live dictation is collapsed until the therapist opens it",
+      liveAt > 0 && !/<details class="live-dict" open/.test(SRC),
+      "an open disclosure is not opt-in");
+
+    r.check("…and says why it is the second choice",
+      /files each sentence as you say it, so anything the patient corrects later/.test(SRC),
+      "a demoted feature with no reason given reads as an arbitrary rearrangement");
+
+    /* The recorder reads langSel.value when it processes. Burying it inside
+       the live-dictation disclosure would hide the one setting that decides
+       whether a Bisaya visit transcribes correctly — and NOTES.md already
+       records that a tablet left on the wrong pairing degrades every
+       utterance with nothing on screen to say so. */
+    const primary = SRC.slice(recAt, liveAt);
+    r.check("the language pairing stays with the recorder, not inside the disclosure",
+      /id="langSel"/.test(primary),
+      "processRecording() reads langSel.value — it cannot be hidden behind a closed <details>");
+
+    r.check("a corrected mis-transcription is visible whether or not live is open",
+      /id="dictFixes"/.test(primary),
+      "record-then-process reports its fixes through the same chip");
+
+    /* The read-only branch is a separate copy of this markup, and
+       startDictation() is never called for it — but the page still renders
+       these ids, so a missing one is a silent null on a signed note. */
+    const readOnly = SRC.slice(SRC.indexOf('<span class="dict-status" id="dictStatus">Locked</span>') - 900,
+                               SRC.indexOf('<span class="dict-status" id="dictStatus">Locked</span>') + 400);
+    for (const id of ["micBtn", "langSel", "dictStatus", "dictMeter", "dictFixes"]) {
+      r.check(`a signed note still renders #${id}`, readOnly.includes(`id="${id}"`),
+        "the locked branch is a second copy of this markup and drifts silently");
+    }
+  }
+
   /* ---------------- the recording stage ---------------- */
   {
     /* `btn.addEventListener("click"` occurs earlier in app.js than the stage

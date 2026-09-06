@@ -4366,19 +4366,60 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <span><i class="sev-dot sev-none"></i>resolved</span>
       </div>
     </div>
+    ${editable ? `
+    <!-- Recording is the way in now, and live dictation is the deliberate
+         choice below it. The order is the argument: the live pass pins a
+         region the moment it hears the word and cannot take it back, so a
+         patient who corrects themselves leaves a mark the therapist has to
+         find and remove. Recording the visit and reading it once does not
+         have that failure mode. Live is kept because it is genuinely better
+         for a short daily note dictated one sentence at a time — but it is
+         no longer what a therapist falls into without choosing it. -->
+    <div class="rec-primary">
+      <div class="rec-primary-head">
+        <span>Record the visit</span>
+        <select id="langSel" title="What you'll be speaking" ${editable ? "" : "disabled"}>
+          <option value="fil-PH">English &amp; Tagalog</option>
+          <option value="ceb-PH">English &amp; Cebuano</option>
+        </select>
+      </div>
+      <div class="rec-bar" id="recBar">
+        <div class="rec-main">
+          <button class="btn rec-btn primary" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
+          <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
+          <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
+          <span class="rec-meta" id="recMeta">Record straight through. Nothing is written to the note until you have read what the visit said and approved it.</span>
+        </div>
+        <div class="rec-progress" id="recProgress" hidden></div>
+      </div>
+      <!-- Outside the collapsed section on purpose: a mis-transcription
+           corrected during record-then-process has to be visible whether or
+           not live dictation is open. -->
+      <span class="dict-fixes" id="dictFixes" hidden title="A known speech-recognition misreading, corrected before it reached the note"></span>
+    </div>
+
+    <details class="live-dict">
+      <summary>Or dictate live, one sentence at a time</summary>
+      <p class="live-dict-why">Live dictation files each sentence as you say it, so anything the patient corrects later has to be taken off the note and the body map by hand. Good for a short daily note; for an evaluation, record the visit instead.</p>
+      <div class="dict-bar">
+        <button class="mic-btn" id="micBtn"><span>🎤</span><span id="micLabel">Listen &amp; dictate live</span></button>
+        <span class="dict-status" id="dictStatus">Mic off</span>
+        <span class="mic-level" id="micLevel" hidden title="How loud you are, and where the gate is set. Speech should push past the line; the room shouldn't.">
+          <i class="mic-level-fill" id="micLevelFill"></i><i class="mic-level-bar" id="micLevelBar"></i>
+        </span>
+        <span class="dict-meter" id="dictMeter" hidden></span>
+      </div>
+    </details>` : `
     <div class="dict-bar">
-      <button class="mic-btn" id="micBtn" ${editable ? "" : "disabled"}><span>🎤</span><span id="micLabel">Listen &amp; dictate live</span></button>
-      <select id="langSel" title="What you'll be speaking" ${editable ? "" : "disabled"}>
+      <button class="mic-btn" id="micBtn" disabled><span>🎤</span><span id="micLabel">Listen &amp; dictate live</span></button>
+      <select id="langSel" title="What you'll be speaking" disabled>
         <option value="fil-PH">English &amp; Tagalog</option>
         <option value="ceb-PH">English &amp; Cebuano</option>
       </select>
-      <span class="dict-status" id="dictStatus">${editable ? "Mic off" : "Locked"}</span>
-      ${editable ? `<span class="mic-level" id="micLevel" hidden title="How loud you are, and where the gate is set. Speech should push past the line; the room shouldn't.">
-        <i class="mic-level-fill" id="micLevelFill"></i><i class="mic-level-bar" id="micLevelBar"></i>
-      </span>` : ""}
+      <span class="dict-status" id="dictStatus">Locked</span>
       <span class="dict-meter" id="dictMeter" hidden></span>
-      <span class="dict-fixes" id="dictFixes" hidden title="A known speech-recognition misreading, corrected before it reached the note"></span>
-    </div>
+      <span class="dict-fixes" id="dictFixes" hidden></span>
+    </div>`}
     ${dictationLine(doc)}
     <div class="figures">
       <figure><figcaption>Front <span class="hint">(patient's L on your right)</span></figcaption><div class="bodymap" id="mapFront">${figureMarkup("front")}</div></figure>
@@ -4409,16 +4450,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
     </div>` : ""}
     ${editable ? `
-    <div class="rec-bar" id="recBar">
-      <div class="rec-alt-head">Or record the whole visit</div>
-      <div class="rec-main">
-        <button class="btn rec-btn" id="recBtn" type="button"><span class="rec-dot"></span><span id="recBtnLabel">Record the visit</span></button>
-        <button class="btn primary" id="recProcess" type="button" hidden>Process audio</button>
-        <button class="btn small" id="recDiscard" type="button" hidden>Discard</button>
-        <span class="rec-meta" id="recMeta">Record straight through, then process once.</span>
-      </div>
-      <div class="rec-progress" id="recProgress" hidden></div>
-    </div>
     <!-- Where the recorder controls MOVE to while a visit is being recorded.
          Empty on purpose: wireRecorder() relocates the real #recBar and the
          two meters into these slots and puts them back afterwards, so the
