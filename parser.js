@@ -498,16 +498,45 @@
   const ROM_MOTIONS =
     "flexion|extension|abduction|adduction|internal rotation|external rotation|rotation|" +
     "dorsiflexion|plantar\\s?flexion|supination|pronation|lateral flexion|" +
-    // the abbreviations therapists actually say out loud
-    "int(?:ernal)?\\.?\\s?rot(?:ation)?|ext(?:ernal)?\\.?\\s?rot(?:ation)?|ir|er|abd|add|flex|ext|df|pf";
-  const ROM_FILLER = "(?:\\s+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
-  const ROM_DEGREES = "\\s*(?:=|:)?\\s*(\\d{1,3})\\s*(?:degrees?|deg\\b|°)";
+    // the abbreviations therapists actually say out loud.
+    /* "er" is the one that is also a hesitation, and now that the value may
+       sit after a comma the two shapes collide: "flexion is, er, 130 degrees"
+       would read as EXTERNAL ROTATION 130 — the right number filed under a
+       motion the therapist never measured, which is worse in a signed chart
+       than the number going missing. Nothing in the words can tell that
+       apart from a dictated "ER, 45", so the abbreviation simply does not
+       reach across a comma for its value: spoken as "ER 45" it still reads,
+       and the hesitation stays out of the table either way. */
+    "int(?:ernal)?\\.?\\s?rot(?:ation)?|ext(?:ernal)?\\.?\\s?rot(?:ation)?|ir|er(?!\\s*,)|abd|add|flex|ext|df|pf";
+  /* A comma between the motion and its reading is not a clause break. It is
+     how the refine pass punctuates what was dictated — "right ankle
+     dorsiflexion is limited, about ten degrees" comes back with one — and how
+     a therapist types the same sentence. Both separators here were
+     whitespace-only, so the filler run stopped dead at the comma and the
+     degrees pattern could not reach across it: the angle was dropped from the
+     chart with nothing on screen to say a number had been spoken at all.
+
+     Crossing a comma is still not crossing a clause. The filler run has to
+     begin at the motion and the number has to follow the run, so a sentence
+     that changes subject at the comma — "shoulder flexion is fine, knee is 90
+     degrees" — offers no chain that reaches the 90, and the number stays with
+     the clause that owns it. */
+  const ROM_FILLER = "(?:[\\s,]+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
+  const ROM_DEGREES = "[\\s,]*(?:=|:)?\\s*(\\d{1,3})\\s*(?:degrees?|deg\\b|°)";
   /* The same number with the unit left off. A therapist says the unit once and
      then reels off the rest — "abduction 90 degrees, external rotation 45,
      flexion 120" — so requiring "degrees" every time dropped all but the first.
      Guarded by a lookahead so a muscle grade ("flexion 4 out of 5"), a
      percentage or a date can't be read as an angle, and only ever used in a
-     text that already carries one explicit degrees reading (see pass 2b). */
+     text that already carries one explicit degrees reading (see pass 2b).
+
+     Deliberately NOT allowed to cross a comma, unlike ROM_DEGREES above. The
+     unit is what says the number is an angle, and with it gone the comma
+     forms are ordinary prose: "we worked on knee flexion, 3 sets of 10" would
+     file a knee flexion of 3°. A run of readings puts the comma before the
+     next MOTION ("abduction 90 degrees, ER 45"), which still reads — it is
+     only the value that has to stay adjacent to the motion it belongs to.
+     Inventing an angle is worse than dropping one. */
   const ROM_BARE_NUM = "\\s*(?:=|:)?\\s*(\\d{1,3})\\b(?!\\s*(?:out\\s+of|/|%|:|degrees?\\w))";
   // joints are dictated singular or plural ("both shoulders flexion 150")
   const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
@@ -528,8 +557,14 @@
      joint between them stopped both — the reading was not mis-sided or
      unsided, it was dropped, with nothing on screen to say a number had been
      spoken at all. */
+  /* The comma lands between the motion and the joint here — "Dorsiflexion,
+     right ankle, 10 degrees" is how the refine pass writes a measurement up as
+     a list — so this separator needs it too. The joint word itself is still
+     required immediately after, which is what keeps a real clause break out:
+     "we iced the shoulder after flexion, knee extension was 90 degrees" finds
+     no reading, because "extension" is not a joint and not filler. */
   const MOTION_JOINT_ROM_RE = new RegExp(
-    `\\b(${ROM_MOTIONS})\\s+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
+    `\\b(${ROM_MOTIONS})[\\s,]+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
     `(?:the|his|her|their|ang|akong|among|imong|iyang|yung|aking)?\\s*` +
     `(?:(${SIDE_WORDS})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
   const BARE_ROM_NOUNIT_RE = new RegExp(

@@ -572,6 +572,117 @@ function mention(result, partName, side = undefined) {
     rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
 }
 
+/* A comma between the motion and its value — the shape the refine pass writes
+   ("right ankle dorsiflexion is limited, about ten degrees" comes back
+   punctuated) and the shape a therapist types. Every one of these dropped the
+   angle entirely, silently: the transcript held the number, the chart did not,
+   and nothing on screen said a measurement had been spoken. */
+{
+  const romOf = (t) => parseUtterance(t).measurements.rom;
+
+  const flex = romOf("Knee flexion, 130 degrees");
+  check("a comma before the value still reads as a measurement",
+    flex.length === 1 && flex[0].joint === "knee" && flex[0].motion === "flexion" && flex[0].degrees === 130,
+    JSON.stringify(flex));
+
+  const abd = romOf("Shoulder abduction, 110 degrees");
+  check("…for the joint-first form too",
+    abd.length === 1 && abd[0].joint === "shoulder" && abd[0].motion === "abduction" && abd[0].degrees === 110,
+    JSON.stringify(abd));
+
+  // the visit that exposed this: Chirp 2 heard it correctly, the refine pass
+  // punctuated it, and the ROM row never reached the chart
+  const ankle = romOf("Right ankle dorsiflexion is limited, about 10 degrees");
+  check("a comma in the middle of the filler run does not stop it",
+    ankle.length === 1 && ankle[0].side === "right" && ankle[0].joint === "ankle"
+      && ankle[0].motion === "dorsiflexion" && ankle[0].degrees === 10,
+    JSON.stringify(ankle));
+
+  const abbrev = romOf("R ankle DF limited, 10 deg");
+  check("the abbreviated form reads across the comma as well",
+    abbrev.length === 1 && abbrev[0].joint === "ankle" && abbrev[0].motion === "dorsiflexion"
+      && abbrev[0].degrees === 10,
+    JSON.stringify(abbrev));
+
+  const stacked = romOf("Right shoulder abduction is, approximately, 90 degrees");
+  check("filler set off by commas on both sides is still filler",
+    stacked.length === 1 && stacked[0].degrees === 90, JSON.stringify(stacked));
+
+  // motion first, joint after it — the comma lands between them
+  const listed = romOf("Dorsiflexion, right ankle, 10 degrees");
+  check("a comma between the motion and the joint after it is read",
+    listed.length === 1 && listed[0].side === "right" && listed[0].joint === "ankle"
+      && listed[0].motion === "dorsiflexion" && listed[0].degrees === 10,
+    JSON.stringify(listed));
+
+  const linked = romOf("Flexion of the right knee, 120 degrees");
+  check("…and after the linker form as well",
+    linked.length === 1 && linked[0].side === "right" && linked[0].joint === "knee" && linked[0].degrees === 120,
+    JSON.stringify(linked));
+
+  // the rest of what a reading carries has to survive the comma too
+  const trail = romOf("Knee extension, 5 degrees, on the right");
+  check("a trailing side is still read past the value's comma",
+    trail.length === 1 && trail[0].side === "right" && trail[0].degrees === 5, JSON.stringify(trail));
+
+  const bilat = romOf("Knee flexion, 130 degrees bilaterally");
+  check("'bilaterally' still splits a comma form into both sides",
+    bilat.length === 2 && bilat.every((x) => x.degrees === 130)
+      && bilat.map((x) => x.side).sort().join() === "left,right",
+    JSON.stringify(bilat));
+
+  const arom = romOf("AROM shoulder flexion, 120 degrees");
+  check("the active/passive qualifier still governs a comma form",
+    arom.length === 1 && arom[0].quality === "active", JSON.stringify(arom));
+
+  const tall = romOf("Knee flexion, 200 degrees");
+  check("an impossible angle is still rejected past a comma",
+    tall.length === 0, JSON.stringify(tall));
+}
+
+/* The comma must not become a licence to reach into the NEXT clause. A comma
+   between a motion and its own value is punctuation; a comma between two
+   clauses is a boundary, and a number on the far side of it belongs to
+   whatever the speaker turned to. */
+{
+  const romOf = (t) => parseUtterance(t).measurements.rom;
+
+  check("a clause that changes subject at the comma keeps its own number",
+    romOf("shoulder flexion is fine, knee is 90 degrees").length === 0,
+    JSON.stringify(romOf("shoulder flexion is fine, knee is 90 degrees")));
+
+  /* MMT_RE joins the words before the grade with \\s+ the same way ROM_FILLER
+     did, so this grade is not read as a muscle grade either — a separate gap,
+     left alone here. What matters for ROM is that the 5 is not filed as an
+     angle. */
+  const grade = parseUtterance("knee flexion is good, 5 out of 5");
+  check("a muscle grade after a comma is not an angle",
+    grade.measurements.rom.length === 0, JSON.stringify(grade.measurements.rom));
+
+  const both = romOf("Right knee flexion is 130 degrees, extension is 5 degrees");
+  check("the run form is unchanged by all of this",
+    both.length === 2 && both[1].motion === "extension" && both[1].degrees === 5
+      && both.every((x) => x.side === "right" && x.joint === "knee"),
+    JSON.stringify(both));
+
+  /* The unitless pass deliberately does NOT cross a comma: with the unit gone
+     there is nothing to say the number is an angle, and "3 sets of 10" sits in
+     exactly the same shape. Inventing an angle is worse than dropping one. */
+  const reps = romOf("we worked on knee flexion, 3 sets of 10 reps, and shoulder flexion 120 degrees");
+  check("a rep count after a comma does not become an angle",
+    reps.length === 1 && reps[0].joint === "shoulder" && reps[0].degrees === 120, JSON.stringify(reps));
+
+  /* "er" is both an abbreviation and a hesitation. Reading the hesitation
+     would file the right number under a motion nobody measured, so the
+     abbreviation does not reach across a comma for its value. */
+  check("a hesitation before the value is not read as external rotation",
+    romOf("Right shoulder flexion is, er, 130 degrees").length === 0,
+    JSON.stringify(romOf("Right shoulder flexion is, er, 130 degrees")));
+  const er = romOf("right shoulder abduction 90 degrees, ER 45");
+  check("…and the spoken abbreviation still reads when the value follows it",
+    er.length === 2 && er[1].motion === "external rotation" && er[1].degrees === 45, JSON.stringify(er));
+}
+
 /* MMT: the side is the point of measuring it, and the muscle is often named
    after the grade in Taglish word order. */
 {
