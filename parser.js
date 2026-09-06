@@ -245,7 +245,9 @@
      clinic, and neither was recognised, so the rating was simply lost. They
      are safe to add HERE specifically because this pattern requires the
      "<number> out-of ten" shape around them. */
-  const RATING_RE = /\b(\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|sero|isa|dalawa|tatlo|apat|lima|anim|pito|walo|siyam|sampu|usa|duha|tulo|upat|unom|napulo|uno|dos|tres|kwatro|kuwatro|singko|sais|siyete|otso|nuwebe|nwebe|diyes)\s*(?:\/|out of|over|sa|sa\s+gawas\s+sa)\s*(?:10|ten|sampu|napulo|diyes)\b/i;
+  const NUM_ALT = "\\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|sero|isa|dalawa|tatlo|apat|lima|anim|pito|walo|siyam|sampu|usa|duha|tulo|upat|unom|napulo|uno|dos|tres|kwatro|kuwatro|singko|sais|siyete|otso|nuwebe|nwebe|diyes";
+  const RATING_RE = new RegExp(
+    `\\b(${NUM_ALT})\\s*(?:\\/|out of|over|sa|sa\\s+gawas\\s+sa)\\s*(?:10|ten|sampu|napulo|diyes)\\b`, "i");
   const NUM_WORDS = {
     zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
     // Tagalog
@@ -303,6 +305,133 @@
       out.push({ score, index: m.index, length: m[0].length });
     }
     return out;
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  A bare number answering a scale question
+   *
+   *    "Gaano po kasakit, kung isa hanggang sampu?"  —  "Mga pito po."
+   *
+   *  The scale is in the clinician's turn and the answer carries only the
+   *  number, so RATING_RE — which wants the scale attached to the number
+   *  ("pito sa sampu", "7/10") — never sees a rating at all. It shows up most
+   *  in Tagalog and Cebuano because that is the natural way to answer, but it
+   *  is not a numerals problem: "about a seven" is lost in English in exactly
+   *  the same way, and a transcript at 3.4% word error charted no pain score.
+   *
+   *  A bare number is the most ambiguous token in a clinical transcript, so
+   *  this is deliberately narrow. A scale has to have been named out loud; it
+   *  stays open for two turns and no longer; the value has to be 0-10; and the
+   *  clause the number sits in has to be nothing BUT the answer — only hedges
+   *  and particles ("mga", "about a", "po", "siguro") may stand around it.
+   *  That last rule is what keeps everything else out: "flexion 120", "four
+   *  out of five", "for 3 weeks", "my 5th visit" and "I lifted 5 boxes" are
+   *  all clauses that say something besides the number.
+   * ---------------------------------------------------------------- */
+
+  const SCALE_QUESTION_RE = new RegExp(
+    "\\b(?:scale\\s+(?:of|from|ng|sa)\\s+)?(?:0|1|zero|sero|one|isa|usa|uno)\\s*"
+    + "(?:to|hanggang\\s+sa|hanggang|hangtod\\s+sa|hangtod|hangtud|hantod|ngadto\\s+sa|-|–|—)\\s*"
+    + "(?:10|ten|sampu|napulo|diyes)\\b"
+    // "walk one to ten minutes" sets no scale — a unit after it means counting
+    + "(?!\\s*(?:minutes?|mins?|seconds?|secs?|hours?|oras|days?|araw|adlaw|weeks?|linggo|semana"
+    + "|months?|buwan|bulan|years?|taon|tuig|reps?|sets?|times?|beses|degrees?|kilos?|kg|lbs?"
+    + "|pounds?|percent|%))"
+    + "|\\bscale\\s+of\\s+(?:10|ten|sampu|napulo|diyes)\\b", "i");
+
+  /* The only words allowed to stand between a scale question and its answer,
+     or to trail the answer. Anything else in the clause means the number is
+     doing a different job, and the reading is dropped rather than guessed. */
+  const SCALE_FILLER = new Set((
+    "a an the of is was be it its it's that's thats i i'm im i'd id say would think guess "
+    + "about around roughly approximately maybe probably possibly perhaps like well ok okay okey "
+    + "um umm uhm uh er eh ah oh ay yes yeah yep sige opo oo "
+    + "siguro mga parang baka medyo tingin feeling akala pakiramdam ko sa kay ay po ho nga ba lang na pa "
+    + "yata ata sir maam ma'am doc dok doktor doktora "
+    + "basin tingali murag kuan ano"
+  ).split(/\s+/));
+
+  const fillerOnly = (s) =>
+    String(s || "").toLowerCase().split(/[^a-z0-9'’]+/i).filter(Boolean)
+      .every((w) => SCALE_FILLER.has(w.replace(/’/g, "'")));
+
+  // where one spoken answer ends and the next thought begins
+  const ANSWER_BREAK_RE = /[.,;:!?—–]|\b(?:but|however|and|then|so|because|pero|kaso|kasi|tapos|apan|ug)\b/gi;
+
+  /** The span of the clause `idx` sits in. */
+  function answerClause(text, idx) {
+    const re = new RegExp(ANSWER_BREAK_RE.source, "gi");
+    let start = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      const end = m.index + m[0].length;
+      if (end <= idx) start = end;
+      else if (m.index >= idx) return [start, m.index];
+    }
+    return [start, text.length];
+  }
+
+  /** A bare number offered as a rating — either after a scale question in
+      this same line, or anywhere in a line that answers one asked a moment
+      ago (`scaleOpen`). Returns { score, index, length } or null. */
+  function findBareRating(text, scaleOpen) {
+    const q = SCALE_QUESTION_RE.exec(text);
+    if (!q && !scaleOpen) return null;
+    // nothing before the question can be its answer
+    const from = q ? q.index + q[0].length : 0;
+    const re = new RegExp(`\\b(${NUM_ALT})\\b`, "gi");
+    re.lastIndex = from;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const score = NUM_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
+      if (!(score >= 0 && score <= 10)) continue;
+      const [cs, ce] = answerClause(text, m.index);
+      if (!fillerOnly(text.slice(Math.max(cs, from), m.index))) continue;
+      if (!fillerOnly(text.slice(m.index + m[0].length, ce))) continue;
+      if (NEG_TAIL_RE.test(text.slice(Math.max(0, m.index - 30), m.index))) continue;
+      return { score, index: m.index, length: m[0].length };
+    }
+    return null;
+  }
+
+  /* Two turns of grace. The answer is usually the very next turn, but an
+     "opo" or the clinician asking again sits in between often enough. Longer
+     than that and a number said minutes later would be read as an answer to a
+     question nobody remembers asking. */
+  const SCALE_GRACE_TURNS = 2;
+
+  /** The one region a scale question is about — "Gaano po kasakit ang KANANG
+      BALIKAT ninyo, kung isa hanggang sampu?" The answer to that question is
+      about the shoulder even though the answer says only a number.
+
+      Exactly one region, or none. A question that sweeps two ("balikat o
+      leeg?") leaves the answer where it was: a score on the wrong body part
+      is worse than a score on no body part at all. */
+  function soleRegion(text) {
+    const named = [];
+    for (const mn of parseUtterance(text).mentions) {
+      const key = `${mn.partName}|${mn.side || ""}`;
+      if (!named.some((x) => x.key === key)) named.push({ key, partName: mn.partName, side: mn.side });
+    }
+    return named.length === 1 ? { partName: named[0].partName, side: named[0].side } : null;
+  }
+
+  /** Carries the open-scale state across a run of turns — parseUtterance sees
+      one utterance at a time and cannot know what was just asked. */
+  function scaleTracker() {
+    let left = 0;
+    let region = null;              // what the question was about, if it said
+    const close = () => { left = 0; region = null; };
+    return {
+      open: () => left > 0,
+      region: () => (left > 0 ? region : null),
+      /** Feed every turn in order, once it has been read. */
+      turn(text) {
+        // a rating that arrives closes the scale; nothing else answers it
+        if (findRating(text) || (left > 0 && findBareRating(text, true))) close();
+        else if (SCALE_QUESTION_RE.test(text)) { left = SCALE_GRACE_TURNS; region = soleRegion(text); }
+        else if (left > 0 && --left === 0) close();
+      },
+    };
   }
 
   /* ---------------------------------------------------------------- *
@@ -742,7 +871,7 @@
     return out.sort((a, b) => a.start - b.start);
   }
 
-  function extractMeasurements(text, mentions) {
+  function extractMeasurements(text, mentions, opts) {
     const rom = [];
     const mmt = [];
     const special = [];
@@ -931,7 +1060,16 @@
        my shoulder is an 8 out of 10", "left is a seven out of ten, right is a
        four". Reading only the first silently dropped the second complaint's
        severity, which is the number the whole note is built around. */
-    for (const rating of findRatings(text)) {
+    const ratings = findRatings(text);
+    /* The bare answer to a scale question — "Mga pito po." Only when this line
+       carries no reading of its own: a line already holding degrees, a grade
+       or a special test is a measurement run, and a run is never mined for a
+       pain score. */
+    if (!ratings.length && !rom.length && !mmt.length && !special.length) {
+      const bare = findBareRating(text, !!(opts && opts.scaleOpen));
+      if (bare) ratings.push(bare);
+    }
+    for (const rating of ratings) {
     if (!NEG_TAIL_RE.test(text.slice(Math.max(0, rating.index - 30), rating.index))) {
       // attach the rating to the NEAREST non-denied mention, not just the
       // first — "no pain in the neck, but the shoulder is a 7/10" — and
@@ -968,7 +1106,14 @@
         const spoken = lead ? sideWord(lead[1]) : null;
         if (spoken && spoken !== "both") side = spoken;
       }
-      const where = best ? `${side ? side + " " : ""}${best.partName.toLowerCase()}` : null;
+      let where = best ? `${side ? side + " " : ""}${best.partName.toLowerCase()}` : null;
+      /* The answer to a scale question names no region because the QUESTION
+         named it: "Gaano kasakit ang kanang balikat…" — "Mga pito po." Only
+         where this line named none of its own, so a patient who answers about
+         somewhere else ("yung likod naman, siyam sa sampu") is taken at their
+         word rather than filed under the shoulder that was asked about. */
+      const asked = !where && opts && opts.scaleRegion;
+      if (asked) where = `${asked.side ? asked.side + " " : ""}${String(asked.partName).toLowerCase()}`;
       if (!pain.some((p) => p.score === rating.score && p.location === where)) {
         pain.push({ score: rating.score, location: where });
       }
@@ -1281,7 +1426,7 @@
    *    so nothing a physical therapist would care about gets dropped.
    *  - measurements: {rom, mmt, special, pain} found in the utterance
    */
-  function parseUtterance(rawText) {
+  function parseUtterance(rawText, opts) {
     const text = String(rawText || "").trim().replace(/\s+/g, " ");
     const mentions = [];
     if (!text) return { text, mentions, loose: null, notMine: [], measurements: { rom: [], mmt: [], special: [], pain: [] } };
@@ -1388,7 +1533,7 @@
        which is what a loose signal does — would file one person's complaint
        under another's body part. */
     if (!mentions.length && notMine.length) {
-      return { text, mentions, loose: null, notMine, measurements: extractMeasurements(text, mentions) };
+      return { text, mentions, loose: null, notMine, measurements: extractMeasurements(text, mentions, opts) };
     }
     if (!mentions.length) {
       const anchor = firstSignal(text);
@@ -1409,7 +1554,7 @@
       }
     }
 
-    const measurements = extractMeasurements(text, mentions);
+    const measurements = extractMeasurements(text, mentions, opts);
     return { text, mentions, loose, notMine, measurements };
   }
 
@@ -1712,8 +1857,11 @@
    * Judge one raw transcript line.
    * Returns { keep, reason } — reason is why it would be dropped, phrased for
    * a therapist reading the review screen.
+   * `opts.scaleOpen` says the clinician has just asked for a 0-10 rating, so
+   * a line that is only a number — "Mga pito po" — is the answer to it and
+   * not the three empty words it looks like on its own.
    */
-  function turnSubstance(raw) {
+  function turnSubstance(raw, opts) {
     const text = String(raw || "").trim();
     if (!text) return { keep: false, reason: "empty line" };
     if (FILLER_RE.test(text)) return { keep: false, reason: "acknowledgement only — nothing was reported" };
@@ -1733,7 +1881,7 @@
          of pain" is the fragment "how is your", which reads as a clinician cue
          and is nothing at all. */
       if (rest) {
-        const rr = parseUtterance(rest);
+        const rr = parseUtterance(rest, opts);
         const mm = rr.measurements;
         if (mm.rom.length || mm.mmt.length || mm.special.length || mm.pain.length
           || rr.loose || rr.mentions.some((m) => !m.bare)) return { keep: true, reason: "" };
@@ -1741,7 +1889,7 @@
       return { keep: false, reason: "an example, not something the patient reported" };
     }
 
-    const r = parseUtterance(text);
+    const r = parseUtterance(text, opts);
     const ms = r.measurements;
     if (ms.rom.length || ms.mmt.length || ms.special.length || ms.pain.length) return { keep: true, reason: "" };
     if (META_RE.test(text)) return { keep: false, reason: "about the app, not the patient" };
@@ -2034,6 +2182,7 @@
     const illustrative = new Map(); // key -> the example sentence that produced it
     const unreported = new Map();   // key -> named, but never by the patient
     let lastKey = null;
+    const scale = scaleTracker();   // a 0-10 question waiting on its answer
 
     (utterances || []).forEach((raw) => {
       /* Everything below judges the CLEANED sentence. Reading the raw one
@@ -2044,7 +2193,13 @@
       if (!text) return;
       const speaker = guessSpeaker(text);
       const turnIndex = dialogue.length;
-      const substance = turnSubstance(text);
+      /* What was ASKED decides what an answer means: "Mga pito po" is a pain
+         rating only because the turn before it named a scale. The tracker is
+         fed every turn, including the ones about to be dropped — a terse
+         "One to ten?" earns no place in the note and is still the only reason
+         the number that follows can be read. */
+      const substance = turnSubstance(text, { scaleOpen: scale.open(), scaleRegion: scale.region() });
+      scale.turn(text);
       dialogue.push({ speaker, text, keep: substance.keep, dropReason: substance.reason });
 
       if (TREATMENT_RE.test(text)) treatmentSentences.push(text);
@@ -2190,7 +2345,7 @@
       bare: f.bare, corrected: corrections.has(f.key),
     }));
 
-    const measurements = aggregateMeasurements(dialogue.filter((d) => d.keep).map((d) => d.text));
+    const measurements = aggregateMeasurements(dialogue);
 
     /* A turn that was only ever about a region the patient took back — or
        never really reported — must not survive in the Subjective either. */
@@ -2224,23 +2379,43 @@
     return { ...out, grounding: groundingReport(out, (utterances || []).map(String)) };
   }
 
-  // run measurement extraction across every turn and de-duplicate
+  /* Run measurement extraction across every turn and de-duplicate.
+
+     A turn may arrive as a plain string or as a {text, keep} entry from the
+     cleaned dialogue. A dropped turn is still READ, and only its findings are
+     thrown away: "One to ten?" is too terse to earn a place in the note, and
+     it is the only thing that makes the bare number in the next turn a pain
+     rating rather than a stray number. */
   function aggregateMeasurements(texts) {
     const out = { rom: [], mmt: [], special: [], pain: [] };
     const seen = new Set();
-    for (const t of texts) {
-      /* Extract WITH the sentence's body-part mentions. Without them a pain
-         rating has nowhere to live — "my right shoulder is a seven out of
-         ten" came back as an unlocated 7/10, which is both a worse record
-         and a second row in the table, because the live pass had already
-         filed the located one and the two no longer looked like duplicates. */
-      const m = parseUtterance(t).measurements;
-      for (const kind of ["rom", "mmt", "special", "pain"]) {
-        for (const item of m[kind]) {
-          const sig = kind + ":" + JSON.stringify(item);
-          if (!seen.has(sig)) { seen.add(sig); out[kind].push(item); }
+    const scale = scaleTracker();
+    for (const item of texts || []) {
+      const plain = typeof item === "string";
+      const t = plain ? item : String((item && item.text) || "");
+      if (plain || !item || item.keep !== false) {
+        /* Extract WITH the sentence's body-part mentions. Without them a pain
+           rating has nowhere to live — "my right shoulder is a seven out of
+           ten" came back as an unlocated 7/10, which is both a worse record
+           and a second row in the table, because the live pass had already
+           filed the located one and the two no longer looked like duplicates. */
+        const m = parseUtterance(t, { scaleOpen: scale.open(), scaleRegion: scale.region() }).measurements;
+        for (const kind of ["rom", "mmt", "special", "pain"]) {
+          for (const found of m[kind]) {
+            const sig = kind + ":" + JSON.stringify(found);
+            if (!seen.has(sig)) { seen.add(sig); out[kind].push(found); }
+          }
         }
       }
+      scale.turn(t);
+    }
+    /* An answered scale files a score with no region, because the answer turn
+       is only a number — the body part was named in the question. When the
+       same score was also recorded against a region, the two are one report
+       and the unlocated row is the poorer copy of it. */
+    if (out.pain.length > 1) {
+      const located = new Set(out.pain.filter((x) => x.location).map((x) => x.score));
+      out.pain = out.pain.filter((x) => x.location || !located.has(x.score));
     }
     return out;
   }

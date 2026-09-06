@@ -352,7 +352,7 @@
 
     const base = {
       dialogue, findings, corrections, source,
-      measurements: parser.aggregateMeasurements(dialogue.filter((d) => d.keep !== false).map((d) => d.text)),
+      measurements: parser.aggregateMeasurements(dialogue),
       subjective: String(parsed.subjective || "").trim(),
       treatment: String(parsed.treatment || "").trim(),
       /* Optional in the schema, so a model that returns none of them must
