@@ -41,10 +41,11 @@ floor, `--gap 500` for the pause between speakers.
 ## What it costs
 
 The ElevenLabs half is **cached on disk by content hash**, so only the first run
-pays for speech; the scripts don't change between runs. The Google half is paid
-every time — about 2½ minutes of audio across the six scripts, which is roughly
-**$0.04 of Speech-to-Text** plus six Vertex refine calls. Every run prints the
-bill, and `--say-only` costs nothing at Google at all.
+pays for speech; the scripts don't change between runs. Generating all fifteen
+from scratch is about **5,100 characters**. The Google half is paid every time —
+roughly 7 minutes of audio, about **$0.11 of Speech-to-Text** plus fifteen
+Vertex refine calls. Every run prints the bill, and `--say-only` costs nothing
+at Google at all.
 
 ## The scripts
 
@@ -66,6 +67,23 @@ Six, in `scripts.js`, each aimed at something the codebase already worries about
 - **`shoulder/tagalog-heavy`** — near-monolingual Tagalog, no English to lean on.
 - **`knee/cebuano-heavy`** — near-monolingual Cebuano, same idea. See the caveat
   below: this one measures ElevenLabs as much as it measures TheraChart.
+- **`visit/long-full-session`** — a 90-second visit, so it is cut into two
+  chunks. The path that transcribes each piece separately and stitches them back
+  — leaving a marked hole when one fails, rather than welding two unrelated
+  sentences together — had never been exercised by anything.
+- **`numbers/confusables`** — thirty/thirteen, fifteen/fifty, forty/fourteen,
+  sixty/sixteen, in the places a chart uses them.
+- **`multi-region/shoulder-and-back`** — two complaints must stay two. Every
+  other script has one region, which is the easy case.
+- **`relay/third-person`** — a note dictated entirely as "patient reports…",
+  which is how documentation is taught. `refineSystem` has a paragraph on it.
+- **`precautions/post-op`** — a weight-bearing limit and an anticoagulant. The
+  one section where an omission reads as clearance.
+- **`smalltalk/nothing-clinical`** — nothing clinical is said. An empty findings
+  array is the correct answer, and the microphone is open through the small talk
+  at the start of every appointment.
+- **`bilateral/both-knees`** — "pareho" must pin both sides; half a bilateral
+  finding reads as a unilateral problem.
 
 ## Can ElevenLabs actually speak Tagalog and Cebuano?
 
@@ -118,9 +136,26 @@ it is not a clinic.
 
 **Some assertions are variance-dependent, not stable.** `ankle/cebuano`'s ROM
 check passes or fails depending on whether the refine pass happens to write
-"limited, about 10 degrees" with a comma — a comma between the motion and the
-value silently drops the reading (parser.js `ROM_FILLER`). Until that is fixed,
-read a single run of that assertion as a coin flip, not as a verdict.
+"limited, about 10 degrees" with a comma. Until that is fixed, read a single run
+of it as a coin flip, not a verdict.
+
+### The open ROM-extraction bug, as currently understood
+
+`ROM_FILLER` in parser.js joins filler words with `\s+`, so **anything between
+the motion and the value that is not on its short allow-list drops the reading
+entirely** — silently, with nothing on screen to say a number was spoken:
+
+```
+right shoulder flexion is 60 degrees        → found
+shoulder flexion on the right is 60 degrees → LOST   (a side, stated after the motion)
+knee flexion, 90 degrees                    → LOST   (a comma)
+knee flexion today is 90 degrees            → LOST   (a time word)
+```
+
+It was first found as "a comma bug" via `ankle/cebuano`; `numbers/confusables`
+then caught the same failure with no comma in sight. Both `ankle/cebuano` and
+the shoulder assertion in `numbers/confusables` are really measuring this one
+defect.
 
 **It does not exercise the browser recorder at all.** The voice gate, the idle
 backstop, the per-visit ceiling and the chunk-at-a-pause logic all live in

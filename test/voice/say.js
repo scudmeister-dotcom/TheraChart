@@ -147,29 +147,58 @@ async function speak({ key, text, voiceId, modelId, settings }) {
 
 /* ---------- a whole script, as one recording ---------- */
 
-/** Speak every turn and stitch them into ONE WAV, the way one chunk of a real
-    recording arrives: two voices, a beat of room between them, no edits.
+/* How long one posted chunk may be.
 
-    Turn gaps matter. The recorder closes a chunk at a PAUSE (see recorderEngine),
-    and the refine pass has to find the speaker boundaries itself from a single
-    stitched transcript — so a gap that is realistic is part of the test, not
-    presentation. */
+   Google's synchronous recognize refuses audio past 60 seconds, which is why
+   recorderEngine in app.js carries a hardCap of 58s and starts looking for a
+   pause at ~55s. A harness that ignored that could only ever test snippets: a
+   real visit is minutes long, and the path that stitches its chunks back into
+   one transcript — the path that leaves a marked hole when a chunk fails — was
+   the part no test had ever reached.
+
+   Cut at a TURN GAP, never mid-word, for the same reason app.js does: each
+   chunk is transcribed as an independent request, so a word split across a
+   boundary is mangled in both halves and the model recovers neither. */
+const CHUNK_MAX_SECONDS = 50;
+
+/** Speak every turn and return the recording as one or more WAV chunks, the
+    way a real recording arrives: two voices, a beat of room between them, no
+    edits, and a cut at a pause whenever it has run long enough.
+
+    Turn gaps matter. The refine pass has to find the speaker boundaries itself
+    from a single stitched transcript, so a gap that is realistic is part of the
+    test rather than presentation. */
 async function speakScript(script, opts) {
   const { key, voices, modelId, settings, gapMs = 500, leadMs = 400, roomRms = 0.004, level = 1 } = opts;
-  const parts = [silence(leadMs)];
-  let cachedAll = true;
+  const maxBytes = CHUNK_MAX_SECONDS * RATE * 2;
+
+  const chunks = [];
+  let cur = [silence(leadMs)], curBytes = 0;
+  let cachedAll = true, totalBytes = 0;
+
+  const close = () => {
+    if (!curBytes) return;
+    chunks.push(Buffer.concat(cur));
+    cur = []; curBytes = 0;
+  };
+
   for (const turn of script.turns) {
     const voiceId = voices[turn.who] || voices.clinician;
     const { pcm, cached } = await speak({ key, text: turn.text, voiceId, modelId, settings });
     cachedAll = cachedAll && cached;
-    parts.push(pcm, silence(gapMs));
+    // close BEFORE adding, so the cut lands in the gap that precedes this turn
+    if (curBytes && curBytes + pcm.length > maxBytes) close();
+    cur.push(pcm, silence(gapMs));
+    curBytes += pcm.length + silence(gapMs).length;
+    totalBytes += pcm.length + silence(gapMs).length;
   }
-  const body = gain(Buffer.concat(parts), level);
-  const pcm = mixNoise(body, roomRms);
+  close();
+
+  const wavs = chunks.map((c) => toWav(mixNoise(gain(c, level), roomRms)));
   return {
-    wav: toWav(pcm),
-    seconds: pcm.length / 2 / RATE,
-    peak: peak(pcm),
+    wavs,
+    seconds: totalBytes / 2 / RATE,
+    peak: Math.max(...chunks.map((c) => peak(c))),
     cached: cachedAll,
   };
 }

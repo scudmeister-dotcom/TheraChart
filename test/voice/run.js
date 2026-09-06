@@ -200,13 +200,14 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
     process.stdout.write(`  speaking ${s.id}… `);
     const take = await say.speakScript(s, { key, voices, modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
     takes.push({ script: s, ...take });
-    console.log(`${take.seconds.toFixed(1)}s${take.cached ? " (cached)" : ""} peak ${take.peak.toFixed(2)}`);
+    console.log(`${take.seconds.toFixed(1)}s${take.wavs.length > 1 ? ` in ${take.wavs.length} chunks` : ""}${take.cached ? " (cached)" : ""} peak ${take.peak.toFixed(2)}`);
     if (take.peak < 0.05) console.log(`    ⚠ that take is almost silent — check the voice id and --level`);
   }
 
   if (KEEP_WAV) {
     fs.mkdirSync(KEEP_WAV, { recursive: true });
-    for (const t of takes) fs.writeFileSync(path.join(KEEP_WAV, `${t.script.id.replace(/\//g, "-")}.wav`), t.wav);
+    for (const t of takes) t.wavs.forEach((w, i) => fs.writeFileSync(
+      path.join(KEEP_WAV, `${t.script.id.replace(/\//g, "-")}${t.wavs.length > 1 ? `-${i + 1}` : ""}.wav`), w));
     console.log(`\n  WAVs written to ${KEEP_WAV}`);
   }
 
@@ -247,22 +248,40 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
       const sc = t.script;
       process.stdout.write(`  ${sc.id}… `);
 
-      /* Exactly the request processRecording makes in app.js: raw WAV body,
-         the chosen language code, chirp2, bearer token. */
-      const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" },
-        body: t.wav,
-      });
-      const d = await r.json().catch(() => ({}));
-      if (typeof d.billedSeconds === "number") billedSeconds += d.billedSeconds;
-      if (!r.ok) {
-        console.log(`STT FAILED — ${d.error || `HTTP ${r.status}`}`);
-        results.push({ id: sc.id, why: sc.why, sttError: d.error || `HTTP ${r.status}`, earned: 0, possible: sc.expect.reduce((n, a) => n + a.weight, 0), failed: [], heardFailed: [] });
+      /* Exactly the requests processRecording makes in app.js: one raw WAV
+         body per chunk, the chosen language code, chirp2, bearer token — sent
+         together and reassembled in order.
+
+         The stitching is copied deliberately, marker and all. A chunk that
+         fails leaves a HOLE, and joining the survivors with a space splices
+         the sentence before a lost fifty seconds onto the one after it, so
+         "…denies numbness" and "…in the right shoulder" read in the record as
+         one continuous statement nobody made. That is a property of the
+         product worth testing, not an implementation detail worth skipping. */
+      const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
+      const parts = await Promise.all(t.wavs.map(async (wav) => {
+        const r = await fetch(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" },
+          body: wav,
+        });
+        const d = await r.json().catch(() => ({}));
+        // billed outside the ok branch: a chunk that failed AT Google is still billed
+        if (typeof d.billedSeconds === "number") billedSeconds += d.billedSeconds;
+        return r.ok ? { text: d.text || "", model: d.model } : { error: d.error || `HTTP ${r.status}` };
+      }));
+
+      const lost = parts.filter((p) => p.error);
+      if (lost.length === parts.length) {
+        console.log(`STT FAILED — ${lost[0].error}`);
+        results.push({ id: sc.id, why: sc.why, sttError: lost[0].error, chunks: t.wavs.length,
+          earned: 0, possible: sc.expect.reduce((n, a) => n + a.weight, 0), failed: [], heardFailed: [] });
         continue;
       }
-
-      const heard = d.text || "";
+      const heard = parts
+        .map((p) => (p.error ? AUDIO_GAP_MARK : p.text))
+        .filter((x, i) => x !== AUDIO_GAP_MARK || i === 0 || !parts[i - 1].error)
+        .join(" ").replace(/\s+/g, " ").trim();
       const w = wer(spokenText(sc), heard);
       const heardFailed = [];
       if (sc.heard.wer != null && w.wer > sc.heard.wer) heardFailed.push(`word error ${pct(w.wer)} over the ${pct(sc.heard.wer)} ceiling`);
@@ -302,10 +321,11 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
       console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · note ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
-        id: sc.id, why: sc.why, lang: sc.lang,
+        id: sc.id, why: sc.why, lang: sc.lang, chunks: t.wavs.length,
         wer: w.wer, refWords: w.ref, edits: w.edits,
         spoken: spokenText(sc), heard,
-        heardFailed, refineError, fellBack, model: d.model,
+        heardFailed, refineError, fellBack,
+        model: (parts.find((x) => x.model) || {}).model,
         graded, earned, possible,
         failed: graded.filter((g) => !g.skipped && !g.ok).map((g) => ({ name: g.name, detail: g.detail })),
         /* The whole refine answer, for --json only. It is what you actually
@@ -336,7 +356,7 @@ const bar = (x) => { const n = x >= 1 ? 20 : Math.max(0, Math.floor(x * 20)); re
       for (const r of results) {
         if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ! STT failed: ${r.sttError}`); continue; }
         const p = r.possible ? r.earned / r.possible : 0;
-        console.log(`  ${NO_REFINE ? "░".repeat(20) : bar(p)} ${(NO_REFINE ? "" : pct(p)).padStart(6)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
+        console.log(`  ${NO_REFINE ? "░".repeat(20) : bar(p)} ${(NO_REFINE ? "" : pct(p)).padStart(6)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
         console.log(`  ${" ".repeat(20)}         ${r.why}`);
         for (const h of r.heardFailed) console.log(`  ${" ".repeat(20)}         ✗ heard: ${h}`);
         for (const f of r.failed) console.log(`  ${" ".repeat(20)}         ✗ note: ${f.name}${f.detail ? `\n  ${" ".repeat(20)}             ${f.detail}` : ""}`);

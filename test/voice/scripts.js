@@ -353,6 +353,300 @@ const SCRIPTS = [
         detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
     ],
   },
+
+  /* 9. A whole visit, long enough to be cut in two.
+
+     Every script above is one chunk. A real appointment is not, and the path
+     that splits a recording, transcribes each piece as an independent request
+     and stitches the results back into one transcript had never been exercised
+     by anything — including the case where a chunk fails and leaves a marked
+     hole rather than silently welding two unrelated sentences together.
+
+     Long also changes the note problem, not just the audio one: the model has
+     to hold a whole session in view and still put each fact in the right
+     section, rather than summarising four tidy sentences. */
+  {
+    id: "visit/long-full-session",
+    lang: "fil-PH",
+    why: "a full-length visit — the multi-chunk stitch, and a note built from minutes rather than seconds",
+    turns: [
+      { who: "clinician", text: "Good morning po. Let us start with how the week went." },
+      { who: "patient", text: "Medyo mas okay na po, doc. Pero masakit pa rin ang kanang balikat ko kapag umaabot ako sa taas." },
+      { who: "clinician", text: "How would you rate it now, out of ten?" },
+      { who: "patient", text: "Mga lima na lang po. Dati po kasi pito, kaya medyo bumuti." },
+      { who: "clinician", text: "That is good progress. Any night pain still?" },
+      { who: "patient", text: "Konti na lang po. Nakakatulog na po ako ngayon, hindi na po ako nagigising." },
+      { who: "clinician", text: "Any numbness or tingling going down the arm?" },
+      { who: "patient", text: "Wala naman po. Sakit lang po talaga sa balikat." },
+      { who: "clinician", text: "Let me measure. Right shoulder active flexion is one hundred forty degrees today, up from one twenty last week." },
+      { who: "clinician", text: "Abduction is one hundred thirty. External rotation is fifty five degrees." },
+      { who: "clinician", text: "Rotator cuff MMT is four out of five, and that is better than the three plus we had at evaluation." },
+      { who: "clinician", text: "Neer is still mildly positive but Hawkins is negative now." },
+      { who: "patient", text: "Ibig sabihin po ba gumagaling na?" },
+      { who: "clinician", text: "Yes. The impingement signs are settling and your range is close to normal." },
+      { who: "clinician", text: "Today we did scaption to ninety degrees, three sets of ten, and prone rows with a yellow band." },
+      { who: "clinician", text: "We also did soft tissue work to the upper trapezius and posterior cuff." },
+      { who: "clinician", text: "Continue the home programme twice daily and add the doorway stretch." },
+      { who: "clinician", text: "Plan is to continue twice weekly for two more weeks, then reassess." },
+    ],
+    heard: {
+      wer: 0.20,
+      must: ["shoulder", "abduction"],
+    },
+    expect: [
+      { name: "the right shoulder is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Shoulder", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no left shoulder invented across a long visit", weight: 3,
+        test: (r) => !hasFinding(r, "Shoulder", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the stitch did not lose the second half — abduction survived", weight: 3,
+        test: (r) => !!rom(r, "abduction"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+      { name: "flexion from the first half survived too", weight: 2,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+      { name: "the CURRENT 5/10 is recorded, not only the historical 7", weight: 2,
+        test: (r) => painScores(r).includes(5),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "the denial is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial })))}` },
+      { name: "treatment done this visit reached the Treatment section", weight: 2,
+        test: (r) => /scaption|row|soft tissue|band/.test(norm(r.treatment)),
+        detail: (r) => `treatment: ${norm(r.treatment).slice(0, 140)}` },
+    ],
+  },
+
+  /* 10. The number pairs that sound alike.
+
+     numbers/dense proves a clean reading survives. This is the other half: the
+     pairs English speakers mishear from each other, said in the places a chart
+     actually uses them. Thirteen for thirty is not a typo in a note, it is a
+     different knee. */
+  {
+    id: "numbers/confusables",
+    lang: "fil-PH",
+    why: "thirteen/thirty, fifteen/fifty, forty/fourteen — mishearings that leave the sentence intact",
+    turns: [
+      { who: "clinician", text: "Let us record today's measurements for the left knee." },
+      { who: "clinician", text: "Left knee flexion is thirty degrees today, up from before." },
+      { who: "clinician", text: "Left knee extension is fifteen degrees." },
+      { who: "clinician", text: "Hip abduction is forty degrees on that side." },
+      { who: "clinician", text: "Shoulder flexion on the right is sixty degrees." },
+      { who: "patient", text: "The pain is four out of ten today, doc." },
+      { who: "clinician", text: "Good. We will measure again in two weeks." },
+    ],
+    heard: {
+      /* Deliberately looser than numbers/dense. Confusable pairs are the whole
+         point of this script, so a wrong digit must fail the ASSERTIONS below,
+         where it is unambiguous — not the word error ceiling, where a slip on
+         "today" scores the same as thirteen for thirty. */
+      wer: 0.25,
+      must: ["knee", "flexion", "extension"],
+    },
+    expect: [
+      { name: "flexion is 30, not 13", weight: 3,
+        test: (r) => { const m = rom(r, "flexion"); return !!m && m.degrees === 30; },
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+      { name: "extension is 15, not 50", weight: 3,
+        test: (r) => { const m = rom(r, "extension"); return !!m && m.degrees === 15; },
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+      { name: "abduction is 40, not 14", weight: 3,
+        test: (r) => { const m = rom(r, "abduction"); return !!m && m.degrees === 40; },
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+      /* This one currently fails for a reason that has nothing to do with
+         confusable digits: "shoulder flexion ON THE RIGHT is sixty degrees"
+         is DROPPED entirely, because ROM_FILLER in parser.js cannot cross the
+         words between the motion and the value. Same family as the comma that
+         loses "knee flexion, 130 degrees" — see the README. Kept here as a
+         failing assertion rather than reworded, because the property is right
+         even though the cause turned out to be somewhere else. */
+      { name: "shoulder flexion is recorded as 60", weight: 3,
+        test: (r) => ((r.measurements && r.measurements.rom) || []).some((m) => m.joint === "shoulder" && m.degrees === 60),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  /* 11. Two complaints in one visit.
+
+     Every other script has a single region, which is the easy case: anything
+     the model pins is right by construction. A patient with two problems can
+     have them merged into one, or have the quieter one dropped entirely, and
+     neither failure is visible from a note that looks well written. */
+  {
+    id: "multi-region/shoulder-and-back",
+    lang: "fil-PH",
+    why: "two separate complaints must stay two — merging or dropping one is invisible in a tidy note",
+    turns: [
+      { who: "clinician", text: "What is bothering you today?" },
+      { who: "patient", text: "Dalawa po. Ang kaliwang balikat ko, tapos ang lower back ko rin." },
+      { who: "clinician", text: "Tell me about the shoulder first." },
+      { who: "patient", text: "Masakit po kapag nag-aabot ako sa likod. Mga anim out of ten." },
+      { who: "clinician", text: "And the back?" },
+      { who: "patient", text: "Matigas po sa umaga, mga tatlo out of ten lang naman po." },
+    ],
+    heard: {
+      wer: 0.30,
+      must: ["balikat", "back"],
+    },
+    expect: [
+      { name: "the left shoulder is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Shoulder", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the low back is pinned as well, not merged into the shoulder", weight: 3,
+        test: (r) => (r.findings || []).some((f) => /back|lumbar|spine/i.test(f.part)),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "they are two findings, not one", weight: 2,
+        test: (r) => new Set((r.findings || []).filter((f) => !f.denial).map((f) => f.key)).size >= 2,
+        detail: (r) => `pinned: ${findingParts(r)}` },
+    ],
+  },
+
+  /* 12. The therapist dictating the whole note in the third person.
+
+     refineSystem devotes a paragraph to this ("A RELAY IS STILL THE PATIENT'S
+     REPORT") because it is how clinical documentation is taught and how many
+     therapists actually dictate. The failure it guards against is silent: every
+     line is labelled clinician, correctly, and the complaints are then dropped
+     for not having come from the patient. */
+  {
+    id: "relay/third-person",
+    lang: "fil-PH",
+    why: "a note dictated entirely in the third person — the complaint is still the patient's",
+    turns: [
+      { who: "clinician", text: "Patient reports right knee pain, six out of ten, worse going down stairs." },
+      { who: "clinician", text: "Patient denies any locking or giving way." },
+      { who: "clinician", text: "Patient states the pain began three weeks ago after a long walk." },
+      { who: "clinician", text: "Patient complains of morning stiffness lasting about twenty minutes." },
+    ],
+    heard: {
+      wer: 0.15,
+      must: ["knee", "patient"],
+    },
+    expect: [
+      { name: "the relayed complaint still pins the right knee", weight: 3,
+        test: (r) => hasFinding(r, "Knee", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 the therapist relayed reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      /* Not "the denial is unpinned" — a denial folded into the tail of a real
+         complaint is not a pin of its own, and the knee genuinely hurts. The
+         property worth holding is that the pertinent negative SURVIVED: a
+         relayed "denies locking" that vanishes leaves a note that never asked. */
+      { name: "the relayed denial was not thrown away", weight: 2,
+        test: (r) => /lock|giving way/.test(prose(r))
+          || (r.findings || []).some((f) => /lock|giving way/i.test(f.summary)),
+        detail: (r) => `subjective: ${norm(r.subjective).slice(0, 140)}` },
+      { name: "no finding is pinned that is ONLY a denial", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !f.denial),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial })))}` },
+      { name: "the complaint reached the Subjective", weight: 2,
+        test: (r) => /knee/.test(norm(r.subjective)),
+        detail: (r) => `subjective: ${norm(r.subjective).slice(0, 140)}` },
+    ],
+  },
+
+  /* 13. The things that make a treatment unsafe.
+
+     Precautions is the one section where an omission is dangerous rather than
+     untidy — a weight-bearing limit or an anticoagulant that never reached the
+     note is a note that reads as clearance. */
+  {
+    id: "precautions/post-op",
+    lang: "fil-PH",
+    why: "a weight-bearing limit and an anticoagulant must reach Precautions, where an omission reads as clearance",
+    turns: [
+      { who: "clinician", text: "This is post-operative day twelve after her right knee replacement." },
+      { who: "clinician", text: "She is partial weight bearing only, no more than twenty five percent through the right leg." },
+      { who: "clinician", text: "She is on warfarin, so no aggressive soft tissue work and watch for bruising." },
+      { who: "patient", text: "Masakit pa rin po kapag yumuyuko, mga lima out of ten." },
+      { who: "clinician", text: "Understood. We will keep to the protocol range today." },
+    ],
+    heard: {
+      wer: 0.25,
+      must: ["weight bearing", "knee"],
+    },
+    expect: [
+      { name: "the weight-bearing limit reached the note", weight: 3,
+        test: (r) => /weight[- ]?bearing|partial weight|25 ?%|twenty five/.test(prose(r)),
+        detail: (r) => `precautions: ${norm(r.precautions).slice(0, 160)}` },
+      { name: "the anticoagulant reached the note", weight: 3,
+        test: (r) => /warfarin|anticoagul|blood thinner|bruis/.test(prose(r)),
+        detail: (r) => `precautions: ${norm(r.precautions).slice(0, 160)}` },
+      { name: "both landed in Precautions rather than being scattered", weight: 1,
+        test: (r) => /weight|warfarin|anticoagul|bruis/.test(norm(r.precautions)),
+        detail: (r) => `precautions: ${norm(r.precautions).slice(0, 160)}` },
+    ],
+  },
+
+  /* 14. A visit where nothing clinical is said.
+
+     refineSystem states that an EMPTY findings array is a correct answer. The
+     model is under standing pressure to produce something, and the microphone
+     is open through the small talk at the start of every appointment — so the
+     question is whether a chart can be written out of nothing at all. */
+  {
+    id: "smalltalk/nothing-clinical",
+    lang: "fil-PH",
+    why: "nothing clinical was said — an empty findings array is the correct answer, not a failure",
+    turns: [
+      { who: "clinician", text: "Kumusta po ang byahe? Ang traffic ba sa EDSA?" },
+      { who: "patient", text: "Grabe po, isang oras po ako sa jeep. Ang init pa po." },
+      { who: "clinician", text: "Let me just get your file open, one moment." },
+      { who: "patient", text: "Sige po. Nag-lunch na po ba kayo?" },
+      { who: "clinician", text: "Not yet, later. Okay, the system is slow today." },
+    ],
+    heard: {
+      wer: 0.35,
+      must: [],
+    },
+    expect: [
+      { name: "no finding is invented out of small talk", weight: 3,
+        test: (r) => (r.findings || []).filter((f) => !f.denial && !f.bare).length === 0,
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no pain score is invented", weight: 3,
+        test: (r) => painScores(r).length === 0,
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "no measurement is invented", weight: 3,
+        test: (r) => ((r.measurements && r.measurements.rom) || []).length === 0,
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  /* 15. Both sides at once.
+
+     "Pareho" and "both" expand to two pinned regions, and the halfway failure
+     is the dangerous one: a bilateral complaint recorded on one side reads as a
+     unilateral problem and quietly halves the treatment. */
+  {
+    id: "bilateral/both-knees",
+    lang: "fil-PH",
+    why: "a bilateral complaint must pin BOTH sides — recording one reads as a unilateral problem",
+    turns: [
+      { who: "clinician", text: "Which knee is troubling you?" },
+      { who: "patient", text: "Pareho po, doc. Parehong tuhod, pero mas masakit po ang kanan." },
+      { who: "clinician", text: "How bad on each side?" },
+      { who: "patient", text: "Kanan po mga pito, kaliwa po mga apat." },
+      { who: "clinician", text: "Understood, bilateral knee pain, worse on the right." },
+    ],
+    heard: {
+      wer: 0.30,
+      must: ["tuhod"],
+    },
+    expect: [
+      { name: "the right knee is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Knee", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the left knee is pinned too — bilateral is not half a finding", weight: 3,
+        test: (r) => hasFinding(r, "Knee", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the write-up says bilateral rather than naming one side", weight: 1,
+        test: (r) => /both|bilateral|pareho/.test(prose(r)),
+        detail: (r) => `subjective: ${norm(r.subjective).slice(0, 140)}` },
+    ],
+  },
 ];
 
 /** The reference text a transcript is scored against: everything said, in order. */

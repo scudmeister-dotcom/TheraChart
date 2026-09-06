@@ -7,19 +7,20 @@
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 193.273875,
-  "billedSeconds": 198,
-  "sttUsd": 0.0528,
-  "refineCalls": 8,
-  "meanWer": 0.07686006386522927,
-  "earned": 59,
-  "possible": 69,
-  "overall": 0.855072463768116,
+  "audioSeconds": 400.7871249999999,
+  "billedSeconds": 416,
+  "sttUsd": 0.1109,
+  "refineCalls": 15,
+  "meanWer": 0.05897297798381091,
+  "earned": 128,
+  "possible": 142,
+  "overall": 0.9014084507042254,
   "cases": [
     {
       "id": "shoulder/clinical-vocab",
       "why": "the boosted phrase list, spoken — MMT, AROM, Neer, Hawkins, scaption, subacromial, therex, HEP",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.07317073170731707,
       "refWords": 82,
       "edits": 6,
@@ -73,6 +74,7 @@
       "id": "knee/laterality-correction",
       "why": "a mid-sentence laterality correction has to move the pin, not add a second one",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.05660377358490566,
       "refWords": 53,
       "edits": 3,
@@ -112,6 +114,7 @@
       "id": "back/taglish-negation",
       "why": "code-switched speech, and a Tagalog negation that must not become a positive finding",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.01818181818181818,
       "refWords": 55,
       "edits": 1,
@@ -151,6 +154,7 @@
       "id": "ankle/cebuano",
       "why": "the ceb-PH language code, spoken — the Visayas clinic's whole dictation path",
       "lang": "ceb-PH",
+      "chunks": 1,
       "wer": 0.08108108108108109,
       "refWords": 37,
       "edits": 3,
@@ -177,24 +181,20 @@
         {
           "name": "dorsiflexion ROM survived",
           "weight": 1,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "rom: []"
+          "detail": ""
         }
       ],
-      "earned": 5,
+      "earned": 6,
       "possible": 6,
-      "failed": [
-        {
-          "name": "dorsiflexion ROM survived",
-          "detail": "rom: []"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "hip/not-the-patient",
       "why": "hypotheticals and third parties are transcribed faithfully — they must not become findings",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.029850746268656716,
       "refWords": 67,
       "edits": 2,
@@ -234,6 +234,7 @@
       "id": "shoulder/tagalog-heavy",
       "why": "near-monolingual Tagalog — laterality from \"kanang\", a rating, and a denial, with no English to lean on",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.03389830508474576,
       "refWords": 59,
       "edits": 2,
@@ -285,6 +286,7 @@
       "id": "knee/cebuano-heavy",
       "why": "near-monolingual Cebuano — a language ElevenLabs does not officially speak, so this is the take to listen to",
       "lang": "ceb-PH",
+      "chunks": 1,
       "wer": 0.2608695652173913,
       "refWords": 46,
       "edits": 12,
@@ -335,6 +337,7 @@
       "id": "numbers/dense",
       "why": "degrees, grades and scores — the one class of error that leaves the sentence looking fine",
       "lang": "fil-PH",
+      "chunks": 1,
       "wer": 0.061224489795918366,
       "refWords": 49,
       "edits": 3,
@@ -390,6 +393,345 @@
           "detail": "rom: [{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":130},{\"side\":\"right\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":5}]"
         }
       ]
+    },
+    {
+      "id": "visit/long-full-session",
+      "why": "a full-length visit — the multi-chunk stitch, and a note built from minutes rather than seconds",
+      "lang": "fil-PH",
+      "chunks": 2,
+      "wer": 0.04186046511627907,
+      "refWords": 215,
+      "edits": 9,
+      "heard": "good morning po let us start with how the week went medyo mas okay na po doc pero masakit pa rin ang kanang balikat ko kapag umaabot ako sa taas how would you rate it now out of 10 mga lima na lang po dati po kasi pito kaya medyo bumuti that is good progress any night pain still konti na lang po nakakatulog na po ako ngayon hindi na po ako nagigising any numbness or tingling going down the arm wala naman po sakit lang po talaga sa balikat let me measure right shoulder active flexion is 140° today up from 120 last week abduction is 130 external rotation is 55° rotator cuff,mmt is four out of five and that is better than the three plus we had at evaluation neer is still mildly positive but hawkins is negative now ibig sabihin po ba gumagaling na yes the impingement signs are settling and your range is close to normal today we did scapsion to 90° three sets of 10 and prone rose with a yellow band we also did soft tissue work to the upper trapezius and posterior continue the home program twice daily and add the doorway stretch plan is to continue twice weekly for two more weeks then reassess",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the right shoulder is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no left shoulder invented across a long visit",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the stitch did not lose the second half — abduction survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "flexion from the first half survived too",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the CURRENT 5/10 is recorded, not only the historical 7",
+          "weight": 2,
+          "ok": false,
+          "thrown": null,
+          "detail": "pain: []"
+        },
+        {
+          "name": "the denial is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "treatment done this visit reached the Treatment section",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 16,
+      "possible": 18,
+      "failed": [
+        {
+          "name": "the CURRENT 5/10 is recorded, not only the historical 7",
+          "detail": "pain: []"
+        }
+      ]
+    },
+    {
+      "id": "numbers/confusables",
+      "why": "thirteen/thirty, fifteen/fifty, forty/fourteen — mishearings that leave the sentence intact",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0.06779661016949153,
+      "refWords": 59,
+      "edits": 4,
+      "heard": "let us record today's measurements for the left knee left knee flexion is 30° today up from before left knee extension is 15° hip abduction is 40° on that side shoulder flexion on the right is 60° the pain is four out of 10 today doc good we will measure again in two weeks",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "flexion is 30, not 13",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "extension is 15, not 50",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "abduction is 40, not 14",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "shoulder flexion is 60, not 16",
+          "weight": 3,
+          "ok": false,
+          "thrown": null,
+          "detail": "rom: [{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":30},{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":15},{\"side\":null,\"joint\":\"hip\",\"motion\":\"abduction\",\"degrees\":40}]"
+        }
+      ],
+      "earned": 9,
+      "possible": 12,
+      "failed": [
+        {
+          "name": "shoulder flexion is 60, not 16",
+          "detail": "rom: [{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":30},{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":15},{\"side\":null,\"joint\":\"hip\",\"motion\":\"abduction\",\"degrees\":40}]"
+        }
+      ]
+    },
+    {
+      "id": "multi-region/shoulder-and-back",
+      "why": "two separate complaints must stay two — merging or dropping one is invisible in a tidy note",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0.04,
+      "refWords": 50,
+      "edits": 2,
+      "heard": "what is bothering you today dalawa po ang kaliwang balikat ko tapos ang lower back ko rin tell me about the shoulder velder first masakit po kapag nag-aabot ako sa likod mga anim out of 10 and the back matigas po sa umaga mga tatlo out of 10 lang naman po",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the left shoulder is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the low back is pinned as well, not merged into the shoulder",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "they are two findings, not one",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 8,
+      "possible": 8,
+      "failed": []
+    },
+    {
+      "id": "relay/third-person",
+      "why": "a note dictated entirely in the third person — the complaint is still the patient's",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0.04878048780487805,
+      "refWords": 41,
+      "edits": 2,
+      "heard": "patient reports right knee pain 6 out of 10 worse going downstairs patient denies any locking or giving way patient states the pain began 3 weeks ago after a long walk patient complains of morning stiffness lasting about 20 minutes",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the relayed complaint still pins the right knee",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 the therapist relayed reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the relayed denial was not thrown away",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no finding is pinned that is ONLY a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the complaint reached the Subjective",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "precautions/post-op",
+      "why": "a weight-bearing limit and an anticoagulant must reach Precautions, where an omission reads as clearance",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0.05,
+      "refWords": 60,
+      "edits": 3,
+      "heard": "this is post-operative day 12 after her right knee replacement she is partial weight bearing only no more than 25 through the right leg she is on warfarin so no aggressive soft tissue work and watch for bruising masakit pa rin po kapag yumiyo ko mga lima out of 10 understood we will keep to the protocol range today",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the weight-bearing limit reached the note",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the anticoagulant reached the note",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both landed in Precautions rather than being scattered",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 7,
+      "possible": 7,
+      "failed": []
+    },
+    {
+      "id": "smalltalk/nothing-clinical",
+      "why": "nothing clinical was said — an empty findings array is the correct answer, not a failure",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0.02127659574468085,
+      "refWords": 47,
+      "edits": 1,
+      "heard": "kumusta po ang biyahe ang traffic ba sa edsa grabe po isang oras po ako sa jeep ang init pa po let me just get your file open one moment sige po nag-lunch na po ba kayo not yet later okay the system is slow today",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "no finding is invented out of small talk",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no pain score is invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no measurement is invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 9,
+      "possible": 9,
+      "failed": []
+    },
+    {
+      "id": "bilateral/both-knees",
+      "why": "a bilateral complaint must pin BOTH sides — recording one reads as a unilateral problem",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "wer": 0,
+      "refWords": 37,
+      "edits": 0,
+      "heard": "which knee is troubling you pareho po doc parehong tuhod pero mas masakit po ang kanan how bad on each side kanan po mga pito kaliwa po mga apat understood bilateral knee pain worse on the right",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the right knee is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the left knee is pinned too — bilateral is not half a finding",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the write-up says bilateral rather than naming one side",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 7,
+      "possible": 7,
+      "failed": []
     }
   ]
 }
