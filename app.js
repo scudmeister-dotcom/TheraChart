@@ -7327,11 +7327,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     for (const f of result.findings) {
       const t = correctedBy.get(f.key);
       const bare = !t && isEmpty(f.summary);
+      /* A pertinent negative. The model is asked for these deliberately and
+         they belong in the write-up, but a symptom the patient said they do
+         NOT have must not pin itself on the body map — unticked with the
+         reason, and the Subjective still carries the denial. */
+      const denied = !t && !bare && PR.isDenial(f.summary);
       const inLive = liveKeys.has(f.key);
       rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
-        summary: f.summary, quote: f.quote, include: !t && !bare, section: "",
-        note: t ? t.reason : bare ? "Named, but nothing was reported about it" : "",
-        origin: t ? t.kind || "corrected" : bare ? "empty" : inLive ? "confirmed" : "added" });
+        summary: f.summary, quote: f.quote, include: !t && !bare && !denied, section: "",
+        note: t ? t.reason : bare ? "Named, but nothing was reported about it"
+          : denied ? "Reported as ABSENT — kept in the write-up, not pinned on the body map" : "",
+        origin: t ? t.kind || "corrected" : bare ? "empty" : denied ? "denied" : inLive ? "confirmed" : "added" });
     }
     for (const p of livePts) {
       if (aiByKey.has(p.key)) continue;
@@ -7518,6 +7524,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       "not-the-patient": ["bad", "not the patient speaking"],
       misheard: ["bad", "misheard by dictation"],
       empty: ["warn", "nothing was reported"],
+      denied: ["warn", "reported as absent"],
       manual: ["good", "you added this"],
       ungrounded: ["bad", "not traceable to the transcript"],
     };
@@ -7930,7 +7937,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         label: `${p.side ? cap(p.side) + " " : ""}${p.part}`,
         detail: t ? t.reason + (t.supersededBy ? ` — now recorded as ${t.supersededBy}` : "")
           : row && row.origin === "empty" ? "Named, but nothing was reported about it"
-            : "removed in cleanup",
+            : row && row.origin === "denied" ? "Reported as absent — it stays in the write-up, off the body map"
+              : "removed in cleanup",
       });
     }
     /* One line per reading, whichever way it left. A reading the live pass

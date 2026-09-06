@@ -6,7 +6,7 @@
 "use strict";
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
-        correctDictation, extractMeasurements } = require("../parser.js");
+        correctDictation, extractMeasurements, isDenial } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -953,6 +953,37 @@ const meas = (t) => parseUtterance(t).measurements;
     both.length === 2 && both[0].quality === "active" && both[1].quality === "passive", JSON.stringify(both));
   check("active and passive readings of one motion stay two findings",
     both[0].degrees === 120 && both[1].degrees === 155);
+}
+
+/* ---- pertinent negatives are not places on the body ----
+
+   Caught by the voice eval (test/voice), which spoke "walang numbness, walang
+   tingling" into the real chain: the note documented the denial correctly AND
+   pinned a finding on the leg for it. A marker on the chart reads like a
+   symptom the patient has, and this one is the opposite.
+
+   The refine prompt asks for denials deliberately, so nothing here deletes
+   them — isDenial only decides whether the review offers the row ticked. That
+   is why the second block matters as much as the first: a false positive is a
+   real complaint the therapist has to tick back on. */
+{
+  const denial = (s) => isDenial(s);
+
+  check("a plain denial is recognised", denial("Denies radiating numbness or tingling"));
+  check("the exact summary the model produced is recognised",
+    denial("Denies numbness or tingling radiating down the lower extremities"));
+  check("a third-person relay is recognised", denial("pt denies numbness"));
+  check("an absence phrased with 'no' is recognised", denial("No pain in the right knee"));
+  check("'negative for' is recognised", denial("Negative for numbness"));
+  check("Tagalog negation is recognised", denial("Walang numbness o tingling sa binti"));
+  check("Cebuano negation is recognised", denial("Walay sakit sa tuong tuhod"));
+
+  check("an ordinary complaint is left alone", !denial("Sharp left shoulder pain 7/10, worse overhead"));
+  check("a complaint that MENTIONS an absence is still a complaint",
+    !denial("Sharp pain, but no numbness"));
+  check("'not tolerating' is a problem, not a denial", !denial("Not tolerating the exercises well"));
+  check("a word merely starting with 'no' is not a denial", !denial("Nocturnal pain in the left shoulder"));
+  check("an empty summary is not a denial", !denial(""));
 }
 
 const total = passed + failures.length;

@@ -326,7 +326,7 @@
       const quote = f.sourceQuote || "";
       const turns = [];
       dialogue.forEach((d, i) => { if (quote && d.text.toLowerCase().includes(quote.toLowerCase().slice(0, 24))) turns.push(i); });
-      return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns, bare: parser.isBareMention(f.summary) };
+      return { key: `${c.part}|${c.side || ""}`, part: c.part, side: c.side, view: c.view, x: c.x, y: c.y, summary: String(f.summary || "").trim(), quote, turns, bare: parser.isBareMention(f.summary), denial: parser.isDenial(f.summary) };
     }).filter((f) => f.summary);
 
     const KINDS = ["corrected", "hypothetical", "not-the-patient", "misheard"];

@@ -317,6 +317,32 @@
   const isBareMention = (summary) =>
     new RegExp("^" + BARE_MENTION_PREFIX, "i").test(String(summary || "").trim());
 
+  /* A finding the patient reported as ABSENT — "denies numbness", "walang
+     tingling", "no pain in the right knee".
+
+     These are real documentation and the refine prompt asks for them on
+     purpose (see refineSystem: a denial IS a finding, phrased as a denial).
+     What they are not is a place on the body. A pertinent negative that pins
+     itself puts a marker on the leg for a symptom the patient explicitly said
+     they do not have, which reads on the chart exactly like one they do.
+
+     So this does not delete anything. It marks the finding so the review can
+     offer it UNTICKED with its reason, the way a bare mention and a corrected
+     region already are — the therapist was in the room and gets the last word,
+     and the denial stays in the Subjective either way.
+
+     Judged on the LEAD, not on any negation anywhere in the sentence: "sharp
+     pain, but no numbness" is a complaint that mentions an absence, and only
+     the sentence that OPENS with the denial is about the absence. Bare "not"
+     is deliberately absent from the list — "not tolerating the exercises" is a
+     problem, not a denial. The cost of being wrong here is one tick box,
+     shown with the reason, so this leans narrow rather than clever. */
+  const DENIAL_LEAD_RE = new RegExp(
+    "^(?:the\\s+)?(?:pt|patient|px)?[\\s,.:-]*" +
+    "(?:denies|denied|denying|reports?\\s+no|states?\\s+no|reports?\\s+absence|" +
+    "negative\\s+for|no|without|absent|wala|walang|walay|hindi|dili)\\b", "i");
+  const isDenial = (summary) => DENIAL_LEAD_RE.test(String(summary || "").trim());
+
   /** Turn the text around a body-part mention into a short paraphrase.
       ms/me mark where the body part sits inside windowText, so symptoms
       spoken close to the mention outrank ones from a different clause. */
@@ -2338,6 +2364,7 @@
     refineTranscript,
     turnSubstance,
     isBareMention,
+    isDenial,
     CORRECTION_RE,
     HYPOTHETICAL_RE,
     META_RE,
