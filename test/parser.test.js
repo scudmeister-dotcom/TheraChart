@@ -683,6 +683,57 @@ function mention(result, partName, side = undefined) {
     er.length === 2 && er[1].motion === "external rotation" && er[1].degrees === 45, JSON.stringify(er));
 }
 
+/* THE SIGN ON A ROM READING.
+   "Extension is negative five degrees" is a flexion contracture. "Extension is
+   five degrees" is hyperextension — the opposite finding, and the sentence
+   reads perfectly either way, so nothing on the review screen gives the
+   therapist a reason to look twice. The pattern had no way to capture a sign,
+   which dropped the reading whenever the word survived transcription and filed
+   the wrong direction whenever it did not. */
+{
+  const forms = [
+    ["knee extension is negative 5 degrees", "the spoken word"],
+    ["knee extension is minus 5 degrees", "\"minus\""],
+    ["knee extension is -5 degrees", "the typed symbol"],
+  ];
+  for (const [said, how] of forms) {
+    const rom = parseUtterance(said).measurements.rom;
+    check(`a negative angle is kept — ${how}`,
+      rom.length === 1 && rom[0].degrees === -5, JSON.stringify(rom));
+  }
+}
+{
+  // the line from the voice run, exactly as Chirp 2 punctuates it: the sign
+  // rides the unitless pass, where the therapist stated "degrees" only once
+  const rom = parseUtterance("right knee flexion is 130 degrees, extension is negative 5").measurements.rom;
+  check("the dictated line files a contracture, not a hyperextension",
+    rom.length === 2 && rom[0].degrees === 130 && rom[1].degrees === -5, JSON.stringify(rom));
+  check("…and both readings keep the side that was stated once",
+    rom.every((x) => x.side === "right" && x.joint === "knee"), JSON.stringify(rom));
+}
+{
+  // the other direction still means what it always did — the sign is read, not applied
+  const rom = parseUtterance("knee extension is 5 degrees").measurements.rom;
+  check("an unsigned angle stays positive",
+    rom.length === 1 && rom[0].degrees === 5, JSON.stringify(rom));
+}
+{
+  // the floor mirrors the 180° ceiling: no contracture is 120° deep
+  const rom = parseUtterance("knee extension is negative 120 degrees").measurements.rom;
+  check("an implausible negative is rejected like an implausible positive",
+    rom.length === 0, JSON.stringify(rom));
+}
+{
+  /* A hyphen is punctuation far more often than it is a minus. A range and a
+     dash-as-separator must not come back as negative angles. */
+  const range = parseUtterance("shoulder flexion 120-130 degrees").measurements.rom;
+  check("a range is not read as a negative angle",
+    range.every((x) => x.degrees >= 0), JSON.stringify(range));
+  const dash = parseUtterance("shoulder flexion - 120 degrees").measurements.rom;
+  check("a spaced dash is not read as a minus",
+    dash.every((x) => x.degrees >= 0), JSON.stringify(dash));
+}
+
 /* MMT: the side is the point of measuring it, and the muscle is often named
    after the grade in Taglish word order. */
 {

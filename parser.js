@@ -566,7 +566,23 @@
      degrees" — offers no chain that reaches the 90, and the number stays with
      the clause that owns it. */
   const ROM_FILLER = "(?:[\\s,]+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
-  const ROM_DEGREES = "[\\s,]*(?:=|:)?\\s*(\\d{1,3})\\s*(?:degrees?|deg\\b|°)";
+  /* THE SIGN. "Extension is negative five degrees" is a flexion contracture;
+     "extension is five degrees" is hyperextension — the opposite finding about
+     the opposite knee, and both sentences read perfectly well, so a therapist
+     re-reading the note has nothing to catch.
+
+     The pattern could not capture a sign at all. That did not store the
+     reading unsigned: it failed to match and dropped the measurement outright,
+     so a surviving "negative" emptied the row and a lost one filed the wrong
+     direction.
+
+     The sign lives INSIDE the number's own capture group, so every existing
+     group index still means what it did; romDegrees() reads it back out. A
+     word form must be followed by space ("minus 5") and a symbol must touch
+     the digit ("-5"), which keeps a dash used as punctuation — "flexion - 120",
+     the range in "flexion 120-130" — from being read as a minus. */
+  const ROM_SIGN = "(?:(?:negative|minus|neg)\\s+|[-−])?";
+  const ROM_DEGREES = `[\\s,]*(?:=|:)?\\s*(${ROM_SIGN}\\d{1,3})\\s*(?:degrees?|deg\\b|°)`;
   /* The same number with the unit left off. A therapist says the unit once and
      then reels off the rest — "abduction 90 degrees, external rotation 45,
      flexion 120" — so requiring "degrees" every time dropped all but the first.
@@ -581,7 +597,7 @@
      next MOTION ("abduction 90 degrees, ER 45"), which still reads — it is
      only the value that has to stay adjacent to the motion it belongs to.
      Inventing an angle is worse than dropping one. */
-  const ROM_BARE_NUM = "\\s*(?:=|:)?\\s*(\\d{1,3})\\b(?!\\s*(?:out\\s+of|/|%|:|degrees?\\w))";
+  const ROM_BARE_NUM = `\\s*(?:=|:)?\\s*(${ROM_SIGN}\\d{1,3})\\b(?!\\s*(?:out\\s+of|/|%|:|degrees?\\w))`;
   // joints are dictated singular or plural ("both shoulders flexion 150")
   const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
 
@@ -802,6 +818,22 @@
       return found;
     };
 
+    /* The band a reading has to fall in to be believable. The ceiling was
+       already here — no human joint motion exceeds 180°, so a bigger number is
+       a mis-transcription rather than a measurement. The floor is its mirror.
+       Real negatives are extension lags and contractures and they are small: a
+       knee that lacks 5° or 20° of extension. Past -90° is the same noise the
+       ceiling catches, not a joint. */
+    const ROM_MAX_DEG = 180, ROM_MIN_DEG = -90;
+    const ROM_SIGN_RE = /^(?:-|−|negative|minus|neg)\s*/i;
+    const romDegrees = (raw) => {
+      const said = String(raw).trim();
+      const n = Number(said.replace(ROM_SIGN_RE, ""));
+      if (!Number.isFinite(n)) return NaN;
+      return ROM_SIGN_RE.test(said) ? -n : n;
+    };
+    const romPlausible = (d) => Number.isFinite(d) && d <= ROM_MAX_DEG && d >= ROM_MIN_DEG;
+
     const pushRom = (side, joint, motion, degrees, at) => {
       const quality = qualityBefore(at);
       const entry = quality ? { joint, motion, degrees, quality } : { joint, motion, degrees };
@@ -815,9 +847,9 @@
     let m;
     JOINT_ROM_RE.lastIndex = 0;
     while ((m = JOINT_ROM_RE.exec(text)) !== null) {
-      const degrees = Number(m[4]);
+      const degrees = romDegrees(m[4]);
       claimed.push([m.index, m.index + m[0].length]);
-      if (degrees > 180) continue; // no human joint motion exceeds 180° — likely a mis-transcription
+      if (!romPlausible(degrees)) continue; // outside the believable band — a mis-transcription, not a joint
       pushRom(sideWord(m[1]) || trailSide(m.index + m[0].length),
         normJoint(m[2]), normMotion(m[3]), degrees, m.index);
     }
@@ -828,8 +860,8 @@
     while ((m = MOTION_JOINT_ROM_RE.exec(text)) !== null) {
       const start = m.index, end = start + m[0].length;
       if (claimed.some(([a, b]) => start < b && end > a)) continue;
-      const degrees = Number(m[4]);
-      if (degrees > 180) continue;
+      const degrees = romDegrees(m[4]);
+      if (!romPlausible(degrees)) continue;
       claimed.push([start, end]);
       pushRom(sideWord(m[2]) || trailSide(end), normJoint(m[3]), normMotion(m[1]), degrees, start);
     }
@@ -842,8 +874,8 @@
       while ((b = re.exec(text)) !== null) {
         const start = b.index, end = start + b[0].length;
         if (claimed.some(([s, e]) => start < e && end > s)) continue;
-        const degrees = Number(b[numGroup]);
-        if (degrees > 180) continue;
+        const degrees = romDegrees(b[numGroup]);
+        if (!romPlausible(degrees)) continue;
         const anchor = anchorBefore(start) || anchorJustAfter(start);
         if (!anchor) continue;
         claimed.push([start, end]);

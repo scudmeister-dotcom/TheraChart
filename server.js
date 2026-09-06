@@ -935,8 +935,27 @@ const STT_PHRASES = [
   "rotator cuff", "patellofemoral", "gastrocnemius", "quadriceps", "hamstring",
   "gait training", "weight bearing", "ambulates", "transfers",
   "Neer", "Hawkins", "Lachman", "McMurray", "Thomas test", "Ober",
+  /* "negative" is the one ordinary English word on this list, and it is here
+     against the rule above because in this room it is not ordinary: it is the
+     result of every special test ("Hawkins is negative") and the sign on a
+     range reading ("extension is negative five"). Chirp 2 dropped it in 4 of 4
+     voices on numbers/dense — every voice, so a vocabulary gap rather than one
+     speaker's diction — and dropping it inverts the finding, because "five
+     degrees of extension" is hyperextension where "negative five" is a flexion
+     contracture. It earns the exception "help" and "tens" were refused because
+     it has no ordinary near-homophone to steal from: nothing else a therapist
+     says comes back as "negative". */
+  "negative",
 ];
 const STT_BOOST = 15;
+/* One phrase carries its own weight. "negative" is the only entry that flips a
+   finding rather than garbling a word — a lost one turns a contracture into a
+   hyperextension — and at the shared 15 it still went missing in half the
+   voices swept. 20 is the ceiling Google allows.
+   Prototype-free because it is keyed by whatever strings STT_PHRASES holds,
+   and a phrase named like an Object member would otherwise look up a function
+   and send it to Google as a boost. */
+const STT_PHRASE_BOOST = Object.assign(Object.create(null), { negative: 20 });
 
 /* Whether this deployment's model accepts an `adaptation` block at all.
    Chirp 2's feature support varies by region, and a request carrying an
@@ -950,7 +969,7 @@ function sttRequestBody(wavBuffer, model, language, withAdaptation) {
   const config = { autoDecodingConfig: {}, model, languageCodes: [language] };
   if (withAdaptation) {
     config.adaptation = {
-      phraseSets: [{ inlinePhraseSet: { phrases: STT_PHRASES.map((value) => ({ value, boost: STT_BOOST })) } }],
+      phraseSets: [{ inlinePhraseSet: { phrases: STT_PHRASES.map((value) => ({ value, boost: STT_PHRASE_BOOST[value.toLowerCase()] ?? STT_BOOST })) } }],
     };
   }
   return { config, content: wavBuffer.toString("base64") };
