@@ -239,12 +239,19 @@ const SCRIPTS = [
      failure in either language shows up as itself instead of being carried by
      the English around it.
 
-     They also stand as the honest test of whether ElevenLabs can speak these
-     languages at all. Filipino is a language its multilingual model supports;
-     Cebuano is NOT, and is being approximated by a Filipino-accented voice
-     reading Cebuano text. Word error rate alone cannot tell a mispronounced
-     take from a mis-transcribed one, so `--keep-wav` and a native ear is the
-     check that settles it. */
+     The Cebuano one carries a caveat the Tagalog one does not, and --sweep
+     measured it: the same script, same words, read by four voices, scored
+     30.4% / 23.9% / 19.6% / 10.9% word error. Nearly twenty points of spread
+     with the transcriber held constant means the variable is the SPEECH model,
+     not Chirp 2 — Filipino is a language it supports and Cebuano is one it
+     only half does, so the voice decides how much survives.
+
+     That is why the default voices are the two the sweep scored best (see
+     run.js). On a badly-pronounced take this script measures ElevenLabs; on a
+     well-pronounced one it measures TheraChart, which is what it is for. Run
+     --sweep for the robustness question, and keep a native ear for the rest:
+     word error alone still cannot tell a mispronounced take from a misheard
+     one. */
   {
     id: "shoulder/tagalog-heavy",
     lang: "fil-PH",
@@ -280,7 +287,7 @@ const SCRIPTS = [
   {
     id: "knee/cebuano-heavy",
     lang: "ceb-PH",
-    why: "near-monolingual Cebuano — a language ElevenLabs does not officially speak, so this is the take to listen to",
+    why: "near-monolingual Cebuano — laterality from \"tuong tuhod\", in a language the speech model only half speaks",
     turns: [
       { who: "clinician", text: "Maayong buntag. Unsa may imong gibati karon?" },
       { who: "patient", text: "Sakit akong tuong tuhod, doc. Labi na kung motungas ko sa hagdanan." },

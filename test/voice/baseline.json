@@ -3,28 +3,28 @@
     "model": "eleven_multilingual_v2",
     "voices": {
       "clinician": "iyZZ2rpPw5XY3ZQltAWV",
-      "patient": "sfEqHIAPrP82grzla9Ji"
+      "patient": "X69aMGx8u7YHtScNLx9R"
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 400.7871249999999,
-  "billedSeconds": 416,
-  "sttUsd": 0.1109,
+  "audioSeconds": 391.91712499999994,
+  "billedSeconds": 408,
+  "sttUsd": 0.1088,
   "refineCalls": 15,
-  "meanWer": 0.05897297798381091,
-  "earned": 128,
+  "meanWer": 0.054726012035890566,
+  "earned": 130,
   "possible": 142,
-  "overall": 0.9014084507042254,
+  "overall": 0.9154929577464789,
   "cases": [
     {
       "id": "shoulder/clinical-vocab",
       "why": "the boosted phrase list, spoken — MMT, AROM, Neer, Hawkins, scaption, subacromial, therex, HEP",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.07317073170731707,
+      "wer": 0.10975609756097561,
       "refWords": 82,
-      "edits": 6,
-      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom flexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a fee pay ship to do twice a day",
+      "edits": 9,
+      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about 7 out of 10 worse at night left shoulder arom inflexion is 120° abduction 110 mmt is 4 out of 5 on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for their and i'm giving you a free pass ship to do twice a day",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -78,7 +78,7 @@
       "wer": 0.05660377358490566,
       "refWords": 53,
       "edits": 3,
-      "heard": "so the right knee is the one giving you trouble no doctor sorry it is the left one the left knee the right one is fine let me correct that left knee pain is 5 out of 10 going downstairs yes 5 out of 10 and it feels unstable when i go down",
+      "heard": "so the right knee is the one giving you trouble no doctor sorry it is the left one the left knee the right one is fine let me correct that left knee pain is five out of 10 going downstairs yes five out of 10 and it feels unstable when i go down",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -158,7 +158,7 @@
       "wer": 0.08108108108108109,
       "refWords": 37,
       "edits": 3,
-      "heard": "kumusta na ang imong tiil ang right ankle sakit pa gihapon kung mulakaw ko ug taas mga six out of 10 right ankle dorsiflexion is limited about 10 degrees swelling is mild oh manghubag gihapon sa gabi",
+      "heard": "kumusta na ang imong tiil ang right ankle sakit pa gihapon kung mula ko ug taas mga six out of 10 right ankle dorsiflexion is limited about 10 degrees swelling is mild oh manghubag gihapon sa gabi",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -181,14 +181,19 @@
         {
           "name": "dorsiflexion ROM survived",
           "weight": 1,
-          "ok": true,
+          "ok": false,
           "thrown": null,
-          "detail": ""
+          "detail": "rom: []"
         }
       ],
-      "earned": 6,
+      "earned": 5,
       "possible": 6,
-      "failed": []
+      "failed": [
+        {
+          "name": "dorsiflexion ROM survived",
+          "detail": "rom: []"
+        }
+      ]
     },
     {
       "id": "hip/not-the-patient",
@@ -235,10 +240,10 @@
       "why": "near-monolingual Tagalog — laterality from \"kanang\", a rating, and a denial, with no English to lean on",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.03389830508474576,
+      "wer": 0.01694915254237288,
       "refWords": 59,
-      "edits": 2,
-      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon dak masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pababa sa braso wala naman po sakit lang po talaga sa balikat",
+      "edits": 1,
+      "heard": "magandang umaga po ano po ang nararamdaman ninyo ngayon doc masakit po ang kanang balikat ko kumikirot kapag itinataas ko gaano po kasakit kung isa hanggang 10 mga pito po lalo na sa gabi hindi po ako makatulog ng maayos may pamamanhid po ba o parang kinukuryente pababa sa braso wala naman po sakit lang po talaga sa balikat",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -287,13 +292,11 @@
       "why": "near-monolingual Cebuano — a language ElevenLabs does not officially speak, so this is the take to listen to",
       "lang": "ceb-PH",
       "chunks": 1,
-      "wer": 0.2608695652173913,
+      "wer": 0.17391304347826086,
       "refWords": 46,
-      "edits": 12,
-      "heard": "maayong buntag unsa may imong gibati karon sakit akong tungtuhod doc labi na kung mutungas ko sa hagdanan pila kasakit kung isa hangtod na pulo mga unom dili ko kay maka lakaw ug taas na bay manghubag o mamanhid wala man sakit ra gyud sa tungtuhod",
-      "heardFailed": [
-        "\"tuhod\" never made it into the transcript"
-      ],
+      "edits": 8,
+      "heard": "maayong buntag unsa may imong gibati karon sakit akong tuong tuhod doc labi na kung mutungas ko sa hagdanan pila kasakit kung isa hangtod na pulo mga unom dili ko kaayo maka lakaw ug taas na bay manghubag o mamanhid wala man sakit ra gyud sa tuhod",
+      "heardFailed": [],
       "refineError": null,
       "fellBack": false,
       "model": "chirp_2",
@@ -301,9 +304,9 @@
         {
           "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
           "weight": 3,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "pinned: Knee|"
+          "detail": ""
         },
         {
           "name": "\"wala man\" was read as a denial, not as the left knee",
@@ -320,13 +323,9 @@
           "detail": "pain: []"
         }
       ],
-      "earned": 3,
+      "earned": 6,
       "possible": 7,
       "failed": [
-        {
-          "name": "the RIGHT knee is pinned from \"tuong tuhod\"",
-          "detail": "pinned: Knee|"
-        },
         {
           "name": "the 6/10 rating survived Cebuano",
           "detail": "pain: []"
@@ -472,10 +471,10 @@
       "why": "thirteen/thirty, fifteen/fifty, forty/fourteen — mishearings that leave the sentence intact",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.06779661016949153,
+      "wer": 0.0847457627118644,
       "refWords": 59,
-      "edits": 4,
-      "heard": "let us record today's measurements for the left knee left knee flexion is 30° today up from before left knee extension is 15° hip abduction is 40° on that side shoulder flexion on the right is 60° the pain is four out of 10 today doc good we will measure again in two weeks",
+      "edits": 5,
+      "heard": "let us record today's measurements for the left knee left knee flexion is 30° today up from before left knee extension is 15° hip abduction is 40° on that side shoulder flexion on the right is 60° the pain is 4 out of 10 today though good we will measure again in two weeks",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -503,7 +502,7 @@
           "detail": ""
         },
         {
-          "name": "shoulder flexion is 60, not 16",
+          "name": "shoulder flexion is recorded as 60",
           "weight": 3,
           "ok": false,
           "thrown": null,
@@ -514,7 +513,7 @@
       "possible": 12,
       "failed": [
         {
-          "name": "shoulder flexion is 60, not 16",
+          "name": "shoulder flexion is recorded as 60",
           "detail": "rom: [{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":30},{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":15},{\"side\":null,\"joint\":\"hip\",\"motion\":\"abduction\",\"degrees\":40}]"
         }
       ]
@@ -524,10 +523,10 @@
       "why": "two separate complaints must stay two — merging or dropping one is invisible in a tidy note",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.04,
+      "wer": 0.06,
       "refWords": 50,
-      "edits": 2,
-      "heard": "what is bothering you today dalawa po ang kaliwang balikat ko tapos ang lower back ko rin tell me about the shoulder velder first masakit po kapag nag-aabot ako sa likod mga anim out of 10 and the back matigas po sa umaga mga tatlo out of 10 lang naman po",
+      "edits": 3,
+      "heard": "what is bothering you today dalawa po ang kaliwang balikat ko tapos ang lower back ko rin tell me about the shoulder velder first masakit po kapag nag-aabot ako sa likod mga 8 out of 10 and the back matigas po sa umaga mga tatlo out of 10 lang naman po",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
@@ -618,10 +617,10 @@
       "why": "a weight-bearing limit and an anticoagulant must reach Precautions, where an omission reads as clearance",
       "lang": "fil-PH",
       "chunks": 1,
-      "wer": 0.05,
+      "wer": 0.016666666666666666,
       "refWords": 60,
-      "edits": 3,
-      "heard": "this is post-operative day 12 after her right knee replacement she is partial weight bearing only no more than 25 through the right leg she is on warfarin so no aggressive soft tissue work and watch for bruising masakit pa rin po kapag yumiyo ko mga lima out of 10 understood we will keep to the protocol range today",
+      "edits": 1,
+      "heard": "this is post-operative day 12 after her right knee replacement she is partial weight bearing only no more than 25 through the right leg she is on warfarin so no aggressive soft tissue work and watch for bruising masakit pa rin po kapag yumuyuko mga lima out of 10 understood we will keep to the protocol range today",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,

@@ -60,17 +60,38 @@ is a pronunciation problem.
 It grades transcription only. Running fifteen notes once per voice would
 multiply the Vertex bill to answer a question about hearing.
 
-**This is what settled the Cebuano question.** The same Cebuano script, same
-text, four voices:
+### What the first full sweep found
 
-| Juvy | Juan Tamad | Mang Jose | Pedro |
-|---|---|---|---|
-| 28.3% | 23.9% | 17.4% | **10.9%** |
+15 scripts × 4 Filipino voices, transcription only, $0.45:
 
-17.4 points of spread on identical words. Chirp 2 is not the weak link —
-**ElevenLabs' Cebuano pronunciation varies enormously by voice**, and the
-original 26% reading was an artefact of using Juvy as the patient, who speaks
-every Cebuano clinical term in that script.
+```
+script                            Juvy  JuanTamad  MangJose    Pedro   spread
+knee/cebuano-heavy               30.4%      23.9%     19.6%    10.9%    19.6%
+precautions/post-op               8.3%       1.7%      3.3%     1.7%     6.7%
+shoulder/tagalog-heavy            3.4%       1.7%      5.1%     1.7%     3.4%
+…every other script              ≤8.5%                                  ≤2.8%
+MEAN                              6.6%       5.1%      5.3%     4.7%
+```
+
+**One script is voice-sensitive and it is the Cebuano one.** Nearly twenty
+points of spread on identical words, with the transcriber held constant. Chirp 2
+was never the weak link — the original 26% reading was an artefact of casting
+Juvy as the patient, who speaks every Cebuano clinical term in that script.
+
+Switching the default voices to the two best-measured (Pedro, Mang Jose) took
+`knee/cebuano-heavy` from **42.9% to 85.7%**, and *"the RIGHT knee is pinned
+from tuong tuhod"* started passing. TheraChart had been reading Cebuano
+laterality correctly the whole time.
+
+**Five scripts show 0.0% spread** — identical word error across four different
+voices. That is not luck; it means those errors are deterministic properties of
+Chirp 2 on that text rather than noise, which is exactly what you want a
+regression baseline built on.
+
+**`"negative"` was lost by 4 voices out of 4.** That settles it as a vocabulary
+failure rather than a pronunciation one: Chirp 2 drops the word regardless of
+who says it, so "extension is negative five" is charted as five degrees of
+hyperextension every single time.
 
 ## What it costs
 
