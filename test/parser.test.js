@@ -768,6 +768,52 @@ function mention(result, partName, side = undefined) {
     r.measurements.mmt.length === 0, JSON.stringify(r.measurements.mmt));
 }
 
+/* The refine pass punctuates dictated speech, so the pause a therapist takes
+   between the muscle and the grade comes back as a comma. It used to stop the
+   words before the grade from being read at all, and the grade went with them:
+   a spoken "deltoid strength, four out of five" reached the chart with no MMT
+   row and nothing on screen to say a number had been said. */
+{
+  // the comma form must read exactly the same as the same words without it
+  const reading = (text) => {
+    const m = parseUtterance(text).measurements.mmt;
+    return m.length === 1 ? `${m[0].context}|${m[0].grade}|${m[0].side}` : JSON.stringify(m);
+  };
+  for (const [comma, plain] of [
+    ["deltoid strength, 4 out of 5", "deltoid strength 4 out of 5"],
+    ["deltoid strength, four out of five", "deltoid strength four out of five"],
+    ["knee flexion is good, 5 out of 5", "knee flexion is good 5 out of 5"],
+    ["right deltoid strength, 4/5", "right deltoid strength 4/5"],
+    ["grip strength is, 5 out of 5", "grip strength is 5 out of 5"],
+    ["lakas ng quad, apat sa lima", "lakas ng quad apat sa lima"],   // tl
+  ]) {
+    check(`a comma before the grade reads the same as none: "${comma}"`,
+      reading(comma) === reading(plain), `${reading(comma)} vs ${reading(plain)}`);
+  }
+  check("the comma form still keeps the muscle and the grade",
+    reading("deltoid strength, 4 out of 5") === "deltoid|4/5|null",
+    reading("deltoid strength, 4 out of 5"));
+  // a therapist reels several muscles off in one comma-separated run
+  const run = parseUtterance("quad strength 4 out of 5, hamstring strength, 3 out of 5").measurements.mmt;
+  check("every grade in a comma-separated run is kept",
+    run.length === 2 && run[0].context === "quad" && run[1].context === "hamstring",
+    JSON.stringify(run));
+}
+/* The comma may only be crossed by the grade itself. Letting the muscle reach
+   further would invent a grade out of an ordinary sentence. */
+{
+  check("the muscle is not read across a clause boundary",
+    parseUtterance("her knee, she has 5 out of 5 kids").measurements.mmt.length === 0,
+    JSON.stringify(parseUtterance("her knee, she has 5 out of 5 kids").measurements.mmt));
+  check("two pain ratings in one line are still not muscle grades",
+    parseUtterance("my neck is a 3 out of 10 but my shoulder is an 8 out of 10").measurements.mmt.length === 0,
+    JSON.stringify(parseUtterance("my neck is a 3 out of 10 but my shoulder is an 8 out of 10").measurements.mmt));
+  const r = parseUtterance("quad strength is 4 out of 5");
+  check("and the plain form is untouched",
+    r.measurements.mmt.length === 1 && r.measurements.mmt[0].context === "quad"
+      && r.measurements.mmt[0].grade === "4/5", JSON.stringify(r.measurements.mmt));
+}
+
 /* The whole utterance from the live Vertex run that exposed all of this. */
 {
   const r = parseUtterance("right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5");

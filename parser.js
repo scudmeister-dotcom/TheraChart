@@ -804,8 +804,22 @@
      Taglish "quad strength apat sa lima" — an ordinary way to dictate 4/5 —
      produced no measurement at all and the grade was lost from the chart. */
   const MMT_NUM = "[0-5]|zero|one|two|three|four|five|sero|isa|dalawa|tatlo|apat|lima|usa|duha|tulo|upat";
+  /* The words before the grade were joined with `\s+`, so the run could not
+     cross a comma — and the refine pass punctuates dictated speech, so
+     "deltoid strength, four out of five" reached the parser with the comma in
+     place. The chain stopped there, MMT_CONTEXT_RE then saw only "4 out of 5"
+     with no strength word left in it, and the match was discarded: a grade the
+     therapist said out loud produced no MMT row at all, with nothing on screen
+     to show a number had been spoken. Only the separator that runs INTO the
+     grade admits a comma; the words themselves are still joined by whitespace.
+     That reads the muscle across the pause a therapist actually takes ("knee
+     flexion is good, 5 out of 5") without reaching across a real clause
+     boundary — in "her knee, she has 5 out of 5 kids" the only things allowed
+     after the comma are the grade and the words that grade it, so "knee" stays
+     out of reach and the sentence still reads as no muscle grade. */
   const MMT_RE = new RegExp(
-    `\\b((?:[A-Za-z][\\w-]*\\s+){0,3}?)(?:strength|mmt|lakas|kusog)?\\s*(?:is|was|graded?(?:\\s+at)?|at)?\\s*`
+    `\\b(?:((?:[A-Za-z][\\w-]*)(?:\\s+[A-Za-z][\\w-]*){0,2}?)[\\s,]+)?`
+    + `(?:strength|mmt|lakas|kusog)?[\\s,]*(?:is|was|graded?(?:\\s+at)?|at)?[\\s,]*`
     + `((?:${MMT_NUM})(?:\\s*(?:plus|minus)|[+-])?)\\s*(?:out\\s+of|over|sa|\\/)\\s*(?:5|five|lima)\\b`, "gi");
   /* The muscle is often named AFTER the grade, especially in Taglish word order
      — "strength 4 over 5 sa deltoid". Without this the grade was filed with no
@@ -1032,7 +1046,7 @@
          asymmetry (the whole point of measuring it) was invisible in the chart.
          Look in the matched words first, then a short tail after the grade for
          the trailing "on the right" form, then fall back to the joint anchor. */
-      let context = m[1].trim();
+      let context = (m[1] || "").trim();
       const start = m.index, end = start + m[0].length;
       const leadSide = new RegExp(`^(${SIDE_WORDS})\\b\\s*`, "i").exec(context);
       if (leadSide) context = context.slice(leadSide[0].length).trim();
