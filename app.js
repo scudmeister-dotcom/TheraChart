@@ -7340,10 +7340,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          is real and dropping it would lose more than it saves; it is labelled
          instead, so the one person who was in the room can say which.
 
-         Dictation is where this comes from. Chirp 2 loses the Cebuano word for
-         "right" ("tuo") in 6 takes out of 6 measured through test/voice, so a
-         Visayas visit can reach this screen having said the side out loud and
-         still not have it in the transcript. Nothing downstream can recover
+         Dictation is where this comes from. Measured through test/voice, Chirp 2
+         drops the Cebuano word for "right" ("tuo") in about 3 takes out of 10,
+         so a Visayas visit can reach this screen having said the side out loud
+         and still not have it in the transcript. Nothing downstream can recover
          that; asking is the only honest move left. */
       const noSide = !t && !bare && !denied && !f.side && PR.isPaired(f.part);
       const inLive = liveKeys.has(f.key);

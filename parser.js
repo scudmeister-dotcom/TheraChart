@@ -512,8 +512,9 @@
      It exists because a finding on a paired region with NO side is a specific
      kind of incomplete — the note names a knee without saying which — and the
      review can ask about it instead of pinning the figure's centre and hoping.
-     Cebuano dictation makes this concrete: Chirp 2 loses "tuo" (right) often
-     enough that a Visayas visit can reach review with the side simply absent. */
+     Cebuano dictation makes this concrete: Chirp 2 drops "tuo" (right) in
+     roughly 3 takes out of 10, so a Visayas visit can reach review with the
+     side simply absent even though the patient said it. */
   const isPaired = (name) => {
     const l = coordForName(name, "left"), r = coordForName(name, "right");
     return !!(l && r && l.x !== r.x);

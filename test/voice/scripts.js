@@ -239,19 +239,18 @@ const SCRIPTS = [
      failure in either language shows up as itself instead of being carried by
      the English around it.
 
-     The Cebuano one carries a caveat the Tagalog one does not, and --sweep
-     measured it: the same script, same words, read by four voices, scored
-     30.4% / 23.9% / 19.6% / 10.9% word error. Nearly twenty points of spread
-     with the transcriber held constant means the variable is the SPEECH model,
-     not Chirp 2 — Filipino is a language it supports and Cebuano is one it
-     only half does, so the voice decides how much survives.
+     The Cebuano one was rewritten once already, and the rewrite is most of why
+     it works. Its first version used the contracted "tuong tuhod" and
+     "motungas ko sa hagdanan" — 26.1% word error, with the laterality word
+     elided into the one before it. Ordinary written Cebuano ("tuo nga tuhod",
+     "mosaka ko ug hagdan") took the same script to 7.5%, and took "tuo" from a
+     coin flip to 7 takes in 10.
 
-     That is why the default voices are the two the sweep scored best (see
-     run.js). On a badly-pronounced take this script measures ElevenLabs; on a
-     well-pronounced one it measures TheraChart, which is what it is for. Run
-     --sweep for the robustness question, and keep a native ear for the rest:
-     word error alone still cannot tell a mispronounced take from a misheard
-     one. */
+     What remains is a real but much smaller gap: on identical audio Chirp 2
+     keeps "tuo" 7 times in 10 where ElevenLabs' own Scribe keeps it 10 times
+     in 10. The script is fine and the speech is fine; the transcriber is
+     modestly weaker in Cebuano than in Tagalog. Three visits in ten reaching
+     review without a side is why the review asks (see PR.isPaired). */
   {
     id: "shoulder/tagalog-heavy",
     lang: "fil-PH",
@@ -303,7 +302,7 @@ const SCRIPTS = [
        with English, it holds 8.1% with 0.0% spread across both models AND both
        voices. Real Bisaya audio is what would retire this caveat. */
     advisory: true,
-    why: "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 loses 6 times out of 6",
+    why: "near-monolingual Cebuano — laterality from \"tuo nga tuhod\", which Chirp 2 drops about 3 takes in 10",
     /* Rewritten after measuring the first version word by word. That one used
        the contracted "tuong" (which elides into the word before it and survived
        about half the time) and "motungas ko sa hagdanan" (which no transcriber

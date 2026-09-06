@@ -216,16 +216,18 @@ Everything else here measures the speaker and the transcriber in series and
 cannot say which one is weak. ElevenLabs' own speech-to-text (Scribe) gives a
 second pair of ears on the *identical WAV*, which separates them.
 
-**The decisive test.** One line — `"Sakit ang tuo nga tuhod"`, Cebuano for "the
-right knee hurts" — six fresh takes, the same audio sent to both:
+**Most of the Cebuano problem was the script, not either engine.** The first
+version of `knee/cebuano-heavy` used the contracted `tuong tuhod` and
+`motungas ko sa hagdanan`, and scored 26.1% word error. Ordinary written
+Cebuano — `tuo nga tuhod`, `mosaka ko ug hagdan` — took the same script to
+**7.5%**, and took the laterality word from a coin flip to 7 takes in 10.
+
+What is left is a real but modest gap. One line, `"Sakit ang tuo nga tuhod"`,
+10 fresh takes on the harness's default voice and model, same WAV to both:
 
 ```
-laterality survived    Google Chirp 2: 0/6      ElevenLabs Scribe: 6/6
+"tuo" (right) survived    Google Chirp 2: 7/10     ElevenLabs Scribe: 10/10
 ```
-
-Scribe recovers `tuo` in **every** take. Chirp 2 loses it in every take,
-rendering it as "tuhod ug", "tuwang-tuhod", "tuon nga", "tulog na". The word is
-plainly present in the audio; one transcriber hears it and the other does not.
 
 Over a wider sample — 4 scripts × 3 takes, 480 reference words, errors
 classified by hand into real mishearings versus Cebuano spelling variation:
@@ -236,30 +238,26 @@ classified by hand into real mishearings versus Cebuano spelling variation:
 | ElevenLabs Scribe | **8.3%** | 5.0% |
 
 And Chirp 2 is not a weak transcriber in general — on Tagalog it beats Scribe
-(1.7% vs 5.1%). It is specifically weak on Cebuano.
+(1.7% vs 5.1%). It is specifically, and moderately, weaker on Cebuano.
 
-**So the shortcoming is Google's `ceb-PH`, not the synthetic audio.** Three
-things were wrongly blamed along the way, and all three are corrected above:
-
-1. **Not ElevenLabs.** Scribe recovering 92% of the same audio proves the speech
-   is intelligible Cebuano.
-2. **Partly the scripts.** The first Cebuano script used the contracted `tuong`
-   and `motungas ko sa hagdanan`, which no transcriber held together. Ordinary
-   written Cebuano — `tuo nga tuhod`, `mosaka ko ug hagdan` — cut word error
-   from 26.1% to **7.5%**.
-3. **Partly the scoring.** Roughly 3.5% of what this harness called "error" is
-   standard Cebuano spelling variation, not mishearing: `o~u` (*mosaka/musaka*),
-   `h~y` (*gihapon/giyapon*), and the routinely-dropped apostrophe in
-   *naa ba'y* → *nabay*. Cebuano orthography is not standardised and a
-   word-level scorer cannot tell a variant from a mistake.
+**A correction worth keeping.** An earlier version of this file reported that
+figure as **0/6 for Chirp 2 against 6/6 for Scribe**, and concluded that Cebuano
+laterality simply does not survive dictation. That measurement was taken on
+`eleven_v3` audio, which had been switched on while investigating whether v3
+helped — and v3 is *worse* at this word than the default `multilingual_v2`
+(0/10 against 7/10). The number described the wrong speech model, not the
+transcriber. Check which TTS model a take came from before drawing a conclusion
+from it; `--sweep` and `--takes` exist for exactly this reason and neither was
+used for that test.
 
 ### What this means for the product
 
-**Cebuano laterality does not survive dictation.** A Visayas patient saying
-`tuo nga tuhod` gets a knee pinned with **no side at all** — the transcript
-never carries the word, so the model has nothing to read it from. That is not a
-harness artefact; it is what a real clinic would get today, and the dictation
-menu offers `ceb-PH`.
+**About three Cebuano visits in ten lose the side.** A patient saying `tuo nga
+tuhod` gets a knee pinned with no side whenever the word does not survive — the
+transcript never carries it, so the model has nothing to read it from. Usually
+it does survive; sometimes it does not, and nothing downstream can tell the
+difference. That is not a harness artefact, and the dictation menu offers
+`ceb-PH` today.
 
 Four levers were tried. **None is worth shipping**, and `chirp_2` + the phrase
 list stays exactly as it was.
