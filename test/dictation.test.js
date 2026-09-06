@@ -507,5 +507,48 @@ const settle = () => new Promise((r) => setImmediate(r));
       "a correction nobody can see is one nobody can disagree with");
   }
 
+  /* ---------------- the recording stage ---------------- */
+  {
+    /* `btn.addEventListener("click"` occurs earlier in app.js than the stage
+       does, so it cannot be the closing bound — indexOf would run backwards
+       and hand every check below an empty string that quietly passes nothing. */
+    const stageStart = SRC.indexOf("const stage = document.getElementById(\"recStage\")");
+    const stage = SRC.slice(stageStart,
+      SRC.indexOf("if (stageBack) stageBack.addEventListener(\"click\", exitStage);", stageStart));
+    r.check("the stage block was actually found in app.js", stage.length > 400,
+      `sliced ${stage.length} chars — the checks below are meaningless if this is empty`);
+
+    r.check("the recorder controls are MOVED to the stage, never copied",
+      /slot\.appendChild\(bar\)/.test(stage) && !/recStageSlot"\)\.innerHTML\s*=/.test(SRC),
+      "a second record button with its own listeners is two microphones as far as the therapist can tell");
+
+    r.check("the stage re-parents to <body> before it is shown",
+      /document\.body\.appendChild\(stage\)/.test(stage),
+      "an ancestor inside the page forms a stacking context, and the fixed sidebar paints over a 'full screen' recorder that stays inside it");
+
+    /* The one property that matters clinically: there is no way to walk away
+       from a running recorder. A hot microphone nobody can see is the failure
+       every other backstop in this file exists to catch. */
+    r.check("there is no way off the stage while the mic is open",
+      /if \(stageBack\) stageBack\.hidden = true;/.test(stage)
+        && /const stageIdle = \(\) => \{ if \(stageBack && stage && !stage\.hidden\) stageBack\.hidden = false; \};/.test(stage),
+      "Back is offered only once recording has stopped");
+
+    r.check("…and it is only entered once the microphone is genuinely open",
+      /const ok = await rec\.start\(\);[\s\S]{0,600}enterStage\(\);/.test(SRC),
+      "entering before start() means a full-screen recorder over a mic that was refused");
+
+    r.check("leaving the stage puts every element back where it was",
+      /parent\.insertBefore\(el, next\)/.test(stage) && !/exitStage[\s\S]{0,200}appendChild/.test(stage),
+      "appending to the old parent silently reorders the dictation toolbar");
+
+    r.check("the review opens over the note, not over the stage",
+      /exitStage\(\);\s*\n\s*showIdle\(\);\s*\n\s*if \(aiOn\) await runRefine/.test(SRC),
+      "reading a review over a full-screen recorder hides the document it is filling in");
+
+    r.check("discarding a recording leaves the stage",
+      /meta\.textContent = "Recording discarded\.";\s*\n\s*exitStage\(\);/.test(SRC));
+  }
+
   r.done();
 })();

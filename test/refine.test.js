@@ -475,6 +475,95 @@ for (const t of [
     !/90 degrees/.test(r.subjective), r.subjective);
 }
 
+/* ---- a reading must not survive the region it was taken on ----
+
+   The refine pass corrects findings but not measurements: findings are the
+   model's reading of the visit, measurements are still the parser's regexes
+   run over the dialogue. The regex cannot hear a correction three lines
+   later, so "my RIGHT shoulder is about a seven out of ten" — corrected to
+   the left in the next breath — filed a pain score against the right
+   shoulder while the map and the Subjective both said left.
+
+   A note that contradicts itself across two sections is worse than one that
+   is merely incomplete, because nothing on screen admits the disagreement. */
+{
+  const fs3 = require("fs"), path3 = require("path");
+  const APP3 = fs3.readFileSync(path3.join(__dirname, "..", "app.js"), "utf8");
+  const lift3 = (decl) => {
+    const a = APP3.indexOf(decl);
+    if (a < 0) throw new Error(`app.js no longer contains: ${decl}`);
+    const b = APP3.indexOf("\n  }\n", a);
+    return APP3.slice(a, b + 5);
+  };
+  const M = new Function("PR",
+    [lift3("  function measurementRegionKey(kind, m) {"),
+     lift3("  function splitMeasurements(meas, correctedBy, keptKeys) {")].join("\n")
+    + "\n  return { measurementRegionKey, splitMeasurements };")(PR);
+
+  const corr = new Map([["Shoulder|right", { reason: "The patient corrected this to Left Shoulder" }]]);
+  const meas = {
+    rom: [{ side: "right", joint: "shoulder", motion: "abduction", degrees: 90 }],
+    mmt: [], special: [{ name: "Neer", result: "positive" }],
+    pain: [{ score: 7, location: "right shoulder" }],
+  };
+
+  // the therapist agreed with the retraction: only the left shoulder is kept
+  const agreed = M.splitMeasurements(meas, corr, new Set(["Shoulder|left"]));
+  check("a pain score on a retracted region is not filed",
+    agreed.keep.pain.length === 0 && agreed.dropped.some((d) => d.kind === "pain"),
+    JSON.stringify(agreed.keep.pain));
+  check("…nor is a range of motion taken on it",
+    agreed.keep.rom.length === 0, JSON.stringify(agreed.keep.rom));
+  check("…and the drop carries the reason the therapist was shown",
+    agreed.dropped.every((d) => /corrected/i.test(d.reason)), JSON.stringify(agreed.dropped));
+  check("a test with no body region of its own is always filed",
+    agreed.keep.special.length === 1, "Neer has no region to contradict");
+
+  /* The therapist has the last word. Ticking the corrected region back on
+     must bring its readings with it, or the screen and the note disagree
+     the other way round. */
+  const overruled = M.splitMeasurements(meas, corr, new Set(["Shoulder|right"]));
+  check("ticking a corrected region back on restores its readings",
+    overruled.keep.pain.length === 1 && overruled.keep.rom.length === 1 && overruled.dropped.length === 0,
+    JSON.stringify(overruled.dropped));
+
+  // nothing corrected at all: everything files, exactly as before
+  const clean = M.splitMeasurements(meas, new Map(), new Set(["Shoulder|right"]));
+  check("with no corrections every reading still files",
+    clean.keep.pain.length === 1 && clean.keep.rom.length === 1 && clean.dropped.length === 0);
+
+  /* Filtering only what the review ADDS is not enough. The live pass files
+     measurements as it hears them, so by the time the therapist presses
+     review the retracted side's reading is already on the chart — and the
+     note ends up with a map that says left and a table that says right. */
+  const APPLY = APP3.slice(APP3.indexOf("  function applyRefinement("),
+                           APP3.indexOf("/* ================= AI clinical insights ================= */"));
+  check("readings already on the note are pruned, not just the new ones",
+    /const stale = \[\];/.test(APPLY) && /doc\.data\[kind\] = before\.filter\(/.test(APPLY),
+    "applyRefinement must remove what the live pass filed on a retracted region");
+  check("…the prune runs against the same keptKeys the therapist ticked",
+    /const correction = key && !keptKeys\.has\(key\) \? correctedBy\.get\(key\) : null;[\s\S]{0,120}stale\.push/.test(APPLY),
+    APPLY.slice(APPLY.indexOf("const stale"), APPLY.indexOf("const stale") + 500));
+  check("…and a pruned reading is named in the change list",
+    /taken off the measurement table/.test(APPLY));
+  check("…without also being reported a second time as 'not filed'",
+    /staleLabels\.has\(label\)\) continue;/.test(APPLY),
+    "one reading leaving is one fact, not two");
+
+  /* coordForName() answers "Back" when it recognises nothing, so resolving a
+     reading through it would file a strength grade with no region against the
+     lumbar spine — and a correction on the low back would then silently eat
+     it. parseUtterance says "no region" instead. */
+  check("a reading that names no region resolves to no region",
+    M.measurementRegionKey("mmt", { side: null, context: "grip" }) === null,
+    String(M.measurementRegionKey("mmt", { side: null, context: "grip" })));
+  check("a pain score with no location resolves to no region",
+    M.measurementRegionKey("pain", { score: 5, location: null }) === null);
+  check("a range of motion is keyed by its own side field",
+    M.measurementRegionKey("rom", { side: "left", joint: "shoulder", motion: "flexion", degrees: 130 }) === "Shoulder|left",
+    String(M.measurementRegionKey("rom", { side: "left", joint: "shoulder", motion: "flexion", degrees: 130 })));
+}
+
 /* ---- the two places a failure could still go quiet ---- */
 {
   const fs2 = require("fs"), path2 = require("path");

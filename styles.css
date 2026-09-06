@@ -2614,3 +2614,55 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   align-items: center;
   gap: 6px;
 }
+
+/* ---- the recording stage ----
+
+   Full screen while a visit is being recorded, and deliberately almost empty.
+   Nothing is interpreted during a recording any more, so there is nothing
+   honest to show a therapist except who they are recording, that the mic can
+   hear them, and how much of the visit's allowance is spent. The note used to
+   fill in behind them line by line, which looked like progress and was in
+   fact the live pass making the mistakes this flow removes.
+
+   Sits at z-index 50: above the page and the mobile nav (40), below modals
+   (60), so a mic-permission failure still lands on top of it. */
+.rec-stage {
+  position: fixed; inset: 0; z-index: 50;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.rec-stage-inner {
+  width: 100%; max-width: 460px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+}
+.rec-stage-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--danger);
+}
+.rec-stage-eyebrow .rec-dot { animation: recpulse 1.4s ease-in-out infinite; }
+.rec-stage-who h2 { margin: 6px 0 2px; font-size: 22px; }
+.rec-stage-doc { font-size: 13px; color: var(--muted); }
+.rec-stage-meters {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  min-height: 34px; width: 100%;
+}
+/* The level meter is the "I can hear you" signal and the only moving thing on
+   the screen, so it gets room it does not get in the toolbar. */
+/* flex: 0 1 96px in the toolbar rule sets a flex-BASIS, and this container
+   is a column — so that 96px lands on the height and quietly beats the
+   height below it. Reset the flex before sizing it. */
+.rec-stage-meters .mic-level { flex: none; width: 100%; max-width: 320px; height: 10px; }
+.rec-stage-slot { width: 100%; }
+.rec-stage-slot .rec-bar { margin-top: 0; border: 0; background: transparent; padding: 0; }
+.rec-stage-slot .rec-alt-head { display: none; }
+.rec-stage-slot .rec-main { justify-content: center; }
+.rec-stage-slot .rec-meta { flex: 0 1 100%; text-align: center; }
+.rec-stage-slot .rec-btn { font-size: 15px; padding: 12px 20px; }
+.rec-stage-note {
+  font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0; max-width: 380px;
+}
+.rec-stage-back { margin-top: 2px; }
+/* The page behind must not scroll under the stage. */
+body.recording-stage { overflow: hidden; }

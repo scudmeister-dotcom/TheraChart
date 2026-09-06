@@ -277,7 +277,7 @@ Two separate things share your Google Cloud project:
   `us-central1` return 404 for them). Only set `GEMINI_LOCATION` if data
   residency forces a region AND you've confirmed the models exist there.
   Confirm at `/api/ai-status` → `"provider":"vertex"`. Every path uses
-  `gemini-3.6-flash` with thinking on everywhere; only the depth varies.
+  `gemini-3.8-flash` with thinking on everywhere; only the depth varies.
   Transcript cleanup runs at **`medium`** — dropping it lower measurably breaks
   the "every finding is traceable to the transcript" check on code-switched
   Taglish dictation (95.5% → 92.5% over 3 eval runs). Document import, Clinical

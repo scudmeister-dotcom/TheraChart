@@ -11,7 +11,8 @@
 })(typeof self !== "undefined" ? self : this, function (parser, insights) {
   "use strict";
 
-  // One model everywhere: 3.6 Flash with thinking on. Flash is fast + cheap and
+  // One model everywhere: Flash with thinking on (see DEFAULT_MODEL below for
+  // the current version). Flash is fast + cheap and
   // handles the high-volume, schema-bound work (transcript cleanup, document
   // reading); thinking is what buys back the depth the old Pro tier gave the
   // reasoning-heavy paths, so the tiering now lives in the thinking level
@@ -37,22 +38,23 @@
   //     flags, referrals) is clinically consequential.
   //   Levels below STANDARD ("low"/"minimal") spend ZERO thinking tokens, i.e.
   //     thinking off. Don't set them here without re-running the eval.
-  /* Gemini 3.7 Flash (released 2026-08-14), at the SAME introductory rate as
-     3.6 — $0.75/$3.75 per 1M in/out through 2026-12-31, then $1.50/$7.50. So
-     this costs nothing to take.
+  /* Gemini 3.8 Flash. Verified present in the Vertex publisher catalogue for
+     therachart-prod and callable through the Vertex path below — a live refine
+     returns source:"gemini", and correctly retracts a region the patient takes
+     back later in the transcript. 3.x models are served ONLY from the `global`
+     endpoint; a 404 from a regional host means the location is wrong, not the
+     model name.
 
-     Measured before switching: test/eval/run.js --runs 2 against Vertex scores
-     98.0% (200/204) on BOTH models, with the same single miss
-     (insights/declining-rom). No regression, and no gain on these cases either.
-     The reason to move is the published document-processing benchmark, which is
-     the scanned-record import path this eval does not cover (GDP.pdf 34.0% vs
-     22.0%) — an improvement we have NOT independently verified here.
+     Same introductory rate as 3.6 and 3.7 ($0.75/$3.75 per 1M in/out through
+     2026-12-31, then $1.50/$7.50), so the move costs nothing. Per-visit AI
+     cost is the binding constraint on PH pricing — re-check the published
+     rate at the 2026-12-31 rollover, not just for this model.
 
      If anything looks wrong in the field, revert without a deploy:
        gcloud run services update therachart --region us-central1 \
-         --update-env-vars GEMINI_MODEL=gemini-3.6-flash,GEMINI_INSIGHTS_MODEL=gemini-3.6-flash */
-  const DEFAULT_MODEL = "gemini-3.7-flash";
-  const DEFAULT_INSIGHTS_MODEL = "gemini-3.7-flash";
+         --update-env-vars GEMINI_MODEL=gemini-3.7-flash,GEMINI_INSIGHTS_MODEL=gemini-3.7-flash */
+  const DEFAULT_MODEL = "gemini-3.8-flash";
+  const DEFAULT_INSIGHTS_MODEL = "gemini-3.8-flash";
   const THINKING_STANDARD = "medium";
   const THINKING_DEEP = "high";
   const DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta";

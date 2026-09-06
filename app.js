@@ -4418,6 +4418,26 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <span class="rec-meta" id="recMeta">Record straight through, then process once.</span>
       </div>
       <div class="rec-progress" id="recProgress" hidden></div>
+    </div>
+    <!-- Where the recorder controls MOVE to while a visit is being recorded.
+         Empty on purpose: wireRecorder() relocates the real #recBar and the
+         two meters into these slots and puts them back afterwards, so the
+         buttons on the stage are the same buttons with the same listeners.
+         A second copy would need its own wiring, and two record buttons that
+         disagree about whether the mic is open is precisely the failure this
+         screen exists to prevent. -->
+    <div class="rec-stage" id="recStage" hidden>
+      <div class="rec-stage-inner">
+        <div class="rec-stage-who">
+          <div class="rec-stage-eyebrow"><span class="rec-dot"></span>Recording this visit</div>
+          <h2>${esc(S.patientName(p))}</h2>
+          <div class="rec-stage-doc">${esc(doc.title)}</div>
+        </div>
+        <div class="rec-stage-meters" id="recStageMeters"></div>
+        <div class="rec-stage-slot" id="recStageSlot"></div>
+        <p class="rec-stage-note">Nothing is written to the note while you record. When you stop, the whole visit is read in one pass and you approve what goes in — so a detail the patient corrects later never reaches the chart.</p>
+        <button class="btn rec-stage-back" id="recStageBack" type="button" hidden>← Back to the note</button>
+      </div>
     </div>` : ""}
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="route-log" id="routeLog"></div>
@@ -6123,6 +6143,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        attention: record straight through, process once, then read what the AI
        produced next to what you wrote yourself. Nothing reaches the note until
        the therapist accepts it. */
+    /* The mic level meter. Declared BEFORE the recorder is wired, not after:
+       wireRecorder() calls showIdle() as it runs, showIdle() puts the meter
+       away, and a `const` further down the function is still in its temporal
+       dead zone at that point — which threw, and took every listener bound
+       after it (including typed dictation) down with it. */
+    const levelEl = document.getElementById("micLevel");
+    const levelFill = document.getElementById("micLevelFill");
+    const levelBar = document.getElementById("micLevelBar");
+    const LEVEL_FULL = 0.08; // an RMS that reads as full scale — a raised voice
+
     (function wireRecorder() {
       const bar = document.getElementById("recBar");
       if (!bar) return;
@@ -6134,11 +6164,77 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const prog = document.getElementById("recProgress");
       let rec = null, recording = false, captured = null;
 
+      /* ---- the recording stage ----
+
+         The controls are MOVED onto the full-screen stage, not copied. A
+         second set of buttons would need its own listeners, and two record
+         buttons that disagree about whether the mic is open is exactly the
+         failure this screen exists to prevent. Moving a node keeps every
+         listener attached, so the button on the stage IS the button.
+
+         Where each element came from is remembered so it goes back exactly
+         where it was — the toolbar order matters, and appending them to the
+         end of their old parent would quietly rearrange the dictation bar. */
+      const stage = document.getElementById("recStage");
+      const stageBack = document.getElementById("recStageBack");
+      const meterEl = document.getElementById("dictMeter");
+      const homes = new Map();
+      const remember = (el) => { if (el && !homes.has(el)) homes.set(el, [el.parentNode, el.nextSibling]); };
+
+      const enterStage = () => {
+        if (!stage) return;
+        const slot = document.getElementById("recStageSlot");
+        const meters = document.getElementById("recStageMeters");
+        /* The stage moves to <body> first. position:fixed with a high z-index
+           is not enough on its own: an ancestor inside the page already forms
+           a stacking context, so the stage's z-index was being resolved
+           INSIDE it and the fixed sidebar (z-index 30) painted straight over
+           a "full screen" recorder. Re-parenting to <body> is what actually
+           makes it full screen; it is restored with everything else. */
+        remember(stage);
+        for (const el of [bar, levelEl, meterEl]) remember(el);
+        document.body.appendChild(stage);
+        if (levelEl) meters.appendChild(levelEl);
+        if (meterEl) meters.appendChild(meterEl);
+        slot.appendChild(bar);
+        stage.hidden = false;
+        /* No way off the stage while the mic is live except Stop. Letting a
+           therapist walk away from a running recorder is how you end up with
+           a hot microphone nobody can see — the one failure the dictation
+           backstops exist to catch. */
+        if (stageBack) stageBack.hidden = true;
+        document.body.classList.add("recording-stage");
+      };
+
+      // the mic is off but the audio is still here: offer the way back
+      const stageIdle = () => { if (stageBack && stage && !stage.hidden) stageBack.hidden = false; };
+
+      const exitStage = () => {
+        if (!stage || stage.hidden) return;
+        for (const [el, [parent, next]] of homes) if (parent) parent.insertBefore(el, next);
+        homes.clear();
+        stage.hidden = true;
+        if (stageBack) stageBack.hidden = true;
+        document.body.classList.remove("recording-stage");
+      };
+      if (stageBack) stageBack.addEventListener("click", exitStage);
+
       /* Deliberately no running clock while the mic is open — see
          dictationLine(). The pulsing dot on the button is the "still
          recording" cue; a mm:ss counter would just be the visit timer we
          took out of the note. */
+      /* Undo what onLevel did, and give the gate marker back to live
+         dictation — it owns the threshold, the recorder does not. */
+      const clearRecLevel = () => {
+        if (!levelEl) return;
+        levelEl.hidden = true;
+        levelFill.style.width = "0%";
+        levelFill.classList.remove("voiced");
+        if (levelBar) levelBar.style.display = "";
+      };
+
       const showIdle = () => {
+        clearRecLevel();
         label.textContent = captured && captured.length ? "Record more" : "Record the visit";
         btn.classList.remove("on");
         processBtn.hidden = !(captured && captured.length);
@@ -6153,6 +6249,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           captured = chunks;
           meta.textContent = "Recording captured — process it when you're ready. Silence was skipped, so only speech is charged.";
           showIdle();
+          stageIdle();
           return;
         }
         const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
@@ -6163,10 +6260,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           ceilingSeconds: ceilMin * 60,
           // whole minutes only — see showDictMeter()
           onElapsed: (total, voiced) => showDictMeter(priorSec + voiced, ceilMin * 60),
+          /* The "I can hear you" signal. It matters more here than it does on
+             the live path: nothing is interpreted during a recording any more,
+             so without this the screen is completely still for forty minutes
+             and a dead microphone looks exactly like a quiet room.
+
+             NOTE the argument order is (voiced, rms) — the REVERSE of the live
+             engine's (rms, voiced, threshold). Swapping them paints the bar
+             from a boolean and is wrong in a way nothing reports. The gate
+             marker is hidden rather than left where live dictation last put
+             it, because the recorder does not publish its threshold and a
+             stale line is worse than no line. */
+          onLevel: (voiced, rms) => {
+            if (!levelEl) return;
+            levelEl.hidden = false;
+            if (levelBar) levelBar.style.display = "none";
+            levelFill.style.width = Math.max(0, Math.min(100, (rms / LEVEL_FULL) * 100)) + "%";
+            levelFill.classList.toggle("voiced", !!voiced);
+          },
           onStop: (why) => {
             if (why === "limit") meta.textContent = "Stopped at the 20-minute limit — process this, then start another.";
             else if (why === "ceiling") meta.textContent = `Stopped — this visit has reached ${ceilMin} minutes of recorded speech. Process this, then start another recording if you need to.`;
-            recording = false; hideDictMeter(); showIdle();
+            recording = false; hideDictMeter(); showIdle(); stageIdle();
           },
         });
         const ok = await rec.start();
@@ -6176,12 +6291,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         label.textContent = "Stop recording";
         btn.classList.add("on");
         processBtn.hidden = true; discardBtn.hidden = true;
+        enterStage();   // only once the mic is genuinely open, never before
       });
 
       discardBtn.addEventListener("click", async () => {
         captured = null;
         await savedAudio.clear(doc.id).catch(() => {});
         meta.textContent = "Recording discarded.";
+        exitStage();
         showIdle();
       });
 
@@ -6199,28 +6316,43 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
               : "Nothing recognisable in that recording. The audio is still here if you want to try again.";
             return;
           }
+          /* Whether the whole conversation gets read at once, or line by line.
+             It decides the message below as well as the routing, so it is
+             settled before anything is said to the therapist. */
+          const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
           if (out.errors.length) {
             prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed. The gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript, and the recording is still here — press Process again to retry.`;
           } else {
-            prog.textContent = "Transcribed. Review what the AI filled in against your own notes below.";
+            prog.textContent = aiOn
+              ? "Transcribed. Reading the whole visit before anything is filed…"
+              : "Transcribed. Review what was filled in against your own notes below.";
           }
-          // Record the spend before routing: routeUtterance persists doc.data,
-          // and a crash mid-routing should not lose what we were already billed.
+          // Record the spend first: a crash further down should not lose what
+          // we were already billed for.
           recordDictationSeconds(doc.id, out.billedSeconds, user);
-          // Route it exactly as dictation would, so measurements, the body map
-          // and the SOAP fields all fill the same way.
-          /* Snapshot what the therapist wrote BEFORE the AI touches anything,
-             so the comparison is against their own words rather than against
-             whatever the routing has already overwritten. */
-          const keys = (COMPARE_FIELDS[doc.type] || COMPARE_FIELDS.daily).map(([k]) => k);
-          doc.data._preRecording = Object.fromEntries(keys.map((k) => [k, doc.data[k] || ""]));
-
-          // Route it line by line exactly as typed dictation does, so
-          // measurements, the body map and the SOAP fields all fill the same way.
           const repaired = PR.correctDictation(out.text);
           if (repaired.fixes.length) noteDictationFixes(repaired.fixes);
-          repaired.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
-            .forEach((line) => routeUtterance(doc, user, line, dstate));
+
+          /* NOTHING is interpreted here when the AI review is available. The
+             transcript is stored as spoken and the whole visit is read in one
+             pass, so a region the patient takes back late in the conversation
+             is retracted BEFORE the first pin is drawn — rather than pinned,
+             then offered for deletion afterwards.
+
+             Without the AI there is no whole-visit reader, so this falls back
+             to the live pass. A transcript on its own would be less than this
+             button used to give, and the note is still the therapist's to
+             write and sign in the usual way. */
+          if (aiOn) {
+            captureUtterances(doc, user, repaired.text, dstate);
+          } else {
+            /* Snapshot what the therapist wrote BEFORE the routing touches
+               anything, so the comparison is against their own words. */
+            const keys = (COMPARE_FIELDS[doc.type] || COMPARE_FIELDS.daily).map(([k]) => k);
+            doc.data._preRecording = Object.fromEntries(keys.map((k) => [k, doc.data[k] || ""]));
+            repaired.text.split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean)
+              .forEach((line) => routeUtterance(doc, user, line, dstate));
+          }
           /* Only discard the audio once ALL of it was transcribed. A partial
              failure used to clear the recording anyway, so the words in the
              chunk that failed were gone for good — while the message on screen
@@ -6230,8 +6362,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             captured = null;
             await savedAudio.clear(doc.id).catch(() => {});
           }
+          /* Off the stage before the review opens. Transcription progress
+             belongs on the stage — it is still part of the recording — but
+             the review is about the NOTE, and reading it over a full-screen
+             recorder would hide the very document it is filling in. An early
+             return above leaves the stage up on purpose, so a failed
+             transcription can be retried where it was started. */
+          exitStage();
           showIdle();
-          openCompare(doc, user);
+          if (aiOn) await runRefine(doc, user, dstate);
+          else openCompare(doc, user);
         } finally { processBtn.disabled = false; btn.disabled = false; }
       });
 
@@ -6314,10 +6454,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       ceilingSeconds: (S.settings().maxDictationMinutesPerVisit || 30) * 60,
     };
 
-    const levelEl = document.getElementById("micLevel");
-    const levelFill = document.getElementById("micLevelFill");
-    const levelBar = document.getElementById("micLevelBar");
-    const LEVEL_FULL = 0.08; // an RMS that reads as full scale — a raised voice
     let autoStopNotice = ""; // why the mic stopped, until the therapist acts on it
     let engine = null;
     function makeEngine() {
@@ -6639,6 +6775,34 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const meas = PR.extractMeasurements(sentence);
     if (meas.rom.length + meas.mmt.length + meas.special.length) return null; // → measurement table
     return target;
+  }
+
+  /* Store dictated lines in the transcript WITHOUT interpreting them.
+
+     routeUtterance below is a one-way street: it pins a region the moment it
+     hears the word, and nothing said later can un-pin it. A patient who
+     revises themselves three sentences on ("not the right, the left") leaves
+     BOTH pins on the mannequin and the therapist has to spot the wrong one.
+
+     Live dictation has no choice — it only ever has the sentence in front of
+     it. A finished recording has no such excuse: the whole conversation is in
+     hand, so the reading is deferred to the refine pass, which can see the
+     correction coming before anything reaches the chart or the body map. */
+  function captureUtterances(doc, user, text, dstate) {
+    if (!doc.data.transcript) doc.data.transcript = [];
+    const time = nowTime();
+    let n = 0;
+    for (const line of String(text || "").split(/(?<=[.!?])\s+/)) {
+      // the same normalisation parseUtterance opens with, and nothing else
+      const t = line.trim().replace(/\s+/g, " ");
+      if (!t) continue;
+      doc.data.transcript.push({ time, text: t });
+      n += 1;
+    }
+    if (!n) return 0;
+    S.updateDocData(doc.id, doc.data, user);
+    drawTranscript(doc, null, dstate);
+    return n;
   }
 
   function routeUtterance(doc, user, raw, dstate, silent, target) {
@@ -7227,14 +7391,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>`;
     };
 
-    const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
-    const measCount = meas.rom.length + meas.mmt.length + meas.special.length + meas.pain.length;
-    const measList = [
-      ...meas.rom.map((r) => `${romLabel(r)} · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`),
-      ...meas.mmt.map((r) => `MMT · ${r.side ? r.side + " " : ""}${r.context || ""} ${r.grade}`),
-      ...meas.special.map((r) => `${r.name} — ${r.result}`),
-      ...meas.pain.map((r) => `Pain · ${r.location || "—"} ${r.score}/10`),
-    ];
+    /* Built from the CURRENT ticks, not from the raw result: a reading whose
+       region is being taken off the chart must not be promised here and then
+       quietly withheld on apply. Re-rendered whenever a finding is ticked, so
+       putting a corrected region back brings its readings back with it. */
+    const measBlockHtml = () => {
+      const keptNow = new Set(rows.filter((r) => r.include && r.summary.trim()).map((r) => r.key));
+      const { keep, dropped } = splitMeasurements(result.measurements, correctedBy, keptNow);
+      const list = [];
+      for (const kind of ["rom", "mmt", "special", "pain"]) for (const item of keep[kind]) list.push(measLabel(kind, item));
+      return `<label>Objective measurements to file (${list.length})</label>
+        ${list.length ? `<ul class="rev-meas">${list.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
+          : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}
+        ${dropped.length ? `<div class="rev-why">${dropped.map((d) =>
+            `<div><b>Not filed — ${esc(measLabel(d.kind, d.item))}</b>: ${esc(d.reason)}</div>`).join("")
+          }<div>Tick that region back on under Findings and its readings come with it.</div></div>` : ""}`;
+    };
     /* What this review cannot write, said plainly on the same screen. A
        therapist who has just watched the AI fill six sections will assume it
        filled the rest too, and the Plan and the charge sheet are exactly the
@@ -7244,9 +7416,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const sectionsHtml = `
       <div class="rev-legend">Every section the review can write, each with its own tick. Ticked sections <b>replace</b> what is in the note — all still editable afterwards. Anything you typed by hand starts unticked.</div>
       ${sectionRows.length ? sectionRows.map(sectionRowHtml).join("") : `<div class="empty-state">The visit said nothing that belongs in a note section.</div>`}
-      <div class="field"><label>Objective measurements to file (${measCount})</label>
-        ${measCount ? `<ul class="rev-meas">${measList.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
-        : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}</div>
+      <div class="field" id="revMeas">${measBlockHtml()}</div>
       ${yoursNow.length ? `<div class="rev-yours">
         <b>The review does not write these — the clinician does:</b>
         ${yoursNow.map((t) => `<span class="chip ${SOURCE_META[t.source].tone}">${esc(t.label)}</span>`).join("")}
@@ -7288,25 +7458,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     };
 
     const m = showModal(`
-<h2>Review &amp; clean up ${engineChip}</h2>
-<p style="font-size:12.5px; color:var(--muted); margin-top:-4px">Edit anything below. Speaker labels and wording are yours to correct; only the findings you keep will be saved to the note and body map.</p>
+<h2>What the visit said ${engineChip}</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:-4px">Nothing here is on the chart yet. Tick what belongs, edit any wording, and only then does it reach the note and the body map.</p>
 <div class="rev-tabs">
-  <button class="rev-tab active" data-tab="dialogue">Conversation</button>
-  <button class="rev-tab" data-tab="findings">Findings (${rows.length})</button>
+  <button class="rev-tab active" data-tab="findings">Findings (${rows.length})</button>
   <button class="rev-tab" data-tab="sections">Note sections</button>
+  <button class="rev-tab" data-tab="dialogue">Conversation</button>
 </div>
-<div class="rev-pane" data-pane="dialogue">
+<div class="rev-pane" data-pane="dialogue" style="display:none">
   <div class="rev-legend">Who said what — click a speaker to change it, edit text inline. Unticked lines carry nothing clinical and will be dropped from the transcript; what goes is listed afterwards under “See what changed”.</div>
   ${dialogueHtml || `<div class="empty-state">No dialogue.</div>`}
 </div>
-<div class="rev-pane" data-pane="findings" style="display:none">
-  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements. Uncheck any you don't want; edit the wording freely. Anything the patient corrected later, said only as an example, or named without reporting anything starts unticked.</div>
+<div class="rev-pane" data-pane="findings">
+  <div class="rev-legend">Findings drawn from the <b>patient's</b> statements, read across the whole visit — so a region they corrected later never reaches the map at all. Uncheck any you don't want; edit the wording freely. Anything the patient corrected, said only as an example, or named without reporting anything starts unticked.</div>
   ${rows.map(findingRow).join("") || `<div class="empty-state">No patient findings detected.</div>`}
 </div>
 <div class="rev-pane" data-pane="sections" style="display:none">${sectionsHtml}</div>
 <div class="modal-actions">
   <button class="btn" id="revCancel">Cancel</button>
-  <button class="btn primary" id="revApply">Apply cleaned-up version</button>
+  <button class="btn primary" id="revApply">Approve &amp; fill the note</button>
 </div>`);
     m.classList.add("wide");
 
@@ -7326,9 +7496,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     m.querySelectorAll("[data-spk]").forEach((s) => s.addEventListener("change", () => { result.dialogue[Number(s.dataset.spk)].speaker = s.value; }));
     m.querySelectorAll("[data-turn]").forEach((t) => t.addEventListener("input", () => { result.dialogue[Number(t.dataset.turn)].text = t.value; }));
     m.querySelectorAll("[data-fsum]").forEach((t) => t.addEventListener("input", () => { rows[Number(t.dataset.fsum)].summary = t.value; }));
+    const repaintMeas = () => { const el = m.querySelector("#revMeas"); if (el) el.innerHTML = measBlockHtml(); };
     m.querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => {
       rows[Number(c.dataset.inc)].include = c.checked;
       c.closest(".rev-finding").classList.toggle("dropping", !c.checked);
+      repaintMeas();   // a retracted region takes its readings with it
     }));
     m.querySelectorAll("[data-keep]").forEach((c) => c.addEventListener("change", () => {
       result.dialogue[Number(c.dataset.keep)].keep = c.checked;
@@ -7349,12 +7521,75 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
   }
 
+  /* ---- measurements vs. what the patient took back ----
+
+     The refine pass corrects FINDINGS but not MEASUREMENTS, and they come
+     from different places: findings are the model's reading of the visit,
+     while measurements are still the parser's regexes run over the dialogue
+     (see normalizeRefinement in ai.js). The regex has no idea a region was
+     retracted three lines later, so "my RIGHT shoulder is about a seven out
+     of ten" — corrected to the left in the very next breath — filed a pain
+     score against the right shoulder while the body map and the Subjective
+     both said left.
+
+     A note that contradicts itself across two sections is worse than one
+     that is merely incomplete: the map says left, the objective table says
+     right, and nothing on screen admits the disagreement. So a reading whose
+     region the therapist has just taken off the chart is not filed.
+
+     It is deliberately DROPPED rather than moved to the corrected side. The
+     patient corrected where their symptom is; that is not the same statement
+     as a reading having been taken on the other side, and re-siding a number
+     onto a limb nobody measured would be inventing clinical data to protect
+     a tidy-looking table. The sentence stays in the transcript and the drop
+     is named in "See what changed", so the therapist can file it by hand. */
+  /* One spelling for a reading, so the review screen and the "See what
+     changed" list cannot describe the same measurement two different ways. */
+  function measLabel(kind, r) {
+    if (kind === "rom") return `${romLabel(r)} · ${r.side ? r.side + " " : ""}${r.joint} ${r.motion} ${r.degrees}°`;
+    if (kind === "mmt") return `MMT · ${r.side ? r.side + " " : ""}${r.context || ""} ${r.grade}`;
+    if (kind === "special") return `${r.name} — ${r.result}`;
+    return `Pain · ${r.location || "—"} ${r.score}/10`;
+  }
+
+  function measurementRegionKey(kind, m) {
+    if (kind === "special") return null;              // no region to contradict
+    const text = kind === "pain" ? String(m.location || "")
+      : kind === "rom" ? `${m.side || ""} ${m.joint || ""}`
+        : `${m.side || ""} ${m.context || ""}`;
+    if (!text.trim()) return null;
+    /* parseUtterance, NOT coordForName: coordForName falls back to "Back"
+       when it recognises nothing, so a strength grade whose context names no
+       region would be filed against the lumbar spine. */
+    const mention = PR.parseUtterance(text).mentions[0];
+    if (!mention) return null;
+    return `${mention.partName}|${(kind === "pain" ? mention.side : m.side || mention.side) || ""}`;
+  }
+
+  /* Split the readings into the ones that may be filed and the ones a
+     retraction has orphaned. keptKeys is what the therapist has ticked, so
+     ticking a corrected region back on brings its measurements with it. */
+  function splitMeasurements(meas, correctedBy, keptKeys) {
+    const keep = { rom: [], mmt: [], special: [], pain: [] };
+    const dropped = [];
+    for (const kind of ["rom", "mmt", "special", "pain"]) {
+      for (const item of (meas || {})[kind] || []) {
+        const key = measurementRegionKey(kind, item);
+        const correction = key && !keptKeys.has(key) ? correctedBy.get(key) : null;
+        if (correction) dropped.push({ kind, item, key, reason: correction.reason });
+        else keep[kind].push(item);
+      }
+    }
+    return { keep, dropped };
+  }
+
   function applyRefinement(doc, user, dstate, result, rows, fields) {
     const before = doc.data.mapPoints || [];
     const beforeByKey = new Map(before.map((p) => [p.key, p.notes.map((n) => n.summary).join(" · ")]));
     const correctedBy = new Map((result.corrections || []).map((t) => [t.key, t]));
     const sectionChanges = [];
     const kept = rows.filter((r) => r.include && r.summary.trim());
+    const keptKeys = new Set(kept.map((r) => r.key));
 
     /* 1) transcript becomes the speaker-labeled, cleaned dialogue, minus the
           lines that carry nothing.
@@ -7410,7 +7645,30 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         detail: r.current ? "rewritten from the cleaned transcript" : "filled from the cleaned transcript",
       });
     }
-    const meas = result.measurements || { rom: [], mmt: [], special: [], pain: [] };
+    /* Readings ALREADY on the note that the retraction contradicts.
+
+       Filtering only what the review is about to ADD is not enough: the live
+       pass files measurements as it hears them, so by the time a therapist
+       presses review, the right shoulder's 7/10 is on the chart. Leaving it
+       there would put it beside a body map that now says left — the same
+       self-contradiction, arrived at from the other direction.
+
+       mapPoints are already rebuilt wholesale from the kept findings a few
+       lines above; this is the measurement table catching up with them. */
+    const stale = [];
+    for (const kind of ["rom", "mmt", "special", "pain"]) {
+      const before = doc.data[kind] || [];
+      if (!before.length) continue;
+      doc.data[kind] = before.filter((item) => {
+        const key = measurementRegionKey(kind, item);
+        const correction = key && !keptKeys.has(key) ? correctedBy.get(key) : null;
+        if (!correction) return true;
+        stale.push({ kind, item, reason: correction.reason });
+        return false;
+      });
+    }
+
+    const split = splitMeasurements(result.measurements, correctedBy, keptKeys);
     let filed = 0;
     /* Key order is whatever the object was built in, and these travel through
        storage and back — so two identical readings could serialise
@@ -7419,7 +7677,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     for (const kind of ["rom", "mmt", "special", "pain"]) {
       if (!doc.data[kind]) doc.data[kind] = [];
       const seen = new Set(doc.data[kind].map(sig));
-      for (const item of meas[kind] || []) {
+      for (const item of split.keep[kind]) {
         if (!seen.has(sig(item))) { doc.data[kind].push(item); seen.add(sig(item)); filed++; }
       }
     }
@@ -7427,7 +7685,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     // 3) compute the change list (live vs cleaned) for the comparison view
     const changes = sectionChanges.slice();
-    const keptKeys = new Set(kept.map((r) => r.key));
     for (const r of kept) {
       const label = `${r.side ? cap(r.side) + " " : ""}${r.part}`;
       if (!beforeByKey.has(r.key)) changes.push({ tag: "added", label, detail: r.summary });
@@ -7444,6 +7701,26 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         detail: t ? t.reason + (t.supersededBy ? ` — now recorded as ${t.supersededBy}` : "")
           : row && row.origin === "empty" ? "Named, but nothing was reported about it"
             : "removed in cleanup",
+      });
+    }
+    /* One line per reading, whichever way it left. A reading the live pass
+       had already filed AND the review would have re-filed is one fact, and
+       saying it twice reads like two different problems. */
+    const staleLabels = new Set(stale.map((d) => measLabel(d.kind, d.item)));
+    for (const d of stale) {
+      changes.push({
+        tag: "dropped",
+        label: measLabel(d.kind, d.item),
+        detail: `${d.reason} — taken off the measurement table, which still had it from the live pass.`,
+      });
+    }
+    for (const d of split.dropped) {
+      const label = measLabel(d.kind, d.item);
+      if (staleLabels.has(label)) continue;
+      changes.push({
+        tag: "dropped",
+        label,
+        detail: `${d.reason} — the reading was not filed. It is still in the transcript if you want to record it yourself.`,
       });
     }
     for (const r of removed) changes.push({ tag: "trimmed", label: `“${r.text}”`, detail: r.reason });

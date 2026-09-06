@@ -259,7 +259,7 @@ key; otherwise a **local, on-device reviewer** runs (no network, no key), so
 the feature always works. Enable Gemini on the clinic server:
 
 ```bash
-GEMINI_API_KEY=... GEMINI_MODEL=gemini-3.6-flash node server.js
+GEMINI_API_KEY=... GEMINI_MODEL=gemini-3.8-flash node server.js
 # for PHI/compliance, point GEMINI_BASE_URL at Vertex AI Gemini under a BAA
 ```
 
