@@ -145,7 +145,15 @@ async function speak({ key, text, voiceId, modelId, settings, take = 0 }) {
   }
   const pcm = Buffer.from(await r.arrayBuffer());
   fs.mkdirSync(CACHE, { recursive: true });
-  fs.writeFileSync(file, pcm);
+  /* Write, then rename. A run killed between those two steps used to leave a
+     TRUNCATED take in the cache, and every later run trusted it — the file
+     exists, so it is never re-fetched. That is how bilateral/both-knees went
+     from 0.0% word error to 51.4% without a line of code changing: not a
+     regression, a half-written WAV. A rename is atomic, so the cache now holds
+     either a whole take or nothing. */
+  const tmp = `${file}.${process.pid}.part`;
+  fs.writeFileSync(tmp, pcm);
+  fs.renameSync(tmp, file);
   return { pcm, cached: false };
 }
 
