@@ -6,7 +6,7 @@
 "use strict";
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
-        correctDictation, extractMeasurements } = require("../parser.js");
+        correctDictation, extractMeasurements, aggregateMeasurements } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -953,6 +953,167 @@ const meas = (t) => parseUtterance(t).measurements;
     both.length === 2 && both[0].quality === "active" && both[1].quality === "passive", JSON.stringify(both));
   check("active and passive readings of one motion stay two findings",
     both[0].degrees === 120 && both[1].degrees === 155);
+}
+
+/* ---------------------------------------------------------------- *
+ *  A bare number answering a scale question
+ *
+ *    "Gaano po kasakit, kung isa hanggang sampu?"  —  "Mga pito po."
+ *
+ *  The scale lives in the clinician's turn and the answer carries only the
+ *  number, so nothing used to link them. This is NOT a missing-numerals
+ *  problem — "pito sa sampu" has always scored — it is the scale being one
+ *  turn away, which is why "about a seven" fails in English the same way.
+ *  Caught by test/voice (shoulder/tagalog-heavy): the transcript came back at
+ *  3.4% word error and the chart still recorded no pain score at all.
+ *
+ *  The false-positive checks below are the more important half. A bare number
+ *  is the most ambiguous token in a clinical transcript, and a wrong pain
+ *  score is worse than a missing one.
+ * ---------------------------------------------------------------- */
+
+{
+  const pain = (turns) => aggregateMeasurements(turns).pain;
+  const score = (turns) => (pain(turns)[0] || {}).score ?? null;
+  const ASK_TL = "Gaano po kasakit, kung isa hanggang sampu?";
+  const ASK_EN = "How bad is it, from one to ten?";
+  const ASK_CEB = "Kung isa hangtod napulo, unsa ka sakit?";
+  const ASK_TL_SHOULDER = "Gaano po kasakit ang kanang balikat, kung isa hanggang sampu?";
+
+  // the answers the eval caught, in the three languages a PH clinic hears
+  check("scale: 'Mga pito po' answers a Tagalog scale question",
+    score([ASK_TL, "Mga pito po."]) === 7, JSON.stringify(pain([ASK_TL, "Mga pito po."])));
+  check("scale: the same answer in digits",
+    score([ASK_TL, "Mga 7 po."]) === 7, JSON.stringify(pain([ASK_TL, "Mga 7 po."])));
+  check("scale: 'About a seven' answers the English one",
+    score([ASK_EN, "About a seven."]) === 7, JSON.stringify(pain([ASK_EN, "About a seven."])));
+  check("scale: 'Maybe a 6' too",
+    score([ASK_EN, "Maybe a 6."]) === 6, JSON.stringify(pain([ASK_EN, "Maybe a 6."])));
+  check("scale: the Cebuano question is understood",
+    score([ASK_CEB, "Mga pito."]) === 7, JSON.stringify(pain([ASK_CEB, "Mga pito."])));
+  check("scale: 'on a scale of ten' opens one as well",
+    score(["On a scale of ten, how bad?", "Siguro anim po."]) === 6,
+    JSON.stringify(pain(["On a scale of ten, how bad?", "Siguro anim po."])));
+
+  // an acknowledgement can sit between the question and the answer
+  check("scale: an 'Opo' in between does not close the scale",
+    score([ASK_TL, "Opo.", "Mga pito po."]) === 7, JSON.stringify(pain([ASK_TL, "Opo.", "Mga pito po."])));
+
+  // question and answer in ONE turn — parseUtterance can see this much alone
+  const sameTurn = parseUtterance("gaano po kasakit kung isa hanggang sampu mga pito po");
+  check("scale: question and answer in the same turn",
+    (sameTurn.measurements.pain[0] || {}).score === 7, JSON.stringify(sameTurn.measurements.pain));
+  const sameTurnEn = parseUtterance("how bad from one to ten about a seven");
+  check("scale: same turn, in English",
+    (sameTurnEn.measurements.pain[0] || {}).score === 7, JSON.stringify(sameTurnEn.measurements.pain));
+  const sided = parseUtterance("gaano kasakit ang kanang balikat, kung isa hanggang sampu, mga pito po");
+  check("scale: a region named in the question keeps the score located",
+    (sided.measurements.pain[0] || {}).location === "right shoulder", JSON.stringify(sided.measurements.pain));
+
+  // the forms that already worked must keep working
+  for (const [text, want] of [["pito sa sampu", 7], ["seven out of ten", 7], ["7/10", 7]]) {
+    check(`scale: "${text}" still scores without any question`,
+      (parseUtterance(text).measurements.pain[0] || {}).score === want,
+      JSON.stringify(parseUtterance(text).measurements.pain));
+  }
+
+  /* ---- the guards ---- */
+
+  // a bare number on its own is still nothing at all
+  check("scale: a bare number nobody asked for is not a rating",
+    parseUtterance("mga pito po").measurements.pain.length === 0);
+  check("scale: and not across a conversation that never named a scale",
+    pain(["Kumusta po kayo?", "Mga pito po."]).length === 0,
+    JSON.stringify(pain(["Kumusta po kayo?", "Mga pito po."])));
+  check("scale: the scale does not stay open all visit",
+    pain([ASK_TL, "Opo.", "Sige po.", "Ano po ulit?", "Mga pito po."]).length === 0,
+    JSON.stringify(pain([ASK_TL, "Opo.", "Sige po.", "Ano po ulit?", "Mga pito po."])));
+
+  // numbers that mean something else, all spoken while a scale is open
+  for (const [answer, why] of [
+    ["Shoulder flexion 120 degrees, abduction 90.", "ROM degrees"],
+    ["Knee flexion 10 degrees lang po.", "a ROM reading inside 0-10"],
+    ["Deltoid strength is four out of five.", "an MMT grade"],
+    ["Grade 4 lang po ang lakas.", "a spoken grade"],
+    ["Mga tatlong araw na po.", "a duration in Tagalog"],
+    ["For three weeks now.", "a duration in English"],
+    ["I am 8 years old.", "an age"],
+    ["This is my 5th visit.", "a visit count"],
+    ["Three times a week po.", "a frequency"],
+    ["On 6/10 nagsimula po.", "a date"],
+    ["I walk about 5 blocks and it starts hurting.", "a number inside a sentence"],
+    ["Umiinom po ako ng 2 tablets.", "a dose"],
+  ]) {
+    check(`scale: ${why} is not read as a pain rating`,
+      pain([ASK_TL, answer]).length === 0, `${answer} → ${JSON.stringify(pain([ASK_TL, answer]))}`);
+  }
+  // the readings themselves must survive the turn they were spoken in
+  const run = aggregateMeasurements([ASK_TL, "Shoulder flexion 120 degrees, abduction 90."]);
+  check("scale: the measurement run is still recorded in full",
+    run.rom.length === 2 && run.pain.length === 0, JSON.stringify(run));
+  const grade = aggregateMeasurements([ASK_TL, "Deltoid strength is four out of five."]);
+  check("scale: the MMT grade is still recorded", grade.mmt.length === 1 && grade.pain.length === 0, JSON.stringify(grade));
+
+  // counting to ten is not asking for a rating
+  check("scale: 'one to ten minutes' opens no scale",
+    pain(["I warm up for one to ten minutes.", "Mga pito po."]).length === 0,
+    JSON.stringify(pain(["I warm up for one to ten minutes.", "Mga pito po."])));
+
+  /* ---- end to end ---- */
+
+  const visit = refineTranscript([
+    "Masakit po ang kanang balikat ko.",
+    "Gaano po kasakit, kung isa hanggang sampu?",
+    "Mga pito po.",
+  ]);
+  check("scale: the answering turn is not trimmed away as three empty words",
+    (visit.dialogue.find((d) => /pito/i.test(d.text)) || {}).keep === true,
+    JSON.stringify(visit.dialogue));
+  check("scale: the visit records the score",
+    visit.measurements.pain.some((x) => x.score === 7), JSON.stringify(visit.measurements.pain));
+
+  /* ---- the answer inherits the region the question named ---- */
+
+  // null is a real answer here — "scored, but nowhere" — so it must not read
+  // the same as "no score at all"
+  const at = (turns) => { const first = pain(turns)[0]; return first ? first.location : "(no score)"; };
+
+  check("scale: the answer is filed against the region the question named",
+    at(["Gaano po kasakit ang kanang balikat ninyo, kung isa hanggang sampu?", "Mga pito po."]) === "right shoulder",
+    at(["Gaano po kasakit ang kanang balikat ninyo, kung isa hanggang sampu?", "Mga pito po."]));
+  check("scale: in English too",
+    at(["How bad is your left knee, from one to ten?", "About a seven."]) === "left knee",
+    at(["How bad is your left knee, from one to ten?", "About a seven."]));
+  check("scale: and in Cebuano",
+    at(["Pila ka sakit ang imong tuong tuhod, kung isa hangtod napulo?", "Mga unom."]) === "right knee",
+    at(["Pila ka sakit ang imong tuong tuhod, kung isa hangtod napulo?", "Mga unom."]));
+  check("scale: the region survives an acknowledgement in between",
+    at([ASK_TL_SHOULDER, "Opo.", "Mga pito po."]) === "right shoulder",
+    at([ASK_TL_SHOULDER, "Opo.", "Mga pito po."]));
+  check("scale: an answer that states the scale in full inherits it as well",
+    at([ASK_TL_SHOULDER, "Pito sa sampu po."]) === "right shoulder",
+    at([ASK_TL_SHOULDER, "Pito sa sampu po."]));
+
+  /* The two ways this must NOT put a number on the wrong body part. */
+  check("scale: a question that named nothing leaves the score unlocated",
+    at([ASK_TL, "Mga pito po."]) === null, at([ASK_TL, "Mga pito po."]));
+  check("scale: a question sweeping two regions guesses at neither",
+    at(["Gaano kasakit ang balikat o ang leeg, kung isa hanggang sampu?", "Mga pito po."]) === null,
+    at(["Gaano kasakit ang balikat o ang leeg, kung isa hanggang sampu?", "Mga pito po."]));
+  check("scale: a patient who answers about somewhere else is taken at their word",
+    at([ASK_TL_SHOULDER, "Yung likod ko naman, siyam sa sampu."]) === "back",
+    at([ASK_TL_SHOULDER, "Yung likod ko naman, siyam sa sampu."]));
+
+  /* The answer turn names no region — the question did — so the score files
+     unlocated. Where the same score was also recorded against a region, the
+     two are one report and the table must not show it twice. */
+  const twice = aggregateMeasurements([
+    "Masakit po ang kanang balikat ko, pito sa sampu.",
+    "Gaano po kasakit, kung isa hanggang sampu?",
+    "Mga pito po.",
+  ]);
+  check("scale: the answer adds no second, region-less row",
+    twice.pain.length === 1 && twice.pain[0].location === "right shoulder", JSON.stringify(twice.pain));
 }
 
 const total = passed + failures.length;
