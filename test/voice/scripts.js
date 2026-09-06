@@ -287,6 +287,22 @@ const SCRIPTS = [
   {
     id: "knee/cebuano-heavy",
     lang: "ceb-PH",
+    /* ADVISORY: reported, but it does not fail a run.
+
+       Measured as the median of five takes per cell, this script sits at 15.2%
+       word error on its best model-and-voice combination (eleven_v3 + Pedro)
+       and 28.3% on its worst — against 1.7% for the equivalent Tagalog script.
+       Nothing shifted that: not v3, not stability, not a seed, not a
+       pronunciation dictionary (see README).
+
+       The instrument is the limit, not the chart. Synthetic Cebuano is roughly
+       nine times noisier than synthetic Tagalog, and a gate built on it would
+       fail for reasons that have nothing to do with TheraChart. It stays
+       because the signal is still worth reading — a sudden change here is worth
+       looking at — but ankle/cebuano is the Cebuano coverage to trust: mixed
+       with English, it holds 8.1% with 0.0% spread across both models AND both
+       voices. Real Bisaya audio is what would retire this caveat. */
+    advisory: true,
     why: "near-monolingual Cebuano — laterality from \"tuong tuhod\", in a language the speech model only half speaks",
     turns: [
       { who: "clinician", text: "Maayong buntag. Unsa may imong gibati karon?" },

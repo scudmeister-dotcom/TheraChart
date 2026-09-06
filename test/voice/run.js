@@ -55,7 +55,11 @@ const SAY_ONLY = has("--say-only");
 const NO_REFINE = has("--no-refine");
 const JSON_OUT = has("--json");
 const SAVE = has("--save-baseline");
+/* Comma-separated, so one run can cover a hand-picked set — comparing two TTS
+   models over the same three scripts took six invocations before this. */
 const ONLY = val("--case", "");
+const ONLY_LIST = ONLY ? ONLY.split(",").map((x) => x.trim()).filter(Boolean) : [];
+const matches = (id) => !ONLY_LIST.length || ONLY_LIST.some((pre) => id.startsWith(pre));
 const KEEP_WAV = val("--keep-wav", "");
 const MODEL_ID = val("--tts-model", process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2");
 const GAP_MS = Number(val("--gap", "500"));
@@ -363,7 +367,7 @@ async function sweep(scripts, key) {
   }
 
   if (SWEEP) {
-    const swept = SCRIPTS.filter((sc) => !ONLY || sc.id.startsWith(ONLY));
+    const swept = SCRIPTS.filter((sc) => matches(sc.id));
     if (!swept.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
     return sweep(swept, key);
   }
@@ -400,7 +404,7 @@ async function sweep(scripts, key) {
     console.log(`--list-voices to choose deliberately, --sweep to run them all.\n`);
   }
 
-  const scripts = SCRIPTS.filter((s) => !ONLY || s.id.startsWith(ONLY));
+  const scripts = SCRIPTS.filter((s) => matches(s.id));
   if (!scripts.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
 
 
@@ -532,7 +536,7 @@ async function sweep(scripts, key) {
       console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · note ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
-        id: sc.id, why: sc.why, lang: sc.lang, chunks: t.wavs.length,
+        id: sc.id, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
         wer: w.wer, refWords: w.ref, edits: w.edits,
         spoken: spokenText(sc), heard,
         heardFailed, refineError, fellBack,
@@ -568,7 +572,7 @@ async function sweep(scripts, key) {
         if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ! STT failed: ${r.sttError}`); continue; }
         const p = r.possible ? r.earned / r.possible : 0;
         console.log(`  ${NO_REFINE ? "░".repeat(20) : bar(p)} ${(NO_REFINE ? "" : pct(p)).padStart(6)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
-        console.log(`  ${" ".repeat(20)}         ${r.why}`);
+        console.log(`  ${" ".repeat(20)}         ${r.why}${r.advisory ? "  [ADVISORY — reported, does not fail the run]" : ""}`);
         for (const h of r.heardFailed) console.log(`  ${" ".repeat(20)}         ✗ heard: ${h}`);
         for (const f of r.failed) console.log(`  ${" ".repeat(20)}         ✗ note: ${f.name}${f.detail ? `\n  ${" ".repeat(20)}             ${f.detail}` : ""}`);
         if (r.refineError) console.log(`  ${" ".repeat(20)}         ! refine: ${r.refineError}`);
@@ -637,6 +641,13 @@ async function sweep(scripts, key) {
 
   /* Non-zero when a script did worse than its own ceiling, so this can gate a
      prompt change the same way the text eval does. */
-  const broke = (out && out.cases || []).some((r) => r.sttError || r.heardFailed.length || r.failed.length);
+  /* Advisory scripts are excluded from the exit code on purpose. A gate is only
+     worth having if a red run means something changed; a script whose own
+     instrument is nine times noisier than the rest would make it mean "the
+     synthesiser had an off day". It is still printed, and still in the
+     baseline diff. */
+  const broke = (out && out.cases || [])
+    .filter((r) => !r.advisory)
+    .some((r) => r.sttError || r.heardFailed.length || r.failed.length);
   if (broke && !SAVE) process.exit(1);
 })().catch((e) => { console.error(`\n${e.stack || e.message}`); process.exit(2); });

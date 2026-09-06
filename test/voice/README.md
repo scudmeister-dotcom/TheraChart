@@ -177,10 +177,29 @@ Four levers, measured rather than assumed. The target was the word `tuong`
 
 | lever | result |
 |---|---|
-| `eleven_v3` (natively supports `ceb`) | **worse** — 19.6–21.7% vs multilingual's ~22%, no gain |
+| `eleven_v3` (natively supports `ceb`) | **helps, with the right voice** — see below |
 | `stability` 0.5 → 0.85 | no help — 1/5 → 2/5 survival |
 | fixed `seed` | **does not reproduce** — same byte length, different audio |
 | pronunciation dictionary | **applied and confirmed, but no gain** — 2/8 → 3/8 |
+
+`eleven_v3` was written off here on single-take evidence and that was wrong.
+Re-measured as the median of five takes on `knee/cebuano-heavy`:
+
+```
+                      Pedro   Mang Jose
+eleven_multilingual_v2 21.7%      21.7%
+eleven_v3              15.2%      28.3%
+```
+
+So v3 is the best Cebuano available — **but only paired with the right voice**,
+and it re-introduces a 13-point spread that multilingual_v2 does not have. Even
+at its best it is ~9× the error of the equivalent Tagalog script (1.7%).
+
+The one Cebuano result that IS solid is `ankle/cebuano`, the mixed
+Cebuano-and-English script: **8.1% with 0.0% spread across both models and both
+voices.** English scaffolding carries it. That is the Cebuano coverage to trust,
+and `knee/cebuano-heavy` is marked `advisory` — reported, and in the baseline
+diff, but it does not fail a run.
 
 The dictionary was verified working with a sentinel rule (`tuong` → `kaliwang`,
 which came back as "kaliwang" on both models), so that is a real negative
@@ -190,6 +209,12 @@ result, not broken plumbing. Aliases tried: `tu-ong`, `tuo nga`, `tuóng`,
 `tuong` survives roughly **half the time**, and nothing moved it. An assertion
 resting on it is reporting a coin toss. That is a limit of synthetic Cebuano, not
 of TheraChart — the fix is to know it, which is what `--takes` is for.
+
+**What would actually settle it:** two minutes of a real Bisaya speaker reading
+`knee/cebuano-heavy`. Everything above measures ElevenLabs and Chirp 2 together
+and cannot separate them — nothing here establishes how good Chirp 2's `ceb-PH`
+is, which is the part that matters to a Visayas clinic. The harness takes any
+16 kHz mono WAV, so a human take drops straight in.
 
 Note the scorer knows Tagalog and Cebuano numerals (`isa`…`sampu`,
 `usa`…`napulo`), because a patient asked "kung isa hanggang sampu?" answers in
