@@ -682,7 +682,12 @@
         treatment: String(v.treatment || "").trim(),
         findings,
         rom: (v.rom || []).map((r) => ({ side: side(r.side), joint: String(r.joint || "").toLowerCase().trim(),
-          motion: String(r.motion || "").toLowerCase().trim(), degrees: clamp(r.degrees, 0, 360) }))
+          motion: String(r.motion || "").toLowerCase().trim(),
+          /* The floor is not zero. A negative reading is a real measurement —
+             "extension -5°" is a flexion contracture — and clamping it up to 0
+             turned an imported chart's contracture into a normal knee, the
+             same loss dictation used to have. Matches the parser's band. */
+          degrees: clamp(r.degrees, -90, 360) }))
           .filter((r) => r.joint && r.motion),
         mmt: (v.mmt || []).map((r) => ({ side: side(r.side), context: String(r.context || "").trim() || null, grade: String(r.grade || "").trim() }))
           .filter((r) => r.grade),
