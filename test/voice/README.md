@@ -261,13 +261,30 @@ never carries the word, so the model has nothing to read it from. That is not a
 harness artefact; it is what a real clinic would get today, and the dictation
 menu offers `ceb-PH`.
 
-Two levers were tried and neither worked:
+Four levers were tried. **None is worth shipping**, and `chirp_2` + the phrase
+list stays exactly as it was.
 
 - **Speech adaptation.** Adding `tuo/tuong/wala/kanan/kaliwa` to `STT_PHRASES`
-  at boost 15 changed nothing: still 0/6. Not committed — an ineffective phrase
-  only dilutes the list.
-- **A different language code.** `fil-PH` on the same Cebuano audio scores 13.2%
-  against `ceb-PH`'s 14.9% real errors. Within noise, no basis to switch.
+  at boost 15 changed nothing: still 0/6. An ineffective phrase only dilutes a
+  list whose own comment says so.
+- **A different language code.** `fil-PH` on Cebuano audio scores 13.2% against
+  `ceb-PH`'s 14.9% real errors. Noise.
+- **A newer model.** Probed live across every model and region this project can
+  reach. `chirp_3` is **unsupported or has no `ceb-PH`** in all four regions
+  tried; `latest_long`, `long`, `short` and `telephony` have no `ceb-PH` at all.
+  `chirp_2` and `chirp` are the only two options that exist.
+- **The older model.** `chirp` v1 looked like the answer — it keeps `tuo` **8
+  takes out of 8** where `chirp_2` gets 0, and scores better on pure Cebuano.
+  It was implemented, measured against the real scripts, and **reverted**: it
+  silently drops whole utterances. On `ankle/cebuano` it lost the entire first
+  half of the visit, and on `knee/cebuano-heavy` it dropped the pain rating.
+  That is the same failure the `STT_LANGS` comment describes for `en-US` on
+  Tagalog, and a note missing whole sentences is worse than one missing a side.
+
+**So `chirp_2` is the best available**, and the gap it leaves is handled in the
+review screen instead: a finding on a region that has a left and a right,
+arriving with no side, is now labelled *"which side?"* rather than pinned at the
+figure's centre as though that were an answer. See `PR.isPaired` in parser.js.
 
 **What would settle it:****What would settle it:** two minutes of a real Bisaya speaker reading
 `knee/cebuano-heavy`. The harness takes any 16 kHz mono WAV, so a human take

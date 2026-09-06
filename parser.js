@@ -343,6 +343,24 @@
     "negative\\s+for|no|without|absent|wala|walang|walay|hindi|dili)\\b", "i");
   const isDenial = (summary) => DENIAL_LEAD_RE.test(String(summary || "").trim());
 
+  /* Does this region come in a left and a right?
+
+     Asked of the body map itself rather than a hand-kept list, so it cannot
+     drift away from what the figure actually draws: a paired region puts its
+     left and right pins in different places, a midline one puts them in the
+     same place. Knee, shoulder, ankle and hip are paired; lower back, neck and
+     head are not.
+
+     It exists because a finding on a paired region with NO side is a specific
+     kind of incomplete — the note names a knee without saying which — and the
+     review can ask about it instead of pinning the figure's centre and hoping.
+     Cebuano dictation makes this concrete: Chirp 2 loses "tuo" (right) often
+     enough that a Visayas visit can reach review with the side simply absent. */
+  const isPaired = (name) => {
+    const l = coordForName(name, "left"), r = coordForName(name, "right");
+    return !!(l && r && l.x !== r.x);
+  };
+
   /** Turn the text around a body-part mention into a short paraphrase.
       ms/me mark where the body part sits inside windowText, so symptoms
       spoken close to the mention outrank ones from a different clause. */
@@ -2365,6 +2383,7 @@
     turnSubstance,
     isBareMention,
     isDenial,
+    isPaired,
     CORRECTION_RE,
     HYPOTHETICAL_RE,
     META_RE,

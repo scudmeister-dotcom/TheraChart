@@ -6,7 +6,7 @@
 "use strict";
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
-        correctDictation, extractMeasurements, isDenial } = require("../parser.js");
+        correctDictation, extractMeasurements, isDenial, isPaired } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -984,6 +984,24 @@ const meas = (t) => parseUtterance(t).measurements;
   check("'not tolerating' is a problem, not a denial", !denial("Not tolerating the exercises well"));
   check("a word merely starting with 'no' is not a denial", !denial("Nocturnal pain in the left shoulder"));
   check("an empty summary is not a denial", !denial(""));
+}
+
+/* ---- which regions have a left and a right ----
+
+   Read off the body map rather than a list, so it cannot drift from what the
+   figure draws. It decides whether the review asks "which side?" about a
+   finding that arrived without one — which is how a Cebuano visit reaches the
+   screen after Chirp 2 drops "tuo". Asking about the neck would be noise; not
+   asking about a knee would be the bug. */
+{
+  for (const part of ["Knee", "Shoulder", "Ankle", "Hip", "Elbow", "Wrist"]) {
+    check(`${part} is paired, so a missing side is worth asking about`, isPaired(part));
+  }
+  for (const part of ["Lower back", "Neck", "Head", "Abdomen"]) {
+    check(`${part} is midline, so the review must not ask which side`, !isPaired(part));
+  }
+  check("an unknown region does not claim to be paired", !isPaired("Zorkle"));
+  check("an empty name does not claim to be paired", !isPaired(""));
 }
 
 const total = passed + failures.length;

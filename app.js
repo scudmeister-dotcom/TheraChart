@@ -7332,12 +7332,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          NOT have must not pin itself on the body map — unticked with the
          reason, and the Subjective still carries the denial. */
       const denied = !t && !bare && PR.isDenial(f.summary);
+      /* A knee, but which knee?
+
+         A finding on a region that HAS a left and a right, arriving with no
+         side, is not wrong — it is incomplete, and it pins the figure's centre
+         as though that were an answer. It stays ticked, because the complaint
+         is real and dropping it would lose more than it saves; it is labelled
+         instead, so the one person who was in the room can say which.
+
+         Dictation is where this comes from. Chirp 2 loses the Cebuano word for
+         "right" ("tuo") in 6 takes out of 6 measured through test/voice, so a
+         Visayas visit can reach this screen having said the side out loud and
+         still not have it in the transcript. Nothing downstream can recover
+         that; asking is the only honest move left. */
+      const noSide = !t && !bare && !denied && !f.side && PR.isPaired(f.part);
       const inLive = liveKeys.has(f.key);
       rows.push({ key: f.key, part: f.part, side: f.side, view: f.view, x: f.x, y: f.y,
         summary: f.summary, quote: f.quote, include: !t && !bare && !denied, section: "",
         note: t ? t.reason : bare ? "Named, but nothing was reported about it"
-          : denied ? "Reported as ABSENT — kept in the write-up, not pinned on the body map" : "",
-        origin: t ? t.kind || "corrected" : bare ? "empty" : denied ? "denied" : inLive ? "confirmed" : "added" });
+          : denied ? "Reported as ABSENT — kept in the write-up, not pinned on the body map"
+            : noSide ? `Which ${String(f.part).toLowerCase()} — left or right? Nobody said, so it is pinned without a side.` : "",
+        origin: t ? t.kind || "corrected" : bare ? "empty" : denied ? "denied"
+          : noSide ? "no-side" : inLive ? "confirmed" : "added" });
     }
     for (const p of livePts) {
       if (aiByKey.has(p.key)) continue;
@@ -7525,6 +7541,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       misheard: ["bad", "misheard by dictation"],
       empty: ["warn", "nothing was reported"],
       denied: ["warn", "reported as absent"],
+      "no-side": ["warn", "which side?"],
       manual: ["good", "you added this"],
       ungrounded: ["bad", "not traceable to the transcript"],
     };
