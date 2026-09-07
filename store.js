@@ -1392,6 +1392,17 @@
        is the real fix; this bounds the damage when a room beats it anyway.
        Set at 3x fair use so no honest visit ever reaches it. */
     maxDictationMinutesPerVisit: 30,
+    /* Whether the AI checks each burst of section-aimed dictation against what
+       the parser filed. ON by default because the check is the point — an
+       aimed microphone skips the classifier, so nothing else reads that text
+       before it lands in the note.
+
+       It is a setting rather than a constant because it is the one AI feature
+       that fires several times in a visit rather than once, and it is
+       therefore the one a cost-sensitive clinic will want to turn off first.
+       Turning it off loses the check, not the dictation: the parser still
+       files what was said, exactly as it does today. */
+    sectionDictationCheck: true,
   };
 
   /** Effective settings for one clinic: its own block over the legacy global

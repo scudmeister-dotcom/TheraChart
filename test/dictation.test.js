@@ -36,6 +36,30 @@ const { reporter } = require("./helpers/server.js");
 
 const SRC = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 
+/* The overlap helpers are plain string functions inside the page IIFE, so they
+   are lifted and run rather than pattern-matched. splitSentences comes with
+   them because overlapSentences calls it, and ABBREV_RE is injected because it
+   lives further up the file than anything else here needs. */
+function liftOverlap() {
+  const slice = (from, to) => {
+    const a = SRC.indexOf(from);
+    if (a < 0) throw new Error(`app.js no longer contains: ${from}`);
+    const b = SRC.indexOf(to, a);
+    if (b < 0) throw new Error(`could not find the end of: ${from}`);
+    return SRC.slice(a, b + to.length);
+  };
+  const fn = (decl) => slice(decl, "\n  }\n");
+  const body = [
+    slice("  const OVERLAP_STOP", 'about").split(" "));'),
+    fn("  function contentWords"),
+    /^  const SEEN_AT = .*$/m.exec(SRC)[0],
+    fn("  function splitSentences"),
+    fn("  function overlapSentences"),
+  ].join("\n");
+  return new Function("ABBREV_RE", `${body}\n; return { overlapSentences, contentWords };`)(
+    /\b(dr|mr|mrs|ms|vs|approx|etc|no)\.$/i);
+}
+
 /* Slice one function out of app.js by its declaration. Everything inside the
    page's IIFE is indented two spaces, so a line that is exactly "  }" is the
    function's own closing brace and nothing else. */
@@ -479,7 +503,8 @@ const settle = () => new Promise((r) => setImmediate(r));
       "an aim left set on a closed mic sends the next utterance somewhere nobody chose");
 
     r.check("stopping dictation from outside clears the aim too",
-      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; \}/.test(SRC));
+      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; burst = null; \}/.test(SRC),
+      "…and drops the pending burst with it: the router is replacing this document, so a check billed here would draw its answer onto a screen nobody is looking at");
 
     /* Where the mic is pointed has to ride ON the engine's status line: the
        cloud engine rewrites that line every time a segment goes out, so
@@ -561,33 +586,74 @@ const settle = () => new Promise((r) => setImmediate(r));
        and hand every check below an empty string that quietly passes nothing. */
     const stageStart = SRC.indexOf("const stage = document.getElementById(\"recStage\")");
     const stage = SRC.slice(stageStart,
-      SRC.indexOf("if (stageBack) stageBack.addEventListener(\"click\", exitStage);", stageStart));
-    r.check("the stage block was actually found in app.js", stage.length > 400,
-      `sliced ${stage.length} chars — the checks below are meaningless if this is empty`);
+      SRC.indexOf("if (dockBack) dockBack.addEventListener(\"click\", enterStage);", stageStart));
+    r.check("the stage block was actually found in app.js", stage.length > 400 && stage.length < 6000,
+      `sliced ${stage.length} chars — the checks below are meaningless if this is empty or unbounded`);
 
     r.check("the recorder controls are MOVED to the stage, never copied",
-      /slot\.appendChild\(bar\)/.test(stage) && !/recStageSlot"\)\.innerHTML\s*=/.test(SRC),
+      /slot\.appendChild\(bar\)/.test(stage)
+        && !/recStageSlot"\)\.innerHTML\s*=/.test(SRC) && !/recDockSlot"\)\.innerHTML\s*=/.test(SRC),
       "a second record button with its own listeners is two microphones as far as the therapist can tell");
 
     r.check("the stage re-parents to <body> before it is shown",
       /document\.body\.appendChild\(stage\)/.test(stage),
       "an ancestor inside the page forms a stacking context, and the fixed sidebar paints over a 'full screen' recorder that stays inside it");
 
-    /* The one property that matters clinically: there is no way to walk away
-       from a running recorder. A hot microphone nobody can see is the failure
-       every other backstop in this file exists to catch. */
-    r.check("there is no way off the stage while the mic is open",
-      /if \(stageBack\) stageBack\.hidden = true;/.test(stage)
-        && /const stageIdle = \(\) => \{ if \(stageBack && stage && !stage\.hidden\) stageBack\.hidden = false; \};/.test(stage),
-      "Back is offered only once recording has stopped");
+    /* The property that matters clinically, restated.
+
+       This used to be "there is no way off the stage while the mic is open",
+       enforced by hiding the Back button. That made a therapist who wanted to
+       type during the visit choose between typing and recording, so leaving
+       the stage is now allowed — and the guarantee had to move rather than go.
+
+       What must remain true is that a RUNNING RECORDER IS NEVER INVISIBLE.
+       Leaving the stage with the mic open docks it: the same #recBar, the same
+       Stop button, pinned to the viewport. The failure being prevented is a
+       hot microphone nobody can see, and one control in view is what prevents
+       it — not the absence of a door. */
+    r.check("leaving the stage while the mic is open docks it rather than hiding it",
+      /stageBack\.addEventListener\("click", \(\) => \(recording \? dockStage\(\) : exitStage\(\)\)\)/.test(stage),
+      "walking away from a running recorder with no control on screen is the one thing this flow must not allow");
+
+    r.check("the dock holds the real recorder, not a second copy of it",
+      /moveControls\("recDockSlot", "recDockMeters"\)/.test(stage)
+        && /dock\.hidden = false/.test(stage),
+      "two record buttons that disagree about whether the mic is open is the failure the stage exists to prevent");
+
+    /* Sliced per function rather than matched within a character window: the
+       comments inside these bodies are long and a distance-based regex breaks
+       the next time one of them grows a paragraph. */
+    const fnBody = (name, end) => stage.slice(stage.indexOf(`const ${name} = `),
+      stage.indexOf(end, stage.indexOf(`const ${name} = `)));
+    const enterBody = fnBody("enterStage", "const dockStage");
+    const dockBody = fnBody("dockStage", "// the mic is off");
+    r.check("the dock and the stage are never both up",
+      /stage\.hidden = true/.test(dockBody) && /dock\.hidden = true/.test(enterBody),
+      "two visible recorders is the same confusion as two record buttons");
+
+    r.check("docking releases the scroll lock the stage takes",
+      /dockStage[\s\S]{0,400}classList\.remove\("recording-stage"\)/.test(stage),
+      "body.recording-stage sets overflow:hidden — leave it on and the therapist cannot scroll to the section they docked in order to type into");
 
     r.check("…and it is only entered once the microphone is genuinely open",
       /const ok = await rec\.start\(\);[\s\S]{0,600}enterStage\(\);/.test(SRC),
       "entering before start() means a full-screen recorder over a mic that was refused");
 
     r.check("leaving the stage puts every element back where it was",
-      /parent\.insertBefore\(el, next\)/.test(stage) && !/exitStage[\s\S]{0,200}appendChild/.test(stage),
+      /parent\.insertBefore\(el, next\)/.test(stage) && !/exitStage = \(\) => \{[\s\S]{0,300}appendChild/.test(stage),
       "appending to the old parent silently reorders the dictation toolbar");
+
+    /* The dock's own consequence. While the stage covered the screen a
+       therapist could not reach the sidebar, so navigating away mid-recording
+       was unreachable rather than handled. It is reachable now. */
+    r.check("navigating away stops the recorder instead of leaving it running",
+      /if \(activeRecording\) \{ activeRecording\.stop\(\); activeRecording = null; \}/.test(SRC)
+        && /activeRecording = \{\s*\n\s*stop\(\)/.test(SRC),
+      "the dock lets a therapist leave the document with the mic open, which the stage never did");
+
+    r.check("stopping on the way out keeps the audio",
+      /activeRecording = \{[\s\S]{0,400}rec && rec\.stop\(\)/.test(SRC),
+      "chunks are flushed to IndexedDB as they are captured, so the visit is offered back rather than lost");
 
     r.check("the review opens over the note, not over the stage",
       /exitStage\(\);\s*\n\s*showIdle\(\);\s*\n\s*if \(aiOn\) await runRefine/.test(SRC),
@@ -595,6 +661,92 @@ const settle = () => new Promise((r) => setImmediate(r));
 
     r.check("discarding a recording leaves the stage",
       /meta\.textContent = "Recording discarded\.";\s*\n\s*exitStage\(\);/.test(SRC));
+  }
+
+  /* ---------------- the accuracy check on an aimed burst ----------------
+
+     An aimed microphone skips the classifier on purpose, so this is the only
+     thing that reads that text before it sits in the note. It is also the one
+     AI call that fires several times in a visit, which makes WHEN it fires a
+     cost property and not only a UX one. */
+  {
+    r.check("the check fires once per burst, not once per sentence",
+      /if \(aimedAt && aimedAt !== target\) flushBurst\(\);/.test(SRC)
+        && !/noteBurst\([\s\S]{0,120}flushBurst\(\)/.test(SRC),
+      "a Gemini call is billed mostly for what it writes, so a per-sentence check costs several times what reviewing the whole visit costs");
+
+    r.check("…and only for a microphone that was AIMED at a section",
+      /if \(report && aimedAt && open\) noteBurst\(aimedAt, report\)/.test(SRC),
+      "the roaming mic spreads one breath over several sections, so there is no single section to check it against");
+
+    r.check("a burst too short to be worth a call is dropped",
+      /CHECK_MIN_WORDS/.test(SRC) && /< CHECK_MIN_WORDS\) return;/.test(SRC),
+      "a few words is a false start or a correction, and a call on it costs the same as a call on a paragraph");
+
+    r.check("the clinic can turn the check off without losing dictation",
+      /if \(!S\.settings\(\)\.sectionDictationCheck\) return;/.test(SRC),
+      "this is the one AI feature that fires several times a visit, so it is the one a cost-sensitive clinic turns off first");
+
+    /* The property that matters clinically. The whole reason record-first
+       exists is that text must not arrive in a signed record without a
+       clinician putting it there. */
+    r.check("the check never writes to the note on its own",
+      /data-checkuse/.test(SRC)
+        && /Nothing changes in the note until you press Use this/.test(SRC),
+      "a check that rewrote the section by itself is the live-dictation mistake one layer up");
+
+    r.check("a failed check leaves what was dictated alone",
+      /didn't run — what you dictated is still in the note/.test(SRC),
+      "the parser already filed it; a check that could not run is not a dictation that failed");
+
+    r.check("accepting a reworded section is still machine-written",
+      /markAiFilled\(doc, field, true\);[\s\S]{0,200}S\.updateDocData\(doc\.id, \{ \[field\]: text/.test(SRC),
+      "marking it by hand would stop the whole-visit review from ever pre-ticking it again");
+  }
+
+  /* ---------------- what the AI adds over what the therapist typed ----------
+
+     Typing during the recording is what makes this reachable, so it is checked
+     here rather than with the review: a therapist who typed arrives holding two
+     accounts of one visit, and the screen has to say which parts differ. */
+  {
+    const f = liftOverlap();
+    const mine = "Right shoulder pain for two weeks. Flexion 120 degrees.";
+    const parts = f.overlapSentences(mine,
+      "Right shoulder pain for two weeks. Flexion 130 degrees. Denies numbness in the hand.");
+
+    r.check("a sentence the therapist already wrote reads as already written",
+      parts[0].seen === true, JSON.stringify(parts[0]));
+
+    /* The case the whole screen exists for. Same words, different number — if
+       this reads as a duplicate the therapist skips the one line where the
+       recording and their own note disagree. */
+    r.check("a changed NUMBER makes an otherwise-identical sentence read as new",
+      parts[1].seen === false, JSON.stringify(parts[1]));
+
+    r.check("genuinely new content reads as new",
+      parts[2].seen === false, JSON.stringify(parts[2]));
+
+    r.check("with nothing typed, nothing is claimed as already written",
+      f.overlapSentences("", "Shoulder flexion 130 degrees.").every((s) => !s.seen),
+      "an empty section would otherwise draw a paragraph of grey saying the therapist wrote it");
+
+    r.check("a pain score survives tokenisation whole",
+      f.contentWords("pain is 7/10 today").includes("7/10"),
+      "split 7/10 apart and a pain score half-matches a seven-week history");
+
+    r.check("the strip is only drawn when there is something on both sides",
+      /if \(!r\.proposed \|\| !r\.current\) return "";/.test(SRC),
+      "against an empty section every sentence is new, which is a paragraph of green saying nothing");
+
+    r.check("resolving a section edits the box, never the note",
+      /const setSectionText = \(i, text, note\) => \{[\s\S]{0,300}sectionRows\[i\]\.proposed = text;/.test(SRC)
+        && !/data-sec-mine[\s\S]{0,400}S\.updateDocData/.test(SRC),
+      "the row's tick is what applies a section — these three buttons only change what would be applied");
+
+    r.check("\"Use the AI's\" restores the AI's own words, not the last edit",
+      /aiOriginal: proposed,/.test(SRC) && /sectionRows\[i\]\.aiOriginal, "using the AI's wording"/.test(SRC),
+      "`proposed` is the working copy and every keystroke moves it");
   }
 
   r.done();

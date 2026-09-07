@@ -299,6 +299,16 @@
   /* ---------------- router ---------------- */
 
   let activeDictation = null; // stop mic when leaving a document
+  /* The RECORDER's counterpart, and it exists because the dock exists. While
+     leaving the note meant leaving a full-screen stage, navigating away with
+     the microphone open was not reachable — the stage covered the nav. A
+     therapist who can type in the note can also click the sidebar, so the
+     recorder now needs the same teardown live dictation has had all along.
+
+     Stopping keeps the audio: chunks are flushed to IndexedDB as they are
+     captured, so the visit is offered back on return ("an unfinished
+     recording from earlier is still here") rather than lost. */
+  let activeRecording = null;
   /* Logged-out: which of the two pages to draw. THREE states, not two:
        null  → no explicit choice yet; fall back to the heuristic in render()
        true  → the visitor asked for the sign-in form
@@ -396,7 +406,8 @@
   let pristineDraft = null;
 
   function render() {
-    if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; }
+    if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; window.__theraSay = null; }
+    if (activeRecording) { activeRecording.stop(); activeRecording = null; }
     currentDocState = null; // never carry one document's edit state into another
     closeModal();
     const user = S.currentUser();
@@ -4218,10 +4229,16 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
              title="Dictate straight into ${esc(label)} — what you say goes here, not wherever the app guesses"
              aria-label="Dictate into ${esc(label)}"><span class="field-mic-dot"></span>🎤 <span class="field-mic-word">Dictate</span></button>`
         : "";
+      /* Where the accuracy check on an aimed dictation burst draws itself.
+         Below the box rather than above it: the check is about text that is
+         already in that box, and pushing the box down the screen every time
+         the microphone leaves a section moves the thing the therapist is
+         reading. Empty until there is something to say. */
       return `
       <div class="field field-src-${src}" data-fieldwrap="${field}"><label>${label}
         <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span>${mic}</label>
-      <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
+      <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea>
+      ${editable && isDictatable(doc.type, field) ? `<div class="dict-check" data-fieldcheck="${field}" hidden></div>` : ""}</div>`;
     };
 
     /* The note column is a stack of workflow groups rather than one long form.
@@ -4466,8 +4483,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         </div>
         <div class="rec-stage-meters" id="recStageMeters"></div>
         <div class="rec-stage-slot" id="recStageSlot"></div>
-        <p class="rec-stage-note">Nothing is written to the note while you record. When you stop, the whole visit is read in one pass and you approve what goes in — so a detail the patient corrects later never reaches the chart.</p>
-        <button class="btn rec-stage-back" id="recStageBack" type="button" hidden>← Back to the note</button>
+        <p class="rec-stage-note">Nothing is written to the note <i>for</i> you while you record. When you stop, the whole visit is read in one pass and you approve what goes in — so a detail the patient corrects later never reaches the chart. You can type your own notes as you go: anything you write yourself is never overwritten without you ticking it.</p>
+        <button class="btn rec-stage-back" id="recStageBack" type="button">← Type in the note while this records</button>
+      </div>
+    </div>
+
+    <!-- Where the recorder controls move when the therapist goes BACK to the
+         note with the microphone still open. The stage exists so a running
+         recorder cannot be forgotten; this bar carries that same duty in the
+         one situation the stage cannot cover, which is a therapist who needs
+         to type while the visit is being recorded.
+
+         It is docked, not floating, and it holds the REAL #recBar — the same
+         node, the same listeners — for exactly the reason the stage does. The
+         invariant is unchanged and is the whole point: there is only ever one
+         record button in the document, so two of them can never disagree
+         about whether the microphone is open. -->
+    <div class="rec-dock" id="recDock" hidden>
+      <div class="rec-dock-inner">
+        <div class="rec-dock-who"><span class="rec-dot"></span><b>Recording</b> · ${esc(S.patientName(p))}</div>
+        <div class="rec-dock-meters" id="recDockMeters"></div>
+        <div class="rec-dock-slot" id="recDockSlot"></div>
+        <button class="btn small rec-dock-back" id="recDockBack" type="button">Full screen ↗</button>
       </div>
     </div>` : ""}
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
@@ -6212,43 +6249,87 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const homes = new Map();
       const remember = (el) => { if (el && !homes.has(el)) homes.set(el, [el.parentNode, el.nextSibling]); };
 
+      /* The recorder controls live in exactly one of three places, and they
+         are MOVED between them rather than copied — see the note above. The
+         dock is the state that lets a therapist type into the note while the
+         visit is still recording.
+
+         The stage used to be a one-way door: no way off it except Stop, on
+         the reasoning that a therapist who walks away from a running recorder
+         leaves a hot microphone nobody can see. That reasoning is still
+         right, and it is what the dock answers — leaving the stage does not
+         hide the recorder, it re-homes it into a bar pinned to the viewport
+         that carries the same pulsing dot and the same Stop button. What is
+         forbidden is a running recorder with NO visible control, and neither
+         of these two states is that. */
+      const dock = document.getElementById("recDock");
+      const dockBack = document.getElementById("recDockBack");
+
+      const moveControls = (slotId, metersId) => {
+        const slot = document.getElementById(slotId);
+        const meters = document.getElementById(metersId);
+        if (!slot || !meters) return;
+        remember(stage);
+        for (const el of [bar, levelEl, meterEl]) remember(el);
+        if (levelEl) meters.appendChild(levelEl);
+        if (meterEl) meters.appendChild(meterEl);
+        slot.appendChild(bar);
+      };
+
       const enterStage = () => {
         if (!stage) return;
-        const slot = document.getElementById("recStageSlot");
-        const meters = document.getElementById("recStageMeters");
         /* The stage moves to <body> first. position:fixed with a high z-index
            is not enough on its own: an ancestor inside the page already forms
            a stacking context, so the stage's z-index was being resolved
            INSIDE it and the fixed sidebar (z-index 30) painted straight over
            a "full screen" recorder. Re-parenting to <body> is what actually
            makes it full screen; it is restored with everything else. */
-        remember(stage);
-        for (const el of [bar, levelEl, meterEl]) remember(el);
         document.body.appendChild(stage);
-        if (levelEl) meters.appendChild(levelEl);
-        if (meterEl) meters.appendChild(meterEl);
-        slot.appendChild(bar);
+        moveControls("recStageSlot", "recStageMeters");
         stage.hidden = false;
-        /* No way off the stage while the mic is live except Stop. Letting a
-           therapist walk away from a running recorder is how you end up with
-           a hot microphone nobody can see — the one failure the dictation
-           backstops exist to catch. */
-        if (stageBack) stageBack.hidden = true;
+        if (dock) dock.hidden = true;
         document.body.classList.add("recording-stage");
+        document.body.classList.remove("recording-docked");
       };
 
-      // the mic is off but the audio is still here: offer the way back
-      const stageIdle = () => { if (stageBack && stage && !stage.hidden) stageBack.hidden = false; };
+      /* Off the stage, mic still live, note editable. The dock is re-parented
+         to <body> for the same stacking-context reason the stage is. */
+      const dockStage = () => {
+        if (!dock) return exitStage();
+        document.body.appendChild(dock);
+        moveControls("recDockSlot", "recDockMeters");
+        dock.hidden = false;
+        if (stage) stage.hidden = true;
+        document.body.classList.remove("recording-stage");
+        document.body.classList.add("recording-docked");
+        /* The therapist pressed this to type, so put them in a box rather
+           than leaving them to find one. The first empty dictatable section
+           is the one they are most likely to be reaching for; if every
+           section already has text, focus is left alone rather than stealing
+           the caret out of whatever they were reading. */
+        const first = [...document.querySelectorAll("textarea[data-field]")]
+          .find((t) => isDictatable(doc.type, t.dataset.field) && !t.value.trim());
+        if (first) { first.scrollIntoView({ block: "center", behavior: "smooth" }); first.focus(); }
+      };
+
+      // the mic is off but the audio is still here: bring the controls home so
+      // Process and Discard sit where the therapist already knows to look
+      const stageIdle = () => { exitStage(); };
 
       const exitStage = () => {
-        if (!stage || stage.hidden) return;
         for (const [el, [parent, next]] of homes) if (parent) parent.insertBefore(el, next);
         homes.clear();
-        stage.hidden = true;
-        if (stageBack) stageBack.hidden = true;
+        if (stage) stage.hidden = true;
+        if (dock) dock.hidden = true;
         document.body.classList.remove("recording-stage");
+        document.body.classList.remove("recording-docked");
       };
-      if (stageBack) stageBack.addEventListener("click", exitStage);
+      /* Leaving the stage means DOCKING while the mic is open, and going all
+         the way home once it is shut. Reading `recording` rather than a flag
+         of its own keeps the two in step: there is one source of truth for
+         whether audio is being captured, and this is a reader of it. */
+      if (stageBack) stageBack.addEventListener("click", () => (recording ? dockStage() : exitStage()));
+      if (dockBack) dockBack.addEventListener("click", enterStage);
 
       /* Deliberately no running clock while the mic is open — see
          dictationLine(). The pulsing dot on the button is the "still
@@ -6406,6 +6487,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         } finally { processBtn.disabled = false; btn.disabled = false; }
       });
 
+      /* Leaving the document with the microphone open. Registered here rather
+         than inside a listener because render() has to be able to reach it
+         without knowing anything about this closure.
+
+         Deliberately NOT awaited: stop() flushes the tail chunk into
+         IndexedDB, and every chunk before it is already there, so the visit
+         survives whatever the router does next. Blocking a navigation on a
+         disk write would be a worse trade than a fraction of a second of
+         audio in the very last chunk. */
+      activeRecording = {
+        stop() {
+          if (!recording) { exitStage(); return; }
+          recording = false;
+          Promise.resolve(rec && rec.stop()).catch(() => {});
+          hideDictMeter();
+          exitStage();
+        },
+      };
+
       // an unfinished recording from a previous session (tab closed, phone locked)
       savedAudio.forDoc(doc.id).then((rows) => {
         if (!rows || !rows.length || recording) return;
@@ -6439,7 +6539,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // would be lost); the doc can also have been signed in the meantime
       const live = S.getDoc(doc.id);
       if (!live || live.status === "signed") return;
-      routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
+      const report = routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
+      /* Only an AIMED burst is accumulated. The roaming microphone spreads one
+         breath across several sections by design, so there is no single
+         section to check it against — and the whole-visit recording has
+         /api/refine, which reads the conversation rather than one section. */
+      if (report && aimedAt && open) noteBurst(aimedAt, report);
     };
     const callbacks = {
       docId: doc.id,
@@ -6495,7 +6600,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         if (!engine) statusEl.textContent = "Speech not supported in this browser — type into the dictation box instead.";
         else statusEl.textContent = "Mic off · browser dictation — Google Cloud isn't set up here";
       }
-      window.__theraDict = engine; // test hook
+      /* Test hook. `deliver` is exposed alongside the engine because it is the
+         only way to exercise an AIMED utterance end to end: the engine below
+         it takes audio, and everything above it — routing, the burst
+         accumulator, the section check — is reachable only from a finished
+         line of text. The e2e suite's say() drives the typed-dictation box,
+         which has no aim, so without this the section-aimed path has no test
+         that runs it. */
+      window.__theraDict = engine;
+      window.__theraSay = (text, target) => { aimedAt = target || null; deliver(text); };
     }
     makeEngine();
 
@@ -6542,6 +6655,65 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const withAim = (msg) =>
       listening && aimedAt ? `${msg} — filing into ${fieldLabel(doc.type, aimedAt)}` : msg;
 
+    /* ---- the accuracy check on an aimed dictation burst ----
+
+       An aimed microphone deliberately skips the classifier (see aimedField):
+       the therapist has said which section they are filling, and that answer
+       beats anything the parser infers. The cost of that shortcut is that
+       NOTHING then reads the text before it lands in the note — the roaming
+       path at least runs it past fieldForSentence, and a recording gets the
+       whole-visit refine pass.
+
+       This is that missing read. It checks one burst against the section it
+       was aimed at, and it is scoped narrowly on purpose:
+
+         it never moves text between sections — the therapist aimed the mic;
+         it never writes to the note — it offers, the therapist applies;
+         it fires ONCE per burst, when the microphone leaves that section.
+
+       The last one is the commercial constraint rather than a UI preference.
+       Every Gemini call is billed mostly for what it WRITES, so a check that
+       ran per sentence would cost several times what reviewing the whole
+       visit costs. Per burst, a section-by-section evaluation is a handful of
+       small calls; per sentence it is dozens. */
+    let burst = null;   // { field, filed: [], spoken: [] }
+
+    const noteBurst = (field, report) => {
+      if (!burst || burst.field !== field) burst = { field, filed: [], spoken: [] };
+      for (const f of report.filed) if (f.field === field) burst.filed.push(f.text);
+      if (report.spoken) burst.spoken.push(report.spoken);
+    };
+
+    /* Below this the check is not worth making. A burst of a few words is
+       either a correction the therapist is about to make themselves or a
+       false start, and a call on it costs the same as a call on a paragraph. */
+    const CHECK_MIN_WORDS = 8;
+
+    const flushBurst = async () => {
+      const b = burst;
+      burst = null;
+      if (!b || !b.filed.length) return;
+      if (!S.settings().sectionDictationCheck) return;
+      const filed = b.filed.join(" ").trim();
+      if (filed.split(/\s+/).filter(Boolean).length < CHECK_MIN_WORDS) return;
+      const sync = window.TheraSync || {};
+      if (!sync.checkSection) return;
+      const label = fieldLabel(doc.type, b.field);
+      showCheckPanel(doc, user, b.field, { pending: true });
+      try {
+        const out = await sync.checkSection({
+          filed, spoken: b.spoken.join(" ").trim(), label, field: b.field,
+        });
+        /* A check that could not run is not a dictation that failed: what the
+           parser filed is already in the note. Say the check is unavailable
+           and leave the text alone. */
+        if (!out) return showCheckPanel(doc, user, b.field, { error: "The dictation check didn't run — what you dictated is still in the note." });
+        showCheckPanel(doc, user, b.field, { filed, result: out });
+      } catch (e) {
+        showCheckPanel(doc, user, b.field, { error: "The dictation check didn't run — what you dictated is still in the note." });
+      }
+    };
+
     /** Point the microphone at `target` (a field name, or null for the whole
         visit). Pressing the button that is already lit turns it off; pressing
         a different one re-aims without closing and reopening the mic, so the
@@ -6550,9 +6722,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     async function aimMic(target) {
       if (!engine) return;
       autoStopNotice = ""; // the therapist has seen it and acted
+      /* The microphone leaving a section is what ends a burst — stopping it,
+         or pointing it somewhere else. Deliberately not awaited: re-aiming has
+         to feel instant, and a therapist walking down the note should never
+         wait on a check of the section they have already left. */
+      if (aimedAt && aimedAt !== target) flushBurst();
       if (listening && aimedAt === target) {   // same button again: stop
         listening = false;
         engine.stop();
+        flushBurst();
       } else if (listening) {                  // already open: just re-aim it
         aimedAt = target;
       } else {
@@ -6579,7 +6757,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
 
     activeDictation = {
-      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; },
+      /* No flushBurst() here on purpose. The panel it would open belongs to a
+         document the router is in the middle of replacing, so the call would
+         be billed for an answer drawn onto a screen nobody is looking at.
+         What was dictated is already filed; the check is what is dropped. */
+      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; burst = null; },
     };
   }
 
@@ -6710,6 +6892,148 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return out.length ? out : [text];
   }
 
+  /* ---- what the therapist already wrote, against what the AI proposes ----
+
+     A therapist who typed during the recording arrives at the review holding
+     two accounts of the same visit. The question they have to answer, per
+     section, is not "is this text good" — it is "is any of this SOMETHING I
+     DID NOT ALREADY SAY". Reading two paragraphs word by word to find out is
+     exactly the work the review exists to remove, so the comparison is drawn
+     rather than left to the eye.
+
+     Sentence-level, not word-level, and the choice matters. Word-level
+     highlighting on clinical prose lights up every "the" and "patient" and
+     says nothing; a sentence is also the unit a therapist actually keeps or
+     drops. Each of the AI's sentences is scored on how much of its CONTENT
+     survives in what the therapist wrote, and called `seen` above a
+     threshold.
+
+     Numbers are content words on purpose and are never normalised: "flexion
+     120 degrees" and "flexion 130 degrees" must not read as the same
+     sentence, because the entire reason to look at this screen is to catch
+     the visit where they disagree.
+
+     This is a reading aid and it is labelled as one in the UI. It has no vote
+     in what gets applied — the therapist's tick decides that, exactly as
+     before. */
+  const OVERLAP_STOP = new Set(("a an and are as at be been being but by for from had has have he her him his i in "
+    + "into is it its me my of on or our she that the their them then there these they this those to was were "
+    + "what when which who will with you your patient pt reports reported report states stated denies denied "
+    + "notes noted per also very quite about").split(" "));
+
+  /* Content tokens, lowercased. Slashes and decimals are kept inside a token
+     so "7/10", "4+/5" and "1.5" survive as single comparable units — split
+     them and a pain score of 7/10 would half-match a 7-week history. */
+  function contentWords(s) {
+    return String(s || "").toLowerCase()
+      .replace(/[^a-z0-9+/.\s-]+/g, " ")
+      .split(/\s+/)
+      .map((w) => w.replace(/^[-.]+|[-.]+$/g, ""))
+      .filter((w) => w && !OVERLAP_STOP.has(w));
+  }
+
+  /* SEEN_AT is deliberately high. The cost of the two mistakes is not
+     symmetric: calling a genuinely new sentence "already written" invites the
+     therapist to skip past a finding that is not in their note, while calling
+     a duplicate "new" costs them one line of reading. So the benefit of the
+     doubt goes to NEW. */
+  const SEEN_AT = 0.7;
+
+  function overlapSentences(mine, theirs) {
+    const have = new Set(contentWords(mine));
+    return splitSentences(theirs).map((text) => {
+      const words = contentWords(text);
+      if (!words.length) return { text, seen: false, score: 0, words: 0 };
+      const hit = words.filter((w) => have.has(w)).length;
+      const score = hit / words.length;
+      return { text, seen: have.size > 0 && score >= SEEN_AT, score, words: words.length };
+    });
+  }
+
+  /* ---- the accuracy check, drawn under the section it checked ----
+
+     Three states and no fourth: working, could-not-run, and an answer. The
+     answer is an OFFER — the tidied wording sits in a box the therapist can
+     edit, and the note is not touched until they press Use this. A check that
+     rewrote the section on its own would be the live-dictation mistake all
+     over again, one layer up: text arriving in a signed record that nobody
+     chose to put there.
+
+     `Dismiss` is not a rejection of the finding, it is a rejection of the
+     panel. What was dictated stays exactly where the parser filed it, which
+     is why dismissing is safe and why it is the low-ceremony option. */
+  const CHECK_KIND = {
+    missed: ["warn", "may be missing"],
+    misplaced: ["warn", "may not belong here"],
+    ambiguous: ["info", "worth a second look"],
+  };
+
+  function showCheckPanel(doc, user, field, state) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (!host) return;
+    const close = () => { host.hidden = true; host.innerHTML = ""; };
+
+    if (state.pending) {
+      host.hidden = false;
+      host.innerHTML = `<div class="dict-check-line">✦ Checking what was filed into this section…</div>`;
+      return;
+    }
+    if (state.error) {
+      host.hidden = false;
+      host.innerHTML = `<div class="dict-check-line warn">${esc(state.error)}
+        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`;
+      host.querySelector("[data-checkclose]").addEventListener("click", close);
+      return;
+    }
+
+    const out = state.result || {};
+    const issues = out.issues || [];
+    const tidied = String(out.tidied || "").trim();
+    /* Nothing to say. The check ran, the filing was clean, and the panel is a
+       line that clears itself rather than a box the therapist has to dismiss
+       to get their screen back. */
+    const changed = tidied && tidied !== String(state.filed || "").trim();
+    if (!issues.length && !changed) {
+      host.hidden = false;
+      host.innerHTML = `<div class="dict-check-line good">✓ Checked — what was filed here matches what you said.</div>`;
+      setTimeout(() => { if (host.querySelector(".dict-check-line.good")) close(); }, 4000);
+      return;
+    }
+
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="dict-check-head">✦ Checked this section</div>
+      ${issues.length ? `<ul class="dict-check-issues">${issues.map((x) => {
+        const k = CHECK_KIND[x.kind] || CHECK_KIND.ambiguous;
+        return `<li><span class="chip ${k[0]}">${esc(k[1])}</span> ${esc(x.detail)}</li>`;
+      }).join("")}</ul>` : ""}
+      ${changed ? `
+        <label class="dict-check-label">Suggested wording — edit it, or leave it</label>
+        <textarea class="dict-check-text" rows="3">${esc(tidied)}</textarea>` : ""}
+      <div class="dict-check-actions">
+        ${changed ? `<button class="btn small ai" data-checkuse="1" type="button">Use this</button>` : ""}
+        <button class="btn small" data-checkclose="1" type="button">${changed ? "Keep mine" : "Dismiss"}</button>
+        <span class="hint">Nothing changes in the note until you press Use this.</span>
+      </div>`;
+
+    host.querySelector("[data-checkclose]").addEventListener("click", close);
+    const use = host.querySelector("[data-checkuse]");
+    if (use) use.addEventListener("click", () => {
+      const text = host.querySelector(".dict-check-text").value.trim();
+      const ta = document.querySelector(`textarea[data-field="${field}"]`);
+      if (ta) ta.value = text;
+      doc.data[field] = text;
+      /* Still machine-written after this. The therapist accepted a rewording of
+         text dictation put there; they did not sit down and write the section,
+         and marking it by hand would stop the whole-visit review from ever
+         pre-ticking it. */
+      markAiFilled(doc, field, true);
+      S.updateDocData(doc.id, { [field]: text, aiFilled: doc.data.aiFilled }, user);
+      renderFieldGuide(doc);
+      close();
+    });
+  }
+
   /* Subjective is, by definition, what the PATIENT reports. The live router
      had no notion of who was speaking, so every question the therapist asked
      and every cue they gave ("where does it hurt?", "push against my hand")
@@ -6836,9 +7160,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return n;
   }
 
+  /* Returns what this utterance put where, so an aimed dictation burst can be
+     accumulated and checked once at the end. Callers that only want the
+     side-effects can ignore it, which is what every caller did before the
+     section check existed. */
   function routeUtterance(doc, user, raw, dstate, silent, target) {
     const parsed = PR.parseUtterance(raw);
-    if (!parsed.text) return;
+    if (!parsed.text) return null;
     const time = nowTime();
     if (!doc.data.transcript) doc.data.transcript = [];
     const uttId = doc.data.transcript.length;
@@ -6896,6 +7224,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // subjective and treatment text entirely.
     const aimed = target && isDictatable(doc.type, target) ? target : null;
     const filedTo = [];
+    const filedText = [];
     let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
       /* A sentence can be half small talk and half complaint. File the half
@@ -6906,6 +7235,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
+      filedText.push({ field, text: cap(clinical) });
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
     /* An aimed microphone that filed nothing needs to say so more loudly than
@@ -6921,7 +7251,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     else if (heldBack) routed.push(`${heldBack} line${heldBack > 1 ? "s" : ""} kept to the transcript only`);
 
     S.updateDocData(doc.id, doc.data, user);
-    if (silent) return;
+    const report = { fields: filedTo, filed: filedText, spoken: parsed.text };
+    if (silent) return report;
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
@@ -6933,6 +7264,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     renderFieldGuide(doc);
     const log = document.getElementById("routeLog");
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
+    return report;
   }
 
   function fieldLabel(type, field) {
@@ -7460,10 +7792,50 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const byHand = !!current && !isAiFilled(doc, field);
       return {
         key, field, hint, proposed, current, byHand,
+        /* `proposed` is the working copy and every edit moves it, so the AI's
+           own words have to be kept separately or "Use the AI's" would only
+           ever restore whatever was last typed over them. */
+        aiOriginal: proposed,
         apply: !!proposed && !byHand && proposed !== current,
         unchanged: !!proposed && proposed === current,
       };
     }).filter((r) => r.proposed || r.current);
+
+    /* The AI's draft, sentence by sentence, marked against what the therapist
+       already wrote. Only drawn when there is something on BOTH sides — with
+       an empty section there is nothing to compare and every sentence would
+       be "new", which is a paragraph of green saying nothing. */
+    const compareStripHtml = (r) => {
+      if (!r.proposed || !r.current) return "";
+      const parts = overlapSentences(r.current, r.proposed);
+      const fresh = parts.filter((s) => !s.seen).length;
+      return `
+        <div class="rev-cmp">
+          <div class="rev-cmp-head">
+            <b>${fresh ? `${fresh} of ${parts.length} sentence${parts.length > 1 ? "s" : ""} say something you didn't write` : "Everything here is already in your own words"}</b>
+            <span class="rev-cmp-key"><i class="cmp-new"></i>new <i class="cmp-seen"></i>you already wrote this</span>
+          </div>
+          <p class="rev-cmp-body">${parts.map((s) =>
+            `<span class="${s.seen ? "cmp-seen" : "cmp-new"}">${esc(s.text)}</span>`).join(" ")}</p>
+          <div class="rev-cmp-hint">Matched on wording, not on meaning — a sentence that says the same thing in different words will read as new. It changes nothing on its own; your tick decides what lands.</div>
+        </div>`;
+    };
+
+    /* Three ways to resolve one section, and none of them writes to the note.
+       Every button here edits the textarea below it, which is the single thing
+       that lands if the row is ticked — the same "no hidden third version"
+       rule openCompare() is built on. Blend is the only one that costs a call,
+       so it is the only one that can fail, and it says so in place. */
+    const sectionActionsHtml = (r, i) => {
+      if (!r.proposed || !r.current) return "";
+      return `
+        <div class="rev-sec-actions">
+          <button class="btn small" data-sec-mine="${i}" type="button">Keep mine</button>
+          <button class="btn small" data-sec-ai="${i}" type="button">Use the AI's</button>
+          <button class="btn small ai" data-sec-blend="${i}" type="button">✦ Blend both</button>
+          <span class="rev-sec-state" data-sec-state="${i}"></span>
+        </div>`;
+    };
 
     const sectionRowHtml = (r, i) => {
       const state = r.unchanged ? ["muted", "unchanged"]
@@ -7479,7 +7851,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             <span class="chip ${state[0]}">${esc(state[1])}</span>
             <span class="rev-hint">${esc(r.hint)}</span></div>
           ${r.byHand && r.proposed ? `<div class="rev-why">Currently in the note: “${esc(r.current.slice(0, 180))}${r.current.length > 180 ? "…" : ""}”</div>` : ""}
+          ${compareStripHtml(r)}
           <textarea data-sec-text="${i}" rows="2" class="rev-text" ${r.proposed ? "" : "disabled"}>${esc(r.proposed)}</textarea>
+          ${sectionActionsHtml(r, i)}
         </div>
       </div>`;
     };
@@ -7728,9 +8102,79 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     m.querySelectorAll("[data-sec-text]").forEach((t) => t.addEventListener("input", () => {
       sectionRows[Number(t.dataset.secText)].proposed = t.value;
     }));
+    /* The strip describes the text in the box, so it has to follow it — but on
+       `change` rather than `input`. Recomputing per keystroke re-colours a
+       paragraph under the caret while somebody is mid-word in it, which reads
+       as the screen fighting them. Settling on blur says the same thing and
+       stays still while they type. */
+    m.querySelectorAll("[data-sec-text]").forEach((t) => t.addEventListener("change", () => {
+      repaintCompare(Number(t.dataset.secText));
+    }));
     m.querySelectorAll("[data-sec-apply]").forEach((c) => c.addEventListener("change", () => {
       sectionRows[Number(c.dataset.secApply)].apply = c.checked;
       c.closest(".rev-section").classList.toggle("dropping", !c.checked);
+    }));
+
+    /* ---- resolving one section against what the therapist typed ----
+
+       All three buttons write into the textarea and stop there. Nothing here
+       reaches the note: the row's tick still decides that, and it is left
+       exactly as the therapist set it. Pressing "Keep mine" on an unticked
+       row does NOT tick it — the note already holds that text, so applying it
+       would be a write with no effect, and ticking on their behalf is how a
+       screen starts making decisions it was built to hand over. */
+    const secState = (i, txt) => {
+      const el = m.querySelector(`[data-sec-state="${i}"]`);
+      if (el) el.textContent = txt;
+    };
+    const repaintCompare = (i) => {
+      const row = m.querySelector(`[data-sec-text="${i}"]`);
+      if (!row) return;
+      const holder = row.closest(".rev-fbody");
+      const strip = holder && holder.querySelector(".rev-cmp");
+      if (!strip) return;
+      const temp = document.createElement("div");
+      temp.innerHTML = compareStripHtml(sectionRows[i]);
+      if (temp.firstElementChild) strip.replaceWith(temp.firstElementChild);
+    };
+    const setSectionText = (i, text, note) => {
+      const ta = m.querySelector(`[data-sec-text="${i}"]`);
+      if (!ta) return;
+      sectionRows[i].proposed = text;
+      ta.value = text;
+      fit(ta);
+      repaintCompare(i);
+      secState(i, note);
+    };
+    m.querySelectorAll("[data-sec-mine]").forEach((b) => b.addEventListener("click", () => {
+      const i = Number(b.dataset.secMine);
+      setSectionText(i, sectionRows[i].current, "using your wording");
+    }));
+    m.querySelectorAll("[data-sec-ai]").forEach((b) => b.addEventListener("click", () => {
+      const i = Number(b.dataset.secAi);
+      setSectionText(i, sectionRows[i].aiOriginal, "using the AI's wording");
+    }));
+    /* The one action here that costs a call, and the only one that can fail.
+       It is deliberately not offered as "merge and apply": the merged text
+       lands in the box for reading, and a therapist who does not like it still
+       has both originals one button away. */
+    m.querySelectorAll("[data-sec-blend]").forEach((b) => b.addEventListener("click", async () => {
+      const i = Number(b.dataset.secBlend);
+      const r = sectionRows[i];
+      const mine = String(r.current || "").trim();
+      const theirs = String(m.querySelector(`[data-sec-text="${i}"]`).value || "").trim();
+      if (!mine || !theirs) return secState(i, "nothing to blend");
+      b.disabled = true;
+      secState(i, "blending…");
+      try {
+        const sync = window.TheraSync || {};
+        const out = sync.blendNote
+          ? await sync.blendNote({ mine, ai: theirs, field: r.field, type: doc.type })
+          : null;
+        if (out && out.text) setSectionText(i, out.text, "blended — read it before you tick it");
+        else secState(i, "couldn't blend — edit by hand");
+      } catch (e) { secState(i, "couldn't blend — edit by hand"); }
+      finally { b.disabled = false; }
     }));
 
     bindFindingRows();

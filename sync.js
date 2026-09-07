@@ -489,6 +489,16 @@
     return res.ok ? res.data : null;
   };
 
+  /* Check one burst of section-aimed dictation against what the parser filed.
+     Server-only, and it returns null rather than throwing when there is no
+     server: the check is an ADDITION to dictation, so its absence has to be
+     survivable everywhere it is called. */
+  sync.checkSection = async ({ filed, spoken, label, field }) => {
+    if (sync.mode !== "server" || !sync.token) return null;
+    const res = await api("/api/check-section", { method: "POST", body: { filed, spoken, label, field } });
+    return res.ok ? res.data : null;
+  };
+
   /* File a tester's bug report. Server-only: there is nowhere for a report to
      go in local/offline mode, and silently swallowing one would be worse than
      saying so. Returns null on success, or a message to show the reporter. */
