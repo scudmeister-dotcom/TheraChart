@@ -4499,6 +4499,40 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          invariant is unchanged and is the whole point: there is only ever one
          record button in the document, so two of them can never disagree
          about whether the microphone is open. -->
+    <!-- What the therapist watches between pressing Stop and reading the
+         review. It replaces a one-line status in the toolbar, which was the
+         whole feedback for a step that can run the better part of a minute on
+         a long visit — a screen that still says "Transcribing…" ninety seconds
+         later is indistinguishable from one that has hung.
+
+         The steps are the three things that genuinely happen, and no more. An
+         invented fourth step with a bar creeping across it would be theatre,
+         and this is the screen a therapist is staring at while wondering
+         whether their visit survived. -->
+    <div class="proc-stage" id="procStage" hidden>
+      <div class="proc-stage-inner">
+        <div class="proc-eyebrow"><span class="proc-spin"></span>Processing this visit</div>
+        <h2>${esc(S.patientName(p))}</h2>
+        <div class="proc-doc">${esc(doc.title)}</div>
+        <ol class="proc-steps">
+          <li class="proc-step" data-step="captured">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b>Recording captured</b><small data-detail="captured" data-default=""></small></span>
+          </li>
+          <li class="proc-step" data-step="transcribe">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b>Transcribing what was said</b><small data-detail="transcribe" data-default="Speech only — the silence was never sent.">Speech only — the silence was never sent.</small></span>
+          </li>
+          <li class="proc-step" data-step="read">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b>Reading the whole visit</b><small data-detail="read" data-default="Splitting who spoke, correcting the body map, and drafting each section.">Splitting who spoke, correcting the body map, and drafting each section.</small></span>
+          </li>
+        </ol>
+        <p class="proc-note">Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.</p>
+        <div class="proc-actions" id="procActions" hidden></div>
+      </div>
+    </div>
+
     <div class="rec-dock" id="recDock" hidden>
       <div class="rec-dock-inner">
         <div class="rec-dock-who"><span class="rec-dot"></span><b>Recording</b> · ${esc(S.patientName(p))}</div>
@@ -6362,8 +6396,44 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           meta.textContent = "Recording captured — process it when you're ready. Silence was skipped, so only speech is charged.";
           showIdle();
           stageIdle();
+          /* Stopping used to end in a one-line status in the toolbar, which a
+             therapist who had been looking at the patient rather than the
+             screen never saw — so a captured visit sat unprocessed, looking
+             exactly like a visit that had not been recorded.
+
+             This says what was captured and asks for the one decision that
+             actually remains. "Record more" is kept and kept FIRST-CLASS: a
+             visit interrupted by a phone call is the normal reason to stop,
+             and a dialog that only offered Process would have made the
+             interruption cost the rest of the recording. */
+          const mins = Math.max(1, Math.round((Number(doc.data._dictationSeconds) || 0) / 60));
+          const m = showModal(`
+            <h2>Recording stopped</h2>
+            <p style="font-size:13.5px; line-height:1.55; margin-top:-2px">
+              About <b>${mins} minute${mins > 1 ? "s" : ""}</b> of speech captured on this visit.
+              Processing it takes <b>a few seconds</b> — the whole conversation is transcribed and read
+              in one pass, and then you get to check every line before anything reaches the chart.</p>
+            <p style="font-size:12.5px; color:var(--muted)">Not finished with the patient? Record more and process it all together at the end.</p>
+            <div class="modal-actions">
+              <button class="btn" id="recMore" type="button">Record more</button>
+              <button class="btn primary" id="recGo" type="button">Process the visit</button>
+            </div>`);
+          m.querySelector("#recMore").addEventListener("click", closeModal);
+          m.querySelector("#recGo").addEventListener("click", () => { closeModal(); processBtn.click(); });
           return;
         }
+        /* Said BEFORE the microphone opens, not after. Two reasons: the
+           therapist is about to record a patient and should know what is and
+           is not being written down before that starts, and the button press
+           inside this dialog is the user gesture the browser wants for the
+           microphone permission prompt — asking from here keeps the prompt
+           attached to a deliberate action rather than to a page that already
+           moved on.
+
+           It is shown every time on purpose. This is the screen that says the
+           note will NOT fill itself in as you speak, and a therapist who has
+           dismissed it once still needs that to be true the tenth time. */
+        if (!(await confirmRecording(doc, !!(captured && captured.length)))) return;
         const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
         const priorSec = Number(doc.data._dictationSeconds) || 0;
         rec = recorderEngine({
@@ -6419,13 +6489,28 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         processBtn.disabled = true; btn.disabled = true;
         prog.hidden = false;
         prog.textContent = `Transcribing ${captured.length} chunk${captured.length > 1 ? "s" : ""}…`;
+        /* Onto the processing screen for the whole arc. exitStage() first so
+           this never stacks on top of a recording stage or a dock that is
+           still up — the two overlays share a scroll lock, and whichever
+           released it last would win. */
+        exitStage();
+        procStage.show();
+        const spokenMin = Math.max(1, Math.round((Number(doc.data._dictationSeconds) || 0) / 60));
+        procStage.set("captured", "done",
+          `${captured.length} chunk${captured.length > 1 ? "s" : ""} · about ${spokenMin} minute${spokenMin > 1 ? "s" : ""} of speech`);
+        procStage.set("transcribe", "active", `0 of ${captured.length}`);
         try {
           const out = await processRecording(doc.id, langSel.value, captured,
-            (n, total) => { prog.textContent = `Transcribing… ${n} of ${total}`; });
+            (n, total) => {
+              prog.textContent = `Transcribing… ${n} of ${total}`;
+              procStage.set("transcribe", "active", `${n} of ${total}`);
+            });
           if (!out.text) {
-            prog.textContent = out.errors.length
-              ? `Couldn't transcribe: ${out.errors[0]}. The recording is still here — try Process again.`
+            const why = out.errors.length
+              ? `Couldn't transcribe: ${out.errors[0]}. The recording is still on this device — press Process again to retry.`
               : "Nothing recognisable in that recording. The audio is still here if you want to try again.";
+            prog.textContent = why;
+            procStage.fail("transcribe", why);
             return;
           }
           /* Whether the whole conversation gets read at once, or line by line.
@@ -6434,10 +6519,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
           if (out.errors.length) {
             prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed. The gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript, and the recording is still here — press Process again to retry.`;
+            /* Done, not failed: a chunk that did not come back leaves a marked
+               gap in the transcript and everything else is still usable. The
+               step says so rather than going red on a visit that survived. */
+            procStage.set("transcribe", "done",
+              `${out.errors.length} of ${captured.length} chunk${out.errors.length > 1 ? "s" : ""} failed — the gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript`);
           } else {
             prog.textContent = aiOn
               ? "Transcribed. Reading the whole visit before anything is filed…"
               : "Transcribed. Review what was filled in against your own notes below.";
+            procStage.set("transcribe", "done", "Speech only — the silence was never sent.");
           }
           // Record the spend first: a crash further down should not lose what
           // we were already billed for.
@@ -6474,16 +6565,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             captured = null;
             await savedAudio.clear(doc.id).catch(() => {});
           }
-          /* Off the stage before the review opens. Transcription progress
-             belongs on the stage — it is still part of the recording — but
-             the review is about the NOTE, and reading it over a full-screen
-             recorder would hide the very document it is filling in. An early
-             return above leaves the stage up on purpose, so a failed
-             transcription can be retried where it was started. */
-          exitStage();
+          /* The processing screen stays up THROUGH the whole-visit read and
+             comes down as the review opens — runRefine owns that step and
+             hides the screen itself. Without the AI there is no such step, so
+             it comes down here.
+
+             An early return above leaves the screen up on purpose, showing
+             the failed step and a way back, so a failed transcription is not
+             silently swapped for the note it could not fill. */
           showIdle();
-          if (aiOn) await runRefine(doc, user, dstate);
-          else openCompare(doc, user);
+          if (aiOn) { await runRefine(doc, user, dstate); }
+          else { procStage.hide(); openCompare(doc, user); }
         } finally { processBtn.disabled = false; btn.disabled = false; }
       });
 
@@ -6949,6 +7041,124 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       return { text, seen: have.size > 0 && score >= SEEN_AT, score, words: words.length };
     });
   }
+
+  /* What recording does, said before the microphone opens.
+
+     The one thing on it that matters: the note does NOT fill itself in as you
+     speak. That is the single most surprising property of this flow to anyone
+     who has used dictation software before, and a therapist who believes the
+     opposite spends the visit waiting for text that is never coming, then
+     assumes the microphone is broken.
+
+     Returns a promise for the therapist's answer, so the caller can simply
+     not start the recorder when they back out. */
+  function confirmRecording(doc, hasPrior) {
+    return new Promise((resolve) => {
+      const m = showModal(`
+        <h2>${hasPrior ? "Record more of this visit" : "Record this visit"}</h2>
+        <p style="font-size:13.5px; line-height:1.55; margin-top:-2px">
+          Speak normally, for as long as the patient needs. ${hasPrior
+            ? "This is added to what you already recorded, and it is all processed together."
+            : "Take the whole visit in one go."}</p>
+        <ul style="font-size:13px; line-height:1.6; padding-left: 18px; margin: 10px 0">
+          <li><b>The note does not fill itself in while you speak.</b> Nothing is written until you stop and approve it — so a detail the patient corrects later never reaches the chart.</li>
+          <li><b>You can still type.</b> Leave the recording screen at any time and write in any section; the microphone stays open and visible.</li>
+          <li><b>Only speech is charged.</b> Silence is skipped and never sent.</li>
+        </ul>
+        <div class="modal-actions">
+          <button class="btn" id="recCancel" type="button">Not now</button>
+          <button class="btn primary" id="recStart" type="button">🎤 Start recording</button>
+        </div>`);
+      let answered = false;
+      const done = (v) => { if (answered) return; answered = true; closeModal(); resolve(v); };
+      m.querySelector("#recCancel").addEventListener("click", () => done(false));
+      m.querySelector("#recStart").addEventListener("click", () => done(true));
+      /* Dismissing by clicking the backdrop is a "no". showModal wires that
+         click to closeModal directly, so the promise has to be settled from
+         the node going away or a therapist who clicked outside would leave
+         this pending forever and the record button dead. */
+      const root = document.getElementById("modalRoot");
+      const obs = new MutationObserver(() => {
+        if (!root.contains(m)) { obs.disconnect(); done(false); }
+      });
+      obs.observe(root, { childList: true, subtree: true });
+    });
+  }
+
+  /* ---- the processing screen ----
+
+     Owns the whole arc between Stop and the review: transcription, the
+     whole-visit read, and whatever failed on the way. It is a module-level
+     object rather than a closure because two callers drive it — the recorder,
+     which owns transcription, and runRefine(), which is a top-level function
+     and cannot see the recorder's scope.
+
+     Every step is a real step. `detail` carries the honest running count; no
+     step invents progress it cannot measure, and there is no bar creeping
+     across a call whose duration nobody knows. */
+  const procStage = {
+    el: () => document.getElementById("procStage"),
+    show() {
+      const el = this.el();
+      if (!el) return;
+      /* Re-parented to <body> for the same stacking-context reason the
+         recording stage is: an ancestor already forms one, and a "full
+         screen" overlay resolved inside it paints under the sidebar. */
+      document.body.appendChild(el);
+      el.hidden = false;
+      document.body.classList.add("recording-stage");   // reuses the scroll lock
+      const actions = document.getElementById("procActions");
+      if (actions) { actions.hidden = true; actions.innerHTML = ""; }
+      const spin = el.querySelector(".proc-spin");
+      if (spin) spin.classList.remove("stopped");
+      /* Detail text is reset too, not just state. A second run through this
+         screen kept whatever the first one ended on — so a failed retry showed
+         the previous run's "Read." under a step that had not started, which is
+         the one place a therapist is reading closely for what went wrong. */
+      for (const k of ["captured", "transcribe", "read"]) {
+        const d = el.querySelector(`[data-detail="${k}"]`);
+        if (d) d.textContent = d.dataset.default || "";
+        this.set(k, "waiting");
+      }
+    },
+    hide() {
+      const el = this.el();
+      if (!el) return;
+      el.hidden = true;
+      document.body.classList.remove("recording-stage");
+    },
+    /* state: waiting | active | done | failed */
+    set(key, state, detail) {
+      const el = this.el();
+      if (!el) return;
+      const li = el.querySelector(`[data-step="${key}"]`);
+      if (!li) return;
+      li.dataset.state = state;
+      if (detail != null) {
+        const d = li.querySelector(`[data-detail="${key}"]`);
+        if (d) d.textContent = detail;
+      }
+    },
+    /* The screen has to be able to END on a failure. Without this a failed
+       transcription left a spinner turning over a step that was never coming
+       back, which reads as a hang rather than as the error it is — and the
+       recording is still on the device, which is the one thing the therapist
+       needs told. */
+    fail(key, message, onClose) {
+      this.set(key, "failed", message);
+      const el = this.el();
+      const actions = document.getElementById("procActions");
+      if (!el || !actions) return;
+      const spin = el.querySelector(".proc-spin");
+      if (spin) spin.classList.add("stopped");
+      actions.hidden = false;
+      actions.innerHTML = `<button class="btn primary" id="procClose" type="button">Back to the note</button>`;
+      actions.querySelector("#procClose").addEventListener("click", () => {
+        this.hide();
+        if (onClose) onClose();
+      });
+    },
+  };
 
   /* ---- the accuracy check, drawn under the section it checked ----
 
@@ -7567,9 +7777,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     /* The clinician is told what is reading their note, not who makes it. The
        model behind this has changed twice already and the name in front of a
        therapist mid-visit should not have to change with it. */
-    const m = showModal(`<h2>✦ Reviewing with AI…</h2>
-      <p style="font-size:13px">Reading the transcript to split patient vs clinician speech, clean up wording, and re-check the findings.</p>
-      <div class="empty-state">Working… this can take up to a minute or two on a long visit.</div>`);
+    /* Two ways in, one screen. Arriving from Process, the screen is already up
+       with transcription ticked off and this is its third step. Arriving from
+       the Review button on a typed or previously-transcribed note, there is no
+       screen yet — so it is raised here with the two earlier steps marked done,
+       because they genuinely are: the transcript being read already exists. */
+    const fresh = (procStage.el() || {}).hidden !== false;
+    if (fresh) {
+      procStage.show();
+      procStage.set("captured", "done", "Working from the transcript already on this note.");
+      procStage.set("transcribe", "done", "Already transcribed.");
+    }
+    procStage.set("read", "active",
+      "Splitting who spoke, correcting the body map, and drafting each section. A long visit can take a minute or two.");
     let result;
     try {
       /* No offline branch. A build with no sync layer has no AI either, and
@@ -7579,7 +7799,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         ? await sync.refineTranscript(utterances)
         : { aiFailed: true, unavailable: true, error: "AI review is not configured on this server." };
     } catch (e) {
-      closeModal();
+      procStage.hide();
       return refineFailed(doc, user, dstate, e.message, false);
     }
     /* The AI was asked and could not answer. Everything below this point
@@ -7588,7 +7808,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        the therapist a quietly downgraded note that looks like a reviewed one.
        Refuse it, say so, and let them decide. */
     if (result.aiFailed) {
-      closeModal();
+      procStage.hide();
       return refineFailed(doc, user, dstate, result.error, result.unavailable);
     }
     // counted the moment it runs, not when it is accepted: the call was made
@@ -7596,6 +7816,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // is not counted — a throttled request is rejected before it costs
     // anything, and this meter is the clinician's own usage.
     S.recordDocAiCall(doc.id);
+    procStage.set("read", "done", "Read. Nothing is on the chart yet — check it below.");
+    procStage.hide();
     openReviewModal(doc, user, dstate, result);
   }
 

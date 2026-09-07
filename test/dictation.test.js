@@ -655,9 +655,30 @@ const settle = () => new Promise((r) => setImmediate(r));
       /activeRecording = \{[\s\S]{0,400}rec && rec\.stop\(\)/.test(SRC),
       "chunks are flushed to IndexedDB as they are captured, so the visit is offered back rather than lost");
 
-    r.check("the review opens over the note, not over the stage",
-      /exitStage\(\);\s*\n\s*showIdle\(\);\s*\n\s*if \(aiOn\) await runRefine/.test(SRC),
-      "reading a review over a full-screen recorder hides the document it is filling in");
+    /* The property is unchanged; what enforces it moved. Processing now has a
+       screen of its own, so the recorder overlay comes down before that screen
+       goes up, and that screen comes down before the review opens. Neither
+       overlay may ever be under the review. */
+    r.check("the recorder overlay is down before the processing screen goes up",
+      /exitStage\(\);\s*\n\s*procStage\.show\(\);/.test(SRC),
+      "two full-screen overlays share one scroll lock — whichever released it last would win");
+
+    r.check("the review opens over the note, not over the processing screen",
+      /procStage\.hide\(\);\s*\n\s*openReviewModal/.test(SRC),
+      "reading a review over a full-screen overlay hides the document it is filling in");
+
+    /* A screen that cannot end on a failure is a screen that looks hung. The
+       recording is still on the device at this point, which is the one thing
+       the therapist needs told. */
+    r.check("a failed transcription ends the processing screen instead of spinning",
+      /procStage\.fail\("transcribe", why\);/.test(SRC)
+        && /still on this device — press Process again to retry/.test(SRC),
+      "a spinner over a step that is never coming back reads as a hang, not as the error it is");
+
+    r.check("every exit from the whole-visit read takes the screen down",
+      !/procStage\.set\("read", "active"[\s\S]{0,2000}closeModal\(\);\s*\n\s*return refineFailed/.test(SRC)
+        && (SRC.match(/procStage\.hide\(\);/g) || []).length >= 4,
+      "a failed or unavailable AI must not leave a processing overlay over the note");
 
     r.check("discarding a recording leaves the stage",
       /meta\.textContent = "Recording discarded\.";\s*\n\s*exitStage\(\);/.test(SRC));
