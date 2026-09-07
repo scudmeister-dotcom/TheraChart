@@ -680,12 +680,34 @@ costs. The review screen chips every finding with where it came from — `no-sid
 `live-only`, `corrected`, `hypothetical`, `not-the-patient`, `denied` — and it
 explains every measurement it declined to file ("Not filed — …: reason").
 
-**What it cannot show is something that never arrived.** A region word lost in
-transcription produces no finding, so there is no row to chip; a ROM reading the
-parser failed to extract is in neither the "to file" list nor the "not filed"
-one. The therapist sees a note that looks complete. That is why the extraction
-bug above mattered more than its size suggests, and it is the one class of error
-this app currently has no signal for.
+**What it could not show was something that never arrived.** A region word lost
+in transcription produces no finding, so there is no row to chip; a ROM reading
+the parser failed to extract was in neither the "to file" list nor the "not
+filed" one. The therapist saw a note that looked complete. That is why the
+extraction bug above mattered more than its size suggests.
+
+Half of that is now closed. `unfiledMeasurements()` (parser.js) scans the
+transcript for every number carrying a unit the chart files — degrees, `/5`,
+`/10` — subtracts the ones that landed in a row, and the review screen warns
+about the remainder in the therapist's own words:
+
+> **A number was spoken that isn't in the list above.** Check the transcript and
+> add it by hand if it belongs in the chart.
+> *"Knee flexion was limited by pain to 90 degrees."*
+
+It is deliberately **digits only, and only where the unit is spoken**. A
+word-form "pito sa sampu" that the parser read correctly is never detected, and
+that is the right way round to be wrong: a missed warning costs nothing, while a
+false one teaches a therapist to ignore the banner and then the real ones go
+unread too. Measured at **zero false positives across all twenty-two voice
+scripts**, and the two it did produce in development were both sign bugs — a
+range dash read as a minus, and a missed word-form `negative` — each inventing a
+mismatch against a row that was perfectly correct. Both are regression tests now.
+
+**The other half is still open.** A lost *region word* still leaves no trace,
+because a finding that was never created cannot be chipped. There is no
+equivalent trick there: a number announces itself with a unit, a body part does
+not.
 
 **It does not exercise the browser recorder at all.** The voice gate, the idle
 backstop, the per-visit ceiling and the chunk-at-a-pause logic all live in

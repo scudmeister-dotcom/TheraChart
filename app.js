@@ -7488,6 +7488,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        region is being taken off the chart must not be promised here and then
        quietly withheld on apply. Re-rendered whenever a finding is ticked, so
        putting a corrected region back brings its readings back with it. */
+    /* A number the therapist SAID that reached no row at all.
+
+       Everything else on this screen explains itself: a finding carries a chip
+       saying where it came from, and a measurement the review declines to file
+       says why. A reading the parser never extracted is in neither list — the
+       screen simply shows a shorter list, and a note that looks complete. That
+       is the one loss with no signal, and it is silent in whichever language
+       the visit was dictated in.
+
+       Computed once from the transcript rather than per render: it does not
+       depend on which findings are ticked, only on what was spoken. */
+    const unfiled = (() => {
+      const said = (result.dialogue || []).map((d) => d.text).join(" ");
+      return PR.unfiledMeasurements(said, result.measurements) || [];
+    })();
+
     const measBlockHtml = () => {
       const keptNow = new Set(rows.filter((r) => r.include && r.summary.trim()).map((r) => r.key));
       const { keep, dropped } = splitMeasurements(result.measurements, correctedBy, keptNow);
@@ -7498,7 +7514,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}
         ${dropped.length ? `<div class="rev-why">${dropped.map((d) =>
             `<div><b>Not filed — ${esc(measLabel(d.kind, d.item))}</b>: ${esc(d.reason)}</div>`).join("")
-          }<div>Tick that region back on under Findings and its readings come with it.</div></div>` : ""}`;
+          }<div>Tick that region back on under Findings and its readings come with it.</div></div>` : ""}
+        ${unfiled.length ? `<div class="banner warn" style="margin-top:6px">
+            <b>${unfiled.length === 1 ? "A number was spoken that isn't in the list above"
+              : `${unfiled.length} numbers were spoken that aren't in the list above`}.</b>
+            Check the transcript and add ${unfiled.length === 1 ? "it" : "them"} by hand if ${unfiled.length === 1 ? "it belongs" : "they belong"} in the chart.
+            ${unfiled.map((u) => `<div class="rev-why" style="margin-top:4px">“${esc(u.quote)}”</div>`).join("")}
+          </div>` : ""}`;
     };
     /* What this review cannot write, said plainly on the same screen. A
        therapist who has just watched the AI fill six sections will assume it

@@ -7,7 +7,7 @@
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
         correctDictation, extractMeasurements, isDenial, isPaired,
-        aggregateMeasurements } = require("../parser.js");
+        aggregateMeasurements, unfiledMeasurements } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -571,6 +571,67 @@ function mention(result, partName, side = undefined) {
   const rom = r.measurements.rom;
   check("the unitless pass does not swallow unrelated numbers",
     rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
+}
+
+/* A NUMBER THAT REACHED NO ROW.
+
+   Every other loss on the review screen explains itself: a finding carries a
+   chip saying where it came from, and a measurement the review declines to file
+   says why. A reading the parser never extracted is in neither list — the
+   screen just shows a shorter list and a note that looks complete. These guard
+   the one signal there is for it, and the false-positive cases matter more than
+   the true ones: a warning that cries wolf gets ignored, and then the real ones
+   go unread too. */
+{
+  const unfiled = (t) => unfiledMeasurements(t, extractMeasurements(t));
+  const kinds = (t) => unfiled(t).map((u) => u.kind + ":" + u.value).join(",");
+
+  check("a spoken angle that reached no row is reported",
+    kinds("Knee flexion was limited by pain to 90 degrees") === "rom:90",
+    kinds("Knee flexion was limited by pain to 90 degrees"));
+
+  check("a reading the parser DID file is not reported",
+    kinds("Knee flexion is 90 degrees") === "", kinds("Knee flexion is 90 degrees"));
+
+  check("a filed grade and a filed pain score are both quiet",
+    kinds("Pain is 7 out of 10 and MMT 4 out of 5") === "",
+    kinds("Pain is 7 out of 10 and MMT 4 out of 5"));
+
+  /* The reading the ROM_MOTIONS comment drops on purpose rather than misfile.
+     Dropping it is still right; saying nothing about it was not. */
+  check("the hesitation case is dropped by the parser AND surfaced here",
+    kinds("Right shoulder flexion is, er, 130 degrees") === "rom:130",
+    kinds("Right shoulder flexion is, er, 130 degrees"));
+
+  /* ---- the false positives that matter ---- */
+
+  check("a rep count with no unit is not mistaken for a measurement",
+    kinds("We did 3 sets of 10 reps for 20 minutes") === "",
+    kinds("We did 3 sets of 10 reps for 20 minutes"));
+
+  check("an age and a walking distance are not measurements",
+    kinds("She is 45 years old and walked 200 meters") === "",
+    kinds("She is 45 years old and walked 200 meters"));
+
+  /* Both of these reported a phantom mismatch against a perfectly correct row
+     before the sign rules were made to mirror ROM_SIGN. */
+  check("a word-form sign is read, so a correctly filed -5 stays quiet",
+    kinds("Knee extension is negative 5 degrees") === "",
+    kinds("Knee extension is negative 5 degrees"));
+
+  check("a range dash is punctuation, not a minus",
+    unfiled("Shoulder flexion 120-130 degrees").every((u) => u.value > 0),
+    JSON.stringify(unfiled("Shoulder flexion 120-130 degrees")));
+
+  /* Matching is by value AND count, so a repeated number is not cancelled by
+     one row that happens to share it. */
+  const twice = kinds("Shoulder flexion 120 degrees. Elbow was, er, 120 degrees.");
+  check("a second reading of the same value is still reported",
+    twice === "rom:120", twice);
+
+  const q = unfiled("Knee flexion was limited by pain to 90 degrees. Pain is 7 out of 10.")[0];
+  check("the quote stops at the sentence rather than mid-word",
+    q && /90 degrees\.$/.test(q.quote), q && q.quote);
 }
 
 /* AN UNNAMED WORD between the motion and its value.

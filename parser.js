@@ -2487,6 +2487,78 @@
      thrown away: "One to ten?" is too terse to earn a place in the note, and
      it is the only thing that makes the bare number in the next turn a pain
      rating rather than a stray number. */
+  /* Numbers that were SPOKEN as measurements and reached no row.
+
+     The review screen can chip a finding that looks wrong and can explain a
+     measurement it declined to file, but it has nothing to say about a reading
+     that was never extracted in the first place: that one is in neither list,
+     and the therapist signs a note that looks complete. This finds them — every
+     number carrying a unit the chart actually files, minus the ones that landed.
+
+     Deliberately DIGITS ONLY, and only where the unit is spoken. A word-form
+     "pito sa sampu" that the parser read correctly is not detected here, and
+     that is the right way round to be wrong: a missed warning costs nothing,
+     while a false one teaches a therapist to ignore the banner, and then the
+     real ones go unread too.
+
+     The sign rules mirror ROM_SIGN and have to. Reading the dash in "flexion
+     120-130 degrees" as a minus, or missing the word in "negative 5 degrees",
+     each invents a mismatch against a row that was perfectly correct — both
+     were caught doing exactly that before these two guards went in.
+
+     Matching is by VALUE and by COUNT, not by position: "flexion 120 degrees,
+     abduction 120 degrees" needs two rows of 120 and reports one unfiled if
+     only one arrived. */
+  const UNFILED_PATTERNS = [
+    // a word-form sign needs a space after it; a symbol must touch the digit
+    // and must NOT follow one, so a range dash stays punctuation
+    ["rom", /(?:(?:negative|minus|neg)\s+|(?<!\d)-)?\d{1,3}\s*(?:degrees?|deg\b|°)/gi,
+      /(?:(negative|minus|neg)\s+|(?<!\d)(-))?(\d{1,3})/i],
+    ["mmt", /\d\s*[+-]?\s*(?:out\s+of|over|\/)\s*5\b/gi, /(\d)/],
+    ["pain", /\d{1,2}\s*(?:out\s+of|\/)\s*10\b/gi, /(\d{1,2})/],
+  ];
+
+  function filedValues(meas, kind) {
+    const m = meas || {};
+    if (kind === "rom") return (m.rom || []).map((r) => Number(r.degrees));
+    if (kind === "mmt") return (m.mmt || []).map((r) => parseInt(String(r.grade), 10));
+    return (m.pain || []).map((r) => Number(r.score));
+  }
+
+  /** Spoken measurements with no row to show for them. */
+  function unfiledMeasurements(text, meas) {
+    const src = String(text || "");
+    const out = [];
+    for (const [kind, finder, reader] of UNFILED_PATTERNS) {
+      const pool = filedValues(meas, kind).filter((n) => Number.isFinite(n));
+      for (const hit of src.matchAll(finder)) {
+        const parts = reader.exec(hit[0]);
+        if (!parts) continue;
+        let value;
+        if (kind === "rom") {
+          const neg = !!(parts[1] || parts[2]);
+          value = Number(parts[3]) * (neg ? -1 : 1);
+        } else {
+          value = Number(parts[1]);
+        }
+        const at = pool.indexOf(value);
+        if (at >= 0) { pool.splice(at, 1); continue; }
+        /* Enough around it to recognise what was said, cut at word and
+           sentence boundaries — a quote that ends mid-word ("Pain is 7 o")
+           reads as a bug in the app rather than as the therapist's own words. */
+        let from = Math.max(0, hit.index - 44);
+        if (from > 0) { const sp = src.indexOf(" ", from); if (sp > -1 && sp < hit.index) from = sp + 1; }
+        let to = Math.min(src.length, hit.index + hit[0].length + 14);
+        const stop = src.slice(hit.index, to).search(/[.!?]/);
+        if (stop > -1) to = hit.index + stop + 1;
+        else if (to < src.length) { const sp = src.lastIndexOf(" ", to); if (sp > hit.index) to = sp; }
+        const quote = (from > 0 ? "…" : "") + src.slice(from, to).trim();
+        out.push({ kind, value, spoken: hit[0].trim(), quote });
+      }
+    }
+    return out;
+  }
+
   function aggregateMeasurements(texts) {
     const out = { rom: [], mmt: [], special: [], pain: [] };
     const seen = new Set();
@@ -2713,6 +2785,7 @@
     coordForName,
     extractMeasurements,
     aggregateMeasurements,
+    unfiledMeasurements,
     correctDictation,
     DICTATION_FIXES,
     classifyUtterance,
