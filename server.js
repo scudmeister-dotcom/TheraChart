@@ -955,7 +955,64 @@ const STT_BOOST = 15;
    Prototype-free because it is keyed by whatever strings STT_PHRASES holds,
    and a phrase named like an Object member would otherwise look up a function
    and send it to Google as a boost. */
-const STT_PHRASE_BOOST = Object.assign(Object.create(null), { negative: 20 });
+const STT_PHRASE_BOOST = Object.assign(Object.create(null), {
+  negative: 20,
+  /* "bat-ang" (hip) at the ceiling for the same reason `negative` is there:
+     boosting it 15 moved it from 0/6 recordings to 3/6, and 20 to 5/6 — a
+     monotonic response, which is what confidence looks like and what noise does
+     not. It names a region outright (parser.js:95), so a lost one costs the
+     whole finding rather than a detail of it. */
+  "bat-ang": 20,
+});
+
+/* Words added only for the language that says them.
+
+   The list above rides on every request because it is clinical English, which
+   is spoken in both rooms. These are not: the dictation menu offers exactly two
+   codes — fil-PH is "English & Tagalog", ceb-PH is "English & Cebuano"
+   (app.js) — and a Cebuano word boosted globally would be competing for
+   Manila's audio, where nobody says it, for no benefit there.
+
+   What this does NOT buy is protection for English. There is no English-only
+   code; English rides on whichever of the two is selected, so a word added here
+   is boosted against English speech in the same room. The
+   no-ordinary-near-homophone rule above therefore applies with full force —
+   `hita` (thigh) was measured as a candidate and REFUSED on exactly that
+   ground, because "hit a" is an ordinary thing to say and a false thigh finding
+   is worse than a missed one.
+
+   Every entry has to be measured before it goes in. test/voice/ probe/ speaks
+   each body-part word the region table understands in a carrier sentence and
+   reports how many recordings it survived; twenty-four of the thirty words
+   probed arrived 6/6 and have no business here. */
+const STT_PHRASES_BY_LANG = Object.assign(Object.create(null), {
+  /* "lulod" (shin) arrived in 1 of 6 recordings — the worst Tagalog result in
+     the probe, against 6/6 for balikat, tuhod, leeg, kamay, braso, bisig,
+     pulso, talampakan, daliri and singit. It is safe to boost where `hita` was
+     not: nothing an English-speaking therapist says comes back as "lulod", so
+     it cannot steal a reading the way an ordinary word would. Losing it loses
+     the Shin region outright (parser.js:105), not a detail of one. */
+  "fil-PH": ["lulod"],
+  /* The probe's three Cebuano failures: bat-ang (hip) 0/6, kumagko (thumb) 1/6,
+     buol-buol (ankle) 4/6 — against 6/6 for tuhod, siko, abaga, liog, kamot,
+     tudlo, bukton and tiil, so Cebuano is not uniformly weak, it fails on
+     specific words. All three name a region outright (parser.js:95, :103, :115).
+
+     Only bat-ang is here. Holding the audio byte-identical and changing only
+     this list is what proved the sound was in the recording at all: adaptation
+     cannot recover something the speaker never said, so 0/6 → 5/6 settles that
+     Chirp 2 had the acoustics and lacked the confidence. That is a lexicon gap,
+     and it is what adaptation is for.
+
+     kumagko and buol-buol were tried here and REMOVED. kumagko ran 1/6 → 4/6 →
+     3/6 across boosts — not monotonic, so not evidence — and buol-buol moved a
+     single recording. Both also cost something: with all three boosted,
+     `lapa-lapa` (never boosted, same probe sentence as kumagko) dropped to 5/6,
+     and knee/cebuano-heavy ran 2.5 points worse for one voice. Every phrase
+     here makes its own reading likelier at a neighbour's expense, so a word
+     that cannot show a clear gain is a pure cost. */
+  "ceb-PH": ["bat-ang"],
+});
 
 /* Whether this deployment's model accepts an `adaptation` block at all.
    Chirp 2's feature support varies by region, and a request carrying an
@@ -968,8 +1025,9 @@ const ADAPTATION_UNSUPPORTED_RE = /adaptation|phrase[_ ]?set|unsupported|not sup
 function sttRequestBody(wavBuffer, model, language, withAdaptation) {
   const config = { autoDecodingConfig: {}, model, languageCodes: [language] };
   if (withAdaptation) {
+    const phrases = STT_PHRASES.concat(STT_PHRASES_BY_LANG[language] || []);
     config.adaptation = {
-      phraseSets: [{ inlinePhraseSet: { phrases: STT_PHRASES.map((value) => ({ value, boost: STT_PHRASE_BOOST[value.toLowerCase()] ?? STT_BOOST })) } }],
+      phraseSets: [{ inlinePhraseSet: { phrases: phrases.map((value) => ({ value, boost: STT_PHRASE_BOOST[value.toLowerCase()] ?? STT_BOOST })) } }],
     };
   }
   return { config, content: wavBuffer.toString("base64") };

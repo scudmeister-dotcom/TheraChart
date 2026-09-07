@@ -727,7 +727,58 @@
      that changes subject at the comma — "shoulder flexion is fine, knee is 90
      degrees" — offers no chain that reaches the 90, and the number stays with
      the clause that owns it. */
-  const ROM_FILLER = "(?:[\\s,]+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
+  /* What may sit between the motion and its value.
+
+     The named words below are the copulas and hedges a therapist reaches for,
+     and they used to be the WHOLE list — which was the bug, because the list
+     can never be complete. "hip flexion in supine is 110 degrees", "shoulder
+     flexion on the right is 60 degrees", "knee flexion today is 90 degrees"
+     and "knee flexion passively 120 degrees" are all ordinary dictation, and
+     every one of them dropped the reading outright: no measurement row, no
+     warning, nothing on screen to say a number had been spoken at all. Six of
+     twelve realistic phrasings were lost this way.
+
+     An unnamed word now passes too, up to four of them, held in by three
+     guards that widen what counts as the same clause without widening what
+     counts as a value:
+
+       - the UNIT is still required (ROM_DEGREES), so "3 sets of 10" and
+         "4 out of 5" cannot match however the words fall;
+       - a JOINT, a MOTION or a clause connector ENDS the gap, so a reading
+         belonging to the next measurement is never stolen by the one before
+         it — "knee flexion is limited, extension is 5 degrees" stops dead at
+         "extension" rather than filing 5° of knee flexion;
+       - the separator admits only whitespace and commas, so a full stop ends
+         the reach.
+
+     Inventing an angle is still worse than dropping one. */
+  const ROM_NAMED_FILLER = "is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to";
+  /* What ENDS the gap. Joints and motions, so a value belonging to the next
+     measurement is never stolen by the one before it; clause connectors, so
+     the reach stops at a new thought; and two classes that are not obvious and
+     that the test suite caught:
+
+       THE SIGN. "negative", "minus" and "neg" belong to ROM_SIGN, which sits
+       inside the value's own capture group. Let the gap eat one and the
+       reading survives with its sign stripped — "extension is negative five"
+       files as five degrees of HYPEREXTENSION where the therapist dictated a
+       flexion CONTRACTURE. The opposite finding, in a signed chart, reading
+       perfectly well. Dropping a reading is recoverable; inverting one is not.
+
+       THE HESITATIONS. "er" is both a filler noise and external rotation, and
+       the existing policy is to drop the reading rather than guess (see the
+       ROM_MOTIONS comment). A gap that walked past "er" would quietly reverse
+       that decision. */
+  const ROM_GAP_STOP = `(?:${ROM_MOTIONS}|${ROM_JOINTS}|and|but|so|then|while|because`
+    + `|negative|minus|neg|er|uh|um|ah)\\b`;
+  /* The NARROW filler, for the pass that has no unit to lean on. */
+  const ROM_FILLER = `(?:[\\s,]+(?:${ROM_NAMED_FILLER}))*`;
+  /* The WIDE one, used only where ROM_DEGREES demands a literal "degrees" a
+     few characters later. That unit is what makes the extra reach safe: "3
+     sets of 10" and "4 out of 5" cannot match it however the words fall. The
+     unitless pass below must NOT use this — widening a pattern that accepts a
+     bare number invented a 3-degree abduction the first time it was tried. */
+  const ROM_FILLER_WIDE = `(?:[\\s,]+(?:${ROM_NAMED_FILLER}|(?!${ROM_GAP_STOP})[a-z]+)){0,4}`;
   /* THE SIGN. "Extension is negative five degrees" is a flexion contracture;
      "extension is five degrees" is hyperextension — the opposite finding about
      the opposite knee, and both sentences read perfectly well, so a therapist
@@ -764,9 +815,9 @@
   const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
 
   const JOINT_ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   const BARE_ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   /* Motion first, joint after it — the ordinary Tagalog and Cebuano word order,
      and English's too once the joint is qualified:
 
@@ -788,7 +839,7 @@
   const MOTION_JOINT_ROM_RE = new RegExp(
     `\\b(${ROM_MOTIONS})[\\s,]+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
     `(?:the|his|her|their|ang|akong|among|imong|iyang|yung|aking)?\\s*` +
-    `(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   const BARE_ROM_NOUNIT_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_BARE_NUM}`, "gi");
   // where a joint (with any side stated on it) is named, so a bare motion can
@@ -2436,6 +2487,159 @@
      thrown away: "One to ten?" is too terse to earn a place in the note, and
      it is the only thing that makes the bare number in the next turn a pain
      rating rather than a stray number. */
+  /* A SIDE that was spoken with no body part pinned to it.
+
+     The companion to unfiledMeasurements below, for the loss that one cannot
+     see. A number announces itself with a unit; a body part does not, so a
+     region word lost in transcription creates no finding, and a finding that
+     was never created cannot be chipped. The therapist signs a note that looks
+     complete.
+
+     A laterality word is the tell. It is only ever said ABOUT a body part —
+     "it is the left one that hurts" has no innocent reading — so a side spoken
+     with nothing sided on the body map means the part went missing between the
+     microphone and the chart. Measured against the voice suite: no false
+     positive on any of the twenty-two correct transcripts, and it caught the
+     region loss in all six scripts it was simulated in, across English,
+     Tagalog and Cebuano.
+
+     "wala" is deliberately NOT a trigger on its own. It is Cebuano for LEFT and
+     Tagalog for NONE, and the Tagalog sense is how half these visits record a
+     denial — "wala pong pamamanhid". Only the uncontracted "wala nga", which
+     stands before a noun and can only be the side, counts here. Same for "tuo
+     nga". Getting this wrong would fire the warning on every denial in Manila.
+
+     The English words need the opposite kind of care: "right" is a common
+     ordinary word and "left" is a common verb, so the idioms are excluded
+     explicitly. A missed warning costs nothing; one that cries wolf on "right
+     now" teaches the therapist to ignore the banner. */
+  const SIDE_SPOKEN_RE = new RegExp(
+    "\\b(?:"
+    + "left(?!\\s+(?:the|it|a|off|over|out|us|him|her|them|early|before|after))"
+    + "|right(?!\\s+(?:now|away|there|here|then|back|about|after|before|\\?))"
+    + "|kaliwa\\w*|kanan\\w*|wala\\s+nga|tuo\\s+nga"
+    + ")\\b", "i");
+  /* Phrases where the word is not a side at all, removed before the test above
+     rather than written into it — "all right" cannot be expressed as a
+     lookahead from the word itself. */
+  /* Anchored on BOTH sides. Without the word boundaries "the right" matched the
+     "he right" inside it and the warning went silent on the very sentence it
+     exists for — "the left one is still sore". */
+  const SIDE_NOT_A_SIDE_RE = new RegExp("\\b(?:" + [
+    "all\\s+right", "alright", "quite\\s+right",
+    // "that's right", "that is right", "you're right", "you are right", …
+    "(?:that|this|you|we|they|he|she)(?:'|’)?(?:s|re)?(?:\\s+(?:is|are|were|was))?\\s+right",
+    "is\\s+that\\s+right", "am\\s+i\\s+right",
+    // "doesn't feel right", "something is not right" — a complaint, not a side
+    "(?:feels?|felt|looks?|sounds?|seems?)\\s+right", "not\\s+right", "n(?:'|’)?t\\s+right",
+    "right\\s+(?:now|away|there|here|then|back|about)",
+    // directions, which the open microphone picks up on the way out
+    "(?:turn|turns|turned|turning|go|goes|going|walk|walks|walked|head|heads)\\s+right",
+    // "left" as a verb, and "left over"
+    "(?:she|he|they|i|we|you|it|has|have|had|who)\\s+left", "left\\s+over",
+  ].join("|") + ")\\b", "gi");
+
+  /** A side was spoken, but nothing on the body map carries one. */
+  function unpinnedSide(text, findings) {
+    const anySided = (findings || []).some((f) => f && f.side);
+    if (anySided) return null;
+    const src = String(text || "");
+    const scrubbed = src.replace(SIDE_NOT_A_SIDE_RE, " ");
+    const hit = SIDE_SPOKEN_RE.exec(scrubbed);
+    if (!hit) return null;
+    /* Quote the sentence the side word is IN, from the original text so the
+       therapist reads what was actually said. Scrubbing can shift offsets, so
+       the word is located again in the source.
+
+       Both ends are found relative to the hit. Trimming at the first sentence
+       end in a window instead cut the quote off BEFORE the word it is meant to
+       show — "Masakit po talaga." for a sentence about the left side two
+       clauses later. */
+    const at = src.toLowerCase().indexOf(hit[0].toLowerCase(), Math.max(0, hit.index - 8));
+    if (at < 0) return { side: hit[0].toLowerCase(), quote: src.slice(0, 90).trim() };
+    let from = 0;
+    for (const m of src.slice(0, at).matchAll(/[.!?]\s+/g)) from = m.index + m[0].length;
+    const rest = src.slice(at).search(/[.!?](?:\s|$)/);
+    const to = rest > -1 ? at + rest + 1 : src.length;
+    const clipped = from < at - 90;
+    return {
+      side: hit[0].toLowerCase(),
+      quote: (clipped ? "…" : "") + src.slice(clipped ? at - 90 : from, to).trim(),
+    };
+  }
+
+  /* Numbers that were SPOKEN as measurements and reached no row.
+
+     The review screen can chip a finding that looks wrong and can explain a
+     measurement it declined to file, but it has nothing to say about a reading
+     that was never extracted in the first place: that one is in neither list,
+     and the therapist signs a note that looks complete. This finds them — every
+     number carrying a unit the chart actually files, minus the ones that landed.
+
+     Deliberately DIGITS ONLY, and only where the unit is spoken. A word-form
+     "pito sa sampu" that the parser read correctly is not detected here, and
+     that is the right way round to be wrong: a missed warning costs nothing,
+     while a false one teaches a therapist to ignore the banner, and then the
+     real ones go unread too.
+
+     The sign rules mirror ROM_SIGN and have to. Reading the dash in "flexion
+     120-130 degrees" as a minus, or missing the word in "negative 5 degrees",
+     each invents a mismatch against a row that was perfectly correct — both
+     were caught doing exactly that before these two guards went in.
+
+     Matching is by VALUE and by COUNT, not by position: "flexion 120 degrees,
+     abduction 120 degrees" needs two rows of 120 and reports one unfiled if
+     only one arrived. */
+  const UNFILED_PATTERNS = [
+    // a word-form sign needs a space after it; a symbol must touch the digit
+    // and must NOT follow one, so a range dash stays punctuation
+    ["rom", /(?:(?:negative|minus|neg)\s+|(?<!\d)-)?\d{1,3}\s*(?:degrees?|deg\b|°)/gi,
+      /(?:(negative|minus|neg)\s+|(?<!\d)(-))?(\d{1,3})/i],
+    ["mmt", /\d\s*[+-]?\s*(?:out\s+of|over|\/)\s*5\b/gi, /(\d)/],
+    ["pain", /\d{1,2}\s*(?:out\s+of|\/)\s*10\b/gi, /(\d{1,2})/],
+  ];
+
+  function filedValues(meas, kind) {
+    const m = meas || {};
+    if (kind === "rom") return (m.rom || []).map((r) => Number(r.degrees));
+    if (kind === "mmt") return (m.mmt || []).map((r) => parseInt(String(r.grade), 10));
+    return (m.pain || []).map((r) => Number(r.score));
+  }
+
+  /** Spoken measurements with no row to show for them. */
+  function unfiledMeasurements(text, meas) {
+    const src = String(text || "");
+    const out = [];
+    for (const [kind, finder, reader] of UNFILED_PATTERNS) {
+      const pool = filedValues(meas, kind).filter((n) => Number.isFinite(n));
+      for (const hit of src.matchAll(finder)) {
+        const parts = reader.exec(hit[0]);
+        if (!parts) continue;
+        let value;
+        if (kind === "rom") {
+          const neg = !!(parts[1] || parts[2]);
+          value = Number(parts[3]) * (neg ? -1 : 1);
+        } else {
+          value = Number(parts[1]);
+        }
+        const at = pool.indexOf(value);
+        if (at >= 0) { pool.splice(at, 1); continue; }
+        /* Enough around it to recognise what was said, cut at word and
+           sentence boundaries — a quote that ends mid-word ("Pain is 7 o")
+           reads as a bug in the app rather than as the therapist's own words. */
+        let from = Math.max(0, hit.index - 44);
+        if (from > 0) { const sp = src.indexOf(" ", from); if (sp > -1 && sp < hit.index) from = sp + 1; }
+        let to = Math.min(src.length, hit.index + hit[0].length + 14);
+        const stop = src.slice(hit.index, to).search(/[.!?]/);
+        if (stop > -1) to = hit.index + stop + 1;
+        else if (to < src.length) { const sp = src.lastIndexOf(" ", to); if (sp > hit.index) to = sp; }
+        const quote = (from > 0 ? "…" : "") + src.slice(from, to).trim();
+        out.push({ kind, value, spoken: hit[0].trim(), quote });
+      }
+    }
+    return out;
+  }
+
   function aggregateMeasurements(texts) {
     const out = { rom: [], mmt: [], special: [], pain: [] };
     const seen = new Set();
@@ -2662,6 +2866,8 @@
     coordForName,
     extractMeasurements,
     aggregateMeasurements,
+    unfiledMeasurements,
+    unpinnedSide,
     correctDictation,
     DICTATION_FIXES,
     classifyUtterance,

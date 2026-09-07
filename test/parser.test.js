@@ -7,7 +7,7 @@
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
         correctDictation, extractMeasurements, isDenial, isPaired,
-        aggregateMeasurements } = require("../parser.js");
+        aggregateMeasurements, unfiledMeasurements, unpinnedSide } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -571,6 +571,187 @@ function mention(result, partName, side = undefined) {
   const rom = r.measurements.rom;
   check("the unitless pass does not swallow unrelated numbers",
     rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
+}
+
+/* A SIDE THAT REACHED NO BODY PART.
+
+   The other half of the silent loss. A number announces itself with a unit and
+   can be checked against the rows it should have produced; a body part cannot,
+   so a region word lost in transcription leaves nothing to chip and the note
+   reads as complete. A laterality word is the only reliable tell — it is said
+   ABOUT a part, so a side with nothing sided pinned means the part went missing.
+
+   Measured on the voice suite: silent on all 22 correct transcripts, and it
+   caught the loss in all 6 scripts where a region word was deleted, across
+   English, Tagalog and Cebuano. The false-positive cases below are the ones
+   that decide whether the warning is worth reading. */
+{
+  const sided = [{ part: "Knee", side: "left" }];
+  const unsided = [{ part: "Knee", side: null }];
+
+  check("a side with nothing sided pinned is reported",
+    !!unpinnedSide("It is the left one that hurts", []), "expected a warning");
+
+  check("…and the quote is the sentence the side word is in",
+    (unpinnedSide("Masakit po talaga. Yung kaliwa po ang mas masakit ngayon. Salamat po.", []) || {})
+      .quote === "Yung kaliwa po ang mas masakit ngayon.",
+    JSON.stringify(unpinnedSide("Masakit po talaga. Yung kaliwa po ang mas masakit ngayon. Salamat po.", [])));
+
+  check("a finding that already carries a side keeps it quiet",
+    unpinnedSide("Her left knee hurts", sided) === null, "expected silence");
+
+  check("a finding with no side does not count as one",
+    !!unpinnedSide("Her left knee hurts", unsided), "expected a warning");
+
+  check("Tagalog and Cebuano laterality are read too",
+    !!unpinnedSide("Masakit po ang kanang bahin", []) && !!unpinnedSide("Sakit ang wala nga bahin", []),
+    "expected both");
+
+  /* "wala" is Cebuano for LEFT and Tagalog for NONE, and the Tagalog sense is
+     how these visits record a denial. Only the uncontracted "wala nga", which
+     stands before a noun, is a side — bare "wala" firing here would warn on
+     every denial in Manila. */
+  check("a bare Tagalog \"wala\" denial is NOT read as a side",
+    unpinnedSide("Wala pong pamamanhid, wala pong tingling", []) === null,
+    JSON.stringify(unpinnedSide("Wala pong pamamanhid, wala pong tingling", [])));
+
+  /* "right" is an ordinary English word and "left" an ordinary verb. */
+  const idioms = ["All right, let us take a look", "That is right, the pain started last week",
+    "That's right", "You are right about that", "I will be right back", "Come in right now",
+    "She left the clinic early", "Who left the door open", "We left off with the exercises",
+    "It does not feel right", "Something is not right", "That sounds right", "Quite right",
+    "Turn right at the corner", "Go right past the lift"];
+  const fired = idioms.filter((t) => unpinnedSide(t, []));
+  check("no ordinary use of \"right\" or \"left\" raises the warning",
+    fired.length === 0, JSON.stringify(fired));
+
+  /* The boundary bug that made this silent on the sentence it exists for:
+     without \b anchors the idiom list matched the "he right" inside "the
+     right", and the real warning never fired. */
+  check("\"the right one\" is a side, not the idiom \"he right\"",
+    !!unpinnedSide("The right one is still sore", []), "expected a warning");
+}
+
+/* A NUMBER THAT REACHED NO ROW.
+
+   Every other loss on the review screen explains itself: a finding carries a
+   chip saying where it came from, and a measurement the review declines to file
+   says why. A reading the parser never extracted is in neither list — the
+   screen just shows a shorter list and a note that looks complete. These guard
+   the one signal there is for it, and the false-positive cases matter more than
+   the true ones: a warning that cries wolf gets ignored, and then the real ones
+   go unread too. */
+{
+  const unfiled = (t) => unfiledMeasurements(t, extractMeasurements(t));
+  const kinds = (t) => unfiled(t).map((u) => u.kind + ":" + u.value).join(",");
+
+  check("a spoken angle that reached no row is reported",
+    kinds("Knee flexion was limited by pain to 90 degrees") === "rom:90",
+    kinds("Knee flexion was limited by pain to 90 degrees"));
+
+  check("a reading the parser DID file is not reported",
+    kinds("Knee flexion is 90 degrees") === "", kinds("Knee flexion is 90 degrees"));
+
+  check("a filed grade and a filed pain score are both quiet",
+    kinds("Pain is 7 out of 10 and MMT 4 out of 5") === "",
+    kinds("Pain is 7 out of 10 and MMT 4 out of 5"));
+
+  /* The reading the ROM_MOTIONS comment drops on purpose rather than misfile.
+     Dropping it is still right; saying nothing about it was not. */
+  check("the hesitation case is dropped by the parser AND surfaced here",
+    kinds("Right shoulder flexion is, er, 130 degrees") === "rom:130",
+    kinds("Right shoulder flexion is, er, 130 degrees"));
+
+  /* ---- the false positives that matter ---- */
+
+  check("a rep count with no unit is not mistaken for a measurement",
+    kinds("We did 3 sets of 10 reps for 20 minutes") === "",
+    kinds("We did 3 sets of 10 reps for 20 minutes"));
+
+  check("an age and a walking distance are not measurements",
+    kinds("She is 45 years old and walked 200 meters") === "",
+    kinds("She is 45 years old and walked 200 meters"));
+
+  /* Both of these reported a phantom mismatch against a perfectly correct row
+     before the sign rules were made to mirror ROM_SIGN. */
+  check("a word-form sign is read, so a correctly filed -5 stays quiet",
+    kinds("Knee extension is negative 5 degrees") === "",
+    kinds("Knee extension is negative 5 degrees"));
+
+  check("a range dash is punctuation, not a minus",
+    unfiled("Shoulder flexion 120-130 degrees").every((u) => u.value > 0),
+    JSON.stringify(unfiled("Shoulder flexion 120-130 degrees")));
+
+  /* Matching is by value AND count, so a repeated number is not cancelled by
+     one row that happens to share it. */
+  const twice = kinds("Shoulder flexion 120 degrees. Elbow was, er, 120 degrees.");
+  check("a second reading of the same value is still reported",
+    twice === "rom:120", twice);
+
+  const q = unfiled("Knee flexion was limited by pain to 90 degrees. Pain is 7 out of 10.")[0];
+  check("the quote stops at the sentence rather than mid-word",
+    q && /90 degrees\.$/.test(q.quote), q && q.quote);
+}
+
+/* AN UNNAMED WORD between the motion and its value.
+
+   The filler run used to be a closed allow-list of copulas and hedges, so
+   anything else standing between the motion and the number dropped the reading
+   outright — no row, no warning, nothing on screen to say a measurement had
+   been spoken. These are not exotic phrasings; they are how the position, the
+   side, the timing and the manner of a measurement get dictated, and six of
+   twelve realistic sentences were lost. The value now survives an unnamed word,
+   while the two things that must still stop the run are asserted below. */
+{
+  const romOf = (t) => parseUtterance(t).measurements.rom;
+  const one = (t) => { const r = romOf(t); return r.length === 1 ? r[0] : null; };
+
+  const supine = one("Hip flexion in supine is 110 degrees");
+  check("a position between the motion and the value does not drop the reading",
+    supine && supine.joint === "hip" && supine.motion === "flexion" && supine.degrees === 110,
+    JSON.stringify(romOf("Hip flexion in supine is 110 degrees")));
+
+  const after = one("Shoulder flexion on the right is 60 degrees");
+  check("a side stated AFTER the motion no longer costs the whole reading",
+    after && after.joint === "shoulder" && after.motion === "flexion" && after.degrees === 60,
+    JSON.stringify(romOf("Shoulder flexion on the right is 60 degrees")));
+
+  const today = one("Knee flexion today is 90 degrees");
+  check("a time word between the motion and the value reads",
+    today && today.motion === "flexion" && today.degrees === 90,
+    JSON.stringify(romOf("Knee flexion today is 90 degrees")));
+
+  const passive = one("Knee flexion passively 120 degrees");
+  check("a manner word reads too",
+    passive && passive.motion === "flexion" && passive.degrees === 120,
+    JSON.stringify(romOf("Knee flexion passively 120 degrees")));
+
+  /* The reach stops where a value stops belonging to this motion. */
+  const next = romOf("Knee flexion is limited, extension is 5 degrees");
+  check("a following MOTION ends the run — the 5 is extension's, not flexion's",
+    next.length === 1 && next[0].motion === "extension" && next[0].degrees === 5,
+    JSON.stringify(next));
+
+  const clause = romOf("We discussed knee flexion and her shoulder is 90 degrees");
+  check("a clause connector ends the run rather than stealing the angle",
+    clause.length === 0, JSON.stringify(clause));
+
+  const stop = romOf("Her knee flexion was good. Her elbow extension is 30 degrees");
+  check("a full stop ends the run",
+    stop.length === 1 && stop[0].joint === "elbow" && stop[0].degrees === 30,
+    JSON.stringify(stop));
+
+  /* The sign is not an ordinary word, and letting the run eat it would invert
+     the finding rather than lose it — a contracture filed as a hyperextension. */
+  const neg = one("Knee extension on the left is negative 5 degrees");
+  check("an unnamed word before the SIGN still keeps the sign",
+    neg && neg.motion === "extension" && neg.degrees === -5,
+    JSON.stringify(romOf("Knee extension on the left is negative 5 degrees")));
+
+  /* No unit, so nothing here is an angle however the words fall. */
+  const sets = romOf("We worked on knee flexion, 3 sets of 10");
+  check("the widened run never reaches a number with no unit",
+    sets.length === 0, JSON.stringify(sets));
 }
 
 /* A comma between the motion and its value — the shape the refine pass writes

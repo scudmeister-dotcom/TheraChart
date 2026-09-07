@@ -7488,6 +7488,22 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        region is being taken off the chart must not be promised here and then
        quietly withheld on apply. Re-rendered whenever a finding is ticked, so
        putting a corrected region back brings its readings back with it. */
+    /* A number the therapist SAID that reached no row at all.
+
+       Everything else on this screen explains itself: a finding carries a chip
+       saying where it came from, and a measurement the review declines to file
+       says why. A reading the parser never extracted is in neither list — the
+       screen simply shows a shorter list, and a note that looks complete. That
+       is the one loss with no signal, and it is silent in whichever language
+       the visit was dictated in.
+
+       Computed once from the transcript rather than per render: it does not
+       depend on which findings are ticked, only on what was spoken. */
+    const unfiled = (() => {
+      const said = (result.dialogue || []).map((d) => d.text).join(" ");
+      return PR.unfiledMeasurements(said, result.measurements) || [];
+    })();
+
     const measBlockHtml = () => {
       const keptNow = new Set(rows.filter((r) => r.include && r.summary.trim()).map((r) => r.key));
       const { keep, dropped } = splitMeasurements(result.measurements, correctedBy, keptNow);
@@ -7498,7 +7514,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           : `<div class="empty-state" style="padding:8px">No measurements detected in the transcript.</div>`}
         ${dropped.length ? `<div class="rev-why">${dropped.map((d) =>
             `<div><b>Not filed — ${esc(measLabel(d.kind, d.item))}</b>: ${esc(d.reason)}</div>`).join("")
-          }<div>Tick that region back on under Findings and its readings come with it.</div></div>` : ""}`;
+          }<div>Tick that region back on under Findings and its readings come with it.</div></div>` : ""}
+        ${unfiled.length ? `<div class="banner warn" style="margin-top:6px">
+            <b>${unfiled.length === 1 ? "A number was spoken that isn't in the list above"
+              : `${unfiled.length} numbers were spoken that aren't in the list above`}.</b>
+            Check the transcript and add ${unfiled.length === 1 ? "it" : "them"} by hand if ${unfiled.length === 1 ? "it belongs" : "they belong"} in the chart.
+            ${unfiled.map((u) => `<div class="rev-why" style="margin-top:4px">“${esc(u.quote)}”</div>`).join("")}
+          </div>` : ""}`;
     };
     /* What this review cannot write, said plainly on the same screen. A
        therapist who has just watched the AI fill six sections will assume it
@@ -7579,8 +7601,31 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>`;
     };
 
-    const findingListHtml = () => rows.map(findingRow).join("")
-      || `<div class="empty-state">No patient findings detected.</div>`;
+    /* A side was spoken and nothing on the body map carries one.
+
+       The companion to the unfiled-measurement warning below, for the loss that
+       cannot be chipped: a region word lost in transcription creates no
+       finding, and a finding that was never created has no row to mark. The
+       side word is the tell, because it is only ever said about a body part.
+
+       Recomputed on each render rather than once, because unticking the last
+       sided finding recreates exactly the situation this warns about. */
+    const unpinnedSideNow = () => {
+      const said = (result.dialogue || []).map((d) => d.text).join(" ");
+      return PR.unpinnedSide(said, rows.filter((r) => r.include && r.summary.trim()));
+    };
+
+    const findingListHtml = () => {
+      const gap = unpinnedSideNow();
+      return (rows.map(findingRow).join("")
+        || `<div class="empty-state">No patient findings detected.</div>`)
+        + (gap ? `<div class="banner warn" style="margin-top:6px">
+            <b>A side was mentioned, but nothing on the body map has one.</b>
+            Dictation may have missed the body part. Check the transcript and add
+            the region by hand if it belongs in the chart.
+            <div class="rev-why" style="margin-top:4px">“${esc(gap.quote)}”</div>
+          </div>` : "");
+    };
 
     /* The therapist was in the room and the microphone was not. Until now the
        review could only subtract — untick what the AI got wrong — with no way

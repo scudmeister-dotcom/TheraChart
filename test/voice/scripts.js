@@ -681,6 +681,334 @@ const SCRIPTS = [
         detail: (r) => `subjective: ${norm(r.subjective).slice(0, 140)}` },
     ],
   },
+
+  /* ---------- the language matrix: lang/ ----------
+
+     Everything above varies the CLINICAL problem — a correction, a denial, a
+     bilateral complaint — and lets the language fall where it may. That is the
+     right way to test the chart, and the wrong way to answer "how does
+     dictation hold up in the language this clinic actually speaks", because no
+     two of those scripts say the same thing. A worse score on the Cebuano one
+     could be the language or it could be that it is a different visit.
+
+     These five are the controlled version. Same patient, same visit, same
+     facts every time:
+
+         left elbow, sore three weeks, worse lifting
+         six out of ten, sharp on straightening
+         no numbness in the hand or fingers
+         (where a clinician would say it in English) flexion 120 degrees
+
+     Only the language changes. A gap between two rows of `--case lang/` is a
+     gap in the language, not in the script — which is the one thing the rest of
+     this file cannot tell you.
+
+     Two caveats built in on purpose:
+
+     - The two monolingual scripts have no ROM turn. A Filipino PT says
+       "flexion is one hundred twenty degrees" in English even mid-Tagalog
+       sentence; inventing a Tagalog rendering nobody speaks would measure a
+       language that does not exist. So the pure scripts are the patient
+       interview, and the mixed scripts add the clinician's measurement — which
+       is exactly the split a real chart has. Word error is comparable within
+       those pairs, not across all five.
+
+     - LEFT, not right, and that is the sharp end for Cebuano: `wala` is both
+       "left" and "none", and this visit says it in both senses. knee/cebuano-heavy
+       tests one direction (a denial must not become the left knee); this tests
+       the other, harder one (the left elbow must survive a sentence that also
+       denies numbness with the same word). There is no synonym to fall back on
+       — that is how the language works. */
+
+  {
+    id: "lang/english-only",
+    lang: "fil-PH",
+    why: "the control — the same visit in plain English, so the other four have a floor to be measured against",
+    turns: [
+      { who: "clinician", text: "Good afternoon. What brings you in today?" },
+      { who: "patient", text: "My left elbow has been sore for about three weeks. It is worse when I lift anything heavy." },
+      { who: "clinician", text: "How bad is it, on a scale of one to ten?" },
+      { who: "patient", text: "About six out of ten. It is sharp when I straighten it." },
+      { who: "clinician", text: "Any numbness or tingling in the hand or fingers?" },
+      { who: "patient", text: "No, none at all. Just the elbow." },
+      { who: "clinician", text: "Left elbow flexion is one hundred twenty degrees. Tenderness over the lateral epicondyle." },
+    ],
+    heard: {
+      wer: 0.10,
+      must: ["elbow", "left"],
+    },
+    expect: [
+      { name: "the LEFT elbow is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right elbow invented", weight: 3,
+        test: (r) => !hasFinding(r, "Elbow", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 rating reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "the numbness denial is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial, summary: f.summary })))}` },
+      { name: "elbow flexion ROM survived", weight: 1,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  {
+    id: "lang/tagalog-only",
+    lang: "fil-PH",
+    why: "the same visit with no English at all — laterality from \"kaliwang siko\", a rating in Tagalog numerals, a Tagalog denial",
+    turns: [
+      { who: "clinician", text: "Magandang hapon po. Ano po ang nararamdaman ninyo ngayon?" },
+      { who: "patient", text: "Masakit po ang kaliwang siko ko, mga tatlong linggo na. Lalo na po kapag may binubuhat ako." },
+      { who: "clinician", text: "Gaano po kasakit, kung isa hanggang sampu?" },
+      { who: "patient", text: "Mga anim po. Kumikirot po kapag itinutuwid ko." },
+      { who: "clinician", text: "May pamamanhid po ba sa kamay o sa mga daliri?" },
+      { who: "patient", text: "Wala po. Walang pamamanhid. Sa siko lang po talaga." },
+    ],
+    heard: {
+      wer: 0.30,
+      must: ["siko", "kaliwa"],
+    },
+    expect: [
+      { name: "the LEFT elbow is pinned from \"kaliwang siko\"", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right elbow invented", weight: 3,
+        test: (r) => !hasFinding(r, "Elbow", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 rating survived Tagalog numerals (\"mga anim\")", weight: 2,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "\"walang pamamanhid\" is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|pamamanhid|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial, summary: f.summary })))}` },
+    ],
+  },
+
+  {
+    id: "lang/cebuano-only",
+    lang: "ceb-PH",
+    /* ADVISORY on the same grounds as knee/cebuano-heavy: near-monolingual
+       Cebuano measures ElevenLabs at least as much as it measures TheraChart,
+       and a new script has no measured history to gate a run on. Reported and
+       diffed against the baseline; it does not fail the build. */
+    advisory: true,
+    /* Pedro reads both parts. Measured on knee/cebuano-heavy: 12/12 laterality
+       at 1.7% real word error with Pedro on both, 7/12 at 6.0% when Mang Jose
+       reads the patient. The patient turns are where the Cebuano is. */
+    voices: { clinician: "iyZZ2rpPw5XY3ZQltAWV", patient: "iyZZ2rpPw5XY3ZQltAWV" },
+    why: "the same visit in Cebuano — and \"wala\" has to be read as LEFT in one sentence and as NONE in the next",
+    /* Written uncontracted, which is both ordinary written Cebuano and markedly
+       more robust: "tuo nga tuhod" took knee/cebuano-heavy from 26.1% to 7.5%
+       against the contracted "tuong tuhod". Same rule here — "wala nga siko",
+       never "walang siko". */
+    turns: [
+      { who: "clinician", text: "Maayong hapon. Unsa may imong gibati karon?" },
+      { who: "patient", text: "Sakit ang wala nga siko nako, mga tulo ka semana na." },
+      { who: "clinician", text: "Pila ka sakit, gikan sa usa hangtod napulo?" },
+      { who: "patient", text: "Mga unom sa napulo. Sakit kaayo kung magbitbit ko ug bug-at." },
+      { who: "clinician", text: "Naa bay pamanhid sa imong kamot o mga tudlo?" },
+      { who: "patient", text: "Wala. Wala gyoy pamanhid. Sa siko ra gyod." },
+    ],
+    heard: {
+      wer: 0.30,
+      /* "wala" is deliberately NOT a must-word here even though it is the
+         laterality: `must` matches on \b<word>, so the denial "wala gyoy
+         pamanhid" would satisfy it while the side went missing. The side is
+         asserted where it can actually be checked — on the pin. */
+      must: ["siko"],
+    },
+    expect: [
+      { name: "the LEFT elbow is pinned from \"wala nga siko\"", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right elbow invented", weight: 3,
+        test: (r) => !hasFinding(r, "Elbow", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 rating survived Cebuano numerals (\"unom sa napulo\")", weight: 1,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "\"wala gyoy pamanhid\" is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|pamanhid|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial, summary: f.summary })))}` },
+    ],
+  },
+
+  {
+    id: "lang/taglish",
+    lang: "fil-PH",
+    why: "the same visit as a Manila clinic actually speaks it — code-switched inside the sentence, not between turns",
+    /* back/taglish-negation switches between speakers; this switches mid-clause
+       ("kapag nagbubuhat ako ng heavy"), which is the harder and far more common
+       shape. The clinical measurement is in English because that is where a
+       Filipino PT switches every time. */
+    turns: [
+      { who: "clinician", text: "Kumusta po. So ito po yung left elbow na sinasabi ninyo?" },
+      { who: "patient", text: "Opo doc. Masakit po siya, especially kapag nagbubuhat ako ng heavy. Mga three weeks na po." },
+      { who: "clinician", text: "Pain scale po, one to ten?" },
+      { who: "patient", text: "Mga six po. Sharp po yung sakit kapag itinutuwid ko." },
+      { who: "clinician", text: "May numbness po ba o tingling sa mga daliri?" },
+      { who: "patient", text: "Wala po. Walang numbness, yung sakit lang po sa siko." },
+      { who: "clinician", text: "Left elbow flexion is one hundred twenty degrees, with tenderness over the lateral epicondyle." },
+    ],
+    heard: {
+      wer: 0.25,
+      must: ["elbow", "left"],
+    },
+    expect: [
+      { name: "the LEFT elbow is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right elbow invented", weight: 3,
+        test: (r) => !hasFinding(r, "Elbow", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 rating reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "\"walang numbness\" is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|pamamanhid|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial, summary: f.summary })))}` },
+      { name: "elbow flexion ROM survived the code-switch", weight: 1,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  {
+    id: "lang/bisaya-english",
+    lang: "ceb-PH",
+    why: "the same visit as a Visayas clinic speaks it — Cebuano carrying the complaint, English carrying the side and the numbers",
+    /* This is the Cebuano coverage the README says to trust: mixed with English,
+       ankle/cebuano holds 8.1% with 0.0% spread across both TTS models and both
+       voices, where the near-monolingual script does not. Worth having as its
+       own row precisely because it is the realistic one — a Bisaya PT says
+       "left elbow" and "six out of ten" in English, which sidesteps the wala
+       ambiguity that lang/cebuano-only walks straight into. The pair of them is
+       the finding: same visit, one word of English, different reliability. */
+    turns: [
+      { who: "clinician", text: "Maayong hapon. Ang left elbow, sakit gihapon?" },
+      { who: "patient", text: "Oo doc, sakit gihapon kung magbitbit ko ug heavy. Mga three weeks na." },
+      { who: "clinician", text: "Pila ang pain, one to ten?" },
+      { who: "patient", text: "Mga six out of ten. Sakit kaayo kung i-straight nako." },
+      { who: "clinician", text: "Naa bay numbness sa imong mga tudlo?" },
+      { who: "patient", text: "Wala. Walay numbness, sa siko ra gyod." },
+      { who: "clinician", text: "Left elbow flexion is one hundred twenty degrees, with tenderness over the lateral epicondyle." },
+    ],
+    heard: {
+      wer: 0.25,
+      must: ["elbow", "left"],
+    },
+    expect: [
+      { name: "the LEFT elbow is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right elbow invented", weight: 3,
+        test: (r) => !hasFinding(r, "Elbow", "right"),
+        detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 rating reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(6),
+        detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "\"walay numbness\" is not offered as a pin", weight: 3,
+        test: (r) => (r.findings || []).every((f) => !/numb|pamanhid|tingl/i.test(f.summary) || f.denial === true),
+        detail: (r) => `findings: ${JSON.stringify((r.findings || []).map((f) => ({ part: f.part, denial: !!f.denial, summary: f.summary })))}` },
+      { name: "elbow flexion ROM survived", weight: 1,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  /* ---------- the vocabulary probe: probe/ ----------
+
+     Not a regression test. These two exist to answer one question — WHICH of
+     the Filipino body-part words the parser already understands actually
+     survive Chirp 2 — and they are excluded from a bare run because of it
+     (`probe: true`; name them with --case to run them).
+
+     The question is live because the two halves of the app disagree. parser.js
+     maps about twenty-five Tagalog and Cebuano body-part words (REGIONS at
+     :90-120, JOINT_ALIASES at :822), so the chart understands every one of them
+     if it arrives. None is in STT_PHRASES, so nothing nudges Chirp 2 to produce
+     them. lang/ measured exactly one of them — `siko`, heard in 5 of 6
+     recordings in BOTH languages — and one data point is not a table.
+
+     Read the result from the sweep's "WORDS THAT DID NOT ALWAYS ARRIVE" block,
+     which reports each `must` word's survival rate across every voice × take.
+     A word that is not listed there arrived every time. Run it as:
+
+         node test/voice/run.js --sweep <id>,<id> --takes 3 --case probe/
+
+     Two deliberate choices. The words are in CARRIER SENTENCES rather than
+     recited, because a word spoken alone is a different recognition problem
+     than the same word mid-clause, and mid-clause is the one the clinic has.
+     And the genital terms the region table carries (`puki`, `titi`, `bayag`)
+     are left out — they are in parser.js for a stated reason, but whether to
+     BOOST them is a separate question with its own false-positive cost, and it
+     is not the one being asked here.
+
+     The word error rate these two report is meaningless — the density is
+     nothing like speech — so both are advisory and neither carries an `expect`
+     block. The `must` rates are the entire output. */
+
+  {
+    id: "probe/tagalog-parts",
+    lang: "fil-PH",
+    probe: true,
+    advisory: true,
+    why: "which Tagalog body-part words survive Chirp 2 — the shortlist for a language-gated STT_PHRASES table",
+    turns: [
+      { who: "clinician", text: "Saan po ba kayo masakit?" },
+      { who: "patient", text: "Masakit po ang balikat at ang siko ko." },
+      { who: "patient", text: "Pati po ang tuhod at ang leeg ko, medyo matigas." },
+      { who: "patient", text: "Sumasakit din po ang balakang at ang hita kapag naglalakad ako." },
+      { who: "patient", text: "Ang kamay at ang mga daliri ko po ay namamanhid tuwing umaga." },
+      { who: "patient", text: "Mahina pa rin po ang braso at ang bisig ko." },
+      { who: "patient", text: "Masakit din po ang pulso at ang hinlalaki ko." },
+      { who: "patient", text: "Namamaga po ang bukong-bukong at ang talampakan ko." },
+      { who: "patient", text: "Ang lulod at ang paa ko po ay madaling mapagod." },
+      { who: "patient", text: "Minsan po sumasakit ang singit at ang palad ko." },
+    ],
+    heard: {
+      wer: 1,
+      must: ["balikat", "siko", "tuhod", "leeg", "balakang", "hita", "kamay",
+        "daliri", "braso", "bisig", "pulso", "hinlalaki", "bukong-bukong",
+        "talampakan", "lulod", "paa", "singit", "palad"],
+    },
+    expect: [],
+  },
+
+  {
+    id: "probe/cebuano-parts",
+    lang: "ceb-PH",
+    probe: true,
+    advisory: true,
+    /* Pedro on both parts, for the reason knee/cebuano-heavy records: the
+       patient voice was the whole residual failure on Cebuano, 12/12 laterality
+       against 7/12. A probe wants the best available speech, so that a word it
+       reports as lost was lost by the transcriber rather than by the reader. */
+    voices: { clinician: "iyZZ2rpPw5XY3ZQltAWV", patient: "iyZZ2rpPw5XY3ZQltAWV" },
+    why: "which Cebuano body-part words survive Chirp 2 — same question, the other language",
+    /* Uncontracted throughout, per the finding that ordinary written Cebuano
+       took knee/cebuano-heavy from 26.1% to 7.5% against the contracted form. */
+    turns: [
+      { who: "clinician", text: "Asa man ka masakitan?" },
+      { who: "patient", text: "Sakit ang abaga ug ang siko nako." },
+      { who: "patient", text: "Sakit pod ang tuhod ug ang liog nako." },
+      { who: "patient", text: "Ang bat-ang nako sakit kung molakaw ko ug taas." },
+      { who: "patient", text: "Namanhid ang kamot ug ang mga tudlo nako." },
+      { who: "patient", text: "Maluya pa gihapon ang bukton nako." },
+      { who: "patient", text: "Naghubag ang buol-buol ug ang tiil nako." },
+      { who: "patient", text: "Sakit pod ang kumagko ug ang lapa-lapa nako." },
+    ],
+    heard: {
+      wer: 1,
+      must: ["abaga", "siko", "tuhod", "liog", "bat-ang", "kamot", "tudlo",
+        "bukton", "buol-buol", "tiil", "kumagko", "lapa-lapa"],
+    },
+    expect: [],
+  },
 ];
 
 /** The reference text a transcript is scored against: everything said, in order. */
