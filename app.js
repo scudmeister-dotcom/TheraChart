@@ -5181,7 +5181,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   function drawCallout(doc, layer, pt, side, ly) {
     const lx = side === "left" ? -46 : 246; // gutter x
     const elbow = side === "left" ? -30 : 230;
-    const g = mkSvg("g", { class: `point-group ${pt._sev.cls}` });
+    const g = mkSvg("g", { class: `point-group ${pt._sev.cls}${pt.provisional ? " provisional" : ""}` });
     g.dataset.key = pt.key;
 
     // leader line: dot → elbow → marker
@@ -5196,7 +5196,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     num.textContent = pt._num;
     const title = document.createElementNS(svgNS, "title");
     const latest = pt.notes[pt.notes.length - 1];
-    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""} (${pt._sev.label})`;
+    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""} (${pt._sev.label})`
+      + (pt.provisional ? " · heard while recording, not checked yet" : "");
     marker.appendChild(title);
 
     g.append(line, ring, dot, marker, num);
@@ -5210,14 +5211,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const editable = dstate && dstate.editable;
     const pts = doc.data.mapPoints || [];
     box.innerHTML = pts.length ? pts.map((pt, i) => `
-      <div class="map-note ${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
+      <div class="map-note ${pt.provisional ? "provisional " : ""}${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
         <div class="map-note-head">
           <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</span></b>
+          ${pt.provisional ? `<span class="chip muted prov-chip" title="Heard while the visit was recording. The AI re-reads the whole conversation when you stop, and this may move or go.">not checked yet</span>` : ""}
           ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
       </div>`).join("")
       : `<div class="empty-state" style="padding:8px">Body areas the patient mentions will be pinned here automatically.</div>`;
+    /* Said once, above the list, rather than repeated on every row. The chips
+       mark WHICH pins are unconfirmed; this says what unconfirmed means. */
+    if (pts.some((p) => p.provisional)) {
+      box.insertAdjacentHTML("afterbegin", `<div class="map-prov-note">
+        Dashed pins are what the microphone has heard so far — <b>not the chart</b>.
+        When you stop recording, the whole conversation is read at once and these are
+        confirmed, corrected or dropped.</div>`);
+    }
 
     box.querySelectorAll(".map-note").forEach((el) =>
       el.addEventListener("click", (e) => {
@@ -5781,7 +5791,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   /* Capture gated audio and hand back one Float32Array per ~55s chunk. */
-  function recorderEngine({ docId, onLevel, onElapsed, onStop, billedSoFar, ceilingSeconds }) {
+  function recorderEngine({ docId, onLevel, onElapsed, onStop, onChunk, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, on = false;
     let chunk = [], chunkSamples = 0, voicedMs = 0, tailMs = 0, totalMs = 0;
     let preRoll = [];
@@ -5798,8 +5808,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const flat = new Float32Array(chunk.reduce((n, a) => n + a.length, 0));
       let off = 0; for (const a of chunk) { flat.set(a, off); off += a.length; }
       chunk = []; chunkSamples = 0;
-      chunks.push({ pcm: flat, rate: ctx ? ctx.sampleRate : 16000 });
+      const made = { pcm: flat, rate: ctx ? ctx.sampleRate : 16000 };
+      const index = chunks.length;
+      chunks.push(made);
       try { await savedAudio.put(docId, flat); } catch (_) { /* memory copy still holds it */ }
+      /* Handed over AFTER it is on disk, and never awaited. A chunk closes at
+         a pause in the conversation, which is exactly the moment the recorder
+         must not be blocked on a network call — the next words are already
+         arriving. Whatever the caller does with it, it does on its own time. */
+      if (onChunk) { try { onChunk(made, index); } catch (_) { } }
     };
 
     return {
@@ -5892,27 +5909,43 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      carries no symptom, so it stands in the verbatim transcript and the
      note-filling pass files none of it. */
   const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
-  async function processRecording(docId, lang, chunks, onProgress) {
+
+  /* One chunk, one request. Pulled out of processRecording so the SAME call
+     serves both the end-of-visit sweep and the live pass that transcribes each
+     chunk as it is captured — two code paths posting audio to two slightly
+     different places is how a billing figure or a language setting drifts. */
+  async function transcribeChunk(docId, lang, chunk) {
+    const wav = encodeWav(chunk.pcm, chunk.rate);
+    try {
+      const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
+        method: "POST",
+        headers: Object.assign({ "content-type": "audio/wav" },
+          (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
+        body: wav,
+      });
+      const data = await res.json().catch(() => ({}));
+      /* Take the SERVER's billed figure, not our own count of voiced
+         milliseconds. The two are close, but only one of them is the number
+         on the invoice — and a chunk that failed at Google was still billed,
+         so this is read whether or not the request succeeded. */
+      const billedSeconds = typeof data.billedSeconds === "number" ? data.billedSeconds : 0;
+      if (!res.ok) return { billedSeconds, error: (data && data.error) || `HTTP ${res.status}` };
+      return { billedSeconds, text: data.text || "" };
+    } catch (e) { return { billedSeconds: 0, error: e.message || "network error" }; }
+  }
+
+  /* `prior` is what the live pass already transcribed, indexed by chunk. A
+     chunk answered during the visit is NOT sent again — it is the same audio,
+     and paying Google twice for it would double the largest line in the cost
+     model. */
+  async function processRecording(docId, lang, chunks, onProgress, prior) {
     const done = new Array(chunks.length).fill(null);
     let finished = 0, billedSeconds = 0;
     await Promise.all(chunks.map(async (c, i) => {
-      const wav = encodeWav(c.pcm, c.rate);
-      try {
-        const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
-          method: "POST",
-          headers: Object.assign({ "content-type": "audio/wav" },
-            (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
-          body: wav,
-        });
-        const data = await res.json().catch(() => ({}));
-        /* Take the SERVER's billed figure, not our own count of voiced
-           milliseconds. The two are close, but only one of them is the number
-           on the invoice — and a chunk that failed at Google was still billed,
-           so this is summed outside the res.ok branch. */
-        if (typeof data.billedSeconds === "number") billedSeconds += data.billedSeconds;
-        done[i] = res.ok ? (data.text || "") : "";
-        if (!res.ok) done[i] = { error: (data && data.error) || `HTTP ${res.status}` };
-      } catch (e) { done[i] = { error: e.message || "network error" }; }
+      const already = prior && prior[i];
+      const r = already || await transcribeChunk(docId, lang, c);
+      billedSeconds += r.billedSeconds || 0;
+      done[i] = r.error ? { error: r.error } : (r.text || "");
       finished += 1;
       if (onProgress) onProgress(finished, chunks.length);
     }));
@@ -5924,7 +5957,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       .join(" ").replace(/\s+/g, " ").trim();
     // a run of markers and nothing else is not a transcript
     const heard = done.some((d) => typeof d === "string" && d.trim());
-    return { text: heard ? text : "", errors, chunks: chunks.length, billedSeconds };
+    /* `parts` is per chunk, so the caller can tell which chunks the live pass
+       already wrote into the transcript and append only what is new. */
+    return { text: heard ? text : "", errors, chunks: chunks.length, billedSeconds,
+      parts: done.map((d) => (typeof d === "string" ? d : "")) };
   }
 
   /** "6:12" for 372 seconds. For ONE visit, where seconds are meaningful. */
@@ -6270,6 +6306,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const meta = document.getElementById("recMeta");
       const prog = document.getElementById("recProgress");
       let rec = null, recording = false, captured = null;
+      /* What the live pass transcribed, and how far into the chunk list its
+         text has already reached the transcript. Both are reset at the start
+         of every recording — "Record more" makes a fresh chunk list, and a
+         stale index would skip real text or duplicate it. */
+      let liveParts = [], capturedThroughChunk = 0;
 
       /* ---- the recording stage ----
 
@@ -6441,12 +6482,45 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         if (!(await confirmRecording(doc, !!(captured && captured.length)))) return;
         const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
         const priorSec = Number(doc.data._dictationSeconds) || 0;
+        /* Chunks transcribed DURING the visit, indexed as the recorder made
+           them. Two things come out of this: the map can show what has been
+           heard while there is still a patient in the room, and the wait after
+           Stop shrinks to the AI read, because the transcription it used to
+           start from is already done. Neither costs an extra peso — it is the
+           same audio, sent once, billed by the second either way. */
+        liveParts = [];
+        capturedThroughChunk = 0;
         rec = recorderEngine({
           docId: doc.id,
           billedSoFar: priorSec,
           ceilingSeconds: ceilMin * 60,
           // whole minutes only — see showDictMeter()
           onElapsed: (total, voiced) => showDictMeter(priorSec + voiced, ceilMin * 60),
+          onChunk: async (chunk, i) => {
+            /* The live pass runs ONLY where something later confirms it.
+
+               A provisional pin is a question the whole-visit read answers. On
+               a server with no AI there is no such read — the parser's routing
+               at the end IS the answer — so drawing dashed pins there would
+               promise a confirmation that never comes, and capturing the
+               transcript early would have that routing file every line twice.
+               No AI, no live pass, and the old end-of-visit path is unchanged. */
+            if (((window.TheraSync || {}).refine || "unavailable") !== "gemini") return;
+            const r = await transcribeChunk(doc.id, langSel.value, chunk);
+            liveParts[i] = r;
+            if (!r.text || !r.text.trim()) return;
+            /* Write into the LIVE document. A sync pull can replace the state
+               while a forty-minute visit records, and appending to the copy
+               this closure captured would drop everything heard since. */
+            const live = S.getDoc(doc.id);
+            if (!live || live.status === "signed") return;
+            const fixed = PR.correctDictation(r.text);
+            const seg = location.hash.split("/");
+            const open = seg[1] === "doc" && seg[2] === doc.id;
+            captureUtterances(live, user, fixed.text, open ? currentDocState : null);
+            capturedThroughChunk = Math.max(capturedThroughChunk, i + 1);
+            if (open) addProvisionalPins(live, user, fixed.text, currentDocState);
+          },
           /* The "I can hear you" signal. It matters more here than it does on
              the live path: nothing is interpreted during a recording any more,
              so without this the screen is completely still for forty minutes
@@ -6503,13 +6577,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         const spokenMin = Math.max(1, Math.round((Number(doc.data._dictationSeconds) || 0) / 60));
         procStage.set("captured", "done",
           `${captured.length} chunk${captured.length > 1 ? "s" : ""} · about ${spokenMin} minute${spokenMin > 1 ? "s" : ""} of speech`);
-        procStage.set("transcribe", "active", `0 of ${captured.length}`);
+        /* Most of this is usually already done — the live pass transcribed
+           each chunk as the visit ran. Saying so is the difference between a
+           step that looks stuck and one that is all but finished. */
+        const alreadyDone = liveParts.filter(Boolean).length;
+        procStage.set("transcribe", "active", alreadyDone
+          ? `${alreadyDone} of ${captured.length} already done while you recorded`
+          : `0 of ${captured.length}`);
         try {
           const out = await processRecording(doc.id, langSel.value, captured,
             (n, total) => {
               prog.textContent = `Transcribing… ${n} of ${total}`;
               procStage.set("transcribe", "active", `${n} of ${total}`);
-            });
+            }, liveParts);
           if (!out.text) {
             const why = out.errors.length
               ? `Couldn't transcribe: ${out.errors[0]}. The recording is still on this device — press Process again to retry.`
@@ -6552,7 +6632,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
              button used to give, and the note is still the therapist's to
              write and sign in the usual way. */
           if (aiOn) {
-            captureUtterances(doc, user, repaired.text, dstate);
+            /* Only the chunks the live pass did NOT already write. Capturing
+               `repaired.text` wholesale would put the whole visit into the
+               transcript a second time, underneath the first copy. */
+            const fresh = (out.parts || []).slice(capturedThroughChunk).join(" ").trim();
+            if (fresh) captureUtterances(doc, user, PR.correctDictation(fresh).text, dstate);
           } else {
             /* Snapshot what the therapist wrote BEFORE the routing touches
                anything, so the comparison is against their own words. */
@@ -6990,6 +7074,63 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const score = hit / words.length;
       return { text, seen: have.size > 0 && score >= SEEN_AT, score, words: words.length };
     });
+  }
+
+  /* ---- provisional pins ----
+
+     What the body map shows WHILE the visit is still recording. The parser
+     reads each chunk as it comes back from transcription and marks the regions
+     it hears; the whole-visit AI pass then replaces the lot when the therapist
+     approves the review.
+
+     Measured against the eval transcripts, the parser and the AI agree on the
+     map for 78% of visits. On the rest the parser both over-pins and
+     under-pins — one case shows six regions where the AI keeps two, another
+     shows none where the AI finds both knees — so these marks are drawn as a
+     QUESTION, not as the chart. Dashed, dimmed, and labelled "not checked yet"
+     wherever they appear, because a mannequin that confidently shows six pins
+     and then drops to two teaches a therapist to distrust the map.
+
+     They exist for one reason: a therapist recording a forty-minute visit at a
+     screen that never moves cannot tell a working microphone from a dead one.
+     This is the "I am hearing you, and here is what I think I heard" signal —
+     the same job the level meter does for audio, one layer up.
+
+     Deliberately NOT written: section text, measurements, outcome scores.
+     Those are the note, they are what the therapist signs, and nothing reaches
+     them until the visit has been read whole. */
+  function addProvisionalPins(doc, user, text, dstate) {
+    if (!doc.data.mapPoints) doc.data.mapPoints = [];
+    let added = 0;
+    for (const raw of splitSentences(String(text || ""))) {
+      const parsed = PR.parseUtterance(raw);
+      if (!parsed.text || !parsed.mentions.length) continue;
+      /* The same gate routeUtterance applies, and for the same reasons: a
+         region named inside a measurement, by the clinician, or in a section
+         that is not a complaint is vocabulary rather than a finding. */
+      const meas = parsed.measurements || {};
+      const nMeas = (meas.rom || []).length + (meas.mmt || []).length
+        + (meas.special || []).length + (meas.pain || []).length;
+      const clinician = PR.guessSpeaker(parsed.text) === "clinician";
+      const section = PR.classifyUtterance(parsed.text, parsed, parsed.measurements);
+      const notAComplaint = ["reason", "precautions", "pmh", "assessment"].includes(section);
+      for (const m of parsed.mentions) {
+        if ((nMeas || clinician || notAComplaint) && m.summary.startsWith("Mentioned this area")) continue;
+        const before = doc.data.mapPoints.length;
+        addDocMapPoint(doc, m, null, "");
+        const pt = doc.data.mapPoints[doc.data.mapPoints.length - 1];
+        /* A repeat merges into the pin that is already there, so the flag is
+           set on whatever addDocMapPoint touched rather than only on new
+           points — a provisional pin mentioned twice is still provisional. */
+        if (pt) pt.provisional = true;
+        if (doc.data.mapPoints.length > before) added += 1;
+      }
+    }
+    if (!added && !doc.data.mapPoints.some((p) => p.provisional)) return 0;
+    S.updateDocData(doc.id, doc.data, user);
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    return added;
   }
 
   /* ---- recording into ONE section ----

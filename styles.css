@@ -952,6 +952,44 @@ textarea:disabled, textarea[readonly] { resize: none; }
 @keyframes ring { 0% { r: 4; opacity: 0.6; } 100% { r: 16; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .point-group.flash .loc-ring { animation: none; } .mic-btn.listening { animation: none; } }
 
+/* ---- provisional pins ----
+
+   What the parser heard while the visit is still recording, before the
+   whole-visit read has confirmed any of it. Measured against the eval
+   transcripts the parser and the AI disagree on the map for about a fifth of
+   visits — one case shows six regions where the AI keeps two — so these marks
+   have to read as a question rather than as the chart.
+
+   Hollow and dashed, not merely faded: a solid marker at reduced opacity still
+   says "finding, slightly greyed", while an outline with a broken edge is
+   visibly a different KIND of thing. Colour is not carrying it either — the
+   marker keeps its severity hue, and the shape does the work, so this survives
+   a monochrome screen and a therapist who cannot separate the two states by
+   hue. Every one of them also carries a "not checked yet" chip in the list
+   beside the map. */
+.point-group.provisional .marker {
+  fill: var(--panel);
+  stroke-dasharray: 3 2.5;
+  stroke-width: 2;
+}
+.sev-high.provisional .marker { stroke: var(--sev-high); }
+.sev-mid.provisional  .marker { stroke: var(--sev-mid); }
+.sev-low.provisional  .marker { stroke: var(--sev-low); }
+.sev-none.provisional .marker { stroke: var(--sev-none); }
+.point-group.provisional .marker-num { fill: var(--ink); font-weight: 700; }
+.point-group.provisional .loc-dot { opacity: 0.55; }
+.point-group.provisional .leader { stroke-dasharray: 3 3; opacity: 0.5; }
+
+/* The same distinction in the list beside the map. */
+.map-note.provisional { border-left: 2px dashed var(--sil-line); padding-left: 7px; }
+.map-note.provisional .note-summary { color: var(--muted); }
+.prov-chip { margin-left: 6px; font-weight: 500; }
+.map-prov-note {
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 7px 9px; margin-bottom: 8px;
+}
+
 /* severity colours (markers, dots, legend, badges) */
 .sev-high .marker, .sev-high .loc-dot, .sev-high .loc-ring { fill: var(--sev-high); }
 .sev-mid  .marker, .sev-mid  .loc-dot, .sev-mid  .loc-ring { fill: var(--sev-mid); }

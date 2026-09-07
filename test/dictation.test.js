@@ -374,7 +374,10 @@ const settle = () => new Promise((r) => setImmediate(r));
      therapist was told to "review carefully" — and in the same breath the
      recording was cleared, so there was nothing left to review it against. */
   {
-    const src = lift("  async function processRecording(");
+    /* processRecording delegates one chunk to transcribeChunk, so the sandbox
+       needs both. Lifting them together keeps the test running the real
+       request-building code rather than a stand-in for it. */
+    const src = lift("  async function transcribeChunk(") + "\n" + lift("  async function processRecording(");
     const mark = /const AUDIO_GAP_MARK = "([^"]+)";/.exec(SRC);
     r.check("app.js still declares a gap marker", !!mark);
     const GAP = mark ? mark[1] : "";
@@ -407,6 +410,27 @@ const settle = () => new Promise((r) => setImmediate(r));
     const clean = await runWith(3, []);
     r.check("every chunk transcribing gives a clean transcript",
       clean.text === "chunk0. chunk1. chunk2." && clean.errors.length === 0, JSON.stringify(clean.text));
+
+    /* The live pass hands its results in as `prior`. A chunk it already
+       answered must not reach fetch a second time — same audio, second bill. */
+    {
+      const chunks = Array.from({ length: 3 }, (_, i) => ({ pcm: new Float32Array(8), rate: 16000, i }));
+      const sandbox = new Function("STT_LANG", "STT_LANG_DEFAULT", "STT_MODEL", "window", "fetch", "encodeWav",
+        `const AUDIO_GAP_MARK = ${JSON.stringify(GAP)};\n` + src + "\n  return processRecording;");
+      let calls = 0;
+      const f = async () => { calls += 1; return { ok: true, status: 200, json: async () => ({ text: "late.", billedSeconds: 3 }) }; };
+      const fn = sandbox({ fil: "fil-PH" }, "fil-PH", "chirp2", {}, f, () => new ArrayBuffer(8));
+      const out = await fn("d", "fil", chunks, () => {},
+        [{ text: "live0.", billedSeconds: 4 }, { text: "live1.", billedSeconds: 4 }]);
+      r.check("chunks the live pass already transcribed are not sent again",
+        calls === 1, `${calls} request(s) for 3 chunks, 2 of them already done`);
+      r.check("…and their text and billed seconds still reach the result",
+        out.text === "live0. live1. late." && out.billedSeconds === 11,
+        JSON.stringify({ text: out.text, billed: out.billedSeconds }));
+      r.check("…and `parts` reports per chunk, so the caller can skip what it wrote",
+        JSON.stringify(out.parts) === JSON.stringify(["live0.", "live1.", "late."]),
+        JSON.stringify(out.parts));
+    }
 
     const holed = await runWith(3, [1]);
     r.check("a failed middle chunk leaves a marker where it was",
@@ -776,6 +800,65 @@ const settle = () => new Promise((r) => setImmediate(r));
     r.check("a recording with nothing clinical in it says so and keeps the transcript",
       /Nothing in that recording belonged in \$\{esc\(label\)\}\. What you said is in the transcript\./.test(SRC),
       "a therapist who believes their words vanished will simply say them again");
+  }
+
+  /* ---------------- provisional pins ----------------
+
+     The map shows what the parser hears while the visit records, so a
+     therapist at a screen that never moves can tell a working microphone from
+     a dead one. Measured against the eval transcripts the parser and the AI
+     agree on the map for 78% of visits; on the rest the parser both over-pins
+     (six regions where the AI keeps two) and under-pins (none where the AI
+     finds both knees). So these marks must read as a question. */
+  {
+    r.check("live pins are flagged provisional, never as findings",
+      /if \(pt\) pt\.provisional = true;/.test(SRC),
+      "an unconfirmed mark that looks like a finding is worse than no mark");
+
+    r.check("…and are drawn as a different KIND of thing, not just fainter",
+      /pt\.provisional \? " provisional" : ""/.test(SRC),
+      "a solid marker at reduced opacity still reads as a finding, slightly greyed");
+
+    r.check("every provisional pin says so in the list beside the map",
+      /not checked yet<\/span>/.test(SRC) && /map-prov-note/.test(SRC),
+      "the chips mark WHICH pins are unconfirmed; the note above says what unconfirmed means");
+
+    /* The line that keeps this honest. Pins are a signal; the note is not
+       touched until the visit has been read whole and the therapist ticked. */
+    r.check("the live pass writes pins and the transcript, never the note",
+      !/addProvisionalPins[\s\S]{0,1800}appendField\(/.test(SRC)
+        && !/addProvisionalPins[\s\S]{0,1800}mergeMeasurements\(/.test(SRC),
+      "section text and measurements are what the therapist signs — those wait for the whole-visit read");
+
+    r.check("the whole-visit pass replaces every pin, so provisional ones cannot survive it",
+      /doc\.data\.mapPoints = kept\.map\(\(r\) => \{/.test(SRC),
+      "applyRefinement rebuilds the map from the kept findings, which is what confirms or drops these");
+
+    /* No confirmer, no provisional pins. */
+    r.check("the live pass is skipped where no AI will confirm it",
+      /if \(\(\(window\.TheraSync \|\| \{\}\)\.refine \|\| "unavailable"\) !== "gemini"\) return;/.test(SRC),
+      "dashed pins on a server with no AI promise a confirmation that never comes, and the end-of-visit routing would file every line twice");
+
+    /* Cost. This is the same audio either way — it must be sent once. */
+    r.check("a chunk transcribed live is never sent to Google a second time",
+      /const already = prior && prior\[i\];\s*\n\s*const r = already \|\| await transcribeChunk\(docId, lang, c\);/.test(SRC),
+      "paying twice for one chunk would double the largest line in the cost model");
+
+    r.check("…and its text is not written into the transcript twice either",
+      /const fresh = \(out\.parts \|\| \[\]\)\.slice\(capturedThroughChunk\)\.join\(" "\)\.trim\(\);/.test(SRC),
+      "capturing the whole text at process time would put the visit in underneath the copy the live pass wrote");
+
+    r.check("handing a chunk over never blocks the recorder",
+      /if \(onChunk\) \{ try \{ onChunk\(made, index\); \} catch \(_\) \{ \} \}/.test(SRC),
+      "a chunk closes at a pause in the conversation, which is exactly when the next words are arriving");
+
+    r.check("the live pass writes into the CURRENT document, not the captured copy",
+      /const live = S\.getDoc\(doc\.id\);\s*\n\s*if \(!live \|\| live\.status === "signed"\) return;/.test(SRC),
+      "a sync pull can replace the state during a forty-minute visit");
+
+    r.check("the live pass resets between recordings",
+      /liveParts = \[\];\s*\n\s*capturedThroughChunk = 0;/.test(SRC),
+      "\"Record more\" makes a fresh chunk list, and a stale index would skip real text or duplicate it");
   }
 
   /* ---------------- what the AI adds over what the therapist typed ----------
