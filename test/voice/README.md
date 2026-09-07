@@ -38,6 +38,35 @@ Other flags: `--case knee/` to filter, `--keep-wav out/` to listen to the takes,
 `--save-baseline` to record the bar, `--json`, `--room 0.004` for the noise
 floor, `--gap 500` for the pause between speakers.
 
+## Section dictation
+
+A script carrying a `section` field records ONE box rather than a visit, and is
+graded on `/api/check-section` — the endpoint that writes that section's prose
+from the burst — instead of on `/api/refine`. Its `expect` assertions read
+`{ tidied, issues }`; `secText(r)` is the drafted text.
+
+```bash
+node test/voice/run.js --case section/ --takes 3
+```
+
+Twelve scripts cover the seven dictatable sections plus the cases that decide
+whether the text is safe to sign: numbers, laterality, denials, Taglish, a
+self-correction inside one burst, small talk that must write nothing, and
+content aimed at the wrong box (flagged `misplaced`, never silently re-filed).
+
+Measured 2026-09-07 against Chirp 2 + gemini-3.8-flash on therachart-prod,
+12 scripts × 3 takes: **99.5% (430/432), mean WER 4.0%, no fallbacks**, for
+$0.12 of Speech-to-Text and 36 Vertex calls.
+
+The one miss is worth reading before adding anything to `STT_PHRASES`. Chirp 2
+heard "sling" as "link" on one take, and the section writer did the right
+thing: it wrote what it heard, invented nothing, and raised an issue saying
+"'Link' is likely a transcription error for 'sling'". A sweep across all four
+Filipino-accented voices then put the median word error at 0.0% for three of
+them and 3.7% for one — one speaker's diction, not a vocabulary gap, so
+`sling` was NOT added to the boost list. Compare `negative`, which earned its
+place by failing in 4 of 4 voices.
+
 ## The voice sweep
 
 ```bash

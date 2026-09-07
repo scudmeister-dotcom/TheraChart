@@ -549,12 +549,23 @@ async function sweep(scripts, key) {
 
       let result = null, refineError = null;
       if (!NO_REFINE) {
-        /* One line, the way processRecording stitches a recording: the refine
-           pass has to find the speaker boundaries itself. */
-        const rr = await fetch(`${s.base}/api/refine`, {
+        /* Two chains, chosen by the script. A `section` script recorded ONE
+           box and is graded on what the section writer put in it; everything
+           else recorded a visit and is graded on the refine result.
+
+           Both send the transcript as ONE line, which is what the product
+           does — processRecording stitches its chunks before either endpoint
+           sees them, so the model has to find its own boundaries. */
+        const url = sc.section
+          ? `${s.base}/api/check-section`
+          : `${s.base}/api/refine`;
+        const body = sc.section
+          ? { spoken: heard, label: sc.section.label, field: sc.section.field }
+          : { transcript: [heard] };
+        const rr = await fetch(url, {
           method: "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify({ transcript: [heard] }),
+          body: JSON.stringify(body),
         });
         const rd = await rr.json().catch(() => ({}));
         refineCalls += 1;
@@ -562,7 +573,9 @@ async function sweep(scripts, key) {
       }
 
       /* A refine that fell back to the heuristic is not the thing under test —
-         same guard test/eval/run.js keeps, for the same reason. */
+         same guard test/eval/run.js keeps, for the same reason. The section
+         endpoint has no local fallback at all: it answers or it errors, so
+         there is nothing here for it to be caught by. */
       const fellBack = !!result && (/local/.test(result.source || "") || result.aiFailed === true);
 
       const graded = sc.expect.map((a) => {
@@ -576,7 +589,7 @@ async function sweep(scripts, key) {
       const earned = scored.reduce((n, g) => n + (g.ok ? g.weight : 0), 0);
       const possible = scored.reduce((n, g) => n + g.weight, 0);
 
-      console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · note ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
+      console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · ${sc.section ? "section" : "note"} ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
         id: rid, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
