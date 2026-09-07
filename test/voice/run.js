@@ -176,10 +176,62 @@ function gcloudToken() {
    request never landed, is worth another go. */
 const TRANSPORT_TRIES = 3;
 
-async function tryFetch(what, run) {
+/* ---- fault injection, for testing the two paths above ----
+
+   The retry and the not-run accounting exist because of failures that are
+   rare, remote and impossible to summon on demand — which is exactly the kind
+   of code that rots untested until the night it matters. This makes them
+   summonable.
+
+     --fail-fetch <leg>:<script-id-prefix>:<n|all>
+
+   `leg` is `stt` or `note`. `n` is how many ATTEMPTS to fail before letting
+   the request through, so the two cases the hardening claims to handle can
+   each be produced deliberately:
+
+     stt:section/reason-short:2    two attempts fail, the third succeeds
+                                   → the retry recovers and the row scores
+     note:section/reason-short:all every attempt fails
+                                   → the row is NOT RUN, is left out of the
+                                     totals, and bars a baseline save
+
+   It throws the same bare TypeError undici raises, because the point is to
+   exercise the real catch rather than a stand-in for it. Inert unless the
+   flag is passed, and a malformed spec exits rather than running the whole
+   suite with the injection silently doing nothing. */
+const FAIL_FETCH = val("--fail-fetch", "");
+const injected = new Map();   // "leg|scriptId" -> attempts already failed
+let injector = null;
+if (FAIL_FETCH) {
+  const m = /^(stt|note):(.+):(\d+|all)$/.exec(FAIL_FETCH);
+  if (!m) {
+    console.error(`--fail-fetch must look like <stt|note>:<script-id-prefix>:<n|all>, got: ${FAIL_FETCH}`);
+    process.exit(2);
+  }
+  injector = { leg: m[1], prefix: m[2], times: m[3] === "all" ? Infinity : Number(m[3]) };
+  console.log(`  ⚠ FAULT INJECTION: failing the ${injector.leg} request for "${injector.prefix}"`
+    + ` ${injector.times === Infinity ? "every time" : `${injector.times} time(s)`} — this run is a test of the harness, not of the product.`);
+}
+
+/** Should this attempt be made to fail? Counts per leg+script, not per call. */
+function shouldInjectFailure(what, id) {
+  if (!injector || !id) return false;
+  const leg = what === "stt" ? "stt" : "note";
+  if (leg !== injector.leg || !id.startsWith(injector.prefix)) return false;
+  const key = `${leg}|${id}`;
+  const sofar = injected.get(key) || 0;
+  if (sofar >= injector.times) return false;
+  injected.set(key, sofar + 1);
+  return true;
+}
+
+async function tryFetch(what, run, id) {
   let last = null;
   for (let attempt = 1; attempt <= TRANSPORT_TRIES; attempt++) {
     try {
+      /* Thrown BEFORE the request, so an injected failure costs nothing at
+         Google — the point is to test our handling, not to buy a real one. */
+      if (shouldInjectFailure(what, id)) throw new TypeError("fetch failed");
       return { res: await run() };
     } catch (e) {
       last = e;
@@ -196,9 +248,9 @@ async function tryFetch(what, run) {
   return { transportError: `${last && last.message || "fetch failed"} (after ${TRANSPORT_TRIES} attempts)` };
 }
 
-async function postWav(url, token, body) {
+async function postWav(url, token, body, id) {
   return tryFetch("stt", () => fetch(url, { method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body }));
+    headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body }), id);
 }
 
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
@@ -271,7 +323,7 @@ async function sweep(scripts, key) {
         for (let k = 0; k < TAKES; k++) {
           const t = takes.get(`${id}|${sc.id}|${k}`);
           const parts = await Promise.all(t.wavs.map(async (wav) => {
-            const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
+            const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav, sc.id);
             if (transportError) return null;   // a lost sample; the median takes care of it
             const d = await r.json().catch(() => ({}));
             if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
@@ -547,7 +599,7 @@ async function sweep(scripts, key) {
          product worth testing, not an implementation detail worth skipping. */
       const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
       const parts = await Promise.all(t.wavs.map(async (wav) => {
-        const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
+        const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav, sc.id);
         /* Nothing was billed for a request that never landed, so this is
            summed only when Google actually answered. */
         if (transportError) return { error: transportError, transport: true };
@@ -610,7 +662,7 @@ async function sweep(scripts, key) {
             method: "POST",
             headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
             body: JSON.stringify(body),
-          }));
+          }), sc.id);
         if (transportError) {
           refineError = transportError;
           noteInfra = true;
@@ -681,7 +733,12 @@ async function sweep(scripts, key) {
       for (const r of results) {
         if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ${r.infra ? "! NOT RUN — never reached the server" : "! STT failed"}: ${r.sttError}`); continue; }
         const p = r.possible ? r.earned / r.possible : 0;
-        console.log(`  ${NO_REFINE ? "░".repeat(20) : bar(p)} ${(NO_REFINE ? "" : pct(p)).padStart(6)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
+        /* A script whose note call never landed has no score, and printing it
+           as "0.0%" said the opposite of the NOT RUN line three rows below —
+           the whole point of the accounting above is that this is not a zero.
+           It gets the empty bar and the words instead. */
+        const label = r.infra ? "NOT RUN" : (NO_REFINE ? "" : pct(p));
+        console.log(`  ${NO_REFINE || r.infra ? "░".repeat(20) : bar(p)} ${label.padStart(7)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
         console.log(`  ${" ".repeat(20)}         ${r.why}${r.advisory ? "  [ADVISORY — reported, does not fail the run]" : ""}`);
         for (const h of r.heardFailed) console.log(`  ${" ".repeat(20)}         ✗ heard: ${h}`);
         for (const f of r.failed) console.log(`  ${" ".repeat(20)}         ✗ note: ${f.name}${f.detail ? `\n  ${" ".repeat(20)}             ${f.detail}` : ""}`);
@@ -689,7 +746,14 @@ async function sweep(scripts, key) {
       }
       const ran = results.length - notRun.length;
       console.log(`\n  TRANSCRIPTION  mean word error ${pct(meanWer)} across ${ran} script(s)`);
-      if (!NO_REFINE) console.log(`  NOTE           ${bar(overall)} ${pct(overall)}  (${earned}/${possible} weighted points)`);
+      /* An empty denominator is not a zero score. When every script that ran
+         lost its note call there is nothing to report, and "0.0%" would read
+         as a total failure of the product rather than of the network. */
+      if (!NO_REFINE) {
+        console.log(possible
+          ? `  NOTE           ${bar(overall)} ${pct(overall)}  (${earned}/${possible} weighted points)`
+          : `  NOTE           ${"░".repeat(20)} nothing scored — no note call completed`);
+      }
       if (notRun.length) {
         console.log(`  NOT RUN        ${notRun.length} script(s) never reached the server and are NOT in the numbers above:`);
         for (const r of notRun) console.log(`                   ${r.id} — ${r.sttError || r.refineError}`);

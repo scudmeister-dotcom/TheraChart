@@ -67,6 +67,36 @@ them and 3.7% for one — one speaker's diction, not a vocabulary gap, so
 `sling` was NOT added to the boost list. Compare `negative`, which earned its
 place by failing in 4 of 4 voices.
 
+## When the network drops
+
+A bare `fetch failed` from a localhost POST used to end a run partway through,
+forfeiting the Google spend already incurred and every script that had not run
+yet. Requests now get three attempts with backoff, and the last failure is
+returned rather than thrown, so one unlucky script costs one row. An HTTP error
+is never retried — a 4xx or 5xx is the server answering, and an answer is a
+result.
+
+A script whose request never landed is **not** a script that scored zero. It is
+marked NOT RUN, left out of both sides of the ratio, reported on its own line,
+and it **bars `--save-baseline`**. That last one exists because it has already
+gone wrong: an outage wrote a 32-case 28.9% file over a 15-case 91.5% baseline,
+and only a `git checkout` got it back.
+
+Both paths can be summoned rather than waited for:
+
+```bash
+# two attempts fail, the third succeeds — the retry recovers, the row scores
+node test/voice/run.js --case section/reason-short --fail-fetch stt:section/reason-short:2
+
+# every attempt fails — the row is NOT RUN and no baseline is written
+node test/voice/run.js --case section/ --save-baseline --fail-fetch note:section/reason-short:all
+```
+
+`--fail-fetch <stt|note>:<script-id-prefix>:<n|all>` throws the same bare
+TypeError undici raises, before the request goes out, so an injected failure
+costs nothing at Google. A malformed spec exits rather than running the suite
+with the injection quietly doing nothing.
+
 ## The voice sweep
 
 ```bash
