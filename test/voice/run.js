@@ -60,6 +60,11 @@ const SAVE = has("--save-baseline");
 const ONLY = val("--case", "");
 const ONLY_LIST = ONLY ? ONLY.split(",").map((x) => x.trim()).filter(Boolean) : [];
 const matches = (id) => !ONLY_LIST.length || ONLY_LIST.some((pre) => id.startsWith(pre));
+/* A probe is an instrument, not a regression test: it asks one question about
+   vocabulary, carries no `expect` block, and its word error rate is meaningless
+   because the density is nothing like speech. A bare run would pay for its
+   audio every time and score nothing, so it has to be named to run at all. */
+const selected = (sc) => matches(sc.id) && (!sc.probe || ONLY_LIST.length > 0);
 const KEEP_WAV = val("--keep-wav", "");
 const MODEL_ID = val("--tts-model", process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2");
 const GAP_MS = Number(val("--gap", "500"));
@@ -385,7 +390,7 @@ async function sweep(scripts, key) {
   }
 
   if (SWEEP) {
-    const swept = SCRIPTS.filter((sc) => matches(sc.id));
+    const swept = SCRIPTS.filter(selected);
     if (!swept.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
     return sweep(swept, key);
   }
@@ -422,7 +427,7 @@ async function sweep(scripts, key) {
     console.log(`--list-voices to choose deliberately, --sweep to run them all.\n`);
   }
 
-  const scripts = SCRIPTS.filter((s) => matches(s.id));
+  const scripts = SCRIPTS.filter(selected);
   if (!scripts.length) { console.error(`no scripts match --case ${ONLY}`); process.exit(2); }
 
 

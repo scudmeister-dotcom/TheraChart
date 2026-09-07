@@ -101,14 +101,17 @@ hyperextension every single time.
 
 The ElevenLabs half is **cached on disk by content hash**, so only the first run
 pays for speech; the scripts don't change between runs. Generating all fifteen
-from scratch is about **5,100 characters**. The Google half is paid every time —
-roughly 7 minutes of audio, about **$0.11 of Speech-to-Text** plus fifteen
-Vertex refine calls. Every run prints the bill, and `--say-only` costs nothing
+from scratch is about **6,900 characters**. The Google half is paid every time —
+roughly 9 minutes of audio, about **$0.15 of Speech-to-Text** plus twenty
+Vertex refine calls. Scope a run with `--case` and it bills only what it speaks:
+`--case lang/` is 135 seconds and about $0.04. Every run prints the bill, and `--say-only` costs nothing
 at Google at all.
 
 ## The scripts
 
-Six, in `scripts.js`, each aimed at something the codebase already worries about:
+Twenty, in `scripts.js`. Fifteen aimed at something the codebase already
+worries about, and five more — the `lang/` matrix, described further down — that
+hold the visit fixed and vary only the language:
 
 - **`shoulder/clinical-vocab`** — the `STT_PHRASES` boost list, spoken. MMT,
   AROM, Neer, Hawkins, scaption, subacromial, therex, HEP. That list was
@@ -143,6 +146,9 @@ Six, in `scripts.js`, each aimed at something the codebase already worries about
   at the start of every appointment.
 - **`bilateral/both-knees`** — "pareho" must pin both sides; half a bilateral
   finding reads as a unilateral problem.
+- **`lang/english-only`**, **`lang/tagalog-only`**, **`lang/cebuano-only`**,
+  **`lang/taglish`**, **`lang/bisaya-english`** — one visit, five languages,
+  nothing else changed. See [The language matrix](#the-language-matrix--lang).
 
 ## Can ElevenLabs actually speak Tagalog and Cebuano?
 
@@ -293,6 +299,281 @@ them — without that it charged an error every time Chirp 2 correctly heard
 Each carries a `heard` block (word-error ceiling, and words that must survive at
 all) and an `expect` block graded on the refine result exactly the way
 `test/eval/cases.js` grades it, same weights.
+
+## The language matrix — `lang/`
+
+Everything above varies the clinical problem and lets the language fall where it
+may. That is the right way to test the chart and the wrong way to answer *how
+does dictation hold up in the language this clinic actually speaks*, because no
+two of those scripts say the same thing: a worse score on the Cebuano one could
+be the language, or it could be that it is a different visit.
+
+The five `lang/` scripts are the controlled version. Same patient, same visit,
+same facts every time — left elbow, sore three weeks, worse lifting, six out of
+ten, no numbness, flexion 120° where a clinician would say it in English. Only
+the language changes.
+
+```bash
+node test/voice/run.js --case lang/                                  # scored, ~$0.04
+node test/voice/run.js --sweep <pedro>,<mangjose> --takes 3 --case lang/   # the table below
+```
+
+Two things are deliberate. The monolingual scripts have **no ROM turn** — a
+Filipino PT says "flexion is one hundred twenty degrees" in English even
+mid-Tagalog sentence, and inventing a Tagalog rendering nobody speaks would
+measure a language that does not exist. And the side is **left**, which is the
+sharp end for Cebuano: `wala` is both *left* and *none*, and this visit says it
+in both senses. `knee/cebuano-heavy` tests one direction (a denial must not
+become the left knee); `lang/cebuano-only` tests the harder one.
+
+### What the matrix found
+
+Median of 3 takes per cell, two voices, transcription only, $0.22:
+
+```
+script                    Pedro  Mang Jose   spread
+lang/english-only          2.7%       2.7%     0.0%
+lang/tagalog-only          1.7%       0.0%     1.7%
+lang/cebuano-only         20.0%      18.2%     1.8%
+lang/taglish               4.1%       4.1%     0.0%
+lang/bisaya-english       15.9%      14.3%     1.6%
+```
+
+**Tagalog transcribes better than English does.** 0.0–1.7% against the English
+control's 2.7%, on the same visit. That is not a rounding artifact — it holds in
+both voices, and it retires any lingering worry that `fil-PH` is a second-class
+path. **Taglish is solid too** at 4.1% with 0.0% spread in both voices, which is
+the shape almost every Manila visit actually has.
+
+**Cebuano is genuinely harder, and it is not the voice.** Both Cebuano rows land
+in "bad in every voice" with **1.6–1.8% spread** — the speaker is not the
+variable, so this is the language, the transcriber, or `eleven_multilingual_v2`'s
+grasp of Cebuano, exactly as the sweep is designed to separate.
+
+**English scaffolding rescues Cebuano less than this file previously claimed.**
+The measured verdict above — mixed Cebuano-and-English holds 8.1%, "that is the
+Cebuano coverage to trust" — came from `ankle/cebuano`, four short turns.
+`lang/bisaya-english` is the same idea over a full seven-turn visit and scores
+**15.1% mean**, roughly double. The English words help in proportion to how many
+there are; a visit that is mostly Cebuano scores mostly like Cebuano. Read the
+8.1% as a property of that short script, not of code-switching in general.
+
+**`siko` is a coin flip in both languages** — heard in 5 of 6 recordings in
+`lang/tagalog-only` *and* 5 of 6 in `lang/cebuano-only`. Same word, same rate,
+two different languages and two voices, which makes it a vocabulary gap rather
+than anyone's diction. It matters more than a typical dropped word: `siko` is
+the *region*, mapped at `parser.js:100` and `parser.js:825`, so losing it loses
+the elbow entirely rather than garbling a detail. At the time this was measured
+no Filipino body-part word was in `STT_PHRASES` at all.
+
+That observation is what prompted `probe/`, and the probe then **walked it
+back**: `siko` arrives 6/6 in a different carrier sentence, so it is marginal
+rather than broken and it was NOT boosted. See
+[The vocabulary probe](#the-vocabulary-probe--probe) for what was, and for the
+measured before-and-after.
+
+### The part that matters for the product
+
+**The note came out right in all five languages.** A scored run of `--case lang/`
+took 57 of 57 weighted points — every language pinned the left elbow, none
+invented a right one, every 6/10 rating reached the chart, and no denial was
+offered as a pin. That includes both Cebuano scripts, at 14–16% word error.
+
+So the chart survived word error that looks alarming in a table. The refine pass
+is reading around the gaps, which is the whole reason this harness scores the
+note separately from the transcript. **But that is one take per language**, and
+`siko` arriving is a coin flip — a run where it drops is the run worth watching,
+and nothing here has measured how often the note survives that. That is the next
+measurement, not a conclusion this file can offer yet.
+
+## The vocabulary probe — `probe/`
+
+Two scripts that are instruments rather than regression tests. They exist to
+answer one question: **which** of the Filipino body-part words the parser
+already understands actually survive Chirp 2. They are excluded from a bare run
+(`probe: true`) and have to be named:
+
+```bash
+node test/voice/run.js --sweep <pedro>,<mangjose> --takes 3 --case probe/
+```
+
+The question is live because the two halves of the app disagree. `parser.js`
+maps about twenty-five Tagalog and Cebuano body-part words (`REGIONS` at
+:90-120, `JOINT_ALIASES` at :822) — so the chart understands every one of them
+if it arrives — while **none** is in `STT_PHRASES`, so nothing nudges Chirp 2
+to produce them. Losing one of these words does not garble a detail; it loses
+the **region**, and a region that never arrives cannot be treated or billed for.
+
+Each word sits in a clinical carrier sentence, because a word spoken alone is a
+different recognition problem than the same word mid-clause, and mid-clause is
+the one the clinic has. The word error rates these two report are meaningless —
+the density is nothing like speech — so both are advisory and neither carries an
+`expect` block. The `must` survival rates are the entire output.
+
+### What the probe found
+
+30 words, 2 voices × 3 takes = 6 recordings each, $0.10:
+
+```
+                                     Pedro  Mang Jose
+probe/tagalog-parts                   1.1%       2.2%
+probe/cebuano-parts                  28.3%      21.7%
+
+word          meaning   heard   language
+bat-ang       hip        0/6    Cebuano     NEVER
+lulod         shin       1/6    Tagalog
+kumagko       thumb      2/6    Cebuano
+buol-buol     ankle      4/6    Cebuano
+hita          thigh      5/6    Tagalog
+hinlalaki     thumb      5/6    Tagalog
+…the other 24 words     6/6                 arrived every time
+```
+
+**A table of all twenty-five would be about 80% waste.** Fifteen of eighteen
+Tagalog words and eight of twelve Cebuano words arrived in every single
+recording. Six words is the whole shortlist, and boosting thirty to fix six
+would take on the homophone risk of `paa`, `palad` and `hita` for no gain — the
+list already refuses ordinary words for exactly that reason.
+
+**`siko` arrived 6/6 here**, having been 5/6 in both `lang/` scripts. Same word,
+different carrier sentence. The one data point that motivated this whole
+question is *marginal*, not broken — which is a good argument for probing before
+tabulating, and a reminder that a 5/6 is a coin flip in both directions.
+
+**The Cebuano failures may not be TheraChart's at all.** This is the confound
+that runs through this entire file: `probe/cebuano-parts` scores 25% word error,
+so the audio itself is suspect, and `bat-ang` at 0/6 is as easily
+`eleven_multilingual_v2` failing to *say* the word as Chirp 2 failing to hear
+it — exactly the way `tuhod` came back as `tungtuhod` because the speech, not
+the transcriber, inserted the sound. Speech adaptation cannot fix a word the
+speaker never pronounced. **Tagalog carries no such doubt** — it transcribes at
+0.0–2.2% here, so `lulod` at 1/6 is a credible recognizer gap rather than a
+synthesis artifact.
+
+### Did the boost work — yes, and the run came with its own control
+
+`lulod` was added to `STT_PHRASES_BY_LANG["fil-PH"]` and everything re-measured
+the same way, median of 3 takes across the same two voices:
+
+```
+                          BEFORE            AFTER
+                      Pedro  MangJose   Pedro  MangJose
+probe/tagalog-parts    1.1%      2.2%    0.0%      0.0%
+probe/cebuano-parts   28.3%     21.7%   28.3%     20.0%
+
+lulod (shin)            1/6                6/6
+```
+
+**`lulod` went from 1 of 6 recordings to 6 of 6**, and `probe/tagalog-parts`
+fell to 0.0% word error in both voices — every Tagalog body-part word in the
+region table now arrives every time except `hinlalaki`. So speech adaptation
+*does* work on this class of word, which is worth knowing given it did nothing
+for the laterality words: the difference is that `lulod` is a long, distinctive
+content noun and `wala`/`tuo` are short function words with homophones
+everywhere.
+
+**The `ceb-PH` scripts are the control, and they are why the other movements
+should be ignored.** Nothing was added to the Cebuano list, so any change there
+is noise by construction — and there was plenty:
+
+```
+                       BEFORE          AFTER
+lang/cebuano-only   20.0 / 18.2    14.5 / 18.2     Pedro moved 5.5 points
+lang/bisaya-english 15.9 / 14.3    15.9 / 17.5     Mang Jose moved 3.2 points
+kumagko                    2/6            1/6
+siko in cebuano-only       5/6            4/6
+```
+
+Those scripts were not touched by this change, so **the noise band on a
+median-of-3 Cebuano cell is roughly ±3–5 points.** `lang/english-only` moving
+2.7% → 4.0% for one voice sits inside the same band and is not a regression from
+the boost — it is one word in seventy-five. Read nothing into any of it.
+
+That is the useful methodological result: an untouched language in the same run
+is a free control, and it calibrates how big a change has to be before it means
+anything. On this evidence, only the `lulod` result clears the bar.
+
+`hita` also went 5/6 → 6/6 without being boosted, which is the same point from
+the other direction — 5/6 is a coin flip, and it landed heads this time.
+
+### How the table is gated
+
+`STT_PHRASES` used to be sent unconditionally — `sttRequestBody` took `language`
+and used it only for `languageCodes`, so every request got the same list.
+`STT_PHRASES_BY_LANG` (server.js) now adds per-code entries on top of the shared
+clinical-English list.
+
+What that buys is keeping Cebuano vocabulary out of Manila's audio. What it does
+**not** buy is protection for English: the menu offers only two codes — fil-PH
+is "English & Tagalog", ceb-PH is "English & Cebuano" (app.js:4382) — so there
+is no English-only path, and anything added for fil-PH is boosted against
+English speech in the same room. That is why `hita` (thigh) was measured as a
+candidate and refused: "hit a" is an ordinary thing to say, and a false thigh
+finding is worse than a missed one. `lulod` has no such neighbour.
+
+And temper the expectation: this lever has underperformed twice here. Adding
+`tuo`/`tuong`/`wala`/`kanan`/`kaliwa` at boost 15 changed nothing, and
+`negative` still went missing in half the voices at 15 and needed 20. Measure
+after, not just before.
+
+### Cebuano: the sound was always there — corrected 2026-09-06
+
+This file has said in several places that synthetic Cebuano is the instrument's
+limit, and that a word lost in a Cebuano script is as likely to be ElevenLabs
+failing to *say* it as Chirp 2 failing to hear it. For at least some words
+**that is now measurably wrong.**
+
+The experiment holds the audio byte-identical — every take was cached — and
+changes only the recognizer's phrase list. Adaptation cannot recover a sound
+that is not in the recording, so any recovery proves the sound was there:
+
+```
+word                 no boost   boost 15   boost 20
+bat-ang   (hip)           0/6        3/6        5/6
+kumagko   (thumb)         1/6        4/6        3/6
+buol-buol (ankle)         4/6        5/6        5/6
+lapa-lapa (sole)          6/6        5/6        6/6   ← never boosted
+```
+
+**`bat-ang` went from never arriving to 5 of 6 without a single sample of audio
+changing.** ElevenLabs was saying it all along. Chirp 2 had the acoustic
+evidence and was not confident enough to return the word, which is a *lexicon*
+problem and exactly what speech adaptation is for. The progression 0 → 3 → 5 is
+monotonic in the boost, which is what a genuine confidence effect looks like and
+not what noise looks like.
+
+`buol-buol` and `kumagko` are weaker results — `kumagko` runs 1 → 4 → 3 and
+should not be claimed as an improvement at all. `bat-ang` is the finding, and it
+is the only one of the three that shipped.
+
+**The other two were tried and removed, and removing them mattered.** With all
+three boosted, `knee/cebuano-heavy` ran 12.5% for Pedro against 10.0% unboosted;
+with `bat-ang` alone it is back to 10.0% and `bat-ang` still holds 5/6. So the
+2.5 points were the cost of two words that could not show a gain — which is the
+whole argument for measuring each entry rather than adding a table. `ankle/cebuano`
+never moved through any of it, sitting at its documented 8.1%.
+
+**Watch the fourth row.** `lapa-lapa` was never boosted and dropped to 5/6 at
+boost 15 before returning at 20. `kumagko` and `lapa-lapa` sit in the *same
+sentence* of the probe, so that is boost competition — making one reading
+likelier at a neighbour's expense, which is the cost the top of `STT_PHRASES`
+warns about. The probe overstates it, though: it packs two body parts per
+sentence, and no real visit says "thumb" and "sole of the foot" in one breath.
+
+**What this does NOT settle.** The overall Cebuano word error — 18% on
+`lang/cebuano-only`, 25% on the probe — is still unattributed, and the
+`tuhod` → `tungtuhod` evidence for synthesis being at fault still stands for
+*that* word. What is settled is narrower and still useful: **"synthetic Cebuano
+is too broken to measure" is not a blanket excuse.** Individual word failures
+have to be tested one at a time, and the boost test is cheap and decisive
+because the audio never changes.
+
+The realistic scripts confirm the change is safe rather than helpful:
+`lang/cebuano-only` sits at 18.2% and `lang/bisaya-english` at 15.9% after,
+both inside the ±3–5 point band those two scripts already demonstrate. Neither
+contains any of the three words, so no movement was expected in either
+direction — the point of running them was to catch a regression, and there
+isn't one.
 
 ## What this does NOT prove
 
