@@ -503,8 +503,7 @@ const settle = () => new Promise((r) => setImmediate(r));
       "an aim left set on a closed mic sends the next utterance somewhere nobody chose");
 
     r.check("stopping dictation from outside clears the aim too",
-      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; burst = null; \}/.test(SRC),
-      "…and drops the pending burst with it: the router is replacing this document, so a check billed here would draw its answer onto a screen nobody is looking at");
+      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; \}/.test(SRC));
 
     /* Where the mic is pointed has to ride ON the engine's status line: the
        cloud engine rewrites that line every time a segment goes out, so
@@ -648,8 +647,12 @@ const settle = () => new Promise((r) => setImmediate(r));
        was unreachable rather than handled. It is reachable now. */
     r.check("navigating away stops the recorder instead of leaving it running",
       /if \(activeRecording\) \{ activeRecording\.stop\(\); activeRecording = null; \}/.test(SRC)
-        && /activeRecording = \{\s*\n\s*stop\(\)/.test(SRC),
+        && /activeRecording = \{\s*\n\s*isRecording: \(\) => recording,\s*\n\s*stop\(\)/.test(SRC),
       "the dock lets a therapist leave the document with the mic open, which the stage never did");
+
+    r.check("…and stops a SECTION recording too, which activeRecording does not hold",
+      /if \(sectionRec\) \{ try \{ sectionRec\.engine\.stop\(\); \} catch \(_\) \{ \} sectionRec = null; \}/.test(SRC),
+      "it has its own engine, and letting its stop path run would raise a processing screen over a document the router already replaced");
 
     r.check("stopping on the way out keeps the audio",
       /activeRecording = \{[\s\S]{0,400}rec && rec\.stop\(\)/.test(SRC),
@@ -684,45 +687,95 @@ const settle = () => new Promise((r) => setImmediate(r));
       /meta\.textContent = "Recording discarded\.";\s*\n\s*exitStage\(\);/.test(SRC));
   }
 
-  /* ---------------- the accuracy check on an aimed burst ----------------
+  /* ---------------- recording into one section ----------------
 
-     An aimed microphone skips the classifier on purpose, so this is the only
-     thing that reads that text before it sits in the note. It is also the one
-     AI call that fires several times in a visit, which makes WHEN it fires a
-     cost property and not only a UX one. */
+     A section mic RECORDS; it does not file as you speak. Same arc as the
+     visit recorder — record, stop, transcribe, let the AI write it, approve —
+     so a therapist meets one workflow rather than two, and the property that
+     makes record-first worth having holds at section scale too: nothing
+     reaches the note that the clinician did not put there. */
   {
-    r.check("the check fires once per burst, not once per sentence",
-      /if \(aimedAt && aimedAt !== target\) flushBurst\(\);/.test(SRC)
-        && !/noteBurst\([\s\S]{0,120}flushBurst\(\)/.test(SRC),
-      "a Gemini call is billed mostly for what it writes, so a per-sentence check costs several times what reviewing the whole visit costs");
+    r.check("a section mic records rather than opening the live engine",
+      /sectionBtns\(\)\.forEach\(\(b\) => b\.addEventListener\("click", async \(\) => \{[\s\S]{0,700}startSectionRecording\(doc, user, field\)/.test(SRC),
+      "filing as you speak is the failure record-first exists to remove; a section is not exempt from it");
 
-    r.check("…and only for a microphone that was AIMED at a section",
-      /if \(report && aimedAt && open\) noteBurst\(aimedAt, report\)/.test(SRC),
-      "the roaming mic spreads one breath over several sections, so there is no single section to check it against");
+    r.check("section audio is keyed apart from the visit's",
+      /const key = `\$\{doc\.id\}#\$\{field\}`/.test(SRC),
+      "savedAudio matches on docId exactly, so a shared key would offer a section burst back as the whole visit");
 
-    r.check("a burst too short to be worth a call is dropped",
-      /CHECK_MIN_WORDS/.test(SRC) && /< CHECK_MIN_WORDS\) return;/.test(SRC),
-      "a few words is a false start or a correction, and a call on it costs the same as a call on a paragraph");
+    /* One microphone on the device. Three ways two could be opened at once,
+       and each is refused rather than left to produce two audio graphs. */
+    r.check("a section mic will not open over a running visit recording",
+      /activeRecording\.isRecording\(\)\) \{[\s\S]{0,200}The whole visit is being recorded/.test(SRC),
+      "two recorders on one device is the doubled-audio bug the engine's release() exists to prevent");
 
-    r.check("the clinic can turn the check off without losing dictation",
-      /if \(!S\.settings\(\)\.sectionDictationCheck\) return;/.test(SRC),
-      "this is the one AI feature that fires several times a visit, so it is the one a cost-sensitive clinic turns off first");
+    r.check("…nor over live dictation, which is closed first",
+      /if \(listening\) \{ await aimMic\(null\); \}/.test(SRC));
 
-    /* The property that matters clinically. The whole reason record-first
-       exists is that text must not arrive in a signed record without a
-       clinician putting it there. */
-    r.check("the check never writes to the note on its own",
-      /data-checkuse/.test(SRC)
-        && /Nothing changes in the note until you press Use this/.test(SRC),
-      "a check that rewrote the section by itself is the live-dictation mistake one layer up");
+    r.check("…nor over another section that is already recording",
+      /if \(sectionRecordingActive\(\)\) return;/.test(SRC)
+        && /b\.disabled = !!sectionRec && !on;/.test(SRC),
+      "a second button that still looks pressable is a therapist dictating into a section that is not listening");
 
-    r.check("a failed check leaves what was dictated alone",
-      /didn't run — what you dictated is still in the note/.test(SRC),
-      "the parser already filed it; a check that could not run is not a dictation that failed");
+    /* engine.stop() does NOT call onStop — that callback is for the engine's
+       own limit and ceiling stops. Wiring the button straight to the engine
+       shut the microphone with nothing left to carry the chunks onward, and
+       the panel sat on "Stopping…" forever. */
+    r.check("the Stop button goes through stopSectionRecording, not the engine",
+      /if \(sectionRec && sectionRec\.field === field\) \{\s*\n\s*stopSectionRecording\(sectionRec\.doc, sectionRec\.user, field\);/.test(SRC),
+      "engine.stop() only shuts the microphone; it does not fire onStop, so nothing would process the burst");
 
-    r.check("accepting a reworded section is still machine-written",
-      /markAiFilled\(doc, field, true\);[\s\S]{0,200}S\.updateDocData\(doc\.id, \{ \[field\]: text/.test(SRC),
-      "marking it by hand would stop the whole-visit review from ever pre-ticking it again");
+    r.check("the Stop control is on screen for as long as the mic is open",
+      /data-recstop="\$\{esc\(field\)\}"/.test(SRC)
+        && /Recording into <b>\$\{esc\(label\)\}<\/b> — nothing is written until you stop/.test(SRC),
+      "a hot microphone with no visible control is the one thing this flow must never allow");
+
+    r.check("it shows the same processing screen the visit recorder does",
+      /stopSectionRecording[\s\S]{0,900}procStage\.show\(label\);[\s\S]{0,400}procStage\.set\("transcribe", "active"/.test(SRC),
+      "a therapist should not have to learn two answers to 'is it working, and how much longer'");
+
+    /* …retitled for the section, and reset when the visit recorder next uses
+       it. A screen left saying "Writing Subjective" over a whole-visit read is
+       a worse lie than the generic wording it replaced. */
+    r.check("the screen is retitled per run and resets to the visit wording",
+      /put\("#procScope", scope \? "Processing this section" : "Processing this visit"\);/.test(SRC)
+        && /put\('\[data-title="read"\]', scope \? `Writing \$\{scope\}` : null\);/.test(SRC)
+        && /data-title="read" data-default="Reading the whole visit"/.test(SRC),
+      "a section run must not leave its wording standing on the next visit's screen");
+
+    /* Billing, then the two ways this can fail. Both keep what was said. */
+    r.check("speech is billed as soon as it comes back, before anything can throw",
+      /out = await processRecording\(key[\s\S]{0,400}recordDictationSeconds\(doc\.id, out\.billedSeconds, user\);/.test(SRC),
+      "the same rule the visit recorder follows — a crash further down must not lose what was already billed");
+
+    r.check("the transcript is kept whichever way the AI goes",
+      /captureUtterances\(live, user, repaired\.text, currentDocState\);[\s\S]{0,400}procStage\.set\("read", "active"/.test(SRC),
+      "a therapist whose section draft fails should still be able to read their own words");
+
+    r.check("a failed write says so instead of silently dropping the visit",
+      /procStage\.fail\("read", `Couldn't write \$\{label\} from that recording\. What you said is in the transcript\.`\)/.test(SRC));
+
+    /* The property the whole flow exists for. */
+    r.check("the note is not touched until the therapist presses something",
+      /Nothing changes in \$\{esc\(label\)\} until you press one of these\./.test(SRC)
+        && /data-checkuse="replace"/.test(SRC),
+      "a section that rewrote itself when the recording stopped is the live-dictation mistake one layer up");
+
+    r.check("a section that already has text offers replace, append or keep",
+      /data-checkuse="append"/.test(SRC) && /Keep mine<\/button>/.test(SRC),
+      "the therapist may have typed into it while the recording ran");
+
+    r.check("…and marks what is new against what is already there",
+      /const parts = current \? overlapSentences\(current, drafted\) : \[\];/.test(SRC),
+      "same question as the whole-visit review, so it is answered the same way by the same function");
+
+    r.check("accepting a draft leaves the section machine-written",
+      /markAiFilled\(doc, field, true\);/.test(SRC),
+      "marking it by hand would stop the whole-visit review from ever pre-ticking it");
+
+    r.check("a recording with nothing clinical in it says so and keeps the transcript",
+      /Nothing in that recording belonged in \$\{esc\(label\)\}\. What you said is in the transcript\./.test(SRC),
+      "a therapist who believes their words vanished will simply say them again");
   }
 
   /* ---------------- what the AI adds over what the therapist typed ----------

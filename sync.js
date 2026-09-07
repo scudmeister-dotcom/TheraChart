@@ -489,13 +489,13 @@
     return res.ok ? res.data : null;
   };
 
-  /* Check one burst of section-aimed dictation against what the parser filed.
-     Server-only, and it returns null rather than throwing when there is no
-     server: the check is an ADDITION to dictation, so its absence has to be
-     survivable everywhere it is called. */
-  sync.checkSection = async ({ filed, spoken, label, field }) => {
+  /* Write one section from a recording the therapist aimed at it. Server-only,
+     and it returns null rather than throwing when there is no server: the
+     caller has the transcript either way and says so, rather than losing what
+     was said because the writer could not run. */
+  sync.checkSection = async ({ spoken, label, field }) => {
     if (sync.mode !== "server" || !sync.token) return null;
-    const res = await api("/api/check-section", { method: "POST", body: { filed, spoken, label, field } });
+    const res = await api("/api/check-section", { method: "POST", body: { spoken, label, field } });
     return res.ok ? res.data : null;
   };
 

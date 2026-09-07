@@ -2664,6 +2664,7 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
    Sits under the section's own box, inside the field, so the answer and the
    text it is about are read together. Bordered rather than filled: it is an
    offer sitting next to the note, and it should not look like part of it. */
+.dict-check:has(.dict-rec) { border-left-color: var(--danger); }
 .dict-check {
   margin-top: 6px;
   padding: 8px 10px;
@@ -2673,6 +2674,15 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   background: var(--hover);
   font-size: 12.5px;
 }
+/* The section is recording. Lives in the same slot the result comes back
+   into, so the whole lifecycle happens in one place and the Stop control is
+   on screen for as long as the microphone is open. */
+.dict-rec { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.dict-rec .rec-dot { flex: none; animation: recpulse 1.4s ease-in-out infinite; }
+.dict-rec-what { flex: 1 1 200px; min-width: 0; color: var(--danger); font-size: 12.5px; }
+/* Brightens while the gate is hearing speech — the "I can hear you" signal,
+   in the one spot the therapist is already looking. */
+.dict-rec.voiced .rec-dot { box-shadow: 0 0 0 4px var(--danger-soft); }
 .dict-check-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); }
 .dict-check-line.good { color: var(--good); }
 .dict-check-line.warn { color: var(--danger); }

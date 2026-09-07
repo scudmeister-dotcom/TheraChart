@@ -2068,51 +2068,51 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      /* Check ONE burst of section-aimed dictation against what the parser
-         filed from it. The narrow counterpart of /api/refine, and narrow in
-         the way that matters commercially: this fires several times in a
-         visit where refine fires once, so the schema returns a tidied line
-         and at most three concerns and nothing else. Output is what a Gemini
-         call is billed for, so a small schema — not a smaller model — is what
-         keeps this affordable.
+      /* Write ONE section from a recording the therapist aimed at it. The
+         narrow counterpart of /api/refine, and narrow in the way that matters
+         commercially: this fires once per section dictated where refine fires
+         once per visit, so the schema returns one line of text and at most
+         three concerns and nothing else. Output is what a Gemini call is
+         billed for, so a small schema — not a smaller model — is what keeps
+         this affordable.
 
          It reads only the section it was given. It has no view of the rest of
          the note and cannot move text between sections: the therapist aimed
-         the microphone, and that answer outranks anything a model infers. */
+         the microphone, and that answer outranks anything a model infers. A
+         sentence that plainly belongs elsewhere comes back as a `misplaced`
+         issue for the therapist to act on, never as a silent re-filing. */
       if (url.pathname === "/api/check-section" && req.method === "POST") {
         if (!store.canDocument(user)) return json(res, 403, { error: "Your account can\u2019t create clinical documents." });
-        if (!geminiActive()) return json(res, 503, { error: "The dictation check needs the AI service, which isn\u2019t configured here.", unavailable: true });
+        if (!geminiActive()) return json(res, 503, { error: "Writing a section from dictation needs the AI service, which isn\u2019t configured here.", unavailable: true });
         if (aiRateLimited(res, req, user, "section")) return;
         const b = await readBody(req);
-        const filed = String(b.filed || "").slice(0, 2000).trim();
         const spoken = String(b.spoken || "").slice(0, 2000).trim();
         const label = String(b.label || "this section").slice(0, 60);
-        if (!filed && !spoken) return json(res, 400, { error: "Nothing to check." });
+        if (!spoken) return json(res, 400, { error: "Nothing to write from." });
         try {
           const prompt = [
-            "A physical therapist dictated into ONE named section of a clinical note.",
-            "Software transcribed the speech and filed part of it into that section.",
-            "Your job is to check that filing for accuracy, and nothing else.",
+            "A physical therapist recorded themselves dictating into ONE named section of",
+            "a clinical note. Nothing has been written into the note yet. Write that section",
+            "from what they said.",
             "",
             `SECTION: ${label}`,
-            "", "WHAT THE THERAPIST SAID (verbatim transcript):", spoken || "(not available)",
-            "", "WHAT THE SOFTWARE FILED INTO THAT SECTION:", filed || "(nothing)",
+            "", "WHAT THE THERAPIST SAID (verbatim transcript):", spoken,
             "",
-            "Return `tidied`: the filed text, corrected for capitalisation, punctuation,",
-            "sentence boundaries and obvious transcription slips, phrased as a clinician",
-            "writes that section. HARD RULES for `tidied`:",
+            "Return `tidied`: that section's text, as a clinician writes it — full sentences,",
+            "clinical shorthand where it is natural, no filler and no conversational asides.",
+            "HARD RULES for `tidied`:",
             "- Every clinical fact in it must appear in the transcript above. Add nothing.",
-            "- Do not remove a clinical fact that IS in the filed text.",
             "- Do not add a body region, a side (left/right) or a number that was not spoken.",
-            "- If the filed text is already correct, return it unchanged.",
-            "- If nothing was filed, return an empty string.",
+            "- Do not infer a diagnosis, a plan or a measurement that was not stated.",
+            "- Drop greetings, small talk and false starts; keep everything clinical.",
+            "- If the transcript carries nothing clinical, return an empty string.",
             "",
             "Return `issues`: at most 3, ONLY for things a therapist would want to fix.",
-            "Use kind = 'missed' when the transcript states something clinical that the",
-            "filed text does not carry; 'misplaced' when filed text does not belong in",
-            "this section; 'ambiguous' when a side, region or number was spoken unclearly.",
-            "Each issue's `detail` is one short sentence. Return an empty list if there is",
-            "nothing worth saying — an empty list is the expected answer for a clean burst.",
+            "Use kind = 'misplaced' when something said clearly belongs in a DIFFERENT",
+            "section than this one; 'ambiguous' when a side, region or number was spoken",
+            "unclearly or the transcript is garbled; 'missed' when something clinical was",
+            "said that you could not place in this section. Each issue's `detail` is one",
+            "short sentence. An empty list is the expected answer for a clean recording.",
           ].join("\n");
           const schema = {
             type: "object",
@@ -2143,10 +2143,10 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           const ref = crypto.randomBytes(4).toString("hex");
           console.error(`[error ${ref}] POST /api/check-section \u2014`, e);
-          /* A failed check is not a failed dictation. What the parser filed is
-             already in the note and stays there; the therapist is told the
-             check did not run rather than being shown a half-answer. */
-          return json(res, 500, { error: "Couldn\u2019t check that section. What was dictated is still in the note.", ref });
+          /* A failed write is not a lost recording. The transcript is already
+             on the note and stays there; the therapist is told the section
+             could not be written rather than being shown a half-answer. */
+          return json(res, 500, { error: "Couldn\u2019t write that section. What was said is still in the transcript.", ref });
         }
       }
 

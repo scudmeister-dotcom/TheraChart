@@ -408,6 +408,11 @@
   function render() {
     if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; window.__theraSay = null; }
     if (activeRecording) { activeRecording.stop(); activeRecording = null; }
+    /* A section recording is a hot microphone too, and it is not held by
+       activeRecording — it has its own engine. Stopping it here rather than
+       letting stopSectionRecording() run means no processing screen is raised
+       over a document the router has already replaced. */
+    if (sectionRec) { try { sectionRec.engine.stop(); } catch (_) { } sectionRec = null; }
     currentDocState = null; // never carry one document's edit state into another
     closeModal();
     const user = S.currentUser();
@@ -4226,7 +4231,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
          to end. The word costs a few pixels the label row has to spare. */
       const mic = editable && isDictatable(doc.type, field)
         ? `<button type="button" class="field-mic" data-fieldmic="${field}"
-             title="Dictate straight into ${esc(label)} — what you say goes here, not wherever the app guesses"
+             title="Record straight into ${esc(label)} — nothing is written until you stop, then the AI writes this section from what you said"
              aria-label="Dictate into ${esc(label)}"><span class="field-mic-dot"></span>🎤 <span class="field-mic-word">Dictate</span></button>`
         : "";
       /* Where the accuracy check on an aimed dictation burst draws itself.
@@ -4275,7 +4280,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("pmh", "Past medical history", "Relevant conditions, surgeries…")) +
         group("Subjective", "What the patient reports",
           ["subjective"],
-          ta("subjective", "Subjective", "What the patient reports — dictation files here automatically")) +
+          ta("subjective", "Subjective", "What the patient reports — type it, or press Dictate and speak")) +
         group("Objective", "What you observed and measured",
           ["objectiveText", "@measurements", "@outcomes"],
           ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
@@ -4295,7 +4300,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("subjective", "Subjective", "Patient-reported status today")) +
         group("Objective", "What you did, and what you measured",
           ["summary", "@measurements"],
-          ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
+          ta("summary", "Treatment summary", "Treatments performed this visit — type it, or press Dictate and speak") +
           measurementEditor(doc, editable)) +
         group("Assessment", "How they responded to treatment",
           ["assessment"],
@@ -4511,7 +4516,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          whether their visit survived. -->
     <div class="proc-stage" id="procStage" hidden>
       <div class="proc-stage-inner">
-        <div class="proc-eyebrow"><span class="proc-spin"></span>Processing this visit</div>
+        <div class="proc-eyebrow"><span class="proc-spin"></span><span id="procScope">Processing this visit</span></div>
         <h2>${esc(S.patientName(p))}</h2>
         <div class="proc-doc">${esc(doc.title)}</div>
         <ol class="proc-steps">
@@ -4525,10 +4530,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           </li>
           <li class="proc-step" data-step="read">
             <span class="proc-mark"></span>
-            <span class="proc-body"><b>Reading the whole visit</b><small data-detail="read" data-default="Splitting who spoke, correcting the body map, and drafting each section.">Splitting who spoke, correcting the body map, and drafting each section.</small></span>
+            <span class="proc-body"><b data-title="read" data-default="Reading the whole visit">Reading the whole visit</b><small data-detail="read" data-default="Splitting who spoke, correcting the body map, and drafting each section.">Splitting who spoke, correcting the body map, and drafting each section.</small></span>
           </li>
         </ol>
-        <p class="proc-note">Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.</p>
+        <p class="proc-note" id="procNote" data-default="Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.">Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.</p>
         <div class="proc-actions" id="procActions" hidden></div>
       </div>
     </div>
@@ -6589,6 +6594,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          disk write would be a worse trade than a fraction of a second of
          audio in the very last chunk. */
       activeRecording = {
+        isRecording: () => recording,
         stop() {
           if (!recording) { exitStage(); return; }
           recording = false;
@@ -6631,12 +6637,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // would be lost); the doc can also have been signed in the meantime
       const live = S.getDoc(doc.id);
       if (!live || live.status === "signed") return;
-      const report = routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
-      /* Only an AIMED burst is accumulated. The roaming microphone spreads one
-         breath across several sections by design, so there is no single
-         section to check it against — and the whole-visit recording has
-         /api/refine, which reads the conversation rather than one section. */
-      if (report && aimedAt && open) noteBurst(aimedAt, report);
+      routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
     };
     const callbacks = {
       docId: doc.id,
@@ -6747,65 +6748,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const withAim = (msg) =>
       listening && aimedAt ? `${msg} — filing into ${fieldLabel(doc.type, aimedAt)}` : msg;
 
-    /* ---- the accuracy check on an aimed dictation burst ----
-
-       An aimed microphone deliberately skips the classifier (see aimedField):
-       the therapist has said which section they are filling, and that answer
-       beats anything the parser infers. The cost of that shortcut is that
-       NOTHING then reads the text before it lands in the note — the roaming
-       path at least runs it past fieldForSentence, and a recording gets the
-       whole-visit refine pass.
-
-       This is that missing read. It checks one burst against the section it
-       was aimed at, and it is scoped narrowly on purpose:
-
-         it never moves text between sections — the therapist aimed the mic;
-         it never writes to the note — it offers, the therapist applies;
-         it fires ONCE per burst, when the microphone leaves that section.
-
-       The last one is the commercial constraint rather than a UI preference.
-       Every Gemini call is billed mostly for what it WRITES, so a check that
-       ran per sentence would cost several times what reviewing the whole
-       visit costs. Per burst, a section-by-section evaluation is a handful of
-       small calls; per sentence it is dozens. */
-    let burst = null;   // { field, filed: [], spoken: [] }
-
-    const noteBurst = (field, report) => {
-      if (!burst || burst.field !== field) burst = { field, filed: [], spoken: [] };
-      for (const f of report.filed) if (f.field === field) burst.filed.push(f.text);
-      if (report.spoken) burst.spoken.push(report.spoken);
-    };
-
-    /* Below this the check is not worth making. A burst of a few words is
-       either a correction the therapist is about to make themselves or a
-       false start, and a call on it costs the same as a call on a paragraph. */
-    const CHECK_MIN_WORDS = 8;
-
-    const flushBurst = async () => {
-      const b = burst;
-      burst = null;
-      if (!b || !b.filed.length) return;
-      if (!S.settings().sectionDictationCheck) return;
-      const filed = b.filed.join(" ").trim();
-      if (filed.split(/\s+/).filter(Boolean).length < CHECK_MIN_WORDS) return;
-      const sync = window.TheraSync || {};
-      if (!sync.checkSection) return;
-      const label = fieldLabel(doc.type, b.field);
-      showCheckPanel(doc, user, b.field, { pending: true });
-      try {
-        const out = await sync.checkSection({
-          filed, spoken: b.spoken.join(" ").trim(), label, field: b.field,
-        });
-        /* A check that could not run is not a dictation that failed: what the
-           parser filed is already in the note. Say the check is unavailable
-           and leave the text alone. */
-        if (!out) return showCheckPanel(doc, user, b.field, { error: "The dictation check didn't run — what you dictated is still in the note." });
-        showCheckPanel(doc, user, b.field, { filed, result: out });
-      } catch (e) {
-        showCheckPanel(doc, user, b.field, { error: "The dictation check didn't run — what you dictated is still in the note." });
-      }
-    };
-
     /** Point the microphone at `target` (a field name, or null for the whole
         visit). Pressing the button that is already lit turns it off; pressing
         a different one re-aims without closing and reopening the mic, so the
@@ -6814,15 +6756,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     async function aimMic(target) {
       if (!engine) return;
       autoStopNotice = ""; // the therapist has seen it and acted
-      /* The microphone leaving a section is what ends a burst — stopping it,
-         or pointing it somewhere else. Deliberately not awaited: re-aiming has
-         to feel instant, and a therapist walking down the note should never
-         wait on a check of the section they have already left. */
-      if (aimedAt && aimedAt !== target) flushBurst();
       if (listening && aimedAt === target) {   // same button again: stop
         listening = false;
         engine.stop();
-        flushBurst();
       } else if (listening) {                  // already open: just re-aim it
         aimedAt = target;
       } else {
@@ -6840,7 +6776,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
 
     micBtn.addEventListener("click", () => aimMic(null));
-    sectionBtns().forEach((b) => b.addEventListener("click", () => aimMic(b.dataset.fieldmic)));
+    /* Section mics RECORD; they do not open the live engine. Same arc as the
+       visit recorder — record, stop, transcribe, let the AI write it, approve
+       — so a therapist meets one workflow rather than two. The live engine is
+       still what the whole-visit mic above uses, and is still the deliberate
+       choice under "Or dictate live". */
+    sectionBtns().forEach((b) => b.addEventListener("click", async () => {
+      const field = b.dataset.fieldmic;
+      if (sectionRecordingActive()) return;      // stop is on the panel, not here
+      if (listening) { await aimMic(null); }     // one microphone: close the live one first
+      if (activeRecording && activeRecording.isRecording && activeRecording.isRecording()) {
+        showCheckPanel(doc, user, field, { error: "The whole visit is being recorded. Stop that first, or type into this section instead." });
+        return;
+      }
+      b.disabled = true;
+      const ok = await startSectionRecording(doc, user, field);
+      b.disabled = false;
+      setSectionMicUI();
+      if (!ok) setSectionMicUI();
+    }));
 
     langSel.addEventListener("change", () => {
       localStorage.setItem("therachart-lang", langSel.value);
@@ -6849,11 +6803,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
 
     activeDictation = {
-      /* No flushBurst() here on purpose. The panel it would open belongs to a
-         document the router is in the middle of replacing, so the call would
-         be billed for an answer drawn onto a screen nobody is looking at.
-         What was dictated is already filed; the check is what is dropped. */
-      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; burst = null; },
+      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; },
     };
   }
 
@@ -7042,6 +6992,178 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
   }
 
+  /* ---- recording into ONE section ----
+
+     The same arc as the visit recorder, at section scale: record, stop,
+     transcribe, let the AI read it, then show the therapist what it wrote and
+     wait. Nothing is written into the section while the microphone is open,
+     for exactly the reason the visit recorder does not either — a sentence the
+     therapist restarts halfway through should never have reached the note.
+
+     It deliberately does NOT reuse the visit recorder's state. Two recordings
+     that share `captured` would have a section burst processed as part of the
+     visit, or a visit discarded by finishing a section. They share the ENGINE
+     and the processing screen; they share no state.
+
+     Audio is keyed `docId#field` rather than docId, so the unfinished-recording
+     probe on the visit recorder — an exact match on docId — never picks a
+     section burst up and offers to process it as the whole visit.
+
+     There is no pre-recording dialog here and that is deliberate. That screen
+     exists to set expectations before a therapist walks away from a
+     forty-minute recording; a section burst is a few seconds they start and
+     stop on purpose, and a modal in front of each one is ceremony they would
+     learn to click through. */
+  let sectionRec = null;   // { field, engine, stop() } while a section is recording
+
+  function sectionRecordingActive() { return !!sectionRec; }
+
+  async function startSectionRecording(doc, user, field) {
+    const label = fieldLabel(doc.type, field);
+    const key = `${doc.id}#${field}`;
+    const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
+    const priorSec = Number(doc.data._dictationSeconds) || 0;
+
+    const engine = recorderEngine({
+      docId: key,
+      billedSoFar: priorSec,          // the visit's ceiling covers every mic on it
+      ceilingSeconds: ceilMin * 60,
+      onLevel: (voiced) => paintSectionRecording(field, label, voiced),
+      /* Fires only for the engine's OWN stops — the 20-minute limit and the
+         per-visit ceiling. A stop the therapist presses goes straight to
+         stopSectionRecording, because engine.stop() does not call this. */
+      onStop: () => { stopSectionRecording(doc, user, field); },
+    });
+    const ok = await engine.start();
+    if (!ok) {
+      showCheckPanel(doc, user, field, { error: "Mic blocked — allow microphone access and try again." });
+      return false;
+    }
+    /* doc and user ride along: the Stop button is painted by a module-level
+       function that has neither, and reaching for S.currentUser() there would
+       be a second source of truth for who is writing this note. */
+    sectionRec = { field, engine, doc, user };
+    paintSectionRecording(field, label, false);
+    return true;
+  }
+
+  /* The recording indicator lives in the section's own panel — the same slot
+     the result comes back into. One place for the whole lifecycle means the
+     therapist's eye never has to move, and the Stop control is on screen for
+     as long as the microphone is open, which is the property that matters. */
+  function paintSectionRecording(field, label, voiced) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (!host) return;
+    const live = host.querySelector(".dict-rec");
+    if (live) { live.classList.toggle("voiced", !!voiced); return; }
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="dict-rec">
+        <span class="rec-dot"></span>
+        <span class="dict-rec-what">Recording into <b>${esc(label)}</b> — nothing is written until you stop.</span>
+        <button class="btn small primary" data-recstop="${esc(field)}" type="button">Stop &amp; process</button>
+      </div>`;
+    host.querySelector("[data-recstop]").addEventListener("click", () => {
+      const b = host.querySelector("[data-recstop]");
+      if (b) { b.disabled = true; b.textContent = "Stopping…"; }
+      /* stopSectionRecording owns engine.stop(); calling the engine here would
+         shut the microphone with nothing left to carry the chunks onward. */
+      if (sectionRec && sectionRec.field === field) {
+        stopSectionRecording(sectionRec.doc, sectionRec.user, field);
+      }
+    });
+  }
+
+  /* Stop, then the same three steps the visit recorder shows. The screen is
+     shared on purpose: a therapist should not have to learn two different
+     answers to "is it working, and how much longer". */
+  async function stopSectionRecording(doc, user, field) {
+    const rec = sectionRec;
+    sectionRec = null;
+    if (!rec || rec.field !== field) return;
+    const label = fieldLabel(doc.type, field);
+    const key = `${doc.id}#${field}`;
+    const chunks = await rec.engine.stop();
+    const secs = rec.engine.voicedSeconds();
+    setSectionMicUI();
+
+    if (!chunks.length || secs < 1) {
+      showCheckPanel(doc, user, field, { error: `Nothing was recorded into ${label}. Press Dictate and speak, then stop.` });
+      await savedAudio.clear(key).catch(() => {});
+      return;
+    }
+
+    procStage.show(label);
+    const mins = Math.max(1, Math.round(secs / 60));
+    procStage.set("captured", "done", `Dictated into ${label} · about ${mins} minute${mins > 1 ? "s" : ""} of speech`);
+    procStage.set("transcribe", "active", `0 of ${chunks.length}`);
+    const lang = (document.getElementById("langSel") || {}).value || "fil-PH";
+    let out;
+    try {
+      out = await processRecording(key, lang, chunks,
+        (n, total) => procStage.set("transcribe", "active", `${n} of ${total}`));
+    } catch (e) {
+      procStage.fail("transcribe", "Couldn't transcribe that. The recording is still on this device.");
+      return;
+    }
+    /* Billed the moment it comes back, before anything can throw below it —
+       the same rule the visit recorder follows, and for the same reason. */
+    recordDictationSeconds(doc.id, out.billedSeconds, user);
+    if (!out.text) {
+      procStage.fail("transcribe", out.errors.length
+        ? `Couldn't transcribe: ${out.errors[0]}. Nothing was written into ${label}.`
+        : `Nothing recognisable in that recording. Nothing was written into ${label}.`);
+      await savedAudio.clear(key).catch(() => {});
+      return;
+    }
+    const repaired = PR.correctDictation(out.text);
+    if (repaired.fixes.length) noteDictationFixes(repaired.fixes);
+    await savedAudio.clear(key).catch(() => {});
+
+    /* The transcript is kept whatever the AI does next. It is what was said,
+       it is billed, and a therapist whose section draft fails should still be
+       able to read their own words rather than be told to say them again. */
+    const live = S.getDoc(doc.id) || doc;
+    captureUtterances(live, user, repaired.text, currentDocState);
+
+    procStage.set("transcribe", "done", "Speech only — the silence was never sent.");
+    procStage.set("read", "active", `Writing ${label} from what you said.`);
+    const sync = window.TheraSync || {};
+    if (!sync.checkSection) {
+      procStage.fail("read", `The AI isn't available here, so ${label} wasn't written. What you said is in the transcript.`);
+      return;
+    }
+    let res;
+    try {
+      res = await sync.checkSection({ spoken: repaired.text, label, field });
+    } catch (e) { res = null; }
+    if (!res) {
+      procStage.fail("read", `Couldn't write ${label} from that recording. What you said is in the transcript.`);
+      return;
+    }
+    procStage.set("read", "done", "Written. Nothing is in the note yet — check it below.");
+    procStage.hide();
+    showCheckPanel(live, user, field, { filed: "", result: res, spoken: repaired.text });
+    const wrap = document.querySelector(`[data-fieldwrap="${field}"]`);
+    if (wrap) wrap.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  /* Repaint every section mic from the one piece of state that decides it.
+     Defined at module level because both the button handler and the stop path
+     need it, and they do not share a closure. */
+  function setSectionMicUI() {
+    for (const b of document.querySelectorAll("[data-fieldmic]")) {
+      const on = !!sectionRec && sectionRec.field === b.dataset.fieldmic;
+      b.classList.toggle("listening", on);
+      const wrap = b.closest("[data-fieldwrap]");
+      if (wrap) wrap.classList.toggle("dictating", on);
+      /* Every OTHER section mic is disabled while one is open. There is one
+         microphone on the device, and a second button that looks pressable is
+         a therapist dictating into a section that is not listening. */
+      b.disabled = !!sectionRec && !on;
+    }
+  }
+
   /* What recording does, said before the microphone opens.
 
      The one thing on it that matters: the note does NOT fill itself in as you
@@ -7098,9 +7220,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      across a call whose duration nobody knows. */
   const procStage = {
     el: () => document.getElementById("procStage"),
-    show() {
+    /* `scope` retitles the screen for a section run. Omitted, it resets to the
+       whole-visit wording — a section run must not leave "Writing Subjective"
+       standing on the next visit's processing screen. */
+    show(scope) {
       const el = this.el();
       if (!el) return;
+      const put = (sel, text) => {
+        const n = el.querySelector(sel);
+        if (n) n.textContent = text != null ? text : (n.dataset.default || "");
+      };
+      put("#procScope", scope ? "Processing this section" : "Processing this visit");
+      put('[data-title="read"]', scope ? `Writing ${scope}` : null);
+      put("#procNote", scope
+        ? `Nothing reaches ${scope} yet. When this finishes you get to read it and decide.`
+        : null);
       /* Re-parented to <body> for the same stacking-context reason the
          recording stage is: an ancestor already forms one, and a "full
          screen" overlay resolved inside it paints under the sidebar. */
@@ -7160,21 +7294,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     },
   };
 
-  /* ---- the accuracy check, drawn under the section it checked ----
+  /* ---- what the AI wrote for one section, drawn under that section ----
 
-     Three states and no fourth: working, could-not-run, and an answer. The
-     answer is an OFFER — the tidied wording sits in a box the therapist can
-     edit, and the note is not touched until they press Use this. A check that
-     rewrote the section on its own would be the live-dictation mistake all
-     over again, one layer up: text arriving in a signed record that nobody
-     chose to put there.
+     The offer, and only the offer. The note is not touched until the therapist
+     presses a button here — a section that rewrote itself the moment the
+     recording stopped would be the live-dictation mistake one layer up: text
+     arriving in a signed record that nobody chose to put there.
 
-     `Dismiss` is not a rejection of the finding, it is a rejection of the
-     panel. What was dictated stays exactly where the parser filed it, which
-     is why dismissing is safe and why it is the low-ceremony option. */
+     When the section is EMPTY this is a simple accept. When it already holds
+     something — the therapist typed while recording, or dictated into it
+     earlier — it becomes the same reconciliation the whole-visit review does,
+     marked the same way by the same function, because a therapist should not
+     have to learn two answers to one question. */
   const CHECK_KIND = {
-    missed: ["warn", "may be missing"],
-    misplaced: ["warn", "may not belong here"],
+    missed: ["warn", "said, but not written here"],
+    misplaced: ["warn", "may belong in another section"],
     ambiguous: ["info", "worth a second look"],
   };
 
@@ -7182,66 +7316,85 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const host = document.querySelector(`[data-fieldcheck="${field}"]`);
     if (!host) return;
     const close = () => { host.hidden = true; host.innerHTML = ""; };
-
-    if (state.pending) {
+    const label = fieldLabel(doc.type, field);
+    const dismissable = (html) => {
       host.hidden = false;
-      host.innerHTML = `<div class="dict-check-line">✦ Checking what was filed into this section…</div>`;
-      return;
-    }
-    if (state.error) {
-      host.hidden = false;
-      host.innerHTML = `<div class="dict-check-line warn">${esc(state.error)}
-        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`;
+      host.innerHTML = html;
       host.querySelector("[data-checkclose]").addEventListener("click", close);
-      return;
+    };
+
+    if (state.error) {
+      return dismissable(`<div class="dict-check-line warn">${esc(state.error)}
+        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`);
     }
 
     const out = state.result || {};
     const issues = out.issues || [];
-    const tidied = String(out.tidied || "").trim();
-    /* Nothing to say. The check ran, the filing was clean, and the panel is a
-       line that clears itself rather than a box the therapist has to dismiss
-       to get their screen back. */
-    const changed = tidied && tidied !== String(state.filed || "").trim();
-    if (!issues.length && !changed) {
-      host.hidden = false;
-      host.innerHTML = `<div class="dict-check-line good">✓ Checked — what was filed here matches what you said.</div>`;
-      setTimeout(() => { if (host.querySelector(".dict-check-line.good")) close(); }, 4000);
-      return;
+    const drafted = String(out.tidied || "").trim();
+    const current = String(doc.data[field] || "").trim();
+
+    /* The recording carried nothing this section could use. Said plainly, and
+       the transcript is named — what was said IS kept, and a therapist who
+       believes their words vanished will simply say them again. */
+    if (!drafted) {
+      return dismissable(`<div class="dict-check-line warn">
+        Nothing in that recording belonged in ${esc(label)}. What you said is in the transcript.
+        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`);
     }
+
+    const parts = current ? overlapSentences(current, drafted) : [];
+    const fresh = parts.filter((s) => !s.seen).length;
 
     host.hidden = false;
     host.innerHTML = `
-      <div class="dict-check-head">✦ Checked this section</div>
+      <div class="dict-check-head">✦ Written from what you said</div>
       ${issues.length ? `<ul class="dict-check-issues">${issues.map((x) => {
         const k = CHECK_KIND[x.kind] || CHECK_KIND.ambiguous;
         return `<li><span class="chip ${k[0]}">${esc(k[1])}</span> ${esc(x.detail)}</li>`;
       }).join("")}</ul>` : ""}
-      ${changed ? `
-        <label class="dict-check-label">Suggested wording — edit it, or leave it</label>
-        <textarea class="dict-check-text" rows="3">${esc(tidied)}</textarea>` : ""}
+      ${current ? `
+        <div class="rev-cmp">
+          <div class="rev-cmp-head">
+            <b>${fresh
+              ? `${fresh} of ${parts.length} sentence${parts.length > 1 ? "s" : ""} say something ${esc(label)} doesn't already`
+              : `${esc(label)} already says all of this`}</b>
+            <span class="rev-cmp-key"><i class="cmp-new"></i>new <i class="cmp-seen"></i>already there</span>
+          </div>
+          <p class="rev-cmp-body">${parts.map((s) =>
+            `<span class="${s.seen ? "cmp-seen" : "cmp-new"}">${esc(s.text)}</span>`).join(" ")}</p>
+        </div>` : ""}
+      <label class="dict-check-label">${current ? "What the recording said" : "Suggested wording"} — edit it, or leave it</label>
+      <textarea class="dict-check-text" rows="3">${esc(drafted)}</textarea>
       <div class="dict-check-actions">
-        ${changed ? `<button class="btn small ai" data-checkuse="1" type="button">Use this</button>` : ""}
-        <button class="btn small" data-checkclose="1" type="button">${changed ? "Keep mine" : "Dismiss"}</button>
-        <span class="hint">Nothing changes in the note until you press Use this.</span>
+        ${current
+          ? `<button class="btn small ai" data-checkuse="replace" type="button">Replace ${esc(label)}</button>
+             <button class="btn small" data-checkuse="append" type="button">Add to the end</button>
+             <button class="btn small" data-checkclose="1" type="button">Keep mine</button>`
+          : `<button class="btn small ai" data-checkuse="replace" type="button">Use this</button>
+             <button class="btn small" data-checkclose="1" type="button">Discard</button>`}
+        <span class="hint">Nothing changes in ${esc(label)} until you press one of these.</span>
       </div>`;
 
     host.querySelector("[data-checkclose]").addEventListener("click", close);
-    const use = host.querySelector("[data-checkuse]");
-    if (use) use.addEventListener("click", () => {
-      const text = host.querySelector(".dict-check-text").value.trim();
-      const ta = document.querySelector(`textarea[data-field="${field}"]`);
-      if (ta) ta.value = text;
-      doc.data[field] = text;
-      /* Still machine-written after this. The therapist accepted a rewording of
-         text dictation put there; they did not sit down and write the section,
-         and marking it by hand would stop the whole-visit review from ever
-         pre-ticking it. */
-      markAiFilled(doc, field, true);
-      S.updateDocData(doc.id, { [field]: text, aiFilled: doc.data.aiFilled }, user);
-      renderFieldGuide(doc);
-      close();
-    });
+    for (const btn of host.querySelectorAll("[data-checkuse]")) {
+      btn.addEventListener("click", () => {
+        const typed = host.querySelector(".dict-check-text").value.trim();
+        if (!typed) return close();
+        const text = btn.dataset.checkuse === "append" && current
+          ? `${current}${/[.!?]$/.test(current) ? "" : "."} ${typed}`
+          : typed;
+        const ta = document.querySelector(`textarea[data-field="${field}"]`);
+        if (ta) ta.value = text;
+        doc.data[field] = text;
+        /* Still machine-written. The therapist accepted a draft the recording
+           produced; they did not write the section themselves, and marking it
+           by hand would stop the whole-visit review from ever pre-ticking it. */
+        markAiFilled(doc, field, true);
+        S.updateDocData(doc.id, { [field]: text, aiFilled: doc.data.aiFilled }, user);
+        renderFieldGuide(doc);
+        close();
+      });
+    }
   }
 
   /* Subjective is, by definition, what the PATIENT reports. The live router
@@ -7370,13 +7523,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return n;
   }
 
-  /* Returns what this utterance put where, so an aimed dictation burst can be
-     accumulated and checked once at the end. Callers that only want the
-     side-effects can ignore it, which is what every caller did before the
-     section check existed. */
   function routeUtterance(doc, user, raw, dstate, silent, target) {
     const parsed = PR.parseUtterance(raw);
-    if (!parsed.text) return null;
+    if (!parsed.text) return;
     const time = nowTime();
     if (!doc.data.transcript) doc.data.transcript = [];
     const uttId = doc.data.transcript.length;
@@ -7434,7 +7583,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // subjective and treatment text entirely.
     const aimed = target && isDictatable(doc.type, target) ? target : null;
     const filedTo = [];
-    const filedText = [];
     let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
       /* A sentence can be half small talk and half complaint. File the half
@@ -7445,7 +7593,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
-      filedText.push({ field, text: cap(clinical) });
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
     /* An aimed microphone that filed nothing needs to say so more loudly than
@@ -7461,8 +7608,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     else if (heldBack) routed.push(`${heldBack} line${heldBack > 1 ? "s" : ""} kept to the transcript only`);
 
     S.updateDocData(doc.id, doc.data, user);
-    const report = { fields: filedTo, filed: filedText, spoken: parsed.text };
-    if (silent) return report;
+    if (silent) return;
     drawAllPoints(doc);
     drawMapNotes(doc, dstate);
     drawTranscript(doc, null, dstate);
@@ -7474,7 +7620,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     renderFieldGuide(doc);
     const log = document.getElementById("routeLog");
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
-    return report;
   }
 
   function fieldLabel(type, field) {

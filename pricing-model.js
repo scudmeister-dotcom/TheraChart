@@ -73,15 +73,21 @@ const BANDS = {
           section: { in: 600, out: 60, think: 450 } },
 };
 
-/* How many section-aimed dictation bursts a visit actually checks.
+/* How many sections a visit is dictated into, one at a time.
 
    This is the only AI call that fires SEVERAL times in one visit, so it is
    the only line whose frequency is a design decision rather than an
-   observation — the check fires once per burst, not per sentence, and a burst
-   under CHECK_MIN_WORDS is dropped without a call (see app.js).
+   observation — one call per section RECORDED, when the therapist stops that
+   recording. Not per sentence and not per utterance: the section is written
+   once, from the whole burst.
+
+   Note what this line does NOT carry. The speech is billed to Speech-to-Text
+   above whichever microphone captured it, so dictating section by section
+   does not add dictation minutes — it moves them. This line is the writing,
+   and only the writing.
 
    Four is an estimate, and it is the estimate to revisit first: it assumes a
-   therapist who dictates section by section fills four of the seven narrative
+   therapist who works section by section fills four of the seven narrative
    sections that way. A therapist who records the whole visit instead makes
    ZERO of these calls, so this line is nil for the record-first workflow the
    product steers toward. `section` is metered under its own purpose, so
