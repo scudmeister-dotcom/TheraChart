@@ -704,10 +704,42 @@ scripts**, and the two it did produce in development were both sign bugs — a
 range dash read as a minus, and a missed word-form `negative` — each inventing a
 mismatch against a row that was perfectly correct. Both are regression tests now.
 
-**The other half is still open.** A lost *region word* still leaves no trace,
-because a finding that was never created cannot be chipped. There is no
-equivalent trick there: a number announces itself with a unit, a body part does
-not.
+**The other half is closed too, by a different tell.** A lost region word still
+creates no finding, and a finding that was never created cannot be chipped — so
+the signal has to come from what survived. A **laterality word** is that signal:
+it is only ever said about a body part, so a side spoken with nothing sided on
+the body map means the part went missing between the microphone and the chart.
+`unpinnedSide()` reports it, and the review screen says so under Findings:
+
+> **A side was mentioned, but nothing on the body map has one.** Dictation may
+> have missed the body part.
+> *"Masakit po ang kaliwang ___ ko, mga tatlong linggo na."*
+
+Measured the same way as the other one — by deleting the region word from real
+scripts to simulate the failure:
+
+```
+                                       false positives   caught
+side word, nothing sided pinned            0 / 22         6 / 6
+pain score, no region at all               0 / 22         1 / 4
+motion implies a joint that isn't pinned   3 / 22         2 / 4
+```
+
+Only the first shipped. The pain signal is clean but weak — pain usually rides
+in a sentence that names the region anyway. The motion signal is too noisy as
+it stands, and all three of its false positives are near misses where the region
+WAS named under a neighbouring word: `dorsiflexion` expects `Ankle` and the
+patient said `tiil`, which maps to `Foot`. A joint-synonym map would probably
+rescue it; until someone writes one it would cry wolf three visits in
+twenty-two, which is how a banner stops being read.
+
+Two traps worth knowing if this is ever edited. **Bare `wala` must never
+trigger it** — Cebuano for LEFT, Tagalog for NONE, and the Tagalog sense is how
+half these visits record a denial, so only the uncontracted `wala nga` counts.
+And the English idioms need real care: "right" is an ordinary word and "left" an
+ordinary verb. The exclusion list for those was written without `\b` anchors at
+first, which silently matched the `he right` inside **the** right — and the
+warning went quiet on the exact sentence it exists for.
 
 **It does not exercise the browser recorder at all.** The voice gate, the idle
 backstop, the per-visit ceiling and the chunk-at-a-pause logic all live in

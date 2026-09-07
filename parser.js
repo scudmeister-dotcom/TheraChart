@@ -2487,6 +2487,87 @@
      thrown away: "One to ten?" is too terse to earn a place in the note, and
      it is the only thing that makes the bare number in the next turn a pain
      rating rather than a stray number. */
+  /* A SIDE that was spoken with no body part pinned to it.
+
+     The companion to unfiledMeasurements below, for the loss that one cannot
+     see. A number announces itself with a unit; a body part does not, so a
+     region word lost in transcription creates no finding, and a finding that
+     was never created cannot be chipped. The therapist signs a note that looks
+     complete.
+
+     A laterality word is the tell. It is only ever said ABOUT a body part —
+     "it is the left one that hurts" has no innocent reading — so a side spoken
+     with nothing sided on the body map means the part went missing between the
+     microphone and the chart. Measured against the voice suite: no false
+     positive on any of the twenty-two correct transcripts, and it caught the
+     region loss in all six scripts it was simulated in, across English,
+     Tagalog and Cebuano.
+
+     "wala" is deliberately NOT a trigger on its own. It is Cebuano for LEFT and
+     Tagalog for NONE, and the Tagalog sense is how half these visits record a
+     denial — "wala pong pamamanhid". Only the uncontracted "wala nga", which
+     stands before a noun and can only be the side, counts here. Same for "tuo
+     nga". Getting this wrong would fire the warning on every denial in Manila.
+
+     The English words need the opposite kind of care: "right" is a common
+     ordinary word and "left" is a common verb, so the idioms are excluded
+     explicitly. A missed warning costs nothing; one that cries wolf on "right
+     now" teaches the therapist to ignore the banner. */
+  const SIDE_SPOKEN_RE = new RegExp(
+    "\\b(?:"
+    + "left(?!\\s+(?:the|it|a|off|over|out|us|him|her|them|early|before|after))"
+    + "|right(?!\\s+(?:now|away|there|here|then|back|about|after|before|\\?))"
+    + "|kaliwa\\w*|kanan\\w*|wala\\s+nga|tuo\\s+nga"
+    + ")\\b", "i");
+  /* Phrases where the word is not a side at all, removed before the test above
+     rather than written into it — "all right" cannot be expressed as a
+     lookahead from the word itself. */
+  /* Anchored on BOTH sides. Without the word boundaries "the right" matched the
+     "he right" inside it and the warning went silent on the very sentence it
+     exists for — "the left one is still sore". */
+  const SIDE_NOT_A_SIDE_RE = new RegExp("\\b(?:" + [
+    "all\\s+right", "alright", "quite\\s+right",
+    // "that's right", "that is right", "you're right", "you are right", …
+    "(?:that|this|you|we|they|he|she)(?:'|’)?(?:s|re)?(?:\\s+(?:is|are|were|was))?\\s+right",
+    "is\\s+that\\s+right", "am\\s+i\\s+right",
+    // "doesn't feel right", "something is not right" — a complaint, not a side
+    "(?:feels?|felt|looks?|sounds?|seems?)\\s+right", "not\\s+right", "n(?:'|’)?t\\s+right",
+    "right\\s+(?:now|away|there|here|then|back|about)",
+    // directions, which the open microphone picks up on the way out
+    "(?:turn|turns|turned|turning|go|goes|going|walk|walks|walked|head|heads)\\s+right",
+    // "left" as a verb, and "left over"
+    "(?:she|he|they|i|we|you|it|has|have|had|who)\\s+left", "left\\s+over",
+  ].join("|") + ")\\b", "gi");
+
+  /** A side was spoken, but nothing on the body map carries one. */
+  function unpinnedSide(text, findings) {
+    const anySided = (findings || []).some((f) => f && f.side);
+    if (anySided) return null;
+    const src = String(text || "");
+    const scrubbed = src.replace(SIDE_NOT_A_SIDE_RE, " ");
+    const hit = SIDE_SPOKEN_RE.exec(scrubbed);
+    if (!hit) return null;
+    /* Quote the sentence the side word is IN, from the original text so the
+       therapist reads what was actually said. Scrubbing can shift offsets, so
+       the word is located again in the source.
+
+       Both ends are found relative to the hit. Trimming at the first sentence
+       end in a window instead cut the quote off BEFORE the word it is meant to
+       show — "Masakit po talaga." for a sentence about the left side two
+       clauses later. */
+    const at = src.toLowerCase().indexOf(hit[0].toLowerCase(), Math.max(0, hit.index - 8));
+    if (at < 0) return { side: hit[0].toLowerCase(), quote: src.slice(0, 90).trim() };
+    let from = 0;
+    for (const m of src.slice(0, at).matchAll(/[.!?]\s+/g)) from = m.index + m[0].length;
+    const rest = src.slice(at).search(/[.!?](?:\s|$)/);
+    const to = rest > -1 ? at + rest + 1 : src.length;
+    const clipped = from < at - 90;
+    return {
+      side: hit[0].toLowerCase(),
+      quote: (clipped ? "…" : "") + src.slice(clipped ? at - 90 : from, to).trim(),
+    };
+  }
+
   /* Numbers that were SPOKEN as measurements and reached no row.
 
      The review screen can chip a finding that looks wrong and can explain a
@@ -2786,6 +2867,7 @@
     extractMeasurements,
     aggregateMeasurements,
     unfiledMeasurements,
+    unpinnedSide,
     correctDictation,
     DICTATION_FIXES,
     classifyUtterance,

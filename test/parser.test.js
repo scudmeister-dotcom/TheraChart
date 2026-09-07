@@ -7,7 +7,7 @@
 
 const { parseUtterance, classifyUtterance, guessSpeaker, refineTranscript,
         correctDictation, extractMeasurements, isDenial, isPaired,
-        aggregateMeasurements, unfiledMeasurements } = require("../parser.js");
+        aggregateMeasurements, unfiledMeasurements, unpinnedSide } = require("../parser.js");
 
 let passed = 0;
 const failures = [];
@@ -571,6 +571,65 @@ function mention(result, partName, side = undefined) {
   const rom = r.measurements.rom;
   check("the unitless pass does not swallow unrelated numbers",
     rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
+}
+
+/* A SIDE THAT REACHED NO BODY PART.
+
+   The other half of the silent loss. A number announces itself with a unit and
+   can be checked against the rows it should have produced; a body part cannot,
+   so a region word lost in transcription leaves nothing to chip and the note
+   reads as complete. A laterality word is the only reliable tell — it is said
+   ABOUT a part, so a side with nothing sided pinned means the part went missing.
+
+   Measured on the voice suite: silent on all 22 correct transcripts, and it
+   caught the loss in all 6 scripts where a region word was deleted, across
+   English, Tagalog and Cebuano. The false-positive cases below are the ones
+   that decide whether the warning is worth reading. */
+{
+  const sided = [{ part: "Knee", side: "left" }];
+  const unsided = [{ part: "Knee", side: null }];
+
+  check("a side with nothing sided pinned is reported",
+    !!unpinnedSide("It is the left one that hurts", []), "expected a warning");
+
+  check("…and the quote is the sentence the side word is in",
+    (unpinnedSide("Masakit po talaga. Yung kaliwa po ang mas masakit ngayon. Salamat po.", []) || {})
+      .quote === "Yung kaliwa po ang mas masakit ngayon.",
+    JSON.stringify(unpinnedSide("Masakit po talaga. Yung kaliwa po ang mas masakit ngayon. Salamat po.", [])));
+
+  check("a finding that already carries a side keeps it quiet",
+    unpinnedSide("Her left knee hurts", sided) === null, "expected silence");
+
+  check("a finding with no side does not count as one",
+    !!unpinnedSide("Her left knee hurts", unsided), "expected a warning");
+
+  check("Tagalog and Cebuano laterality are read too",
+    !!unpinnedSide("Masakit po ang kanang bahin", []) && !!unpinnedSide("Sakit ang wala nga bahin", []),
+    "expected both");
+
+  /* "wala" is Cebuano for LEFT and Tagalog for NONE, and the Tagalog sense is
+     how these visits record a denial. Only the uncontracted "wala nga", which
+     stands before a noun, is a side — bare "wala" firing here would warn on
+     every denial in Manila. */
+  check("a bare Tagalog \"wala\" denial is NOT read as a side",
+    unpinnedSide("Wala pong pamamanhid, wala pong tingling", []) === null,
+    JSON.stringify(unpinnedSide("Wala pong pamamanhid, wala pong tingling", [])));
+
+  /* "right" is an ordinary English word and "left" an ordinary verb. */
+  const idioms = ["All right, let us take a look", "That is right, the pain started last week",
+    "That's right", "You are right about that", "I will be right back", "Come in right now",
+    "She left the clinic early", "Who left the door open", "We left off with the exercises",
+    "It does not feel right", "Something is not right", "That sounds right", "Quite right",
+    "Turn right at the corner", "Go right past the lift"];
+  const fired = idioms.filter((t) => unpinnedSide(t, []));
+  check("no ordinary use of \"right\" or \"left\" raises the warning",
+    fired.length === 0, JSON.stringify(fired));
+
+  /* The boundary bug that made this silent on the sentence it exists for:
+     without \b anchors the idiom list matched the "he right" inside "the
+     right", and the real warning never fired. */
+  check("\"the right one\" is a side, not the idiom \"he right\"",
+    !!unpinnedSide("The right one is still sore", []), "expected a warning");
 }
 
 /* A NUMBER THAT REACHED NO ROW.
