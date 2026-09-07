@@ -727,7 +727,58 @@
      that changes subject at the comma — "shoulder flexion is fine, knee is 90
      degrees" — offers no chain that reaches the 90, and the number stays with
      the clause that owns it. */
-  const ROM_FILLER = "(?:[\\s,]+(?:is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to))*";
+  /* What may sit between the motion and its value.
+
+     The named words below are the copulas and hedges a therapist reaches for,
+     and they used to be the WHOLE list — which was the bug, because the list
+     can never be complete. "hip flexion in supine is 110 degrees", "shoulder
+     flexion on the right is 60 degrees", "knee flexion today is 90 degrees"
+     and "knee flexion passively 120 degrees" are all ordinary dictation, and
+     every one of them dropped the reading outright: no measurement row, no
+     warning, nothing on screen to say a number had been spoken at all. Six of
+     twelve realistic phrasings were lost this way.
+
+     An unnamed word now passes too, up to four of them, held in by three
+     guards that widen what counts as the same clause without widening what
+     counts as a value:
+
+       - the UNIT is still required (ROM_DEGREES), so "3 sets of 10" and
+         "4 out of 5" cannot match however the words fall;
+       - a JOINT, a MOTION or a clause connector ENDS the gap, so a reading
+         belonging to the next measurement is never stolen by the one before
+         it — "knee flexion is limited, extension is 5 degrees" stops dead at
+         "extension" rather than filing 5° of knee flexion;
+       - the separator admits only whitespace and commas, so a full stop ends
+         the reach.
+
+     Inventing an angle is still worse than dropping one. */
+  const ROM_NAMED_FILLER = "is|was|to|at|measured|limited|now|about|around|approximately|only|up\\s+to";
+  /* What ENDS the gap. Joints and motions, so a value belonging to the next
+     measurement is never stolen by the one before it; clause connectors, so
+     the reach stops at a new thought; and two classes that are not obvious and
+     that the test suite caught:
+
+       THE SIGN. "negative", "minus" and "neg" belong to ROM_SIGN, which sits
+       inside the value's own capture group. Let the gap eat one and the
+       reading survives with its sign stripped — "extension is negative five"
+       files as five degrees of HYPEREXTENSION where the therapist dictated a
+       flexion CONTRACTURE. The opposite finding, in a signed chart, reading
+       perfectly well. Dropping a reading is recoverable; inverting one is not.
+
+       THE HESITATIONS. "er" is both a filler noise and external rotation, and
+       the existing policy is to drop the reading rather than guess (see the
+       ROM_MOTIONS comment). A gap that walked past "er" would quietly reverse
+       that decision. */
+  const ROM_GAP_STOP = `(?:${ROM_MOTIONS}|${ROM_JOINTS}|and|but|so|then|while|because`
+    + `|negative|minus|neg|er|uh|um|ah)\\b`;
+  /* The NARROW filler, for the pass that has no unit to lean on. */
+  const ROM_FILLER = `(?:[\\s,]+(?:${ROM_NAMED_FILLER}))*`;
+  /* The WIDE one, used only where ROM_DEGREES demands a literal "degrees" a
+     few characters later. That unit is what makes the extra reach safe: "3
+     sets of 10" and "4 out of 5" cannot match it however the words fall. The
+     unitless pass below must NOT use this — widening a pattern that accepts a
+     bare number invented a 3-degree abduction the first time it was tried. */
+  const ROM_FILLER_WIDE = `(?:[\\s,]+(?:${ROM_NAMED_FILLER}|(?!${ROM_GAP_STOP})[a-z]+)){0,4}`;
   /* THE SIGN. "Extension is negative five degrees" is a flexion contracture;
      "extension is five degrees" is hyperextension — the opposite finding about
      the opposite knee, and both sentences read perfectly well, so a therapist
@@ -764,9 +815,9 @@
   const JOINT_TOKEN = `(?:${ROM_JOINTS})s?`;
 
   const JOINT_ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `\\b(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})\\s+(${ROM_MOTIONS})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   const BARE_ROM_RE = new RegExp(
-    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   /* Motion first, joint after it — the ordinary Tagalog and Cebuano word order,
      and English's too once the joint is qualified:
 
@@ -788,7 +839,7 @@
   const MOTION_JOINT_ROM_RE = new RegExp(
     `\\b(${ROM_MOTIONS})[\\s,]+(?:of|on|in|for|sa|ng|nga|para\\s+sa)?\\s*` +
     `(?:the|his|her|their|ang|akong|among|imong|iyang|yung|aking)?\\s*` +
-    `(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})${ROM_FILLER}${ROM_DEGREES}`, "gi");
+    `(?:(${SIDE_WORDS_ABBR})\\s+)?(${JOINT_TOKEN})${ROM_FILLER_WIDE}${ROM_DEGREES}`, "gi");
   const BARE_ROM_NOUNIT_RE = new RegExp(
     `\\b(?:(${SIDE_WORDS})\\s+)?(${ROM_MOTIONS})${ROM_FILLER}${ROM_BARE_NUM}`, "gi");
   // where a joint (with any side stated on it) is named, so a bare motion can

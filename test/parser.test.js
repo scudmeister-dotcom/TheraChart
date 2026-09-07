@@ -573,6 +573,67 @@ function mention(result, partName, side = undefined) {
     rom.length === 1 && rom[0].degrees === 120, JSON.stringify(rom));
 }
 
+/* AN UNNAMED WORD between the motion and its value.
+
+   The filler run used to be a closed allow-list of copulas and hedges, so
+   anything else standing between the motion and the number dropped the reading
+   outright — no row, no warning, nothing on screen to say a measurement had
+   been spoken. These are not exotic phrasings; they are how the position, the
+   side, the timing and the manner of a measurement get dictated, and six of
+   twelve realistic sentences were lost. The value now survives an unnamed word,
+   while the two things that must still stop the run are asserted below. */
+{
+  const romOf = (t) => parseUtterance(t).measurements.rom;
+  const one = (t) => { const r = romOf(t); return r.length === 1 ? r[0] : null; };
+
+  const supine = one("Hip flexion in supine is 110 degrees");
+  check("a position between the motion and the value does not drop the reading",
+    supine && supine.joint === "hip" && supine.motion === "flexion" && supine.degrees === 110,
+    JSON.stringify(romOf("Hip flexion in supine is 110 degrees")));
+
+  const after = one("Shoulder flexion on the right is 60 degrees");
+  check("a side stated AFTER the motion no longer costs the whole reading",
+    after && after.joint === "shoulder" && after.motion === "flexion" && after.degrees === 60,
+    JSON.stringify(romOf("Shoulder flexion on the right is 60 degrees")));
+
+  const today = one("Knee flexion today is 90 degrees");
+  check("a time word between the motion and the value reads",
+    today && today.motion === "flexion" && today.degrees === 90,
+    JSON.stringify(romOf("Knee flexion today is 90 degrees")));
+
+  const passive = one("Knee flexion passively 120 degrees");
+  check("a manner word reads too",
+    passive && passive.motion === "flexion" && passive.degrees === 120,
+    JSON.stringify(romOf("Knee flexion passively 120 degrees")));
+
+  /* The reach stops where a value stops belonging to this motion. */
+  const next = romOf("Knee flexion is limited, extension is 5 degrees");
+  check("a following MOTION ends the run — the 5 is extension's, not flexion's",
+    next.length === 1 && next[0].motion === "extension" && next[0].degrees === 5,
+    JSON.stringify(next));
+
+  const clause = romOf("We discussed knee flexion and her shoulder is 90 degrees");
+  check("a clause connector ends the run rather than stealing the angle",
+    clause.length === 0, JSON.stringify(clause));
+
+  const stop = romOf("Her knee flexion was good. Her elbow extension is 30 degrees");
+  check("a full stop ends the run",
+    stop.length === 1 && stop[0].joint === "elbow" && stop[0].degrees === 30,
+    JSON.stringify(stop));
+
+  /* The sign is not an ordinary word, and letting the run eat it would invert
+     the finding rather than lose it — a contracture filed as a hyperextension. */
+  const neg = one("Knee extension on the left is negative 5 degrees");
+  check("an unnamed word before the SIGN still keeps the sign",
+    neg && neg.motion === "extension" && neg.degrees === -5,
+    JSON.stringify(romOf("Knee extension on the left is negative 5 degrees")));
+
+  /* No unit, so nothing here is an angle however the words fall. */
+  const sets = romOf("We worked on knee flexion, 3 sets of 10");
+  check("the widened run never reaches a number with no unit",
+    sets.length === 0, JSON.stringify(sets));
+}
+
 /* A comma between the motion and its value — the shape the refine pass writes
    ("right ankle dorsiflexion is limited, about ten degrees" comes back
    punctuated) and the shape a therapist types. Every one of these dropped the

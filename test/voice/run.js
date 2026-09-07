@@ -444,10 +444,22 @@ async function sweep(scripts, key) {
        transcriber, same model. A script that swings on which synthetic voice
        reads it is measuring ElevenLabs, and this one is supposed to be
        measuring the chart. */
-    const take = await say.speakScript(s, { key, voices: { ...voices, ...(s.voices || {}) },
-      modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL });
-    takes.push({ script: s, ...take });
-    console.log(`${take.seconds.toFixed(1)}s${take.wavs.length > 1 ? ` in ${take.wavs.length} chunks` : ""}${take.cached ? " (cached)" : ""} peak ${take.peak.toFixed(2)}`);
+    /* --takes N used to be read only by the sweep, so a scored run silently
+       ignored it and printed one number — which is the exact trap the rest of
+       this file warns about, since one take is one sample and the note is
+       graded on whichever transcript that take happened to produce. It is
+       honoured here too now: each take is INDEPENDENT audio (say.js keys the
+       cache on the take index), so N takes answer "how often does the chart
+       come out right", not just "did it this once". */
+    let first = null;
+    for (let k = 0; k < TAKES; k++) {
+      const take = await say.speakScript(s, { key, voices: { ...voices, ...(s.voices || {}) },
+        modelId: MODEL_ID, settings, gapMs: GAP_MS, roomRms: ROOM, level: LEVEL, take: k });
+      takes.push({ script: s, takeNo: k, ...take });
+      if (k === 0) first = take;
+    }
+    const take = first;
+    console.log(`${take.seconds.toFixed(1)}s${take.wavs.length > 1 ? ` in ${take.wavs.length} chunks` : ""}${take.cached ? " (cached)" : ""} peak ${take.peak.toFixed(2)}${TAKES > 1 ? ` ×${TAKES} takes` : ""}`);
     if (take.peak < 0.05) console.log(`    ⚠ that take is almost silent — check the voice id and --level`);
   }
 
@@ -493,7 +505,10 @@ async function sweep(scripts, key) {
 
     for (const t of takes) {
       const sc = t.script;
-      process.stdout.write(`  ${sc.id}… `);
+      /* The take number rides in the reported id so N rows for one script stay
+         tellable apart in the table and in --json. */
+      const rid = TAKES > 1 ? `${sc.id} #${t.takeNo + 1}` : sc.id;
+      process.stdout.write(`  ${rid}… `);
 
       /* Exactly the requests processRecording makes in app.js: one raw WAV
          body per chunk, the chosen language code, chirp2, bearer token — sent
@@ -517,7 +532,7 @@ async function sweep(scripts, key) {
       const lost = parts.filter((p) => p.error);
       if (lost.length === parts.length) {
         console.log(`STT FAILED — ${lost[0].error}`);
-        results.push({ id: sc.id, why: sc.why, sttError: lost[0].error, chunks: t.wavs.length,
+        results.push({ id: rid, why: sc.why, sttError: lost[0].error, chunks: t.wavs.length,
           earned: 0, possible: sc.expect.reduce((n, a) => n + a.weight, 0), failed: [], heardFailed: [] });
         continue;
       }
@@ -564,7 +579,7 @@ async function sweep(scripts, key) {
       console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · note ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
-        id: sc.id, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
+        id: rid, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
         wer: w.wer, refWords: w.ref, edits: w.edits,
         spoken: spokenText(sc), heard,
         heardFailed, refineError, fellBack,

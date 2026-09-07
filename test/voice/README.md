@@ -589,28 +589,103 @@ overwrite them with numbers from here.
 little more honest and gives the voice gate something to calibrate against, but
 it is not a clinic.
 
-**Some assertions are variance-dependent, not stable.** `ankle/cebuano`'s ROM
-check passes or fails depending on whether the refine pass happens to write
-"limited, about 10 degrees" with a comma. Until that is fixed, read a single run
-of it as a coin flip, not a verdict.
+**Some assertions were variance-dependent.** `ankle/cebuano`'s ROM check used to
+pass or fail on whether the refine pass happened to write "limited, about 10
+degrees" with a comma. Both that and the wider extraction bug behind it are
+fixed; five independent takes now score it 100% each time.
 
-### The open ROM-extraction bug, as currently understood
+### Does the chart survive a lost Cebuano word? Measured — yes, 10/10
 
-`ROM_FILLER` in parser.js joins filler words with `\s+`, so **anything between
-the motion and the value that is not on its short allow-list drops the reading
-entirely** — silently, with nothing on screen to say a number was spoken:
+The open question after the language matrix was the one the matrix could not
+answer: every Cebuano note scored 100%, but each was a single take, and `siko`
+arrives only 4-6 times in 6. A note cannot pin a region that never reached the
+transcript, so the runs that mattered were the ones nobody had sampled.
+
+`--takes` now works on a scored run (it used to be read only by the sweep, so a
+scored run silently ignored it and reported one sample as if it were a result).
+Five independent recordings of each Cebuano script, graded end to end:
+
+```
+ankle/cebuano       #1 16.2%  #2 8.1%  #3 5.4%  #4 10.8%  #5 10.8%   note 100% ×5
+lang/cebuano-only   #1 14.5%  #2 16.4%  #3 27.3%  #4 10.9%  #5 14.5%  note 100% ×5
+
+TRANSCRIPTION  mean word error 13.5%
+NOTE           100.0%  (80/80 weighted points)
+```
+
+**Takes #3 and #5 lost `siko` outright** — the transcript did not contain the
+word for elbow at all — and both still pinned the left elbow, filed the 6/10 and
+kept the denial off the body map. Take #3 did it at 27.3% word error, the worst
+recording in the set.
+
+So the refine pass is recovering the region from the surrounding sentences
+rather than from the single word, which is the behaviour you would want and
+which nothing had previously demonstrated. **80 of 80 weighted points across ten
+independent Cebuano recordings** is the strongest evidence in this file that
+Cebuano dictation is safe to offer.
+
+Two limits, as always. This is synthetic speech, so the word error is a floor
+and not a clinic number. And "the model recovered it twice out of ten" is not
+"the model always recovers it" — a script whose ONLY mention of the region is
+the lost word would have nothing to recover from, and this one mentions the
+elbow more than once.
+
+### The ROM-extraction bug — fixed 2026-09-06
+
+`ROM_FILLER` in parser.js joined filler words from a closed allow-list, so
+**anything between the motion and the value that was not on the list dropped the
+reading entirely** — silently, with nothing on screen to say a number had been
+spoken. Six of twelve realistic phrasings were lost:
 
 ```
 right shoulder flexion is 60 degrees        → found
-shoulder flexion on the right is 60 degrees → LOST   (a side, stated after the motion)
-knee flexion, 90 degrees                    → LOST   (a comma)
-knee flexion today is 90 degrees            → LOST   (a time word)
+knee flexion, 90 degrees                    → found  (the comma was fixed earlier)
+shoulder flexion on the right is 60 degrees → LOST   a side, stated after the motion
+hip flexion in supine is 110 degrees        → LOST   a position
+knee flexion today is 90 degrees            → LOST   a time word
+knee flexion passively 120 degrees          → LOST   a manner word
+shoulder abduction after therapy is 100 deg → LOST   a context phrase
 ```
 
-It was first found as "a comma bug" via `ankle/cebuano`; `numbers/confusables`
-then caught the same failure with no comma in sight. Both `ankle/cebuano` and
-the shoulder assertion in `numbers/confusables` are really measuring this one
-defect.
+All twelve now read. An unnamed word passes, up to four of them, and three
+guards keep the reach honest: the unit is still required, so `3 sets of 10` and
+`4 out of 5` cannot match; a joint, a motion or a clause connector ends the run,
+so a value belonging to the next measurement is never stolen by the one before
+it; and the separator takes only whitespace and commas, so a full stop stops it.
+
+**Two things the test suite caught that the first attempt got wrong**, both
+worth knowing before touching this again:
+
+1. **The gap ate the SIGN.** `negative`, `minus` and `neg` belong to `ROM_SIGN`,
+   which lives inside the value's own capture group. An unnamed-word run that
+   walks past `negative` leaves the reading with its sign stripped — "extension
+   is negative five" files as five degrees of *hyperextension* where the
+   therapist dictated a flexion *contracture*. The opposite finding, in a signed
+   chart, reading perfectly well. They are stop words now.
+2. **It was applied to the unitless pass.** `ROM_FILLER` is shared with the
+   pattern that accepts a bare number with no `degrees` after it, where the
+   "unit is required" guard does not exist — and widening that invented a
+   3-degree abduction out of ordinary prose. There are two fillers now: the wide
+   one is used only where `ROM_DEGREES` demands a literal unit.
+
+`numbers/confusables` and `ankle/cebuano` were both really measuring this one
+defect. `ankle/cebuano` was also described here as variance-dependent for that
+reason; across five independent takes it now scores 100% every time.
+
+### What the review screen does and does not catch
+
+Worth stating plainly, because it decides how much a transcription gap actually
+costs. The review screen chips every finding with where it came from — `no-side`
+("which side?"), `misheard`, `ungrounded` ("not traceable to the transcript"),
+`live-only`, `corrected`, `hypothetical`, `not-the-patient`, `denied` — and it
+explains every measurement it declined to file ("Not filed — …: reason").
+
+**What it cannot show is something that never arrived.** A region word lost in
+transcription produces no finding, so there is no row to chip; a ROM reading the
+parser failed to extract is in neither the "to file" list nor the "not filed"
+one. The therapist sees a note that looks complete. That is why the extraction
+bug above mattered more than its size suggests, and it is the one class of error
+this app currently has no signal for.
 
 **It does not exercise the browser recorder at all.** The voice gate, the idle
 backstop, the per-visit ceiling and the chunk-at-a-pause logic all live in
