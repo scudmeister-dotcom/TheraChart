@@ -1051,7 +1051,12 @@ const SCRIPTS = [
       { who: "clinician", text: "She denies any numbness or tingling in the hand." },
       { who: "clinician", text: "She has trouble reaching overhead to the cupboard." },
     ],
-    heard: { wer: 0.15, must: ["right", "shoulder", "two weeks"] },
+    /* `must` is a literal regex over the transcript, and Chirp 2 returns
+       "2 weeks" for spoken "two weeks" — correctly, at 0.0% word error, since
+       the WER normaliser reads number words and digits as the same token. The
+       duration is graded on the note below, where both spellings are accepted;
+       asking for it here only measured which form Google chose to write. */
+    heard: { wer: 0.15, must: ["right", "shoulder", "weeks"] },
     expect: [
       { name: "the section was written at all", weight: 3,
         test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
@@ -1135,8 +1140,13 @@ const SCRIPTS = [
       { name: "no home programme invented — none was mentioned", weight: 3,
         test: (r) => !/\bhep\b|home (exercise )?program/.test(secText(r)),
         detail: (r) => `tidied: "${secText(r)}"` },
+      /* Word-bounded, and the boundaries are load-bearing: an unbounded /ice/
+         matched "tw(ice) a week" and failed this script for a plan that had
+         invented nothing at all. A negative assertion that fires on a
+         substring of an ordinary word is worse than no assertion — it reports
+         the model hallucinating when the model was correct. */
       { name: "no modality invented — none was mentioned", weight: 3,
-        test: (r) => !/ultrasound|e-?stim|tens|ice|heat/.test(secText(r)),
+        test: (r) => !/\bultrasound\b|\be-?stim\b|\btens\b|\bice\b|\bheat\b/.test(secText(r)),
         detail: (r) => `tidied: "${secText(r)}"` },
     ],
   },
@@ -1210,7 +1220,7 @@ const SCRIPTS = [
       { name: "the prior surgery survived", weight: 2,
         test: (r) => /rotator cuff|repair/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
       { name: "no condition invented", weight: 3,
-        test: (r) => !/asthma|cancer|stroke|arthritis|copd/.test(secText(r)),
+        test: (r) => !/\basthma\b|\bcancer\b|\bstroke\b|\barthritis\b|\bcopd\b/.test(secText(r)),
         detail: (r) => `tidied: "${secText(r)}"` },
     ],
   },
