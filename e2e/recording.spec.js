@@ -258,3 +258,133 @@ test.describe("recording into one section", () => {
     expect(await fieldOf(page, docId, "subjective")).toBe("");
   });
 });
+
+/* The review's reconciliation, which is what a therapist who typed while the
+   visit recorded actually has to work through.
+
+   The AI is stubbed at the sync boundary — `refineTranscript` and `blendNote`
+   — rather than called. Everything downstream of that is the real thing: the
+   section rows, the sentence marking, the three buttons and the apply. What is
+   being protected is not the model's wording but the rule around it, which is
+   that NOTHING reaches the note until the therapist ticks a row and presses
+   Approve. */
+test.describe("reconciling the AI's draft with what the therapist typed", () => {
+  const TYPED = "Right shoulder pain for two weeks, worse at night.";
+  const DRAFTED = "Right shoulder pain for two weeks, worse at night. "
+    + "Denies numbness or tingling in the hand. Reports difficulty reaching overhead.";
+
+  /** A draft eval with a transcript, hand-typed Subjective, and a stubbed AI. */
+  async function reviewable(page) {
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "eval", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.evaluate(([id, typed, drafted]) => {
+      const S = window.TheraStore, sync = window.TheraSync;
+      const doc = S.getDoc(id);
+      doc.data.transcript = [
+        { time: "9:15 AM", text: "My right shoulder has been painful for about two weeks." },
+        { time: "9:15 AM", text: "It is worse at night." },
+        { time: "9:16 AM", text: "I don't have any numbness or tingling in the hand." },
+      ];
+      /* Typed by hand, which is what makes the row start UNticked — the flag
+         the review reads is cleared by the textarea's own input listener, so
+         it is set the way typing sets it. */
+      doc.data.subjective = typed;
+      doc.data.aiFilled = { ...(doc.data.aiFilled || {}), subjective: false };
+      S.updateDocData(id, doc.data, S.currentUser());
+
+      sync.refine = "gemini";                    // so the Review button renders enabled
+      sync.refineTranscript = async () => ({
+        aiFailed: false, source: "gemini",
+        dialogue: doc.data.transcript.map((t) => ({ speaker: "patient", text: t.text, keep: true })),
+        findings: [], corrections: [],
+        measurements: { rom: [], mmt: [], special: [], pain: [] },
+        subjective: drafted,
+        treatment: "", reason: "", precautions: "", pmh: "", objective: "", assessment: "",
+      });
+      sync.blendNote = async ({ mine, ai }) => ({ text: `${mine} ${ai}` });
+    }, [docId, TYPED, DRAFTED]);
+    await page.goto(`/#/doc/${docId}`);
+    await page.locator("#refineBtn").click();
+    const sections = page.locator("#modalRoot .modal .rev-tab", { hasText: "Note sections" });
+    await sections.waitFor({ state: "visible", timeout: 30_000 });
+    await sections.click();
+    return docId;
+  }
+
+  const subjectiveRow = (page) =>
+    page.locator("#modalRoot .rev-section").filter({ hasText: "Subjective" }).first();
+
+  test("a section the therapist typed is not pre-ticked, and says why", async ({ page }) => {
+    await reviewable(page);
+    const row = subjectiveRow(page);
+    await expect(row).toContainText("you typed this — ticking replaces it");
+    await expect(row.locator('input[type="checkbox"]')).not.toBeChecked();
+    await expect(row).toContainText(TYPED.slice(0, 30));   // their own words, quoted back
+  });
+
+  /* The reason the strip exists: the therapist has to see which sentences say
+     something their own note does not. */
+  test("the AI's draft is marked sentence by sentence against what was typed", async ({ page }) => {
+    await reviewable(page);
+    const row = subjectiveRow(page);
+    await expect(row.locator(".rev-cmp-head")).toContainText("2 of 3 sentences");
+    await expect(row.locator(".rev-cmp-body .cmp-seen")).toContainText("Right shoulder pain for two weeks");
+    const fresh = row.locator(".rev-cmp-body .cmp-new");
+    await expect(fresh).toHaveCount(2);
+    await expect(fresh.first()).toContainText("Denies numbness");
+  });
+
+  /* All three buttons edit the box and stop there. This is the property the
+     whole screen is built on. */
+  test("keep mine / use the AI's / blend all edit the box, never the note", async ({ page }) => {
+    const docId = await reviewable(page);
+    const row = subjectiveRow(page);
+    const box = row.locator("textarea.rev-text");
+    const noteNow = () => page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId);
+
+    await row.getByRole("button", { name: "Keep mine" }).click();
+    await expect(box).toHaveValue(TYPED);
+    /* The review says this its own way — "in your own words" — where the
+       section panel says "{label} already says all of this". Two surfaces, two
+       contexts: one is about the whole note, the other about one box. */
+    await expect(row.locator(".rev-cmp-head")).toContainText("already in your own words");
+
+    await row.getByRole("button", { name: "Use the AI's" }).click();
+    await expect(box).toHaveValue(DRAFTED);          // the AI's ORIGINAL words
+
+    await row.getByRole("button", { name: "Blend both" }).click();
+    await expect(box).toHaveValue(`${TYPED} ${DRAFTED}`);
+
+    // through all of that the note is untouched, and the row is still unticked
+    expect(await noteNow()).toBe(TYPED);
+    await expect(row.locator('input[type="checkbox"]')).not.toBeChecked();
+  });
+
+  /* …and an untouched row stays untouched through the apply, which is the
+     other half of the same promise. */
+  test("approving writes only the rows that were ticked", async ({ page }) => {
+    const docId = await reviewable(page);
+    const row = subjectiveRow(page);
+
+    await row.getByRole("button", { name: "Use the AI's" }).click();
+    await page.locator("#revApply").click();
+    await expect(page.locator("#modalRoot .modal")).toHaveCount(0);
+    expect(await page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId)).toBe(TYPED);
+  });
+
+  test("…and does write the row once it is ticked", async ({ page }) => {
+    const docId = await reviewable(page);
+    const row = subjectiveRow(page);
+
+    await row.getByRole("button", { name: "Use the AI's" }).click();
+    await row.locator('input[type="checkbox"]').check();
+    await page.locator("#revApply").click();
+    await expect(page.locator("#modalRoot .modal")).toHaveCount(0);
+    await expect.poll(() => page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId))
+      .toBe(DRAFTED);
+  });
+});
