@@ -563,9 +563,27 @@ for (const c of CANDIDATES) auditLadder(c);
    market does not have. The column that decides it is "sold out", not
    "typical" — a clinic using what it PAID FOR must still clear the floor. */
 const GM_FLOOR = 0.60;
-console.log(`\n  The floor: ${(100 * GM_FLOOR).toFixed(0)}% at typical use, and the shipped ladder holds 50-55% even`);
-console.log(`  when every visit and every dictation minute sold is consumed. Any ladder whose`);
-console.log(`  SOLD-OUT column drops under ~45% is one bad usage month from unprofitable.`);
+/* COMPUTED, not asserted. This line used to claim the shipped ladder "holds
+   50-55%" when sold out, which was true of the costs it was written against
+   and stopped being true the moment they were corrected: fixing the meter's
+   output tokens and re-measuring refine's input took the entry rung's
+   sold-out margin to 46%, below the very floor the sentence was claiming.
+   A hardcoded number in a model that recomputes everything around it is a
+   claim that can go stale without anything failing — so it is derived. */
+const SOLD_OUT = PLANS.map((p) => planMargin(p, p.visits, POOL_MIN_PER_VISIT, RATES.list).gm);
+const soldOutLo = Math.min(...SOLD_OUT), soldOutHi = Math.max(...SOLD_OUT);
+const DANGER = 0.45;
+console.log(`\n  The floor: ${(100 * GM_FLOOR).toFixed(0)}% at typical use. The shipped ladder holds `
+  + `${(100 * soldOutLo).toFixed(0)}-${(100 * soldOutHi).toFixed(0)}% when every visit and every`);
+console.log(`  dictation minute sold is consumed. Any ladder whose SOLD-OUT column drops under`);
+console.log(`  ~${(100 * DANGER).toFixed(0)}% is one bad usage month from unprofitable.`);
+if (soldOutLo < 0.5) {
+  const gap = Math.round(100 * (soldOutLo - DANGER));
+  console.log(`\n  ⚠ ${PLANS[SOLD_OUT.indexOf(soldOutLo)].name} is at ${(100 * soldOutLo).toFixed(0)}% sold out — under 50%, and `
+    + `${gap} point${gap === 1 ? "" : "s"} off the ~${(100 * DANGER).toFixed(0)}% danger line.`);
+  console.log(`    The out-token bands are still ESTIMATED; /api/usage records them for real`);
+  console.log(`    from 2026-09-07, and that is the number that settles whether this is real.`);
+}
 
 console.log("\n=========== WHAT THE DICTATION METER IS PROTECTING ===========");
 console.log(`  30 min of mic-on, gate OFF (before yesterday):           ${peso(30 * STT_PER_MIN)}`);
