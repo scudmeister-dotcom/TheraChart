@@ -472,18 +472,22 @@ test.describe("comparing your own note with the recording, without an AI", () =>
     expect(await page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId)).toBe(before);
   });
 
-  /* Blend cannot work HERE, and this pins that rather than pretending.
+  /* Blend is NOT offered here, and that is the point.
 
-     openCompare is only ever reached when sync.refine is not "gemini", which
-     is the same condition that makes /api/blend-note answer 503 — so the one
-     screen offering the button is the one screen where the service behind it
-     is guaranteed to be off. It degrades with a message rather than failing
-     silently, which is why this is a finding and not an outage. */
-  test("blend is offered on the one screen where it cannot work", async ({ page }) => {
+     This screen is reached only when sync.refine is not "gemini", which is the
+     same condition that makes /api/blend-note answer 503 — so the button used
+     to sit on the one screen guaranteed to have the service behind it switched
+     off. It failed politely, which is worse than failing loudly: a control that
+     never works teaches a therapist the app is unreliable, and they stop
+     trusting the ones that do.
+
+     Blending still exists in the AI review, which only appears when the model
+     answered in the first place. */
+  test("blend is not offered on a screen that only appears without an AI", async ({ page }) => {
     await processedWithoutAi(page);
-    const r = row(page);
-    await expect(r.getByRole("button", { name: "Blend both" })).toBeVisible();
-    await r.getByRole("button", { name: "Blend both" }).click();
-    await expect(r.locator(".cmp-state")).toContainText("couldn't blend", { timeout: 15_000 });
+    await expect(page.locator("#modalRoot .modal")).toContainText("Keep mine");
+    await expect(page.locator("#modalRoot .modal")).toContainText("Keep the AI's");
+    await expect(page.locator("#modalRoot .modal")).not.toContainText("Blend");
+    await expect(page.locator("#modalRoot .modal")).toContainText("Keep whichever is right, or edit either one");
   });
 });
