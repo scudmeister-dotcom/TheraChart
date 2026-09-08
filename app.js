@@ -5494,8 +5494,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
      Deliberately NOT a merge button that runs first and asks later. The note is
      a legal record they sign; a blend they did not read is exactly the failure
-     this whole product is meant to avoid. Blend is offered per field, it shows
-     the result for editing, and nothing is written until Apply. */
+     this whole product is meant to avoid. Both columns are editable and
+     nothing is written until Apply.
+
+     There WAS a "Blend both" here, and it could never work. This screen is
+     reached only when sync.refine is not "gemini", and that is the same
+     condition that makes /api/blend-note answer 503 — so the one screen
+     offering the button was the one screen guaranteed to have the service
+     behind it switched off. It failed politely, which is worse than failing
+     loudly: a control that never works teaches a therapist the app is
+     unreliable, and they stop trusting the ones that do.
+
+     Blending still exists where it can run — the AI review's per-section
+     Blend, which only appears when the model answered in the first place. */
 
   const COMPARE_FIELDS = {
     eval: [["subjective", "Subjective"], ["objectiveText", "Objective"], ["assessment", "Assessment"], ["plan", "Plan"]],
@@ -5513,8 +5524,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const m = showModal(`
       <h2>Check the AI against your own notes</h2>
       <p style="font-size:13px; color:var(--muted); margin:-4px 0 14px">
-        Left is what you wrote. Right is what the recording produced. Keep whichever is right —
-        or blend them and edit the result. <b>Nothing changes in the note until you press Apply.</b></p>
+        Left is what you wrote. Right is what the recording produced. Keep whichever is right,
+        or edit either one. <b>Nothing changes in the note until you press Apply.</b></p>
       <div class="cmp-list">
         ${rows.map(([k, lbl], i) => `
           <div class="cmp-row" data-cmp="${k}">
@@ -5532,7 +5543,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             <div class="cmp-actions">
               <button class="btn small" data-keep="mine:${k}" type="button">Keep mine</button>
               <button class="btn small" data-keep="ai:${k}" type="button">Keep the AI's</button>
-              <button class="btn small ai" data-blend="${k}" type="button">✦ Blend both</button>
               <span class="cmp-state" data-state="${k}"></span>
             </div>
           </div>`).join("")}
@@ -5551,23 +5561,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const dst = m.querySelector(which === "mine" ? `[data-ai="${k}"]` : `[data-mine="${k}"]`);
       dst.value = src.value;
       setState(k, which === "mine" ? "using yours" : "using the AI's");
-    }));
-
-    m.querySelectorAll("[data-blend]").forEach((b) => b.addEventListener("click", async () => {
-      const k = b.dataset.blend;
-      const a = m.querySelector(`[data-mine="${k}"]`).value.trim();
-      const c = m.querySelector(`[data-ai="${k}"]`).value.trim();
-      if (!a || !c) { setState(k, "nothing to blend"); return; }
-      b.disabled = true; setState(k, "blending…");
-      try {
-        const sync = window.TheraSync || {};
-        const out = sync.blendNote ? await sync.blendNote({ mine: a, ai: c, field: k, type: doc.type }) : null;
-        if (out && out.text) {
-          m.querySelector(`[data-ai="${k}"]`).value = out.text;
-          setState(k, "blended — read it before applying");
-        } else setState(k, "couldn't blend — edit by hand");
-      } catch (e) { setState(k, "couldn't blend — edit by hand"); }
-      finally { b.disabled = false; }
     }));
 
     m.querySelector("#cmpCancel").addEventListener("click", closeModal);
