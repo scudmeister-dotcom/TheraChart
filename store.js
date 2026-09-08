@@ -1329,6 +1329,23 @@
     workDays: [1, 2, 3, 4, 5, 6],
     audioReview: false,
     audioReviewDays: 7,
+    /* Which language pairing a device that has never been set starts on —
+       "fil-PH" (English & Tagalog) or "ceb-PH" (English & Cebuano).
+
+       The therapist's own choice lives in localStorage and still wins; this is
+       only what a device falls back to when it has no choice stored. That case
+       is not rare and it is not visible: a new tablet, a cleared browser, a
+       second profile, or the legacy "en-US" left over from when the bar had
+       three options all arrive with nothing stored. Before this setting they
+       all landed on Tagalog, so a Cebuano clinic could revert to the wrong
+       pairing without anybody touching the control, and the only sign of it
+       was every Cebuano utterance quietly transcribing worse.
+
+       Defaulting to fil-PH is unchanged and deliberate — Tagalog is the
+       lingua franca, so it is the right guess for a clinic that has not said.
+       What is new is that a Visayas clinic can now say, once, for every device
+       it will ever own. */
+    dictationLang: "fil-PH",
     /* Commercial plan. The allowance is what the clinic bought, in DOCUMENTED
        VISITS — not seats, because cost tracks visits and a clinic that adds a
        part-time therapist without adding visits costs us nothing more. Defaults

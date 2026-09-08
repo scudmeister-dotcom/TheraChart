@@ -873,7 +873,7 @@
     <div class="lp-feature-grid">
       ${feature("🎤", "Voice-first dictation", "Speak naturally. Findings pin to the body map and measurements sort themselves into ROM, MMT, special tests and pain — no typing between patients.")}
       ${feature("🗺️", "Body-mapped findings", "Every symptom lands on a front/back body map with severity, so the whole picture is visible at a glance — and carries onto the printed chart as a labelled list of findings.")}
-      ${feature("🌐", "Bilingual dictation", "Choose <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — whichever pairing you set, both languages are understood at once, including the code-switching clinicians and patients use mid-sentence.")}
+      ${feature("🌐", "Bilingual dictation", "Choose <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — your clinic's pairing is the default on every device, any note can change it, and if a visit comes back sounding like the other language the note says so and offers to switch.")}
       ${feature("✦", "Grounded AI assistant", "Ask about a patient's history, trends or precautions. Answers are drawn strictly from that patient's records — it cites its sources and says so when something isn't documented.")}
       ${feature("📈", "Clinical insights", "Cross-visit connections, ROM/pain trends and red flags surfaced as decision support for a licensed PT — never a diagnosis.")}
       ${feature("🛡️", "Privacy by design", "Your own database, walled off per clinic. E-signed notes that lock, amendments that are authorised and audited, and a plain-English page naming exactly which data leaves the clinic and where it goes.")}
@@ -1436,7 +1436,7 @@ ${walkthroughMarkup()}`;
       shot: "05-dictation-body-map",
       title: "Talk through the visit. It writes the note.",
       now: "You finish the session, then type the note up afterwards — usually after hours, usually from memory.",
-      here: "Press <b>Listen &amp; dictate live</b> and speak the way you already speak. Set the pairing once — <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — and both languages are understood together, including switching between them mid-sentence. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
+      here: "Press <b>Listen &amp; dictate live</b> and speak the way you already speak. Your clinic's pairing — <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — is what every device starts on, and you can change it on any note. Dictation sends one pairing at a time, so if the transcript comes back sounding like the other language the note tells you and offers to switch. What the patient says goes in their words; what you observe is filed as your findings. The body area they mention gets pinned to the map automatically.",
       where: "Inside any note · <b>Dictation &amp; body map</b>, top left",
     },
     {
@@ -4401,8 +4401,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <div class="rec-primary-head">
         <span>Record the visit</span>
         <select id="langSel" title="What you'll be speaking" ${editable ? "" : "disabled"}>
-          <option value="fil-PH">English &amp; Tagalog</option>
-          <option value="ceb-PH">English &amp; Cebuano</option>
+          ${langOptions(localStorage.getItem("therachart-lang"))}
         </select>
       </div>
       <div class="rec-bar" id="recBar">
@@ -4435,8 +4434,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div class="dict-bar">
       <button class="mic-btn" id="micBtn" disabled><span>🎤</span><span id="micLabel">Listen &amp; dictate live</span></button>
       <select id="langSel" title="What you'll be speaking" disabled>
-        <option value="fil-PH">English &amp; Tagalog</option>
-        <option value="ceb-PH">English &amp; Cebuano</option>
+        ${langOptions(localStorage.getItem("therachart-lang"))}
       </select>
       <span class="dict-status" id="dictStatus">Locked</span>
       <span class="dict-meter" id="dictMeter" hidden></span>
@@ -4449,6 +4447,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     </div>
     <div class="map-notes" id="mapNotes"></div>
     <div id="cleanupSummary"></div>
+    <div class="lang-mismatch" id="langMismatch" hidden></div>
     <div class="transcript-head" style="margin-top:12px">
       <h3>Transcript <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? "click a line to edit · click the speaker tag to relabel" : "click a finding to see its source"}</span></h3>
       ${editable ? (() => {
@@ -5375,6 +5374,14 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); relabel(Number(el.dataset.spk)); } });
       });
     }
+
+    /* Checked here rather than at each of the three places a transcript can
+       arrive — live dictation, the visit recorder and a section's own mic all
+       end up redrawing, so this is the one point that cannot be bypassed by a
+       fourth path added later. It also means the evidence ACCUMULATES: live
+       dictation delivers one short utterance at a time, and no single sentence
+       should be enough to tell a clinic it has the wrong language set. */
+    renderLangMismatch(doc, editable);
   }
 
   /* ---- dictation + routing ---- */
@@ -5481,6 +5488,36 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   // the choice sticks. Also the fallback for a stored "en-US" from before the
   // English-only option was withdrawn.
   const STT_LANG_DEFAULT = "fil-PH";
+
+  /* The pairing a device that has never been set starts on.
+
+     Not STT_LANG_DEFAULT directly. The therapist's own choice is stored per
+     device and still wins over this; what this decides is the case where there
+     is no choice to honour — a new tablet, a cleared browser, a second profile,
+     or a stored "en-US" from before the English-only option was withdrawn. All
+     of those used to land on Tagalog no matter where the clinic was, which let
+     a Cebuano clinic revert to the wrong pairing with nobody touching the
+     control and nothing on screen saying so. The clinic sets it once, in
+     Settings, for every device it will ever own. */
+  const STT_LANG_LABEL = { "fil-PH": "English & Tagalog", "ceb-PH": "English & Cebuano" };
+  // The half of the pairing that is actually in dispute. Both pairings carry
+  // English, so "the visit sounds like English & Cebuano" names the wrong
+  // thing — what the words disagree about is Tagalog vs Cebuano.
+  const STT_LANG_OTHER_HALF = { "fil-PH": "Tagalog", "ceb-PH": "Cebuano" };
+
+  function clinicLang() {
+    const c = (S.settings() || {}).dictationLang;
+    return STT_LANG[c] ? c : STT_LANG_DEFAULT;
+  }
+
+  // The two <option>s, with the clinic's pairing already chosen — so a note
+  // opens showing what it will actually send rather than flashing Tagalog and
+  // correcting itself once startDictation() runs.
+  function langOptions(selected) {
+    const cur = STT_LANG[selected] ? selected : clinicLang();
+    return [["fil-PH", "English &amp; Tagalog"], ["ceb-PH", "English &amp; Cebuano"]]
+      .map(([v, label]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${label}</option>`).join("");
+  }
   // The one dictation model. Chirp 2 is GA for both languages above, and it is
   // what the per-visit cost model is priced on.
   const STT_MODEL = "chirp2";
@@ -5991,6 +6028,60 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     el.innerHTML = `heard <b>${[...seen.values()].map((f) => `${esc(f.from)}</b> → <b>${esc(f.to)}`).join("</b>, <b>")}</b>`;
   }
 
+  /* ---- the pairing disagrees with what was actually said ----
+
+     The one moment a wrong language pairing is visible to anybody: the words
+     came back, and they are not in the language the request was sent under.
+     Everything else about this control is set once and then silent, which is
+     how a tablet left on English & Tagalog in a Bisaya clinic degrades every
+     visit without ever being suspected.
+
+     It says which way round the disagreement is, and quotes the words it is
+     reading, because a warning a therapist cannot check is a warning they can
+     only obey or ignore. Switching is one press and it is honest about what it
+     does NOT do: the audio already transcribed is not sent again.
+
+     Dismissable, and re-evaluated as the transcript grows. A clinic that
+     genuinely runs bilingual has to be able to put it away — a notice that
+     cannot be dismissed is the one that stops being read, and then the next
+     one is not read either. */
+  const langWarningOff = new Set();
+
+  function renderLangMismatch(doc, editable) {
+    const host = document.getElementById("langMismatch");
+    if (!host) return;
+    const sel = document.getElementById("langSel");
+    const hide = () => { host.hidden = true; host.innerHTML = ""; };
+    if (!sel || !editable || langWarningOff.has(doc.id)) return hide();
+
+    const said = (doc.data.transcript || []).map((u) => u.text).join(" ");
+    const m = PR.pairingMismatch(said, sel.value);
+    if (!m) return hide();
+
+    const name = (code) => (STT_LANG_LABEL[code] || code);
+    host.hidden = false;
+    host.innerHTML = `<div class="lang-mismatch-say">`
+      + `<b>This is being sent as ${esc(name(sel.value))}, but the visit sounds like ${esc(STT_LANG_OTHER_HALF[m.lang] || name(m.lang))}.</b>`
+      + ` Heard ${m.markers.slice(0, 4).map((w) => `“${esc(w)}”`).join(", ")}`
+      + ` — the pairing this device is on transcribes those worse than it needs to.</div>`
+      + `<div class="lang-mismatch-act">`
+      + `<button class="btn small primary" id="langSwitch" type="button">Switch to ${esc(name(m.lang))}</button>`
+      + `<button class="btn small" id="langKeep" type="button">Keep ${esc(name(sel.value))}</button>`
+      + `<span class="hint">Switching changes what the NEXT recording is sent as. What is already transcribed above is not sent again.</span></div>`;
+
+    document.getElementById("langSwitch").addEventListener("click", () => {
+      sel.value = m.lang;
+      // the same path the <select> itself takes: store it, re-aim a live
+      // engine, redraw. Nothing here writes the code the long way round.
+      sel.dispatchEvent(new Event("change"));
+      renderLangMismatch(doc, editable);
+    });
+    document.getElementById("langKeep").addEventListener("click", () => {
+      langWarningOff.add(doc.id);
+      hide();
+    });
+  }
+
   function dictationLine(doc) {
     const s = Number((doc.data || {})._dictationSeconds) || 0;
     if (!s || doc.status !== "signed") return "";
@@ -6266,7 +6357,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // a device that still has "en-US" stored from the three-option bar lands on
     // the default rather than on a value the select no longer has
     const stored = localStorage.getItem("therachart-lang");
-    langSel.value = STT_LANG[stored] ? stored : STT_LANG_DEFAULT;
+    langSel.value = STT_LANG[stored] ? stored : clinicLang();
 
     /* Dictation is Google Cloud Chirp 2 wherever the server has credentials for
        it. Where it hasn't — this preview, a local demo — the browser engine is
@@ -6864,6 +6955,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       localStorage.setItem("therachart-lang", langSel.value);
       if (engine) engine.setLang(langSel.value);
       setUI();
+      // the warning is about a disagreement between the words and this control,
+      // so moving the control has to settle it — including when the therapist
+      // reaches for the <select> directly instead of pressing Switch.
+      renderLangMismatch(doc, true);
     });
 
     activeDictation = {
@@ -10242,6 +10337,14 @@ ${pricesCard(user)}
       <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>
     </div>
     <div class="hint" style="margin:-4px 0 8px">Operator only — this is what the clinic is billed against. The hard stop is a runaway-microphone backstop, not a limit; set it well above any real visit.</div>` : ""}
+    <div class="field" style="border-top:1px solid var(--border); padding-top:12px; max-width:320px">
+      <label>Dictation language for this clinic</label>
+      <select id="st-lang">
+        <option value="fil-PH" ${(st.dictationLang || "fil-PH") === "fil-PH" ? "selected" : ""}>English &amp; Tagalog</option>
+        <option value="ceb-PH" ${st.dictationLang === "ceb-PH" ? "selected" : ""}>English &amp; Cebuano</option>
+      </select>
+      <div class="hint" style="margin:4px 0 8px">What a device starts on when nobody has chosen — a new tablet, a cleared browser, a second staff login. A therapist can still change it on any note, and their choice sticks to that device. Set this to the language your clinic actually works in: dictation sends one pairing per recording, and the wrong one transcribes the other language measurably worse.</div>
+    </div>
     <div class="field" style="border-top:1px solid var(--border); padding-top:12px">
       <label style="display:flex; gap:8px; align-items:center; font-size:13px">
         <input type="checkbox" id="st-audio" ${st.audioReview ? "checked" : ""}/>
@@ -10365,6 +10468,10 @@ ${pricesCard(user)}
         dayStartHour: Number(document.getElementById("st-start").value) || 8,
         dayEndHour: Number(document.getElementById("st-end").value) || 17,
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
+        // guarded rather than trusted: only the two codes Chirp 2 is offered
+        // are storable, so a stale or hand-edited value cannot become the
+        // thing every new device in the clinic starts on.
+        dictationLang: document.getElementById("st-lang").value === "ceb-PH" ? "ceb-PH" : "fil-PH",
         audioReview: document.getElementById("st-audio").checked,
         audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
       };

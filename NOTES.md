@@ -223,10 +223,37 @@ between English, Tagalog AND Bisaya in one sentence is therefore always
 outside one of the two pairings, and that is where the garbling comes from.
 Three things are worth knowing before anyone picks this up:
 
-1. The choice is stored per DEVICE (`localStorage: therachart-lang`) and set
+1. ~~The choice is stored per DEVICE (`localStorage: therachart-lang`) and set
    once. A tablet left on English & Tagalog in a Bisaya-speaking clinic
-   degrades every Cebuano utterance, and nothing on screen says so. That is
-   the cheapest available win and it is a UX change, not a model one.
+   degrades every Cebuano utterance, and nothing on screen says so.~~ **Done.**
+   There were two doors to the wrong pairing and both are shut:
+
+   - **A per-clinic default** (`settings.dictationLang`, on the facility
+     screen). The therapist's own per-device choice still wins; this decides
+     only what a device with NOTHING stored starts on. That case was neither
+     rare nor visible — a new tablet, a cleared browser, a second staff
+     profile or a legacy `en-US` all used to land on `fil-PH` regardless of
+     where the clinic was, so a Cebuano clinic could revert with nobody
+     touching the control.
+   - **A transcript check.** `PR.pairingMismatch()` reads the words that came
+     BACK and says when they disagree with the code they were sent under,
+     above the transcript, with a one-press switch and a dismiss. It is wired
+     to `drawTranscript()` — the one point all three transcript sources funnel
+     through — so evidence accumulates across short live utterances instead of
+     each sentence being judged alone.
+
+   The detector is **measured, not asserted**: its corpus is the 32 real Chirp
+   2 transcripts in `test/voice/baseline.json`. Under the code each was
+   actually recorded with, it flags 0 of 32. With the code flipped to simulate
+   a wrongly-set device it flags 12, including 4 of 4 Cebuano visits. It stays
+   quiet on English-only visits by design — English rides on both codes, so
+   such a visit is not evidence against either.
+
+   Two things it deliberately does not do. It never fires on a single marker
+   (a false alarm invites a correctly-set clinic to change, and every later
+   visit pays), and it cannot see a recording garbled badly enough to lose its
+   own Cebuano — silence is not evidence the pairing is right. Covered by
+   `test/pairing.test.js` and `e2e/pairing.spec.js`.
 2. Chirp 2 has no multi-language recognition in `us-central1` — the regions
    that offer it do not carry chirp_2. Verified in `test/transport.test.js`.
 3. The AI clean-up pass is what currently repairs code-switched garbling, and

@@ -680,6 +680,125 @@
   }
 
   /* ---------------------------------------------------------------- *
+   *  Which language the transcript actually came back in
+   * ---------------------------------------------------------------- */
+
+  /* The dictation bar sends ONE language code per request — fil-PH
+     ("English & Tagalog") or ceb-PH ("English & Cebuano") — because Chirp 2
+     refuses a list. The choice is stored per device and then never mentioned
+     again, so a tablet left on English & Tagalog in a Bisaya-speaking clinic
+     degrades every Cebuano utterance and nothing on screen says so.
+
+     This reads the words that came BACK and says when they disagree with the
+     code that was sent. It is deliberately the only automatic thing here: a
+     banner that is always on screen is the one that stops being read (the same
+     reason progressReminder defaults off, store.js), so this stays silent
+     unless the transcript itself is the evidence.
+
+     WHAT COUNTS AS A MARKER. A word qualifies only if all three hold:
+
+       1. it is an ordinary word in one of the two languages,
+       2. the OTHER language has a different everyday word for the same thing,
+       3. it is not an ordinary English word and not a near-homophone of one.
+
+     Rule 3 is the same rule server.js applies to phrase adaptation, for the
+     same reason: English rides on whichever code is selected, so a marker that
+     an English speaker can trip is a marker that fires in a room where nothing
+     is wrong.
+
+     Rule 2 is what excludes most of the vocabulary these two languages share,
+     and the exclusions are not obvious. `sakit`, `kung`, `mga`, `siko`,
+     `tuhod`, `sige`, `taas` and `paa` are all in BOTH corpora in
+     test/voice/baseline.json — `taas` in particular reads as Cebuano until you
+     find it in a Tagalog visit ("umaabot ako sa taas"). Bare `wala` is out for
+     the reason parser already carries above: in Cebuano it also means LEFT.
+     `lima`, `pito`, `walo` and `siyam` count identically in both. `po` is out
+     because politeness is not a language, and `kanang` is out because it
+     spells both a Tagalog laterality word and a Cebuano filler.
+
+     WHAT THIS CANNOT DO. It reads the transcription, so it can only see what
+     survived it. A recording garbled badly enough to lose its own Cebuano
+     leaves nothing to detect — the detector reports a mismatch, never its
+     absence, and silence here is not evidence the pairing is right. */
+
+  const OTHER_LANG = { "fil-PH": "ceb-PH", "ceb-PH": "fil-PH" };
+
+  /* Cebuano, and not Tagalog. Every entry below appears in the real Chirp 2
+     output kept in test/voice/baseline.json, or is the direct counterpart of a
+     Tagalog word that does — no invented vocabulary. */
+  const CEB_MARKERS = new RegExp("\\b(?:"
+    + "kaayo|gihapon|unsa|unsay|unsaon|ngano|kanus-?a|karon|gikan|hangtod"
+    + "|imong|nimo|akong|nako|among|atong|amoang|akoang"
+    + "|dili|walay|wala\\s+(?:nay?|pay?|koy?|may?|gyuy?)|gyud|gyuy|lagi"
+    + "|naa\\s+(?:ba)?y?|aduna|adunay|lisod|naglisod|maglisod|gamay|bug-?at"
+    + "|maayo(?:ng)?|nindot|gibati|hubag|pamanhid|paglihok|lihok"
+    + "|tiil|bukton|abaga|liog|kamot|tudlo|kumagko|bat-?ang|buol-?buol"
+    + "|napulo|unom|upat|duha|semana|adlaw|bulan|tuig|gabii|ugma|gahapon"
+    + "|sukad|samtang|inig|pila\\s+(?:ka|ang|ba)|magbitbit|musaka|mulakaw"
+    + ")\\b", "gi");
+
+  /* Tagalog, and not Cebuano. Same standard, same corpus. */
+  const FIL_MARKERS = new RegExp("\\b(?:"
+    + "yung|iyong|inyong|ninyo|niyo|aking|akin|sakin"
+    + "|hindi|walang|wala\\s+(?:naman|po|rin|na\\s+po)|huwag"
+    + "|ngayon|kahapon|kanina|bukas|mamaya|kapag|tuwing|habang|pagkatapos"
+    + "|gaano|kailan|bakit|paano|saan|hanggang"
+    + "|masyado|matindi|napaka\\w+|mahirap|nahihirapan|medyo|lalo|talaga"
+    + "|naman|kasi|dati|daw|sabi|pala"
+    + "|nararamdaman|kumikirot|sumasakit|pamamanhid|namamanhid"
+    + "|balikat|daliri|kamay|binti|leeg|braso|bisig|talampakan"
+    + "|sampu|anim|apat|dalawa|tatlo|linggo|araw|buwan|taon|umaga"
+    + "|maganda|magandang|mabuti|matigas|konti|pareho"
+    + ")\\b", "gi");
+
+  const MARKERS = { "fil-PH": FIL_MARKERS, "ceb-PH": CEB_MARKERS };
+
+  function markersFound(text, lang) {
+    const re = MARKERS[lang];
+    if (!re) return [];
+    const seen = new Map();
+    for (const m of String(text || "").matchAll(re)) {
+      const hit = m[0].toLowerCase().replace(/\s+/g, " ");
+      if (!seen.has(hit)) seen.set(hit, hit);
+    }
+    return [...seen.values()];
+  }
+
+  /**
+   * Does this transcript disagree with the language code it was sent under?
+   *
+   * Returns null when it does not, and { lang, markers, mine } when it does —
+   * `lang` being the code the words point at, `markers` the words that say so.
+   *
+   * THE THRESHOLD, and why it is not one word. A false positive here is worse
+   * than a false negative: it invites a therapist whose pairing was correct to
+   * change it, and the next visit pays for that. A single borrowed word must
+   * therefore never be enough. Two distinct markers, and strictly more of them
+   * than the selected language can show, is what a visit conducted in the
+   * other language looks like; a Taglish visit with one Bisaya word in it is
+   * not, and stays quiet.
+   *
+   * MEASURED, on the 32 real Chirp 2 transcripts kept in
+   * test/voice/baseline.json — actual recogniser output, not invented strings.
+   * Under the code each was actually recorded with: 0 false positives, 32 of
+   * 32. With the code flipped to simulate a wrongly-set device: it fires on
+   * 12, including 4 of 4 Cebuano visits. The 20 that stay quiet carry at most
+   * one marker between them — they are the English-only visits, one Tagalog
+   * clause inside an English one, and a stretch of waiting-room smalltalk.
+   * That is the threshold working rather than failing: an English visit is not
+   * evidence against either code, because English rides on both.
+   */
+  function pairingMismatch(text, lang) {
+    const other = OTHER_LANG[lang];
+    if (!other) return null;
+    const theirs = markersFound(text, other);
+    if (theirs.length < 2) return null;
+    const mine = markersFound(text, lang);
+    if (theirs.length <= mine.length) return null;
+    return { lang: other, markers: theirs, mine };
+  }
+
+  /* ---------------------------------------------------------------- *
    *  Clinical measurements (ROM, MMT, pain rating, special tests)
    * ---------------------------------------------------------------- */
 
@@ -2870,6 +2989,10 @@
     unpinnedSide,
     correctDictation,
     DICTATION_FIXES,
+    pairingMismatch,
+    markersFound,
+    CEB_MARKERS,
+    FIL_MARKERS,
     classifyUtterance,
     guessSpeaker,
     reportedVoice,
