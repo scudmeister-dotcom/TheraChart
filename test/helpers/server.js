@@ -43,6 +43,18 @@ async function startServer(env = {}, opts = {}) {
   child.stdout.on("data", (d) => { log += d; });
   child.stderr.on("data", (d) => { log += d; });
 
+  /* Whether the server is still alive, watched for the WHOLE run rather than
+     only during startup.
+
+     Without this a server that dies mid-run is indistinguishable from a
+     network blip: every later request fails with a bare "fetch failed", the
+     log holds whatever it managed to print, and the caller is left guessing.
+     A dead child and a dropped connection want opposite responses — one is
+     fatal, the other is worth retrying — so the difference has to be
+     knowable. */
+  let exited = null;
+  child.on("exit", (code, signal) => { exited = { code, signal }; });
+
   const base = `http://127.0.0.1:${port}`;
   let ready = false;
   for (let i = 0; i < 120; i++) {
@@ -67,6 +79,8 @@ async function startServer(env = {}, opts = {}) {
   return {
     base, call, dataDir,
     log: () => log,
+    /* null while the server is running; { code, signal } once it is not. */
+    exitInfo: () => exited,
     login: (email, password) => call("/api/login", { method: "POST", body: { email, password } }),
     /* Enter a seeded demo account the way the picker does. On a server that
        offers a demo, typing its password is refused — the account is opened by

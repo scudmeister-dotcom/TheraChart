@@ -225,6 +225,25 @@ function shouldInjectFailure(what, id) {
   return true;
 }
 
+/* "fetch failed" on its own names nothing. undici puts the real error on
+   `.cause`, and the code there is what separates the two failures that wear
+   this message — measured against each mode directly:
+
+     ECONNREFUSED     nothing is listening. The server PROCESS died; retrying
+                      cannot help and the exit code is the diagnosis.
+     UND_ERR_SOCKET   "other side closed" — the connection was destroyed
+                      mid-request while the server stayed up. A genuine blip,
+                      and the case the retry exists for.
+     ENOTFOUND        DNS. Not reachable for a localhost run.
+
+   Two days of "fetch failed" went undiagnosed because this string was thrown
+   away at the point it was caught. */
+const causeOf = (e) => {
+  const c = e && e.cause;
+  const code = c && (c.code || c.errno);
+  return code ? `${e.message} (${code}${c.message && c.message !== e.message ? `: ${c.message}` : ""})` : (e && e.message) || "fetch failed";
+};
+
 async function tryFetch(what, run, id) {
   let last = null;
   for (let attempt = 1; attempt <= TRANSPORT_TRIES; attempt++) {
@@ -237,7 +256,7 @@ async function tryFetch(what, run, id) {
       last = e;
       if (attempt < TRANSPORT_TRIES) {
         const wait = attempt * 1500;
-        console.log(`    (${what}: transport failure, retrying in ${wait / 1000}s — ${e.message})`);
+        console.log(`    (${what}: transport failure, retrying in ${wait / 1000}s — ${causeOf(e)})`);
         await new Promise((r) => setTimeout(r, wait));
       }
     }
@@ -245,7 +264,7 @@ async function tryFetch(what, run, id) {
   /* Never thrown. The caller records it against this script and carries on;
      a run that loses one row to the network is worth far more than a run that
      loses everything after it. */
-  return { transportError: `${last && last.message || "fetch failed"} (after ${TRANSPORT_TRIES} attempts)` };
+  return { transportError: `${causeOf(last)} (after ${TRANSPORT_TRIES} attempts)` };
 }
 
 async function postWav(url, token, body, id) {
@@ -580,6 +599,28 @@ async function sweep(scripts, key) {
     const results = [];
     let billedSeconds = 0, refineCalls = 0;
 
+    /* Did the server PROCESS die, as opposed to a connection dropping?
+
+       These are the two failures that both surface as "fetch failed", and
+       they want opposite responses: a dropped connection is worth retrying,
+       a dead server cannot be. Until the helper watched the child's exit
+       there was no way to tell them apart from out here, which is most of
+       why this went undiagnosed. Said once, not once per remaining script. */
+    let announced = false;
+    const serverGone = () => {
+      const x = s.exitInfo && s.exitInfo();
+      if (!x) return false;
+      if (!announced) {
+        announced = true;
+        console.log(`\n  ✗ THE SERVER PROCESS DIED — exit code ${x.code}, signal ${x.signal || "none"}.`);
+        console.log(`    Every request after this point can only fail. Stopping rather than`);
+        console.log(`    recording the rest of the suite as failures of the product.`);
+        const tail = s.log().trim().split("\n").slice(-15);
+        if (tail.length) console.log(`    --- last of the server log ---\n${tail.map((l) => "    " + l).join("\n")}`);
+      }
+      return true;
+    };
+
     for (const t of takes) {
       const sc = t.script;
       /* The take number rides in the reported id so N rows for one script stay
@@ -625,6 +666,7 @@ async function sweep(scripts, key) {
         results.push({ id: rid, why: sc.why, sttError: lost[0].error, infra, chunks: t.wavs.length,
           earned: 0, possible: infra ? 0 : sc.expect.reduce((n, a) => n + a.weight, 0),
           failed: [], heardFailed: [] });
+        if (infra && serverGone()) break;
         continue;
       }
       const heard = parts
@@ -666,6 +708,7 @@ async function sweep(scripts, key) {
         if (transportError) {
           refineError = transportError;
           noteInfra = true;
+          serverGone();   // says so once, before the row is printed
         } else {
           const rd = await rr.json().catch(() => ({}));
           refineCalls += 1;
@@ -801,14 +844,17 @@ async function sweep(scripts, key) {
       ].filter(Boolean).join("\n"));
     }
 
-    if (SAVE && notRun.length) {
+    const short = results.length < scripts.length * TAKES;
+    if (SAVE && (notRun.length || short)) {
       /* A baseline is the bar every later run is read against, and a run that
          lost scripts to the network did not measure the bar — it measured the
          network. Saving one anyway is how an outage becomes the recorded
          expectation: it happened, the file went from 15 cases at 91.5% to 32
          at 28.9%, and only a `git checkout` got it back. Refusing costs a
          re-run; accepting costs the meaning of the file. */
-      console.log(`  BASELINE NOT SAVED — ${notRun.length} script(s) never reached the server.`);
+      console.log(`  BASELINE NOT SAVED — ${short
+        ? `the run stopped after ${results.length} of ${scripts.length * TAKES} script(s)`
+        : `${notRun.length} script(s) never reached the server`}.`);
       console.log(`  A baseline from a partial run would record an outage as the bar. Re-run when the network is healthy.\n`);
     } else if (SAVE) {
       const slim = { ...out, cases: out.cases.map(({ note, spoken, ...c }) => c) };
