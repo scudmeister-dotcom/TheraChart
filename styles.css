@@ -2588,6 +2588,27 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 }
 .dict-fixes b { color: var(--text); font-weight: 600; }
 
+/* ---- the language pairing disagrees with what was said ----
+   Deliberately not .banner: this is not a status the note carries, it is a
+   thing to answer and then be rid of. It sits directly above the transcript
+   because the transcript is the evidence for it — the therapist reads the
+   claim and the words it is about without moving their eyes. */
+.lang-mismatch {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--review-border, color-mix(in srgb, var(--review) 38%, var(--border)));
+  border-radius: 10px;
+  background: var(--review-soft);
+  font-size: 12.5px;
+  line-height: 1.45;
+  display: grid;
+  gap: 8px;
+}
+.lang-mismatch-say { color: var(--text); }
+.lang-mismatch-say b { color: var(--review); }
+.lang-mismatch-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lang-mismatch-act .hint { flex: 1 1 220px; min-width: 0; }
+
 /* ---- doctor's communication log ---- */
 .dc-list { display: grid; gap: 8px; }
 .dc-row {
