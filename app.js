@@ -6345,11 +6345,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const dock = document.getElementById("recDock");
       const dockBack = document.getElementById("recDockBack");
 
+      /* Every element this moves is remembered BEFORE it is moved — that is
+         the whole contract of `homes`, and it is easy to break by reordering.
+         remember() records an element's CURRENT parent, so calling it after a
+         re-parent records the new home as the original one and exitStage()
+         then "restores" the element to where it already is: an overlay
+         orphaned onto <body>, outliving the document that owned it, holding
+         an id the next note is about to render again. */
       const moveControls = (slotId, metersId) => {
         const slot = document.getElementById(slotId);
         const meters = document.getElementById(metersId);
         if (!slot || !meters) return;
-        remember(stage);
         for (const el of [bar, levelEl, meterEl]) remember(el);
         if (levelEl) meters.appendChild(levelEl);
         if (meterEl) meters.appendChild(meterEl);
@@ -6364,6 +6370,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
            INSIDE it and the fixed sidebar (z-index 30) painted straight over
            a "full screen" recorder. Re-parenting to <body> is what actually
            makes it full screen; it is restored with everything else. */
+        remember(stage);                 // before the move — see moveControls
         document.body.appendChild(stage);
         moveControls("recStageSlot", "recStageMeters");
         stage.hidden = false;
@@ -6376,6 +6383,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          to <body> for the same stacking-context reason the stage is. */
       const dockStage = () => {
         if (!dock) return exitStage();
+        /* Remembered BEFORE it is re-parented, exactly as the stage is.
+           Without this exitStage() only hid the dock and left it attached to
+           <body> — so it outlived the document that owned it, and the next
+           note rendered a second #recDock inside #app while the orphan sat
+           there holding the same id. */
+        remember(dock);
         document.body.appendChild(dock);
         moveControls("recDockSlot", "recDockMeters");
         dock.hidden = false;
@@ -7227,6 +7240,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const chunks = await rec.engine.stop();
     const secs = rec.engine.voicedSeconds();
     setSectionMicUI();
+    /* The microphone is shut, so the panel must stop saying it is open.
+
+       Everything below either replaces this panel with a result or hands the
+       screen to procStage — but not on every path: a transcription that fails
+       leaves the processing screen showing the failure and returns, and the
+       section was left reading "Recording into … nothing is written until you
+       stop" underneath it, indefinitely. Clearing here rather than on each
+       path means a route added later cannot reintroduce that. */
+    clearCheckPanel(field);
 
     if (!chunks.length || secs < 1) {
       showCheckPanel(doc, user, field, { error: `Nothing was recorded into ${label}. Press Dictate and speak, then stop.` });
@@ -7452,6 +7474,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     misplaced: ["warn", "may belong in another section"],
     ambiguous: ["info", "worth a second look"],
   };
+
+  /** Empty the section's panel. Shared so "the mic is closed" and "here is the
+      result" cannot disagree about who owns that space. */
+  function clearCheckPanel(field) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (host) { host.hidden = true; host.innerHTML = ""; }
+  }
 
   function showCheckPanel(doc, user, field, state) {
     const host = document.querySelector(`[data-fieldcheck="${field}"]`);

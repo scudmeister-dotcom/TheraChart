@@ -654,9 +654,30 @@ const settle = () => new Promise((r) => setImmediate(r));
       /stage\.hidden = true/.test(dockBody) && /dock\.hidden = true/.test(enterBody),
       "two visible recorders is the same confusion as two record buttons");
 
+    /* Sliced, not measured. A character window between two patterns breaks the
+       next time a comment grows between them, which is a test failing for a
+       reason that has nothing to do with the property. */
     r.check("docking releases the scroll lock the stage takes",
-      /dockStage[\s\S]{0,400}classList\.remove\("recording-stage"\)/.test(stage),
+      /classList\.remove\("recording-stage"\)/.test(dockBody),
       "body.recording-stage sets overflow:hidden — leave it on and the therapist cannot scroll to the section they docked in order to type into");
+
+    /* Both overlays are remembered BEFORE they are re-parented. remember()
+       records an element's CURRENT parent, so calling it afterwards records
+       <body> as the original home and exitStage() restores the element to
+       where it already is — leaving it orphaned onto <body>, outliving the
+       document that owned it and holding an id the next note renders again.
+       Caught by e2e: #recStage and #recDock both survived a navigation. */
+    /* Asserted as ORDER rather than adjacency: the two calls are what matter
+       and a trailing comment between them is not a regression. */
+    const before = (body, a, b) => {
+      const i = body.indexOf(a), j = body.indexOf(b);
+      return i >= 0 && j >= 0 && i < j;
+    };
+    r.check("an overlay is remembered before it is moved, never after",
+      before(enterBody, "remember(stage)", "document.body.appendChild(stage)")
+        && before(dockBody, "remember(dock)", "document.body.appendChild(dock)")
+        && !/remember\(stage\)/.test(stage.slice(stage.indexOf("const moveControls"), stage.indexOf("const enterStage"))),
+      "remember() after a re-parent records the new home as the old one, and exitStage() then restores nothing");
 
     r.check("…and it is only entered once the microphone is genuinely open",
       /const ok = await rec\.start\(\);[\s\S]{0,600}enterStage\(\);/.test(SRC),
@@ -754,9 +775,22 @@ const settle = () => new Promise((r) => setImmediate(r));
         && /Recording into <b>\$\{esc\(label\)\}<\/b> — nothing is written until you stop/.test(SRC),
       "a hot microphone with no visible control is the one thing this flow must never allow");
 
+    const stopBody = (() => {
+      const a = SRC.indexOf("  async function stopSectionRecording(");
+      return SRC.slice(a, SRC.indexOf("\n  }\n", a));
+    })();
     r.check("it shows the same processing screen the visit recorder does",
-      /stopSectionRecording[\s\S]{0,900}procStage\.show\(label\);[\s\S]{0,400}procStage\.set\("transcribe", "active"/.test(SRC),
+      /procStage\.show\(label\);/.test(stopBody) && /procStage\.set\("transcribe", "active"/.test(stopBody),
       "a therapist should not have to learn two answers to 'is it working, and how much longer'");
+
+    /* The panel stops claiming the microphone is open the moment it shuts.
+       Not on each path but once, before them: a transcription failure returns
+       early with the processing screen holding the error, and the section was
+       left reading "Recording into … nothing is written until you stop"
+       underneath it indefinitely. Caught by e2e. */
+    r.check("stopping clears the recording panel before any path returns",
+      /setSectionMicUI\(\);[\s\S]{0,600}clearCheckPanel\(field\);[\s\S]{0,200}if \(!chunks\.length/.test(stopBody),
+      "a route added later must not be able to leave the section saying the mic is still open");
 
     /* …retitled for the section, and reset when the visit recorder next uses
        it. A screen left saying "Writing Subjective" over a whole-visit read is
