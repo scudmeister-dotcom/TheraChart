@@ -489,6 +489,16 @@
     return res.ok ? res.data : null;
   };
 
+  /* Write one section from a recording the therapist aimed at it. Server-only,
+     and it returns null rather than throwing when there is no server: the
+     caller has the transcript either way and says so, rather than losing what
+     was said because the writer could not run. */
+  sync.checkSection = async ({ spoken, label, field }) => {
+    if (sync.mode !== "server" || !sync.token) return null;
+    const res = await api("/api/check-section", { method: "POST", body: { spoken, label, field } });
+    return res.ok ? res.data : null;
+  };
+
   /* File a tester's bug report. Server-only: there is nowhere for a report to
      go in local/offline mode, and silently swallowing one would be worse than
      saying so. Returns null on success, or a message to show the reporter. */

@@ -36,6 +36,30 @@ const { reporter } = require("./helpers/server.js");
 
 const SRC = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 
+/* The overlap helpers are plain string functions inside the page IIFE, so they
+   are lifted and run rather than pattern-matched. splitSentences comes with
+   them because overlapSentences calls it, and ABBREV_RE is injected because it
+   lives further up the file than anything else here needs. */
+function liftOverlap() {
+  const slice = (from, to) => {
+    const a = SRC.indexOf(from);
+    if (a < 0) throw new Error(`app.js no longer contains: ${from}`);
+    const b = SRC.indexOf(to, a);
+    if (b < 0) throw new Error(`could not find the end of: ${from}`);
+    return SRC.slice(a, b + to.length);
+  };
+  const fn = (decl) => slice(decl, "\n  }\n");
+  const body = [
+    slice("  const OVERLAP_STOP", 'about").split(" "));'),
+    fn("  function contentWords"),
+    /^  const SEEN_AT = .*$/m.exec(SRC)[0],
+    fn("  function splitSentences"),
+    fn("  function overlapSentences"),
+  ].join("\n");
+  return new Function("ABBREV_RE", `${body}\n; return { overlapSentences, contentWords };`)(
+    /\b(dr|mr|mrs|ms|vs|approx|etc|no)\.$/i);
+}
+
 /* Slice one function out of app.js by its declaration. Everything inside the
    page's IIFE is indented two spaces, so a line that is exactly "  }" is the
    function's own closing brace and nothing else. */
@@ -350,7 +374,10 @@ const settle = () => new Promise((r) => setImmediate(r));
      therapist was told to "review carefully" — and in the same breath the
      recording was cleared, so there was nothing left to review it against. */
   {
-    const src = lift("  async function processRecording(");
+    /* processRecording delegates one chunk to transcribeChunk, so the sandbox
+       needs both. Lifting them together keeps the test running the real
+       request-building code rather than a stand-in for it. */
+    const src = lift("  async function transcribeChunk(") + "\n" + lift("  async function processRecording(");
     const mark = /const AUDIO_GAP_MARK = "([^"]+)";/.exec(SRC);
     r.check("app.js still declares a gap marker", !!mark);
     const GAP = mark ? mark[1] : "";
@@ -383,6 +410,27 @@ const settle = () => new Promise((r) => setImmediate(r));
     const clean = await runWith(3, []);
     r.check("every chunk transcribing gives a clean transcript",
       clean.text === "chunk0. chunk1. chunk2." && clean.errors.length === 0, JSON.stringify(clean.text));
+
+    /* The live pass hands its results in as `prior`. A chunk it already
+       answered must not reach fetch a second time — same audio, second bill. */
+    {
+      const chunks = Array.from({ length: 3 }, (_, i) => ({ pcm: new Float32Array(8), rate: 16000, i }));
+      const sandbox = new Function("STT_LANG", "STT_LANG_DEFAULT", "STT_MODEL", "window", "fetch", "encodeWav",
+        `const AUDIO_GAP_MARK = ${JSON.stringify(GAP)};\n` + src + "\n  return processRecording;");
+      let calls = 0;
+      const f = async () => { calls += 1; return { ok: true, status: 200, json: async () => ({ text: "late.", billedSeconds: 3 }) }; };
+      const fn = sandbox({ fil: "fil-PH" }, "fil-PH", "chirp2", {}, f, () => new ArrayBuffer(8));
+      const out = await fn("d", "fil", chunks, () => {},
+        [{ text: "live0.", billedSeconds: 4 }, { text: "live1.", billedSeconds: 4 }]);
+      r.check("chunks the live pass already transcribed are not sent again",
+        calls === 1, `${calls} request(s) for 3 chunks, 2 of them already done`);
+      r.check("…and their text and billed seconds still reach the result",
+        out.text === "live0. live1. late." && out.billedSeconds === 11,
+        JSON.stringify({ text: out.text, billed: out.billedSeconds }));
+      r.check("…and `parts` reports per chunk, so the caller can skip what it wrote",
+        JSON.stringify(out.parts) === JSON.stringify(["live0.", "live1.", "late."]),
+        JSON.stringify(out.parts));
+    }
 
     const holed = await runWith(3, [1]);
     r.check("a failed middle chunk leaves a marker where it was",
@@ -561,40 +609,335 @@ const settle = () => new Promise((r) => setImmediate(r));
        and hand every check below an empty string that quietly passes nothing. */
     const stageStart = SRC.indexOf("const stage = document.getElementById(\"recStage\")");
     const stage = SRC.slice(stageStart,
-      SRC.indexOf("if (stageBack) stageBack.addEventListener(\"click\", exitStage);", stageStart));
-    r.check("the stage block was actually found in app.js", stage.length > 400,
-      `sliced ${stage.length} chars — the checks below are meaningless if this is empty`);
+      SRC.indexOf("if (dockBack) dockBack.addEventListener(\"click\", enterStage);", stageStart));
+    r.check("the stage block was actually found in app.js", stage.length > 400 && stage.length < 6000,
+      `sliced ${stage.length} chars — the checks below are meaningless if this is empty or unbounded`);
 
     r.check("the recorder controls are MOVED to the stage, never copied",
-      /slot\.appendChild\(bar\)/.test(stage) && !/recStageSlot"\)\.innerHTML\s*=/.test(SRC),
+      /slot\.appendChild\(bar\)/.test(stage)
+        && !/recStageSlot"\)\.innerHTML\s*=/.test(SRC) && !/recDockSlot"\)\.innerHTML\s*=/.test(SRC),
       "a second record button with its own listeners is two microphones as far as the therapist can tell");
 
     r.check("the stage re-parents to <body> before it is shown",
       /document\.body\.appendChild\(stage\)/.test(stage),
       "an ancestor inside the page forms a stacking context, and the fixed sidebar paints over a 'full screen' recorder that stays inside it");
 
-    /* The one property that matters clinically: there is no way to walk away
-       from a running recorder. A hot microphone nobody can see is the failure
-       every other backstop in this file exists to catch. */
-    r.check("there is no way off the stage while the mic is open",
-      /if \(stageBack\) stageBack\.hidden = true;/.test(stage)
-        && /const stageIdle = \(\) => \{ if \(stageBack && stage && !stage\.hidden\) stageBack\.hidden = false; \};/.test(stage),
-      "Back is offered only once recording has stopped");
+    /* The property that matters clinically, restated.
+
+       This used to be "there is no way off the stage while the mic is open",
+       enforced by hiding the Back button. That made a therapist who wanted to
+       type during the visit choose between typing and recording, so leaving
+       the stage is now allowed — and the guarantee had to move rather than go.
+
+       What must remain true is that a RUNNING RECORDER IS NEVER INVISIBLE.
+       Leaving the stage with the mic open docks it: the same #recBar, the same
+       Stop button, pinned to the viewport. The failure being prevented is a
+       hot microphone nobody can see, and one control in view is what prevents
+       it — not the absence of a door. */
+    r.check("leaving the stage while the mic is open docks it rather than hiding it",
+      /stageBack\.addEventListener\("click", \(\) => \(recording \? dockStage\(\) : exitStage\(\)\)\)/.test(stage),
+      "walking away from a running recorder with no control on screen is the one thing this flow must not allow");
+
+    r.check("the dock holds the real recorder, not a second copy of it",
+      /moveControls\("recDockSlot", "recDockMeters"\)/.test(stage)
+        && /dock\.hidden = false/.test(stage),
+      "two record buttons that disagree about whether the mic is open is the failure the stage exists to prevent");
+
+    /* Sliced per function rather than matched within a character window: the
+       comments inside these bodies are long and a distance-based regex breaks
+       the next time one of them grows a paragraph. */
+    const fnBody = (name, end) => stage.slice(stage.indexOf(`const ${name} = `),
+      stage.indexOf(end, stage.indexOf(`const ${name} = `)));
+    const enterBody = fnBody("enterStage", "const dockStage");
+    const dockBody = fnBody("dockStage", "// the mic is off");
+    r.check("the dock and the stage are never both up",
+      /stage\.hidden = true/.test(dockBody) && /dock\.hidden = true/.test(enterBody),
+      "two visible recorders is the same confusion as two record buttons");
+
+    /* Sliced, not measured. A character window between two patterns breaks the
+       next time a comment grows between them, which is a test failing for a
+       reason that has nothing to do with the property. */
+    r.check("docking releases the scroll lock the stage takes",
+      /classList\.remove\("recording-stage"\)/.test(dockBody),
+      "body.recording-stage sets overflow:hidden — leave it on and the therapist cannot scroll to the section they docked in order to type into");
+
+    /* Both overlays are remembered BEFORE they are re-parented. remember()
+       records an element's CURRENT parent, so calling it afterwards records
+       <body> as the original home and exitStage() restores the element to
+       where it already is — leaving it orphaned onto <body>, outliving the
+       document that owned it and holding an id the next note renders again.
+       Caught by e2e: #recStage and #recDock both survived a navigation. */
+    /* Asserted as ORDER rather than adjacency: the two calls are what matter
+       and a trailing comment between them is not a regression. */
+    const before = (body, a, b) => {
+      const i = body.indexOf(a), j = body.indexOf(b);
+      return i >= 0 && j >= 0 && i < j;
+    };
+    r.check("an overlay is remembered before it is moved, never after",
+      before(enterBody, "remember(stage)", "document.body.appendChild(stage)")
+        && before(dockBody, "remember(dock)", "document.body.appendChild(dock)")
+        && !/remember\(stage\)/.test(stage.slice(stage.indexOf("const moveControls"), stage.indexOf("const enterStage"))),
+      "remember() after a re-parent records the new home as the old one, and exitStage() then restores nothing");
 
     r.check("…and it is only entered once the microphone is genuinely open",
       /const ok = await rec\.start\(\);[\s\S]{0,600}enterStage\(\);/.test(SRC),
       "entering before start() means a full-screen recorder over a mic that was refused");
 
     r.check("leaving the stage puts every element back where it was",
-      /parent\.insertBefore\(el, next\)/.test(stage) && !/exitStage[\s\S]{0,200}appendChild/.test(stage),
+      /parent\.insertBefore\(el, next\)/.test(stage) && !/exitStage = \(\) => \{[\s\S]{0,300}appendChild/.test(stage),
       "appending to the old parent silently reorders the dictation toolbar");
 
-    r.check("the review opens over the note, not over the stage",
-      /exitStage\(\);\s*\n\s*showIdle\(\);\s*\n\s*if \(aiOn\) await runRefine/.test(SRC),
-      "reading a review over a full-screen recorder hides the document it is filling in");
+    /* The dock's own consequence. While the stage covered the screen a
+       therapist could not reach the sidebar, so navigating away mid-recording
+       was unreachable rather than handled. It is reachable now. */
+    r.check("navigating away stops the recorder instead of leaving it running",
+      /if \(activeRecording\) \{ activeRecording\.stop\(\); activeRecording = null; \}/.test(SRC)
+        && /activeRecording = \{\s*\n\s*isRecording: \(\) => recording,\s*\n\s*stop\(\)/.test(SRC),
+      "the dock lets a therapist leave the document with the mic open, which the stage never did");
+
+    r.check("…and stops a SECTION recording too, which activeRecording does not hold",
+      /if \(sectionRec\) \{ try \{ sectionRec\.engine\.stop\(\); \} catch \(_\) \{ \} sectionRec = null; \}/.test(SRC),
+      "it has its own engine, and letting its stop path run would raise a processing screen over a document the router already replaced");
+
+    r.check("stopping on the way out keeps the audio",
+      /activeRecording = \{[\s\S]{0,400}rec && rec\.stop\(\)/.test(SRC),
+      "chunks are flushed to IndexedDB as they are captured, so the visit is offered back rather than lost");
+
+    /* The property is unchanged; what enforces it moved. Processing now has a
+       screen of its own, so the recorder overlay comes down before that screen
+       goes up, and that screen comes down before the review opens. Neither
+       overlay may ever be under the review. */
+    r.check("the recorder overlay is down before the processing screen goes up",
+      /exitStage\(\);\s*\n\s*procStage\.show\(\);/.test(SRC),
+      "two full-screen overlays share one scroll lock — whichever released it last would win");
+
+    r.check("the review opens over the note, not over the processing screen",
+      /procStage\.hide\(\);\s*\n\s*openReviewModal/.test(SRC),
+      "reading a review over a full-screen overlay hides the document it is filling in");
+
+    /* A screen that cannot end on a failure is a screen that looks hung. The
+       recording is still on the device at this point, which is the one thing
+       the therapist needs told. */
+    r.check("a failed transcription ends the processing screen instead of spinning",
+      /procStage\.fail\("transcribe", why\);/.test(SRC)
+        && /still on this device — press Process again to retry/.test(SRC),
+      "a spinner over a step that is never coming back reads as a hang, not as the error it is");
+
+    r.check("every exit from the whole-visit read takes the screen down",
+      !/procStage\.set\("read", "active"[\s\S]{0,2000}closeModal\(\);\s*\n\s*return refineFailed/.test(SRC)
+        && (SRC.match(/procStage\.hide\(\);/g) || []).length >= 4,
+      "a failed or unavailable AI must not leave a processing overlay over the note");
 
     r.check("discarding a recording leaves the stage",
       /meta\.textContent = "Recording discarded\.";\s*\n\s*exitStage\(\);/.test(SRC));
+  }
+
+  /* ---------------- recording into one section ----------------
+
+     A section mic RECORDS; it does not file as you speak. Same arc as the
+     visit recorder — record, stop, transcribe, let the AI write it, approve —
+     so a therapist meets one workflow rather than two, and the property that
+     makes record-first worth having holds at section scale too: nothing
+     reaches the note that the clinician did not put there. */
+  {
+    r.check("a section mic records rather than opening the live engine",
+      /sectionBtns\(\)\.forEach\(\(b\) => b\.addEventListener\("click", async \(\) => \{[\s\S]{0,700}startSectionRecording\(doc, user, field\)/.test(SRC),
+      "filing as you speak is the failure record-first exists to remove; a section is not exempt from it");
+
+    r.check("section audio is keyed apart from the visit's",
+      /const key = `\$\{doc\.id\}#\$\{field\}`/.test(SRC),
+      "savedAudio matches on docId exactly, so a shared key would offer a section burst back as the whole visit");
+
+    /* One microphone on the device. Three ways two could be opened at once,
+       and each is refused rather than left to produce two audio graphs. */
+    r.check("a section mic will not open over a running visit recording",
+      /activeRecording\.isRecording\(\)\) \{[\s\S]{0,200}The whole visit is being recorded/.test(SRC),
+      "two recorders on one device is the doubled-audio bug the engine's release() exists to prevent");
+
+    r.check("…nor over live dictation, which is closed first",
+      /if \(listening\) \{ await aimMic\(null\); \}/.test(SRC));
+
+    r.check("…nor over another section that is already recording",
+      /if \(sectionRecordingActive\(\)\) return;/.test(SRC)
+        && /b\.disabled = !!sectionRec && !on;/.test(SRC),
+      "a second button that still looks pressable is a therapist dictating into a section that is not listening");
+
+    /* engine.stop() does NOT call onStop — that callback is for the engine's
+       own limit and ceiling stops. Wiring the button straight to the engine
+       shut the microphone with nothing left to carry the chunks onward, and
+       the panel sat on "Stopping…" forever. */
+    r.check("the Stop button goes through stopSectionRecording, not the engine",
+      /if \(sectionRec && sectionRec\.field === field\) \{\s*\n\s*stopSectionRecording\(sectionRec\.doc, sectionRec\.user, field\);/.test(SRC),
+      "engine.stop() only shuts the microphone; it does not fire onStop, so nothing would process the burst");
+
+    r.check("the Stop control is on screen for as long as the mic is open",
+      /data-recstop="\$\{esc\(field\)\}"/.test(SRC)
+        && /Recording into <b>\$\{esc\(label\)\}<\/b> — nothing is written until you stop/.test(SRC),
+      "a hot microphone with no visible control is the one thing this flow must never allow");
+
+    const stopBody = (() => {
+      const a = SRC.indexOf("  async function stopSectionRecording(");
+      return SRC.slice(a, SRC.indexOf("\n  }\n", a));
+    })();
+    r.check("it shows the same processing screen the visit recorder does",
+      /procStage\.show\(label\);/.test(stopBody) && /procStage\.set\("transcribe", "active"/.test(stopBody),
+      "a therapist should not have to learn two answers to 'is it working, and how much longer'");
+
+    /* The panel stops claiming the microphone is open the moment it shuts.
+       Not on each path but once, before them: a transcription failure returns
+       early with the processing screen holding the error, and the section was
+       left reading "Recording into … nothing is written until you stop"
+       underneath it indefinitely. Caught by e2e. */
+    r.check("stopping clears the recording panel before any path returns",
+      /setSectionMicUI\(\);[\s\S]{0,600}clearCheckPanel\(field\);[\s\S]{0,200}if \(!chunks\.length/.test(stopBody),
+      "a route added later must not be able to leave the section saying the mic is still open");
+
+    /* …retitled for the section, and reset when the visit recorder next uses
+       it. A screen left saying "Writing Subjective" over a whole-visit read is
+       a worse lie than the generic wording it replaced. */
+    r.check("the screen is retitled per run and resets to the visit wording",
+      /put\("#procScope", scope \? "Processing this section" : "Processing this visit"\);/.test(SRC)
+        && /put\('\[data-title="read"\]', scope \? `Writing \$\{scope\}` : null\);/.test(SRC)
+        && /data-title="read" data-default="Reading the whole visit"/.test(SRC),
+      "a section run must not leave its wording standing on the next visit's screen");
+
+    /* Billing, then the two ways this can fail. Both keep what was said. */
+    r.check("speech is billed as soon as it comes back, before anything can throw",
+      /out = await processRecording\(key[\s\S]{0,400}recordDictationSeconds\(doc\.id, out\.billedSeconds, user\);/.test(SRC),
+      "the same rule the visit recorder follows — a crash further down must not lose what was already billed");
+
+    r.check("the transcript is kept whichever way the AI goes",
+      /captureUtterances\(live, user, repaired\.text, currentDocState\);[\s\S]{0,400}procStage\.set\("read", "active"/.test(SRC),
+      "a therapist whose section draft fails should still be able to read their own words");
+
+    r.check("a failed write says so instead of silently dropping the visit",
+      /procStage\.fail\("read", `Couldn't write \$\{label\} from that recording\. What you said is in the transcript\.`\)/.test(SRC));
+
+    /* The property the whole flow exists for. */
+    r.check("the note is not touched until the therapist presses something",
+      /Nothing changes in \$\{esc\(label\)\} until you press one of these\./.test(SRC)
+        && /data-checkuse="replace"/.test(SRC),
+      "a section that rewrote itself when the recording stopped is the live-dictation mistake one layer up");
+
+    r.check("a section that already has text offers replace, append or keep",
+      /data-checkuse="append"/.test(SRC) && /Keep mine<\/button>/.test(SRC),
+      "the therapist may have typed into it while the recording ran");
+
+    r.check("…and marks what is new against what is already there",
+      /const parts = current \? overlapSentences\(current, drafted\) : \[\];/.test(SRC),
+      "same question as the whole-visit review, so it is answered the same way by the same function");
+
+    r.check("accepting a draft leaves the section machine-written",
+      /markAiFilled\(doc, field, true\);/.test(SRC),
+      "marking it by hand would stop the whole-visit review from ever pre-ticking it");
+
+    r.check("a recording with nothing clinical in it says so and keeps the transcript",
+      /Nothing in that recording belonged in \$\{esc\(label\)\}\. What you said is in the transcript\./.test(SRC),
+      "a therapist who believes their words vanished will simply say them again");
+  }
+
+  /* ---------------- provisional pins ----------------
+
+     The map shows what the parser hears while the visit records, so a
+     therapist at a screen that never moves can tell a working microphone from
+     a dead one. Measured against the eval transcripts the parser and the AI
+     agree on the map for 78% of visits; on the rest the parser both over-pins
+     (six regions where the AI keeps two) and under-pins (none where the AI
+     finds both knees). So these marks must read as a question. */
+  {
+    r.check("live pins are flagged provisional, never as findings",
+      /if \(pt\) pt\.provisional = true;/.test(SRC),
+      "an unconfirmed mark that looks like a finding is worse than no mark");
+
+    r.check("…and are drawn as a different KIND of thing, not just fainter",
+      /pt\.provisional \? " provisional" : ""/.test(SRC),
+      "a solid marker at reduced opacity still reads as a finding, slightly greyed");
+
+    r.check("every provisional pin says so in the list beside the map",
+      /not checked yet<\/span>/.test(SRC) && /map-prov-note/.test(SRC),
+      "the chips mark WHICH pins are unconfirmed; the note above says what unconfirmed means");
+
+    /* The line that keeps this honest. Pins are a signal; the note is not
+       touched until the visit has been read whole and the therapist ticked. */
+    r.check("the live pass writes pins and the transcript, never the note",
+      !/addProvisionalPins[\s\S]{0,1800}appendField\(/.test(SRC)
+        && !/addProvisionalPins[\s\S]{0,1800}mergeMeasurements\(/.test(SRC),
+      "section text and measurements are what the therapist signs — those wait for the whole-visit read");
+
+    r.check("the whole-visit pass replaces every pin, so provisional ones cannot survive it",
+      /doc\.data\.mapPoints = kept\.map\(\(r\) => \{/.test(SRC),
+      "applyRefinement rebuilds the map from the kept findings, which is what confirms or drops these");
+
+    /* No confirmer, no provisional pins. */
+    r.check("the live pass is skipped where no AI will confirm it",
+      /if \(\(\(window\.TheraSync \|\| \{\}\)\.refine \|\| "unavailable"\) !== "gemini"\) return;/.test(SRC),
+      "dashed pins on a server with no AI promise a confirmation that never comes, and the end-of-visit routing would file every line twice");
+
+    /* Cost. This is the same audio either way — it must be sent once. */
+    r.check("a chunk transcribed live is never sent to Google a second time",
+      /const already = prior && prior\[i\];\s*\n\s*const r = already \|\| await transcribeChunk\(docId, lang, c\);/.test(SRC),
+      "paying twice for one chunk would double the largest line in the cost model");
+
+    r.check("…and its text is not written into the transcript twice either",
+      /const fresh = \(out\.parts \|\| \[\]\)\.slice\(capturedThroughChunk\)\.join\(" "\)\.trim\(\);/.test(SRC),
+      "capturing the whole text at process time would put the visit in underneath the copy the live pass wrote");
+
+    r.check("handing a chunk over never blocks the recorder",
+      /if \(onChunk\) \{ try \{ onChunk\(made, index\); \} catch \(_\) \{ \} \}/.test(SRC),
+      "a chunk closes at a pause in the conversation, which is exactly when the next words are arriving");
+
+    r.check("the live pass writes into the CURRENT document, not the captured copy",
+      /const live = S\.getDoc\(doc\.id\);\s*\n\s*if \(!live \|\| live\.status === "signed"\) return;/.test(SRC),
+      "a sync pull can replace the state during a forty-minute visit");
+
+    r.check("the live pass resets between recordings",
+      /liveParts = \[\];\s*\n\s*capturedThroughChunk = 0;/.test(SRC),
+      "\"Record more\" makes a fresh chunk list, and a stale index would skip real text or duplicate it");
+  }
+
+  /* ---------------- what the AI adds over what the therapist typed ----------
+
+     Typing during the recording is what makes this reachable, so it is checked
+     here rather than with the review: a therapist who typed arrives holding two
+     accounts of one visit, and the screen has to say which parts differ. */
+  {
+    const f = liftOverlap();
+    const mine = "Right shoulder pain for two weeks. Flexion 120 degrees.";
+    const parts = f.overlapSentences(mine,
+      "Right shoulder pain for two weeks. Flexion 130 degrees. Denies numbness in the hand.");
+
+    r.check("a sentence the therapist already wrote reads as already written",
+      parts[0].seen === true, JSON.stringify(parts[0]));
+
+    /* The case the whole screen exists for. Same words, different number — if
+       this reads as a duplicate the therapist skips the one line where the
+       recording and their own note disagree. */
+    r.check("a changed NUMBER makes an otherwise-identical sentence read as new",
+      parts[1].seen === false, JSON.stringify(parts[1]));
+
+    r.check("genuinely new content reads as new",
+      parts[2].seen === false, JSON.stringify(parts[2]));
+
+    r.check("with nothing typed, nothing is claimed as already written",
+      f.overlapSentences("", "Shoulder flexion 130 degrees.").every((s) => !s.seen),
+      "an empty section would otherwise draw a paragraph of grey saying the therapist wrote it");
+
+    r.check("a pain score survives tokenisation whole",
+      f.contentWords("pain is 7/10 today").includes("7/10"),
+      "split 7/10 apart and a pain score half-matches a seven-week history");
+
+    r.check("the strip is only drawn when there is something on both sides",
+      /if \(!r\.proposed \|\| !r\.current\) return "";/.test(SRC),
+      "against an empty section every sentence is new, which is a paragraph of green saying nothing");
+
+    r.check("resolving a section edits the box, never the note",
+      /const setSectionText = \(i, text, note\) => \{[\s\S]{0,300}sectionRows\[i\]\.proposed = text;/.test(SRC)
+        && !/data-sec-mine[\s\S]{0,400}S\.updateDocData/.test(SRC),
+      "the row's tick is what applies a section — these three buttons only change what would be applied");
+
+    r.check("\"Use the AI's\" restores the AI's own words, not the last edit",
+      /aiOriginal: proposed,/.test(SRC) && /sectionRows\[i\]\.aiOriginal, "using the AI's wording"/.test(SRC),
+      "`proposed` is the working copy and every keystroke moves it");
   }
 
   r.done();

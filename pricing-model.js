@@ -63,12 +63,36 @@ const BANDS = {
      the medium one (~2.3k) rather than the deep one (3.5k-7k). The assistant
      and extract-doc still run deep. */
   low:  { refine: { in: 1620, out: 1000, think: 1800 }, insights: { in: 2820, out: 700,  think: 1800 },
-          assistant: { in: 2900, out: 400, think: 3500 }, extract: { in: 3200, out: 900,  think: 3500 } },
+          assistant: { in: 2900, out: 400, think: 3500 }, extract: { in: 3200, out: 900,  think: 3500 },
+          section: { in: 450, out: 25, think: 220 } },
   base: { refine: { in: 1620, out: 1400, think: 2300 }, insights: { in: 2820, out: 1000, think: 2300 },
-          assistant: { in: 2900, out: 600, think: 5000 }, extract: { in: 3200, out: 1300, think: 5000 } },
+          assistant: { in: 2900, out: 600, think: 5000 }, extract: { in: 3200, out: 1300, think: 5000 },
+          section: { in: 500, out: 35, think: 300 } },
   high: { refine: { in: 1620, out: 1800, think: 2800 }, insights: { in: 2820, out: 1400, think: 2800 },
-          assistant: { in: 2900, out: 900, think: 7000 }, extract: { in: 3200, out: 1800, think: 7000 } },
+          assistant: { in: 2900, out: 900, think: 7000 }, extract: { in: 3200, out: 1800, think: 7000 },
+          section: { in: 600, out: 60, think: 450 } },
 };
+
+/* How many sections a visit is dictated into, one at a time.
+
+   This is the only AI call that fires SEVERAL times in one visit, so it is
+   the only line whose frequency is a design decision rather than an
+   observation — one call per section RECORDED, when the therapist stops that
+   recording. Not per sentence and not per utterance: the section is written
+   once, from the whole burst.
+
+   Note what this line does NOT carry. The speech is billed to Speech-to-Text
+   above whichever microphone captured it, so dictating section by section
+   does not add dictation minutes — it moves them. This line is the writing,
+   and only the writing.
+
+   Four is an estimate, and it is the estimate to revisit first: it assumes a
+   therapist who works section by section fills four of the seven narrative
+   sections that way. A therapist who records the whole visit instead makes
+   ZERO of these calls, so this line is nil for the record-first workflow the
+   product steers toward. `section` is metered under its own purpose, so
+   /api/usage settles this rather than leaving it a guess. */
+const SECTION_CHECKS_PER_VISIT = 4;
 const call = (c, r) => (c.in * r.in + (c.out + c.think) * r.out) / 1e6;
 
 /* One documented visit = dictation minutes + one refine + one insights re-run
@@ -114,6 +138,7 @@ function visitLines(band, rate, opts) {
     { feature: "Clinical insights card",      line: "Gemini insights",     usd: insightsShare * INSIGHTS_RUNS_PER_VISIT * call(b.insights, rate), meter: "ai" },
     { feature: "Grounded AI assistant",       line: "Gemini assistant",    usd: ASSISTANT_PER_VISIT * call(b.assistant, rate), meter: "ai" },
     { feature: "Import an outside document",  line: "Gemini extract-doc",  usd: EXTRACT_PER_VISIT * call(b.extract, rate),   meter: "ai" },
+    { feature: "Dictate into one section",    line: "Gemini section-check", usd: SECTION_CHECKS_PER_VISIT * call(b.section, rate), meter: "ai" },
   ];
 }
 

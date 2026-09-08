@@ -293,6 +293,11 @@ const AI_LIMITS = {
   insights:  { perMin: 40,  perDay: 2000 },   // one per chart change
   assistant: { perMin: 20,  perDay: 600 },    // interactive, so genuinely open-ended
   blend:     { perMin: 30,  perDay: 600 },    // a button, a few fields per visit
+  /* The one AI call that fires several times in a visit rather than once, so
+     its ceiling is set against sections-per-note rather than notes-per-day:
+     a seven-section evaluation dictated section by section is seven calls,
+     and a busy clinic runs several of those at once. */
+  section:   { perMin: 60,  perDay: 3000 },
   extract:   { perMin: 5,   perDay: 120 },    // whole PDFs, the priciest single call
   // STT chunks fan out in parallel — a 20-minute recording is ~24 at once — so
   // the per-minute figure has to clear a burst comfortably. Spend per visit is
@@ -2060,6 +2065,88 @@ const server = http.createServer(async (req, res) => {
           const ref = crypto.randomBytes(4).toString("hex");
           console.error(`[error ${ref}] POST /api/blend-note \u2014`, e);
           return json(res, 500, { error: "Couldn\u2019t blend those. Edit by hand instead.", ref });
+        }
+      }
+
+      /* Write ONE section from a recording the therapist aimed at it. The
+         narrow counterpart of /api/refine, and narrow in the way that matters
+         commercially: this fires once per section dictated where refine fires
+         once per visit, so the schema returns one line of text and at most
+         three concerns and nothing else. Output is what a Gemini call is
+         billed for, so a small schema — not a smaller model — is what keeps
+         this affordable.
+
+         It reads only the section it was given. It has no view of the rest of
+         the note and cannot move text between sections: the therapist aimed
+         the microphone, and that answer outranks anything a model infers. A
+         sentence that plainly belongs elsewhere comes back as a `misplaced`
+         issue for the therapist to act on, never as a silent re-filing. */
+      if (url.pathname === "/api/check-section" && req.method === "POST") {
+        if (!store.canDocument(user)) return json(res, 403, { error: "Your account can\u2019t create clinical documents." });
+        if (!geminiActive()) return json(res, 503, { error: "Writing a section from dictation needs the AI service, which isn\u2019t configured here.", unavailable: true });
+        if (aiRateLimited(res, req, user, "section")) return;
+        const b = await readBody(req);
+        const spoken = String(b.spoken || "").slice(0, 2000).trim();
+        const label = String(b.label || "this section").slice(0, 60);
+        if (!spoken) return json(res, 400, { error: "Nothing to write from." });
+        try {
+          const prompt = [
+            "A physical therapist recorded themselves dictating into ONE named section of",
+            "a clinical note. Nothing has been written into the note yet. Write that section",
+            "from what they said.",
+            "",
+            `SECTION: ${label}`,
+            "", "WHAT THE THERAPIST SAID (verbatim transcript):", spoken,
+            "",
+            "Return `tidied`: that section's text, as a clinician writes it — full sentences,",
+            "clinical shorthand where it is natural, no filler and no conversational asides.",
+            "HARD RULES for `tidied`:",
+            "- Every clinical fact in it must appear in the transcript above. Add nothing.",
+            "- Do not add a body region, a side (left/right) or a number that was not spoken.",
+            "- Do not infer a diagnosis, a plan or a measurement that was not stated.",
+            "- Drop greetings, small talk and false starts; keep everything clinical.",
+            "- If the transcript carries nothing clinical, return an empty string.",
+            "",
+            "Return `issues`: at most 3, ONLY for things a therapist would want to fix.",
+            "Use kind = 'misplaced' when something said clearly belongs in a DIFFERENT",
+            "section than this one; 'ambiguous' when a side, region or number was spoken",
+            "unclearly or the transcript is garbled; 'missed' when something clinical was",
+            "said that you could not place in this section. Each issue's `detail` is one",
+            "short sentence. An empty list is the expected answer for a clean recording.",
+          ].join("\n");
+          const schema = {
+            type: "object",
+            properties: {
+              tidied: { type: "string" },
+              issues: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string", enum: ["missed", "misplaced", "ambiguous"] },
+                    detail: { type: "string" },
+                  },
+                  required: ["kind", "detail"],
+                },
+              },
+            },
+            required: ["tidied", "issues"],
+          };
+          const out = await ai.geminiJson(prompt, schema,
+            Object.assign(GEMINI_OPTS(user, "section"), { thinkingLevel: "medium", temperature: 0.1, timeout: 30000 }));
+          return json(res, 200, {
+            tidied: String((out && out.tidied) || "").trim(),
+            issues: ((out && out.issues) || []).slice(0, 3).map((x) => ({
+              kind: String(x.kind || "ambiguous"), detail: String(x.detail || "").slice(0, 240),
+            })).filter((x) => x.detail),
+          });
+        } catch (e) {
+          const ref = crypto.randomBytes(4).toString("hex");
+          console.error(`[error ${ref}] POST /api/check-section \u2014`, e);
+          /* A failed write is not a lost recording. The transcript is already
+             on the note and stays there; the therapist is told the section
+             could not be written rather than being shown a half-answer. */
+          return json(res, 500, { error: "Couldn\u2019t write that section. What was said is still in the transcript.", ref });
         }
       }
 

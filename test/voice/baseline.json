@@ -7,14 +7,15 @@
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 389.50193750000005,
-  "billedSeconds": 403,
-  "sttUsd": 0.1075,
-  "refineCalls": 15,
-  "meanWer": 0.05228816815568238,
-  "earned": 130,
-  "possible": 142,
-  "overall": 0.9154929577464789,
+  "audioSeconds": 668.6475,
+  "billedSeconds": 696,
+  "sttUsd": 0.1856,
+  "refineCalls": 32,
+  "meanWer": 0.05114263034446951,
+  "earned": 341,
+  "possible": 346,
+  "overall": 0.9855491329479769,
+  "notRun": 0,
   "cases": [
     {
       "id": "shoulder/clinical-vocab",
@@ -22,13 +23,14 @@
       "lang": "fil-PH",
       "chunks": 1,
       "advisory": false,
-      "wer": 0.04878048780487805,
+      "wer": 0.06097560975609756,
       "refWords": 82,
-      "edits": 4,
-      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about seven out of 10 worse at night left shoulder arom inflexion is 120° abduction 110 mmt is four out of five on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for therex and i am giving you a hep to do twice a day",
+      "edits": 5,
+      "heard": "good morning let us take a look at that left shoulder today it still hurts when i reach overhead about 7 out of 10 worse at night left shoulder arom inflexion is 120° abduction 110 mmt is 4 out of 5 on the rotator cuff neer and hawkins are both positive so this looks like subacromial impingement we will do scapsion in the pain-free range for theirx and i am giving you a hep to do twice a day",
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -48,16 +50,16 @@
         {
           "name": "shoulder flexion ROM survived transcription",
           "weight": 2,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "rom: []"
+          "detail": ""
         },
         {
           "name": "the 7/10 pain score reached the chart",
           "weight": 2,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "pain: []"
+          "detail": ""
         },
         {
           "name": "the home programme reached a prose section",
@@ -67,18 +69,9 @@
           "detail": ""
         }
       ],
-      "earned": 7,
+      "earned": 11,
       "possible": 11,
-      "failed": [
-        {
-          "name": "shoulder flexion ROM survived transcription",
-          "detail": "rom: []"
-        },
-        {
-          "name": "the 7/10 pain score reached the chart",
-          "detail": "pain: []"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "knee/laterality-correction",
@@ -93,6 +86,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -134,6 +128,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -175,6 +170,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -216,6 +212,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -257,6 +254,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -305,6 +303,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -348,6 +347,7 @@
       ],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -408,6 +408,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -482,6 +483,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -508,19 +510,14 @@
         {
           "name": "shoulder flexion is recorded as 60",
           "weight": 3,
-          "ok": false,
+          "ok": true,
           "thrown": null,
-          "detail": "rom: [{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":30},{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":15},{\"side\":null,\"joint\":\"hip\",\"motion\":\"abduction\",\"degrees\":40}]"
+          "detail": ""
         }
       ],
-      "earned": 9,
+      "earned": 12,
       "possible": 12,
-      "failed": [
-        {
-          "name": "shoulder flexion is recorded as 60",
-          "detail": "rom: [{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"flexion\",\"degrees\":30},{\"side\":\"left\",\"joint\":\"knee\",\"motion\":\"extension\",\"degrees\":15},{\"side\":null,\"joint\":\"hip\",\"motion\":\"abduction\",\"degrees\":40}]"
-        }
-      ]
+      "failed": []
     },
     {
       "id": "multi-region/shoulder-and-back",
@@ -535,6 +532,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -576,6 +574,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -631,6 +630,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -672,6 +672,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -713,6 +714,7 @@
       "heardFailed": [],
       "refineError": null,
       "fellBack": false,
+      "infra": false,
       "model": "chirp_2",
       "graded": [
         {
@@ -739,6 +741,902 @@
       ],
       "earned": 7,
       "possible": 7,
+      "failed": []
+    },
+    {
+      "id": "lang/english-only",
+      "why": "the control — the same visit in plain English, so the other four have a floor to be measured against",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.013333333333333334,
+      "refWords": 75,
+      "edits": 1,
+      "heard": "good afternoon what brings you in today my left elbow has been sore for about three weeks it is worse when i lift anything heavy how bad is it on a scale of one to 10 about six out of 10 it is sharp when i straighten it any numbness or tingling in the hand or fingers no not at all just the elbow left elbow flexion is 120 degrees tenderness over the lateral epicondyle",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right elbow invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the numbness denial is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "elbow flexion ROM survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "lang/tagalog-only",
+      "why": "the same visit with no English at all — laterality from \"kaliwang siko\", a rating in Tagalog numerals, a Tagalog denial",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 60,
+      "edits": 0,
+      "heard": "magandang hapon po ano po ang nararamdaman ninyo ngayon masakit po ang kaliwang siko ko mga tatlong linggo na lalo na po kapag may binubuhat ako gaano po kasakit kung isa hanggang 10 mga anim po kumikirot po kapag itinutuwid ko may pamamanhid po ba sa kamay o sa mga daliri wala po walang pamamanhid sa siko lang po talaga",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned from \"kaliwang siko\"",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right elbow invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating survived Tagalog numerals (\"mga anim\")",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "\"walang pamamanhid\" is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "lang/cebuano-only",
+      "why": "the same visit in Cebuano — and \"wala\" has to be read as LEFT in one sentence and as NONE in the next",
+      "lang": "ceb-PH",
+      "chunks": 1,
+      "advisory": true,
+      "wer": 0.14545454545454545,
+      "refWords": 55,
+      "edits": 8,
+      "heard": "maayong hapon unsa may imong gibati karon sakit ang wala nga siko na ako mga tulo ka semana na pila ka sakit gikan sa usa hangtod napulo mga unom sa napulo sakit kaayo kung magbitbit ko ug bug-at naabay pamanhid sa imong kamot o mga tudlo wala wala gyuy pamanhid sa sikura gyud",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned from \"wala nga siko\"",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right elbow invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating survived Cebuano numerals (\"unom sa napulo\")",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "\"wala gyoy pamanhid\" is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 10,
+      "possible": 10,
+      "failed": []
+    },
+    {
+      "id": "lang/taglish",
+      "why": "the same visit as a Manila clinic actually speaks it — code-switched inside the sentence, not between turns",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.04054054054054054,
+      "refWords": 74,
+      "edits": 3,
+      "heard": "kumusta po so ito po yung left elbow na sinasabi ninyo opo doc masakit po siya especially kapag nagbubuhat ako ng heavy mga three weeks na po pain scale po 1 to 10 mga six po sharp po yung sakit kapag itinutuwid ko may numbness po ba o tingling sa mga daliri wala po walang numbness yung sakit lang po sa siko left elbow flexion is 120° with tenderness over the lateral epic condyl",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right elbow invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "\"walang numbness\" is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "elbow flexion ROM survived the code-switch",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "lang/bisaya-english",
+      "why": "the same visit as a Visayas clinic speaks it — Cebuano carrying the complaint, English carrying the side and the numbers",
+      "lang": "ceb-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.15873015873015872,
+      "refWords": 63,
+      "edits": 10,
+      "heard": "mayong hapon ang left elbow sakit gihapon oh doc sakit gihapon kung magbitbit ko ug heavy mga three weeks na pila ang pain 1 to 10 mga six out of 10 sakit kaayo kung straight na ako na abay numbness sa imong mga tudlo wala walay numbness sa sikorag gyud left elbow flexion is 120 degrees with tenderness over the lateral epicondyle",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right elbow invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 rating reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "\"walay numbness\" is not offered as a pin",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "elbow flexion ROM survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "section/subjective-plain",
+      "why": "the plainest section dictation — laterality, duration and a pain score must all survive",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 36,
+      "edits": 0,
+      "heard": "patient reports right shoulder pain for about 2 weeks it is worse at night around 7 out of 10 she denies any numbness or tingling in the hand she has trouble reaching overhead to the cupboard",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the shoulder survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the two-week duration survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 7/10 pain score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no body region nobody said",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 19,
+      "possible": 19,
+      "failed": []
+    },
+    {
+      "id": "section/objective-measurements",
+      "why": "spoken measurements have to reach the objective narrative intact, digit for digit",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.05,
+      "refWords": 40,
+      "edits": 2,
+      "heard": "left knee flexion is 110° extension lacking 5° quadriceps strength is 4 out of 5 hamstrings 4 plus out of 5 there is mild swelling over the medial joint line gait shows an antalgic pattern on the left",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "flexion 110 survived digit for digit",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the strength grade survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the swelling reached the section",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no measurement invented that was never spoken",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 15,
+      "possible": 15,
+      "failed": []
+    },
+    {
+      "id": "section/plan-no-invention",
+      "why": "the plan must carry what was said and not one frequency more",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 27,
+      "edits": 0,
+      "heard": "plan is to continue therapy twice a week for four weeks we will progress rotator cuff strengthening as tolerated reassess range of motion at the next visit",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the frequency survived exactly",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the four-week duration survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no home programme invented — none was mentioned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no modality invented — none was mentioned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/precautions-limits",
+      "why": "a restriction that loses its number stops being a restriction",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.037037037037037035,
+      "refWords": 27,
+      "edits": 1,
+      "heard": "surgeon says no lifting over 5 kilos for 6 weeks no overhead reaching on the operated side link to be worn at night for another 2 weeks",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the five-kilo limit survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the six-week window survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the overhead restriction survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the night-time instruction survived, whatever the noun came back as",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "a misheard word is flagged, never silently corrected",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 17,
+      "possible": 17,
+      "failed": []
+    },
+    {
+      "id": "section/pmh-conditions",
+      "why": "conditions and years must arrive as spoken, and nothing may join them",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 18,
+      "edits": 0,
+      "heard": "type 2 diabetes diagnosed about 10 years ago hypertension controlled on medication right rotator cuff repair in 2019",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the diabetes survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the hypertension survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the prior surgery survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no condition invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/nothing-clinical",
+      "why": "a burst with nothing clinical in it must write nothing, not something polite",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.06451612903225806,
+      "refWords": 31,
+      "edits": 2,
+      "heard": "good morning how was the traffic coming over here yes the parking lot does fill up after 10:00 let me just get this window open it is warm today",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "nothing was written into the section",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no symptom invented out of small talk",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 6,
+      "possible": 6,
+      "failed": []
+    },
+    {
+      "id": "section/misplaced-content",
+      "why": "an impression dictated into Subjective is flagged, never silently re-filed",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 31,
+      "edits": 0,
+      "heard": "patient reports left elbow pain when gripping about six out of 10 in my assessment this is consistent with lateral epicondylitis she says it started after painting the house last month",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the patient's own report survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the misplaced impression is flagged",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 8,
+      "possible": 8,
+      "failed": []
+    },
+    {
+      "id": "section/taglish-subjective",
+      "why": "code-switched section dictation has to reach English prose with the facts intact",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 29,
+      "edits": 0,
+      "heard": "sabi ng patient masakit ang kanang balikat niya for two weeks na mas masakit daw sa gabi mga seven out of 10 hindi naman daw namamanhid ang kamay niya",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the shoulder reached the note in English",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived the translation",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the pain score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/assessment-impression",
+      "why": "an impression dictated into Assessment is written, not flagged as belonging elsewhere",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 25,
+      "edits": 0,
+      "heard": "assessment is subacromial impingement of the right shoulder limited by pain rather than by true stiffness good rehabilitation potential given her age and activity level",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the impression was written",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "content aimed at the right box is NOT flagged as misplaced",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 8,
+      "possible": 8,
+      "failed": []
+    },
+    {
+      "id": "section/numbers-tight",
+      "why": "digits dictated into one box, with no conversation around them to disambiguate",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.13043478260869565,
+      "refWords": 23,
+      "edits": 3,
+      "heard": "shoulder flexion 115° on the right abduction 90° internal rotation 45° pain at end range is 4 out of 10",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "115 survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "90 survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "45 survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 4/10 pain score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 13,
+      "possible": 13,
+      "failed": []
+    },
+    {
+      "id": "section/reason-short",
+      "why": "a one-sentence burst — the shortest thing a therapist would record into a box",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.1,
+      "refWords": 10,
+      "edits": 1,
+      "heard": "referred by dr santos for right shoulder impingement post arthroscopy",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written from one sentence",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the referring doctor survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 8,
+      "possible": 8,
+      "failed": []
+    },
+    {
+      "id": "section/self-correction",
+      "why": "a therapist correcting themselves mid-burst must not leave both sides in the note",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.1,
+      "refWords": 30,
+      "edits": 3,
+      "heard": "patient reports left knee pain going downstairs sorry correction it is the right knee the right knee is the painful one about five out of 10 and it feels unstable",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the corrected RIGHT knee is what got written",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the withdrawn LEFT is not left standing as a finding",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the pain score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
       "failed": []
     }
   ]

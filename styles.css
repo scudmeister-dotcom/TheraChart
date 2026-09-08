@@ -952,6 +952,44 @@ textarea:disabled, textarea[readonly] { resize: none; }
 @keyframes ring { 0% { r: 4; opacity: 0.6; } 100% { r: 16; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .point-group.flash .loc-ring { animation: none; } .mic-btn.listening { animation: none; } }
 
+/* ---- provisional pins ----
+
+   What the parser heard while the visit is still recording, before the
+   whole-visit read has confirmed any of it. Measured against the eval
+   transcripts the parser and the AI disagree on the map for about a fifth of
+   visits — one case shows six regions where the AI keeps two — so these marks
+   have to read as a question rather than as the chart.
+
+   Hollow and dashed, not merely faded: a solid marker at reduced opacity still
+   says "finding, slightly greyed", while an outline with a broken edge is
+   visibly a different KIND of thing. Colour is not carrying it either — the
+   marker keeps its severity hue, and the shape does the work, so this survives
+   a monochrome screen and a therapist who cannot separate the two states by
+   hue. Every one of them also carries a "not checked yet" chip in the list
+   beside the map. */
+.point-group.provisional .marker {
+  fill: var(--panel);
+  stroke-dasharray: 3 2.5;
+  stroke-width: 2;
+}
+.sev-high.provisional .marker { stroke: var(--sev-high); }
+.sev-mid.provisional  .marker { stroke: var(--sev-mid); }
+.sev-low.provisional  .marker { stroke: var(--sev-low); }
+.sev-none.provisional .marker { stroke: var(--sev-none); }
+.point-group.provisional .marker-num { fill: var(--ink); font-weight: 700; }
+.point-group.provisional .loc-dot { opacity: 0.55; }
+.point-group.provisional .leader { stroke-dasharray: 3 3; opacity: 0.5; }
+
+/* The same distinction in the list beside the map. */
+.map-note.provisional { border-left: 2px dashed var(--sil-line); padding-left: 7px; }
+.map-note.provisional .note-summary { color: var(--muted); }
+.prov-chip { margin-left: 6px; font-weight: 500; }
+.map-prov-note {
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 7px 9px; margin-bottom: 8px;
+}
+
 /* severity colours (markers, dots, legend, badges) */
 .sev-high .marker, .sev-high .loc-dot, .sev-high .loc-ring { fill: var(--sev-high); }
 .sev-mid  .marker, .sev-mid  .loc-dot, .sev-mid  .loc-ring { fill: var(--sev-mid); }
@@ -2610,6 +2648,43 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .rev-section.dropping .rev-text { opacity: 0.5; }
 .rev-section.dropping .rev-fhead b { opacity: 0.6; }
 .rev-hint { font-size: 11px; color: var(--muted); }
+
+/* ---- the AI's draft, marked against what the therapist already wrote ----
+
+   Colour is never the only carrier. The heading states the count in words,
+   "new" sentences also take weight and an underline, and the key spells both
+   colours out — so the strip still reads on a monochrome screen and to a
+   therapist who cannot separate the two hues. */
+.rev-cmp {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--hover);
+}
+.rev-cmp-head {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
+  font-size: 11.5px; margin-bottom: 6px;
+}
+.rev-cmp-key { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; }
+.rev-cmp-key i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.rev-cmp-key i.cmp-new { background: var(--good); }
+.rev-cmp-key i.cmp-seen { background: var(--muted); opacity: .5; margin-left: 6px; }
+.rev-cmp-body { margin: 0; font-size: 12.5px; line-height: 1.55; }
+.rev-cmp-body .cmp-new {
+  color: var(--good); font-weight: 600;
+  text-decoration: underline; text-decoration-color: var(--good-soft); text-underline-offset: 2px;
+}
+.rev-cmp-body .cmp-seen { color: var(--muted); opacity: .75; }
+.rev-cmp-hint { font-size: 10.5px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+
+/* Keep mine · Use the AI's · Blend. None of these writes to the note — they
+   edit the box above, and the row's tick still decides what lands. */
+.rev-sec-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px;
+}
+.rev-sec-state { font-size: 11.5px; color: var(--muted); }
+
 .rev-yours {
   margin-top: 12px;
   padding: 9px 11px;
@@ -2621,6 +2696,44 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   align-items: center;
   gap: 6px;
 }
+
+/* ---- the accuracy check on an aimed dictation burst ----
+
+   Sits under the section's own box, inside the field, so the answer and the
+   text it is about are read together. Bordered rather than filled: it is an
+   offer sitting next to the note, and it should not look like part of it. */
+.dict-check:has(.dict-rec) { border-left-color: var(--danger); }
+.dict-check {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--hover);
+  font-size: 12.5px;
+}
+/* The section is recording. Lives in the same slot the result comes back
+   into, so the whole lifecycle happens in one place and the Stop control is
+   on screen for as long as the microphone is open. */
+.dict-rec { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.dict-rec .rec-dot { flex: none; animation: recpulse 1.4s ease-in-out infinite; }
+.dict-rec-what { flex: 1 1 200px; min-width: 0; color: var(--danger); font-size: 12.5px; }
+/* Brightens while the gate is hearing speech — the "I can hear you" signal,
+   in the one spot the therapist is already looking. */
+.dict-rec.voiced .rec-dot { box-shadow: 0 0 0 4px var(--danger-soft); }
+.dict-check-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); }
+.dict-check-line.good { color: var(--good); }
+.dict-check-line.warn { color: var(--danger); }
+.dict-check-head { font-weight: 600; margin-bottom: 5px; }
+.dict-check-issues { margin: 0 0 7px; padding-left: 0; list-style: none; }
+.dict-check-issues li {
+  display: flex; align-items: flex-start; gap: 6px;
+  line-height: 1.45; margin-bottom: 4px;
+}
+.dict-check-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.dict-check-text { width: 100%; font-size: 12.5px; }
+.dict-check-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.dict-check-actions .hint { font-size: 11px; color: var(--muted); }
 
 /* ---- the recording stage ----
 
@@ -2672,6 +2785,130 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .rec-stage-back { margin-top: 2px; }
 /* The page behind must not scroll under the stage. */
 body.recording-stage { overflow: hidden; }
+
+/* ---- the processing screen ----
+
+   Same footprint and z-index as the recording stage; the two are never up at
+   once. It reuses body.recording-stage for the scroll lock rather than adding
+   a second class that means the same thing. */
+.proc-stage {
+  position: fixed; inset: 0; z-index: 50;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.proc-stage-inner {
+  width: 100%; max-width: 460px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.proc-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--accent);
+}
+.proc-spin {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--accent); border-top-color: transparent;
+  animation: procspin .9s linear infinite;
+}
+.proc-spin.stopped { animation: none; border-color: var(--danger); border-top-color: transparent; }
+@keyframes procspin { to { transform: rotate(360deg); } }
+.proc-stage-inner h2 { margin: 6px 0 2px; font-size: 22px; text-align: center; }
+.proc-doc { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+
+.proc-steps { list-style: none; margin: 0 0 14px; padding: 0; width: 100%; }
+.proc-step {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.proc-step:last-child { border-bottom: 0; }
+/* The status dot. Its shape carries the state as well as its colour: an empty
+   ring is waiting, a filled ring is running, a tick is done, a cross failed —
+   so the screen reads without relying on hue. */
+.proc-mark {
+  flex: none; width: 18px; height: 18px; margin-top: 1px;
+  border-radius: 50%; border: 2px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+.proc-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.proc-body b { font-size: 13.5px; font-weight: 600; }
+.proc-body small { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+
+.proc-step[data-state="waiting"] { opacity: .45; }
+.proc-step[data-state="active"] .proc-mark {
+  border-color: var(--accent);
+  animation: procpulse 1.3s ease-in-out infinite;
+}
+.proc-step[data-state="active"] .proc-body b { color: var(--accent); }
+@keyframes procpulse { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 5px var(--accent-soft); } }
+.proc-step[data-state="done"] .proc-mark { border-color: var(--good); background: var(--good); color: #fff; }
+.proc-step[data-state="done"] .proc-mark::after { content: "✓"; }
+.proc-step[data-state="failed"] .proc-mark { border-color: var(--danger); background: var(--danger); color: #fff; }
+.proc-step[data-state="failed"] .proc-mark::after { content: "✕"; }
+.proc-step[data-state="failed"] .proc-body b,
+.proc-step[data-state="failed"] .proc-body small { color: var(--danger); }
+.proc-note {
+  font-size: 12.5px; color: var(--muted); line-height: 1.5;
+  margin: 0; max-width: 380px; text-align: center;
+}
+.proc-actions { margin-top: 14px; }
+
+/* ---- the docked recorder ----
+
+   Where the controls go when the therapist leaves the stage to type with the
+   microphone still open. Pinned to the bottom of the viewport rather than
+   floating over the note: a therapist typing into a section must never have
+   the recorder covering the box they are typing into, and the body padding
+   below reserves the room so it cannot.
+
+   Same z-index as the stage. The two are never visible at once — one hides
+   as the other shows — so they cannot fight, and both stay under modals. */
+/* Starts where the sidebar ends. The dock outranks the rail on z-index, so a
+   full-width bar paints straight over the user card pinned to the bottom of
+   it — covering the sign-out control for as long as a visit is recording. The
+   rail collapses to a top bar at 720px, and below that the bottom is free. */
+.rec-dock {
+  position: fixed; left: 276px; right: 0; bottom: 0; z-index: 50;
+  background: var(--card); border-top: 2px solid var(--danger);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, .13);
+  padding: 10px 16px;
+}
+@media (max-width: 720px) { .rec-dock { left: 0; } }
+.rec-dock-inner {
+  max-width: 1200px; margin: 0 auto;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.rec-dock-who {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--danger); white-space: nowrap;
+}
+.rec-dock-who .rec-dot { animation: recpulse 1.4s ease-in-out infinite; }
+.rec-dock-meters { display: flex; align-items: center; gap: 10px; }
+.rec-dock-meters .mic-level { flex: none; width: 120px; height: 8px; }
+.rec-dock-slot { flex: 1 1 240px; min-width: 0; }
+.rec-dock-slot .rec-bar { margin-top: 0; border: 0; background: transparent; padding: 0; }
+/* The running commentary is the stage's job. In the dock it would wrap the
+   bar onto a second line and push the note further up the screen, so the
+   controls stay and the prose goes. */
+.rec-dock-slot .rec-meta { display: none; }
+.rec-dock-back { flex: none; }
+/* Reserve the dock's room so a pinned bar can never sit on top of the
+   section the therapist is typing into. */
+body.recording-docked { padding-bottom: 92px; }
+/* The sync badge is fixed to the same corner at the same z-index, so while the
+   dock is up it lands inside it. Lift it clear rather than hide it: whether
+   the note is saving is exactly what a therapist wants to know while typing
+   into a visit that is still recording. */
+/* !important because sync.js sets the badge's position inline — the same
+   reason the mobile rule below has to shout to hide it. */
+body.recording-docked #syncBadge { bottom: 84px !important; }
+@media (max-width: 720px) {
+  .rec-dock-inner { gap: 8px; }
+  .rec-dock-meters { display: none; }   /* the pulsing dot already says "live" */
+  body.recording-docked { padding-bottom: 120px; }
+}
 
 /* ---- findings: where each one is written ----
 

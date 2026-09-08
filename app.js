@@ -299,6 +299,16 @@
   /* ---------------- router ---------------- */
 
   let activeDictation = null; // stop mic when leaving a document
+  /* The RECORDER's counterpart, and it exists because the dock exists. While
+     leaving the note meant leaving a full-screen stage, navigating away with
+     the microphone open was not reachable — the stage covered the nav. A
+     therapist who can type in the note can also click the sidebar, so the
+     recorder now needs the same teardown live dictation has had all along.
+
+     Stopping keeps the audio: chunks are flushed to IndexedDB as they are
+     captured, so the visit is offered back on return ("an unfinished
+     recording from earlier is still here") rather than lost. */
+  let activeRecording = null;
   /* Logged-out: which of the two pages to draw. THREE states, not two:
        null  → no explicit choice yet; fall back to the heuristic in render()
        true  → the visitor asked for the sign-in form
@@ -396,7 +406,13 @@
   let pristineDraft = null;
 
   function render() {
-    if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; }
+    if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; window.__theraSay = null; }
+    if (activeRecording) { activeRecording.stop(); activeRecording = null; }
+    /* A section recording is a hot microphone too, and it is not held by
+       activeRecording — it has its own engine. Stopping it here rather than
+       letting stopSectionRecording() run means no processing screen is raised
+       over a document the router has already replaced. */
+    if (sectionRec) { try { sectionRec.engine.stop(); } catch (_) { } sectionRec = null; }
     currentDocState = null; // never carry one document's edit state into another
     closeModal();
     const user = S.currentUser();
@@ -4215,13 +4231,19 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
          to end. The word costs a few pixels the label row has to spare. */
       const mic = editable && isDictatable(doc.type, field)
         ? `<button type="button" class="field-mic" data-fieldmic="${field}"
-             title="Dictate straight into ${esc(label)} — what you say goes here, not wherever the app guesses"
+             title="Record straight into ${esc(label)} — nothing is written until you stop, then the AI writes this section from what you said"
              aria-label="Dictate into ${esc(label)}"><span class="field-mic-dot"></span>🎤 <span class="field-mic-word">Dictate</span></button>`
         : "";
+      /* Where the accuracy check on an aimed dictation burst draws itself.
+         Below the box rather than above it: the check is about text that is
+         already in that box, and pushing the box down the screen every time
+         the microphone leaves a section moves the thing the therapist is
+         reading. Empty until there is something to say. */
       return `
       <div class="field field-src-${src}" data-fieldwrap="${field}"><label>${label}
         <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span>${mic}</label>
-      <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea></div>`;
+      <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea>
+      ${editable && isDictatable(doc.type, field) ? `<div class="dict-check" data-fieldcheck="${field}" hidden></div>` : ""}</div>`;
     };
 
     /* The note column is a stack of workflow groups rather than one long form.
@@ -4258,7 +4280,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("pmh", "Past medical history", "Relevant conditions, surgeries…")) +
         group("Subjective", "What the patient reports",
           ["subjective"],
-          ta("subjective", "Subjective", "What the patient reports — dictation files here automatically")) +
+          ta("subjective", "Subjective", "What the patient reports — type it, or press Dictate and speak")) +
         group("Objective", "What you observed and measured",
           ["objectiveText", "@measurements", "@outcomes"],
           ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
@@ -4278,7 +4300,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("subjective", "Subjective", "Patient-reported status today")) +
         group("Objective", "What you did, and what you measured",
           ["summary", "@measurements"],
-          ta("summary", "Treatment summary", "Treatments performed this visit — dictation files treatment sentences here") +
+          ta("summary", "Treatment summary", "Treatments performed this visit — type it, or press Dictate and speak") +
           measurementEditor(doc, editable)) +
         group("Assessment", "How they responded to treatment",
           ["assessment"],
@@ -4466,8 +4488,62 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         </div>
         <div class="rec-stage-meters" id="recStageMeters"></div>
         <div class="rec-stage-slot" id="recStageSlot"></div>
-        <p class="rec-stage-note">Nothing is written to the note while you record. When you stop, the whole visit is read in one pass and you approve what goes in — so a detail the patient corrects later never reaches the chart.</p>
-        <button class="btn rec-stage-back" id="recStageBack" type="button" hidden>← Back to the note</button>
+        <p class="rec-stage-note">Nothing is written to the note <i>for</i> you while you record. When you stop, the whole visit is read in one pass and you approve what goes in — so a detail the patient corrects later never reaches the chart. You can type your own notes as you go: anything you write yourself is never overwritten without you ticking it.</p>
+        <button class="btn rec-stage-back" id="recStageBack" type="button">← Type in the note while this records</button>
+      </div>
+    </div>
+
+    <!-- Where the recorder controls move when the therapist goes BACK to the
+         note with the microphone still open. The stage exists so a running
+         recorder cannot be forgotten; this bar carries that same duty in the
+         one situation the stage cannot cover, which is a therapist who needs
+         to type while the visit is being recorded.
+
+         It is docked, not floating, and it holds the REAL #recBar — the same
+         node, the same listeners — for exactly the reason the stage does. The
+         invariant is unchanged and is the whole point: there is only ever one
+         record button in the document, so two of them can never disagree
+         about whether the microphone is open. -->
+    <!-- What the therapist watches between pressing Stop and reading the
+         review. It replaces a one-line status in the toolbar, which was the
+         whole feedback for a step that can run the better part of a minute on
+         a long visit — a screen that still says "Transcribing…" ninety seconds
+         later is indistinguishable from one that has hung.
+
+         The steps are the three things that genuinely happen, and no more. An
+         invented fourth step with a bar creeping across it would be theatre,
+         and this is the screen a therapist is staring at while wondering
+         whether their visit survived. -->
+    <div class="proc-stage" id="procStage" hidden>
+      <div class="proc-stage-inner">
+        <div class="proc-eyebrow"><span class="proc-spin"></span><span id="procScope">Processing this visit</span></div>
+        <h2>${esc(S.patientName(p))}</h2>
+        <div class="proc-doc">${esc(doc.title)}</div>
+        <ol class="proc-steps">
+          <li class="proc-step" data-step="captured">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b>Recording captured</b><small data-detail="captured" data-default=""></small></span>
+          </li>
+          <li class="proc-step" data-step="transcribe">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b>Transcribing what was said</b><small data-detail="transcribe" data-default="Speech only — the silence was never sent.">Speech only — the silence was never sent.</small></span>
+          </li>
+          <li class="proc-step" data-step="read">
+            <span class="proc-mark"></span>
+            <span class="proc-body"><b data-title="read" data-default="Reading the whole visit">Reading the whole visit</b><small data-detail="read" data-default="Splitting who spoke, correcting the body map, and drafting each section.">Splitting who spoke, correcting the body map, and drafting each section.</small></span>
+          </li>
+        </ol>
+        <p class="proc-note" id="procNote" data-default="Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.">Nothing reaches the chart yet. When this finishes you get to read every line and tick what belongs.</p>
+        <div class="proc-actions" id="procActions" hidden></div>
+      </div>
+    </div>
+
+    <div class="rec-dock" id="recDock" hidden>
+      <div class="rec-dock-inner">
+        <div class="rec-dock-who"><span class="rec-dot"></span><b>Recording</b> · ${esc(S.patientName(p))}</div>
+        <div class="rec-dock-meters" id="recDockMeters"></div>
+        <div class="rec-dock-slot" id="recDockSlot"></div>
+        <button class="btn small rec-dock-back" id="recDockBack" type="button">Full screen ↗</button>
       </div>
     </div>` : ""}
     ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
@@ -5105,7 +5181,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   function drawCallout(doc, layer, pt, side, ly) {
     const lx = side === "left" ? -46 : 246; // gutter x
     const elbow = side === "left" ? -30 : 230;
-    const g = mkSvg("g", { class: `point-group ${pt._sev.cls}` });
+    const g = mkSvg("g", { class: `point-group ${pt._sev.cls}${pt.provisional ? " provisional" : ""}` });
     g.dataset.key = pt.key;
 
     // leader line: dot → elbow → marker
@@ -5120,7 +5196,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     num.textContent = pt._num;
     const title = document.createElementNS(svgNS, "title");
     const latest = pt.notes[pt.notes.length - 1];
-    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""} (${pt._sev.label})`;
+    title.textContent = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}${latest ? " — " + latest.summary : ""} (${pt._sev.label})`
+      + (pt.provisional ? " · heard while recording, not checked yet" : "");
     marker.appendChild(title);
 
     g.append(line, ring, dot, marker, num);
@@ -5134,14 +5211,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const editable = dstate && dstate.editable;
     const pts = doc.data.mapPoints || [];
     box.innerHTML = pts.length ? pts.map((pt, i) => `
-      <div class="map-note ${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
+      <div class="map-note ${pt.provisional ? "provisional " : ""}${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
         <div class="map-note-head">
           <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</span></b>
+          ${pt.provisional ? `<span class="chip muted prov-chip" title="Heard while the visit was recording. The AI re-reads the whole conversation when you stop, and this may move or go.">not checked yet</span>` : ""}
           ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
       </div>`).join("")
       : `<div class="empty-state" style="padding:8px">Body areas the patient mentions will be pinned here automatically.</div>`;
+    /* Said once, above the list, rather than repeated on every row. The chips
+       mark WHICH pins are unconfirmed; this says what unconfirmed means. */
+    if (pts.some((p) => p.provisional)) {
+      box.insertAdjacentHTML("afterbegin", `<div class="map-prov-note">
+        Dashed pins are what the microphone has heard so far — <b>not the chart</b>.
+        When you stop recording, the whole conversation is read at once and these are
+        confirmed, corrected or dropped.</div>`);
+    }
 
     box.querySelectorAll(".map-note").forEach((el) =>
       el.addEventListener("click", (e) => {
@@ -5705,7 +5791,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   /* Capture gated audio and hand back one Float32Array per ~55s chunk. */
-  function recorderEngine({ docId, onLevel, onElapsed, onStop, billedSoFar, ceilingSeconds }) {
+  function recorderEngine({ docId, onLevel, onElapsed, onStop, onChunk, billedSoFar, ceilingSeconds }) {
     let ctx = null, stream = null, proc = null, on = false;
     let chunk = [], chunkSamples = 0, voicedMs = 0, tailMs = 0, totalMs = 0;
     let preRoll = [];
@@ -5722,8 +5808,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const flat = new Float32Array(chunk.reduce((n, a) => n + a.length, 0));
       let off = 0; for (const a of chunk) { flat.set(a, off); off += a.length; }
       chunk = []; chunkSamples = 0;
-      chunks.push({ pcm: flat, rate: ctx ? ctx.sampleRate : 16000 });
+      const made = { pcm: flat, rate: ctx ? ctx.sampleRate : 16000 };
+      const index = chunks.length;
+      chunks.push(made);
       try { await savedAudio.put(docId, flat); } catch (_) { /* memory copy still holds it */ }
+      /* Handed over AFTER it is on disk, and never awaited. A chunk closes at
+         a pause in the conversation, which is exactly the moment the recorder
+         must not be blocked on a network call — the next words are already
+         arriving. Whatever the caller does with it, it does on its own time. */
+      if (onChunk) { try { onChunk(made, index); } catch (_) { } }
     };
 
     return {
@@ -5816,27 +5909,43 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      carries no symptom, so it stands in the verbatim transcript and the
      note-filling pass files none of it. */
   const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
-  async function processRecording(docId, lang, chunks, onProgress) {
+
+  /* One chunk, one request. Pulled out of processRecording so the SAME call
+     serves both the end-of-visit sweep and the live pass that transcribes each
+     chunk as it is captured — two code paths posting audio to two slightly
+     different places is how a billing figure or a language setting drifts. */
+  async function transcribeChunk(docId, lang, chunk) {
+    const wav = encodeWav(chunk.pcm, chunk.rate);
+    try {
+      const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
+        method: "POST",
+        headers: Object.assign({ "content-type": "audio/wav" },
+          (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
+        body: wav,
+      });
+      const data = await res.json().catch(() => ({}));
+      /* Take the SERVER's billed figure, not our own count of voiced
+         milliseconds. The two are close, but only one of them is the number
+         on the invoice — and a chunk that failed at Google was still billed,
+         so this is read whether or not the request succeeded. */
+      const billedSeconds = typeof data.billedSeconds === "number" ? data.billedSeconds : 0;
+      if (!res.ok) return { billedSeconds, error: (data && data.error) || `HTTP ${res.status}` };
+      return { billedSeconds, text: data.text || "" };
+    } catch (e) { return { billedSeconds: 0, error: e.message || "network error" }; }
+  }
+
+  /* `prior` is what the live pass already transcribed, indexed by chunk. A
+     chunk answered during the visit is NOT sent again — it is the same audio,
+     and paying Google twice for it would double the largest line in the cost
+     model. */
+  async function processRecording(docId, lang, chunks, onProgress, prior) {
     const done = new Array(chunks.length).fill(null);
     let finished = 0, billedSeconds = 0;
     await Promise.all(chunks.map(async (c, i) => {
-      const wav = encodeWav(c.pcm, c.rate);
-      try {
-        const res = await fetch(`/api/stt?lang=${encodeURIComponent(STT_LANG[lang] || STT_LANG_DEFAULT)}&model=${encodeURIComponent(STT_MODEL)}&docId=${encodeURIComponent(docId)}`, {
-          method: "POST",
-          headers: Object.assign({ "content-type": "audio/wav" },
-            (window.TheraSync && window.TheraSync.token) ? { authorization: `Bearer ${window.TheraSync.token}` } : {}),
-          body: wav,
-        });
-        const data = await res.json().catch(() => ({}));
-        /* Take the SERVER's billed figure, not our own count of voiced
-           milliseconds. The two are close, but only one of them is the number
-           on the invoice — and a chunk that failed at Google was still billed,
-           so this is summed outside the res.ok branch. */
-        if (typeof data.billedSeconds === "number") billedSeconds += data.billedSeconds;
-        done[i] = res.ok ? (data.text || "") : "";
-        if (!res.ok) done[i] = { error: (data && data.error) || `HTTP ${res.status}` };
-      } catch (e) { done[i] = { error: e.message || "network error" }; }
+      const already = prior && prior[i];
+      const r = already || await transcribeChunk(docId, lang, c);
+      billedSeconds += r.billedSeconds || 0;
+      done[i] = r.error ? { error: r.error } : (r.text || "");
       finished += 1;
       if (onProgress) onProgress(finished, chunks.length);
     }));
@@ -5848,7 +5957,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       .join(" ").replace(/\s+/g, " ").trim();
     // a run of markers and nothing else is not a transcript
     const heard = done.some((d) => typeof d === "string" && d.trim());
-    return { text: heard ? text : "", errors, chunks: chunks.length, billedSeconds };
+    /* `parts` is per chunk, so the caller can tell which chunks the live pass
+       already wrote into the transcript and append only what is new. */
+    return { text: heard ? text : "", errors, chunks: chunks.length, billedSeconds,
+      parts: done.map((d) => (typeof d === "string" ? d : "")) };
   }
 
   /** "6:12" for 372 seconds. For ONE visit, where seconds are meaningful. */
@@ -6194,6 +6306,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const meta = document.getElementById("recMeta");
       const prog = document.getElementById("recProgress");
       let rec = null, recording = false, captured = null;
+      /* What the live pass transcribed, and how far into the chunk list its
+         text has already reached the transcript. Both are reset at the start
+         of every recording — "Record more" makes a fresh chunk list, and a
+         stale index would skip real text or duplicate it. */
+      let liveParts = [], capturedThroughChunk = 0;
 
       /* ---- the recording stage ----
 
@@ -6212,43 +6329,100 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const homes = new Map();
       const remember = (el) => { if (el && !homes.has(el)) homes.set(el, [el.parentNode, el.nextSibling]); };
 
+      /* The recorder controls live in exactly one of three places, and they
+         are MOVED between them rather than copied — see the note above. The
+         dock is the state that lets a therapist type into the note while the
+         visit is still recording.
+
+         The stage used to be a one-way door: no way off it except Stop, on
+         the reasoning that a therapist who walks away from a running recorder
+         leaves a hot microphone nobody can see. That reasoning is still
+         right, and it is what the dock answers — leaving the stage does not
+         hide the recorder, it re-homes it into a bar pinned to the viewport
+         that carries the same pulsing dot and the same Stop button. What is
+         forbidden is a running recorder with NO visible control, and neither
+         of these two states is that. */
+      const dock = document.getElementById("recDock");
+      const dockBack = document.getElementById("recDockBack");
+
+      /* Every element this moves is remembered BEFORE it is moved — that is
+         the whole contract of `homes`, and it is easy to break by reordering.
+         remember() records an element's CURRENT parent, so calling it after a
+         re-parent records the new home as the original one and exitStage()
+         then "restores" the element to where it already is: an overlay
+         orphaned onto <body>, outliving the document that owned it, holding
+         an id the next note is about to render again. */
+      const moveControls = (slotId, metersId) => {
+        const slot = document.getElementById(slotId);
+        const meters = document.getElementById(metersId);
+        if (!slot || !meters) return;
+        for (const el of [bar, levelEl, meterEl]) remember(el);
+        if (levelEl) meters.appendChild(levelEl);
+        if (meterEl) meters.appendChild(meterEl);
+        slot.appendChild(bar);
+      };
+
       const enterStage = () => {
         if (!stage) return;
-        const slot = document.getElementById("recStageSlot");
-        const meters = document.getElementById("recStageMeters");
         /* The stage moves to <body> first. position:fixed with a high z-index
            is not enough on its own: an ancestor inside the page already forms
            a stacking context, so the stage's z-index was being resolved
            INSIDE it and the fixed sidebar (z-index 30) painted straight over
            a "full screen" recorder. Re-parenting to <body> is what actually
            makes it full screen; it is restored with everything else. */
-        remember(stage);
-        for (const el of [bar, levelEl, meterEl]) remember(el);
+        remember(stage);                 // before the move — see moveControls
         document.body.appendChild(stage);
-        if (levelEl) meters.appendChild(levelEl);
-        if (meterEl) meters.appendChild(meterEl);
-        slot.appendChild(bar);
+        moveControls("recStageSlot", "recStageMeters");
         stage.hidden = false;
-        /* No way off the stage while the mic is live except Stop. Letting a
-           therapist walk away from a running recorder is how you end up with
-           a hot microphone nobody can see — the one failure the dictation
-           backstops exist to catch. */
-        if (stageBack) stageBack.hidden = true;
+        if (dock) dock.hidden = true;
         document.body.classList.add("recording-stage");
+        document.body.classList.remove("recording-docked");
       };
 
-      // the mic is off but the audio is still here: offer the way back
-      const stageIdle = () => { if (stageBack && stage && !stage.hidden) stageBack.hidden = false; };
+      /* Off the stage, mic still live, note editable. The dock is re-parented
+         to <body> for the same stacking-context reason the stage is. */
+      const dockStage = () => {
+        if (!dock) return exitStage();
+        /* Remembered BEFORE it is re-parented, exactly as the stage is.
+           Without this exitStage() only hid the dock and left it attached to
+           <body> — so it outlived the document that owned it, and the next
+           note rendered a second #recDock inside #app while the orphan sat
+           there holding the same id. */
+        remember(dock);
+        document.body.appendChild(dock);
+        moveControls("recDockSlot", "recDockMeters");
+        dock.hidden = false;
+        if (stage) stage.hidden = true;
+        document.body.classList.remove("recording-stage");
+        document.body.classList.add("recording-docked");
+        /* The therapist pressed this to type, so put them in a box rather
+           than leaving them to find one. The first empty dictatable section
+           is the one they are most likely to be reaching for; if every
+           section already has text, focus is left alone rather than stealing
+           the caret out of whatever they were reading. */
+        const first = [...document.querySelectorAll("textarea[data-field]")]
+          .find((t) => isDictatable(doc.type, t.dataset.field) && !t.value.trim());
+        if (first) { first.scrollIntoView({ block: "center", behavior: "smooth" }); first.focus(); }
+      };
+
+      // the mic is off but the audio is still here: bring the controls home so
+      // Process and Discard sit where the therapist already knows to look
+      const stageIdle = () => { exitStage(); };
 
       const exitStage = () => {
-        if (!stage || stage.hidden) return;
         for (const [el, [parent, next]] of homes) if (parent) parent.insertBefore(el, next);
         homes.clear();
-        stage.hidden = true;
-        if (stageBack) stageBack.hidden = true;
+        if (stage) stage.hidden = true;
+        if (dock) dock.hidden = true;
         document.body.classList.remove("recording-stage");
+        document.body.classList.remove("recording-docked");
       };
-      if (stageBack) stageBack.addEventListener("click", exitStage);
+      /* Leaving the stage means DOCKING while the mic is open, and going all
+         the way home once it is shut. Reading `recording` rather than a flag
+         of its own keeps the two in step: there is one source of truth for
+         whether audio is being captured, and this is a reader of it. */
+      if (stageBack) stageBack.addEventListener("click", () => (recording ? dockStage() : exitStage()));
+      if (dockBack) dockBack.addEventListener("click", enterStage);
 
       /* Deliberately no running clock while the mic is open — see
          dictationLine(). The pulsing dot on the button is the "still
@@ -6281,16 +6455,85 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           meta.textContent = "Recording captured — process it when you're ready. Silence was skipped, so only speech is charged.";
           showIdle();
           stageIdle();
+          /* Stopping used to end in a one-line status in the toolbar, which a
+             therapist who had been looking at the patient rather than the
+             screen never saw — so a captured visit sat unprocessed, looking
+             exactly like a visit that had not been recorded.
+
+             This says what was captured and asks for the one decision that
+             actually remains. "Record more" is kept and kept FIRST-CLASS: a
+             visit interrupted by a phone call is the normal reason to stop,
+             and a dialog that only offered Process would have made the
+             interruption cost the rest of the recording. */
+          const mins = Math.max(1, Math.round((Number(doc.data._dictationSeconds) || 0) / 60));
+          const m = showModal(`
+            <h2>Recording stopped</h2>
+            <p style="font-size:13.5px; line-height:1.55; margin-top:-2px">
+              About <b>${mins} minute${mins > 1 ? "s" : ""}</b> of speech captured on this visit.
+              Processing it takes <b>a few seconds</b> — the whole conversation is transcribed and read
+              in one pass, and then you get to check every line before anything reaches the chart.</p>
+            <p style="font-size:12.5px; color:var(--muted)">Not finished with the patient? Record more and process it all together at the end.</p>
+            <div class="modal-actions">
+              <button class="btn" id="recMore" type="button">Record more</button>
+              <button class="btn primary" id="recGo" type="button">Process the visit</button>
+            </div>`);
+          m.querySelector("#recMore").addEventListener("click", closeModal);
+          m.querySelector("#recGo").addEventListener("click", () => { closeModal(); processBtn.click(); });
           return;
         }
+        /* Said BEFORE the microphone opens, not after. Two reasons: the
+           therapist is about to record a patient and should know what is and
+           is not being written down before that starts, and the button press
+           inside this dialog is the user gesture the browser wants for the
+           microphone permission prompt — asking from here keeps the prompt
+           attached to a deliberate action rather than to a page that already
+           moved on.
+
+           It is shown every time on purpose. This is the screen that says the
+           note will NOT fill itself in as you speak, and a therapist who has
+           dismissed it once still needs that to be true the tenth time. */
+        if (!(await confirmRecording(doc, !!(captured && captured.length)))) return;
         const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
         const priorSec = Number(doc.data._dictationSeconds) || 0;
+        /* Chunks transcribed DURING the visit, indexed as the recorder made
+           them. Two things come out of this: the map can show what has been
+           heard while there is still a patient in the room, and the wait after
+           Stop shrinks to the AI read, because the transcription it used to
+           start from is already done. Neither costs an extra peso — it is the
+           same audio, sent once, billed by the second either way. */
+        liveParts = [];
+        capturedThroughChunk = 0;
         rec = recorderEngine({
           docId: doc.id,
           billedSoFar: priorSec,
           ceilingSeconds: ceilMin * 60,
           // whole minutes only — see showDictMeter()
           onElapsed: (total, voiced) => showDictMeter(priorSec + voiced, ceilMin * 60),
+          onChunk: async (chunk, i) => {
+            /* The live pass runs ONLY where something later confirms it.
+
+               A provisional pin is a question the whole-visit read answers. On
+               a server with no AI there is no such read — the parser's routing
+               at the end IS the answer — so drawing dashed pins there would
+               promise a confirmation that never comes, and capturing the
+               transcript early would have that routing file every line twice.
+               No AI, no live pass, and the old end-of-visit path is unchanged. */
+            if (((window.TheraSync || {}).refine || "unavailable") !== "gemini") return;
+            const r = await transcribeChunk(doc.id, langSel.value, chunk);
+            liveParts[i] = r;
+            if (!r.text || !r.text.trim()) return;
+            /* Write into the LIVE document. A sync pull can replace the state
+               while a forty-minute visit records, and appending to the copy
+               this closure captured would drop everything heard since. */
+            const live = S.getDoc(doc.id);
+            if (!live || live.status === "signed") return;
+            const fixed = PR.correctDictation(r.text);
+            const seg = location.hash.split("/");
+            const open = seg[1] === "doc" && seg[2] === doc.id;
+            captureUtterances(live, user, fixed.text, open ? currentDocState : null);
+            capturedThroughChunk = Math.max(capturedThroughChunk, i + 1);
+            if (open) addProvisionalPins(live, user, fixed.text, currentDocState);
+          },
           /* The "I can hear you" signal. It matters more here than it does on
              the live path: nothing is interpreted during a recording any more,
              so without this the screen is completely still for forty minutes
@@ -6338,13 +6581,34 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         processBtn.disabled = true; btn.disabled = true;
         prog.hidden = false;
         prog.textContent = `Transcribing ${captured.length} chunk${captured.length > 1 ? "s" : ""}…`;
+        /* Onto the processing screen for the whole arc. exitStage() first so
+           this never stacks on top of a recording stage or a dock that is
+           still up — the two overlays share a scroll lock, and whichever
+           released it last would win. */
+        exitStage();
+        procStage.show();
+        const spokenMin = Math.max(1, Math.round((Number(doc.data._dictationSeconds) || 0) / 60));
+        procStage.set("captured", "done",
+          `${captured.length} chunk${captured.length > 1 ? "s" : ""} · about ${spokenMin} minute${spokenMin > 1 ? "s" : ""} of speech`);
+        /* Most of this is usually already done — the live pass transcribed
+           each chunk as the visit ran. Saying so is the difference between a
+           step that looks stuck and one that is all but finished. */
+        const alreadyDone = liveParts.filter(Boolean).length;
+        procStage.set("transcribe", "active", alreadyDone
+          ? `${alreadyDone} of ${captured.length} already done while you recorded`
+          : `0 of ${captured.length}`);
         try {
           const out = await processRecording(doc.id, langSel.value, captured,
-            (n, total) => { prog.textContent = `Transcribing… ${n} of ${total}`; });
+            (n, total) => {
+              prog.textContent = `Transcribing… ${n} of ${total}`;
+              procStage.set("transcribe", "active", `${n} of ${total}`);
+            }, liveParts);
           if (!out.text) {
-            prog.textContent = out.errors.length
-              ? `Couldn't transcribe: ${out.errors[0]}. The recording is still here — try Process again.`
+            const why = out.errors.length
+              ? `Couldn't transcribe: ${out.errors[0]}. The recording is still on this device — press Process again to retry.`
               : "Nothing recognisable in that recording. The audio is still here if you want to try again.";
+            prog.textContent = why;
+            procStage.fail("transcribe", why);
             return;
           }
           /* Whether the whole conversation gets read at once, or line by line.
@@ -6353,10 +6617,16 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
           if (out.errors.length) {
             prog.textContent = `Transcribed, but ${out.errors.length} chunk(s) failed. The gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript, and the recording is still here — press Process again to retry.`;
+            /* Done, not failed: a chunk that did not come back leaves a marked
+               gap in the transcript and everything else is still usable. The
+               step says so rather than going red on a visit that survived. */
+            procStage.set("transcribe", "done",
+              `${out.errors.length} of ${captured.length} chunk${out.errors.length > 1 ? "s" : ""} failed — the gap${out.errors.length > 1 ? "s are" : " is"} marked in the transcript`);
           } else {
             prog.textContent = aiOn
               ? "Transcribed. Reading the whole visit before anything is filed…"
               : "Transcribed. Review what was filled in against your own notes below.";
+            procStage.set("transcribe", "done", "Speech only — the silence was never sent.");
           }
           // Record the spend first: a crash further down should not lose what
           // we were already billed for.
@@ -6375,7 +6645,11 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
              button used to give, and the note is still the therapist's to
              write and sign in the usual way. */
           if (aiOn) {
-            captureUtterances(doc, user, repaired.text, dstate);
+            /* Only the chunks the live pass did NOT already write. Capturing
+               `repaired.text` wholesale would put the whole visit into the
+               transcript a second time, underneath the first copy. */
+            const fresh = (out.parts || []).slice(capturedThroughChunk).join(" ").trim();
+            if (fresh) captureUtterances(doc, user, PR.correctDictation(fresh).text, dstate);
           } else {
             /* Snapshot what the therapist wrote BEFORE the routing touches
                anything, so the comparison is against their own words. */
@@ -6393,18 +6667,39 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             captured = null;
             await savedAudio.clear(doc.id).catch(() => {});
           }
-          /* Off the stage before the review opens. Transcription progress
-             belongs on the stage — it is still part of the recording — but
-             the review is about the NOTE, and reading it over a full-screen
-             recorder would hide the very document it is filling in. An early
-             return above leaves the stage up on purpose, so a failed
-             transcription can be retried where it was started. */
-          exitStage();
+          /* The processing screen stays up THROUGH the whole-visit read and
+             comes down as the review opens — runRefine owns that step and
+             hides the screen itself. Without the AI there is no such step, so
+             it comes down here.
+
+             An early return above leaves the screen up on purpose, showing
+             the failed step and a way back, so a failed transcription is not
+             silently swapped for the note it could not fill. */
           showIdle();
-          if (aiOn) await runRefine(doc, user, dstate);
-          else openCompare(doc, user);
+          if (aiOn) { await runRefine(doc, user, dstate); }
+          else { procStage.hide(); openCompare(doc, user); }
         } finally { processBtn.disabled = false; btn.disabled = false; }
       });
+
+      /* Leaving the document with the microphone open. Registered here rather
+         than inside a listener because render() has to be able to reach it
+         without knowing anything about this closure.
+
+         Deliberately NOT awaited: stop() flushes the tail chunk into
+         IndexedDB, and every chunk before it is already there, so the visit
+         survives whatever the router does next. Blocking a navigation on a
+         disk write would be a worse trade than a fraction of a second of
+         audio in the very last chunk. */
+      activeRecording = {
+        isRecording: () => recording,
+        stop() {
+          if (!recording) { exitStage(); return; }
+          recording = false;
+          Promise.resolve(rec && rec.stop()).catch(() => {});
+          hideDictMeter();
+          exitStage();
+        },
+      };
 
       // an unfinished recording from a previous session (tab closed, phone locked)
       savedAudio.forDoc(doc.id).then((rows) => {
@@ -6495,7 +6790,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         if (!engine) statusEl.textContent = "Speech not supported in this browser — type into the dictation box instead.";
         else statusEl.textContent = "Mic off · browser dictation — Google Cloud isn't set up here";
       }
-      window.__theraDict = engine; // test hook
+      /* Test hook. `deliver` is exposed alongside the engine because it is the
+         only way to exercise an AIMED utterance end to end: the engine below
+         it takes audio, and everything above it — routing, the burst
+         accumulator, the section check — is reachable only from a finished
+         line of text. The e2e suite's say() drives the typed-dictation box,
+         which has no aim, so without this the section-aimed path has no test
+         that runs it. */
+      window.__theraDict = engine;
+      window.__theraSay = (text, target) => { aimedAt = target || null; deliver(text); };
     }
     makeEngine();
 
@@ -6570,7 +6873,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
 
     micBtn.addEventListener("click", () => aimMic(null));
-    sectionBtns().forEach((b) => b.addEventListener("click", () => aimMic(b.dataset.fieldmic)));
+    /* Section mics RECORD; they do not open the live engine. Same arc as the
+       visit recorder — record, stop, transcribe, let the AI write it, approve
+       — so a therapist meets one workflow rather than two. The live engine is
+       still what the whole-visit mic above uses, and is still the deliberate
+       choice under "Or dictate live". */
+    sectionBtns().forEach((b) => b.addEventListener("click", async () => {
+      const field = b.dataset.fieldmic;
+      if (sectionRecordingActive()) return;      // stop is on the panel, not here
+      if (listening) { await aimMic(null); }     // one microphone: close the live one first
+      if (activeRecording && activeRecording.isRecording && activeRecording.isRecording()) {
+        showCheckPanel(doc, user, field, { error: "The whole visit is being recorded. Stop that first, or type into this section instead." });
+        return;
+      }
+      b.disabled = true;
+      const ok = await startSectionRecording(doc, user, field);
+      b.disabled = false;
+      setSectionMicUI();
+      if (!ok) setSectionMicUI();
+    }));
 
     langSel.addEventListener("change", () => {
       localStorage.setItem("therachart-lang", langSel.value);
@@ -6708,6 +7029,542 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     }
     const out = parts.map((x) => x.trim()).filter(Boolean);
     return out.length ? out : [text];
+  }
+
+  /* ---- what the therapist already wrote, against what the AI proposes ----
+
+     A therapist who typed during the recording arrives at the review holding
+     two accounts of the same visit. The question they have to answer, per
+     section, is not "is this text good" — it is "is any of this SOMETHING I
+     DID NOT ALREADY SAY". Reading two paragraphs word by word to find out is
+     exactly the work the review exists to remove, so the comparison is drawn
+     rather than left to the eye.
+
+     Sentence-level, not word-level, and the choice matters. Word-level
+     highlighting on clinical prose lights up every "the" and "patient" and
+     says nothing; a sentence is also the unit a therapist actually keeps or
+     drops. Each of the AI's sentences is scored on how much of its CONTENT
+     survives in what the therapist wrote, and called `seen` above a
+     threshold.
+
+     Numbers are content words on purpose and are never normalised: "flexion
+     120 degrees" and "flexion 130 degrees" must not read as the same
+     sentence, because the entire reason to look at this screen is to catch
+     the visit where they disagree.
+
+     This is a reading aid and it is labelled as one in the UI. It has no vote
+     in what gets applied — the therapist's tick decides that, exactly as
+     before. */
+  const OVERLAP_STOP = new Set(("a an and are as at be been being but by for from had has have he her him his i in "
+    + "into is it its me my of on or our she that the their them then there these they this those to was were "
+    + "what when which who will with you your patient pt reports reported report states stated denies denied "
+    + "notes noted per also very quite about").split(" "));
+
+  /* Content tokens, lowercased. Slashes and decimals are kept inside a token
+     so "7/10", "4+/5" and "1.5" survive as single comparable units — split
+     them and a pain score of 7/10 would half-match a 7-week history. */
+  function contentWords(s) {
+    return String(s || "").toLowerCase()
+      .replace(/[^a-z0-9+/.\s-]+/g, " ")
+      .split(/\s+/)
+      .map((w) => w.replace(/^[-.]+|[-.]+$/g, ""))
+      .filter((w) => w && !OVERLAP_STOP.has(w));
+  }
+
+  /* SEEN_AT is deliberately high. The cost of the two mistakes is not
+     symmetric: calling a genuinely new sentence "already written" invites the
+     therapist to skip past a finding that is not in their note, while calling
+     a duplicate "new" costs them one line of reading. So the benefit of the
+     doubt goes to NEW. */
+  const SEEN_AT = 0.7;
+
+  function overlapSentences(mine, theirs) {
+    const have = new Set(contentWords(mine));
+    return splitSentences(theirs).map((text) => {
+      const words = contentWords(text);
+      if (!words.length) return { text, seen: false, score: 0, words: 0 };
+      const hit = words.filter((w) => have.has(w)).length;
+      const score = hit / words.length;
+      return { text, seen: have.size > 0 && score >= SEEN_AT, score, words: words.length };
+    });
+  }
+
+  /* ---- provisional pins ----
+
+     What the body map shows WHILE the visit is still recording. The parser
+     reads each chunk as it comes back from transcription and marks the regions
+     it hears; the whole-visit AI pass then replaces the lot when the therapist
+     approves the review.
+
+     Measured against the eval transcripts, the parser and the AI agree on the
+     map for 78% of visits. On the rest the parser both over-pins and
+     under-pins — one case shows six regions where the AI keeps two, another
+     shows none where the AI finds both knees — so these marks are drawn as a
+     QUESTION, not as the chart. Dashed, dimmed, and labelled "not checked yet"
+     wherever they appear, because a mannequin that confidently shows six pins
+     and then drops to two teaches a therapist to distrust the map.
+
+     They exist for one reason: a therapist recording a forty-minute visit at a
+     screen that never moves cannot tell a working microphone from a dead one.
+     This is the "I am hearing you, and here is what I think I heard" signal —
+     the same job the level meter does for audio, one layer up.
+
+     Deliberately NOT written: section text, measurements, outcome scores.
+     Those are the note, they are what the therapist signs, and nothing reaches
+     them until the visit has been read whole. */
+  function addProvisionalPins(doc, user, text, dstate) {
+    if (!doc.data.mapPoints) doc.data.mapPoints = [];
+    let added = 0;
+    for (const raw of splitSentences(String(text || ""))) {
+      const parsed = PR.parseUtterance(raw);
+      if (!parsed.text || !parsed.mentions.length) continue;
+      /* The same gate routeUtterance applies, and for the same reasons: a
+         region named inside a measurement, by the clinician, or in a section
+         that is not a complaint is vocabulary rather than a finding. */
+      const meas = parsed.measurements || {};
+      const nMeas = (meas.rom || []).length + (meas.mmt || []).length
+        + (meas.special || []).length + (meas.pain || []).length;
+      const clinician = PR.guessSpeaker(parsed.text) === "clinician";
+      const section = PR.classifyUtterance(parsed.text, parsed, parsed.measurements);
+      const notAComplaint = ["reason", "precautions", "pmh", "assessment"].includes(section);
+      for (const m of parsed.mentions) {
+        if ((nMeas || clinician || notAComplaint) && m.summary.startsWith("Mentioned this area")) continue;
+        const before = doc.data.mapPoints.length;
+        addDocMapPoint(doc, m, null, "");
+        const pt = doc.data.mapPoints[doc.data.mapPoints.length - 1];
+        /* A repeat merges into the pin that is already there, so the flag is
+           set on whatever addDocMapPoint touched rather than only on new
+           points — a provisional pin mentioned twice is still provisional. */
+        if (pt) pt.provisional = true;
+        if (doc.data.mapPoints.length > before) added += 1;
+      }
+    }
+    if (!added && !doc.data.mapPoints.some((p) => p.provisional)) return 0;
+    S.updateDocData(doc.id, doc.data, user);
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    return added;
+  }
+
+  /* ---- recording into ONE section ----
+
+     The same arc as the visit recorder, at section scale: record, stop,
+     transcribe, let the AI read it, then show the therapist what it wrote and
+     wait. Nothing is written into the section while the microphone is open,
+     for exactly the reason the visit recorder does not either — a sentence the
+     therapist restarts halfway through should never have reached the note.
+
+     It deliberately does NOT reuse the visit recorder's state. Two recordings
+     that share `captured` would have a section burst processed as part of the
+     visit, or a visit discarded by finishing a section. They share the ENGINE
+     and the processing screen; they share no state.
+
+     Audio is keyed `docId#field` rather than docId, so the unfinished-recording
+     probe on the visit recorder — an exact match on docId — never picks a
+     section burst up and offers to process it as the whole visit.
+
+     There is no pre-recording dialog here and that is deliberate. That screen
+     exists to set expectations before a therapist walks away from a
+     forty-minute recording; a section burst is a few seconds they start and
+     stop on purpose, and a modal in front of each one is ceremony they would
+     learn to click through. */
+  let sectionRec = null;   // { field, engine, stop() } while a section is recording
+
+  function sectionRecordingActive() { return !!sectionRec; }
+
+  async function startSectionRecording(doc, user, field) {
+    const label = fieldLabel(doc.type, field);
+    const key = `${doc.id}#${field}`;
+    const ceilMin = S.settings().maxDictationMinutesPerVisit || 30;
+    const priorSec = Number(doc.data._dictationSeconds) || 0;
+
+    const engine = recorderEngine({
+      docId: key,
+      billedSoFar: priorSec,          // the visit's ceiling covers every mic on it
+      ceilingSeconds: ceilMin * 60,
+      onLevel: (voiced) => paintSectionRecording(field, label, voiced),
+      /* Fires only for the engine's OWN stops — the 20-minute limit and the
+         per-visit ceiling. A stop the therapist presses goes straight to
+         stopSectionRecording, because engine.stop() does not call this. */
+      onStop: () => { stopSectionRecording(doc, user, field); },
+    });
+    const ok = await engine.start();
+    if (!ok) {
+      showCheckPanel(doc, user, field, { error: "Mic blocked — allow microphone access and try again." });
+      return false;
+    }
+    /* doc and user ride along: the Stop button is painted by a module-level
+       function that has neither, and reaching for S.currentUser() there would
+       be a second source of truth for who is writing this note. */
+    sectionRec = { field, engine, doc, user };
+    paintSectionRecording(field, label, false);
+    return true;
+  }
+
+  /* The recording indicator lives in the section's own panel — the same slot
+     the result comes back into. One place for the whole lifecycle means the
+     therapist's eye never has to move, and the Stop control is on screen for
+     as long as the microphone is open, which is the property that matters. */
+  function paintSectionRecording(field, label, voiced) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (!host) return;
+    const live = host.querySelector(".dict-rec");
+    if (live) { live.classList.toggle("voiced", !!voiced); return; }
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="dict-rec">
+        <span class="rec-dot"></span>
+        <span class="dict-rec-what">Recording into <b>${esc(label)}</b> — nothing is written until you stop.</span>
+        <button class="btn small primary" data-recstop="${esc(field)}" type="button">Stop &amp; process</button>
+      </div>`;
+    host.querySelector("[data-recstop]").addEventListener("click", () => {
+      const b = host.querySelector("[data-recstop]");
+      if (b) { b.disabled = true; b.textContent = "Stopping…"; }
+      /* stopSectionRecording owns engine.stop(); calling the engine here would
+         shut the microphone with nothing left to carry the chunks onward. */
+      if (sectionRec && sectionRec.field === field) {
+        stopSectionRecording(sectionRec.doc, sectionRec.user, field);
+      }
+    });
+  }
+
+  /* Stop, then the same three steps the visit recorder shows. The screen is
+     shared on purpose: a therapist should not have to learn two different
+     answers to "is it working, and how much longer". */
+  async function stopSectionRecording(doc, user, field) {
+    const rec = sectionRec;
+    sectionRec = null;
+    if (!rec || rec.field !== field) return;
+    const label = fieldLabel(doc.type, field);
+    const key = `${doc.id}#${field}`;
+    const chunks = await rec.engine.stop();
+    const secs = rec.engine.voicedSeconds();
+    setSectionMicUI();
+    /* The microphone is shut, so the panel must stop saying it is open.
+
+       Everything below either replaces this panel with a result or hands the
+       screen to procStage — but not on every path: a transcription that fails
+       leaves the processing screen showing the failure and returns, and the
+       section was left reading "Recording into … nothing is written until you
+       stop" underneath it, indefinitely. Clearing here rather than on each
+       path means a route added later cannot reintroduce that. */
+    clearCheckPanel(field);
+
+    if (!chunks.length || secs < 1) {
+      showCheckPanel(doc, user, field, { error: `Nothing was recorded into ${label}. Press Dictate and speak, then stop.` });
+      await savedAudio.clear(key).catch(() => {});
+      return;
+    }
+
+    procStage.show(label);
+    const mins = Math.max(1, Math.round(secs / 60));
+    procStage.set("captured", "done", `Dictated into ${label} · about ${mins} minute${mins > 1 ? "s" : ""} of speech`);
+    procStage.set("transcribe", "active", `0 of ${chunks.length}`);
+    const lang = (document.getElementById("langSel") || {}).value || "fil-PH";
+    let out;
+    try {
+      out = await processRecording(key, lang, chunks,
+        (n, total) => procStage.set("transcribe", "active", `${n} of ${total}`));
+    } catch (e) {
+      procStage.fail("transcribe", "Couldn't transcribe that. The recording is still on this device.");
+      return;
+    }
+    /* Billed the moment it comes back, before anything can throw below it —
+       the same rule the visit recorder follows, and for the same reason. */
+    recordDictationSeconds(doc.id, out.billedSeconds, user);
+    if (!out.text) {
+      procStage.fail("transcribe", out.errors.length
+        ? `Couldn't transcribe: ${out.errors[0]}. Nothing was written into ${label}.`
+        : `Nothing recognisable in that recording. Nothing was written into ${label}.`);
+      await savedAudio.clear(key).catch(() => {});
+      return;
+    }
+    const repaired = PR.correctDictation(out.text);
+    if (repaired.fixes.length) noteDictationFixes(repaired.fixes);
+    await savedAudio.clear(key).catch(() => {});
+
+    /* The transcript is kept whatever the AI does next. It is what was said,
+       it is billed, and a therapist whose section draft fails should still be
+       able to read their own words rather than be told to say them again. */
+    const live = S.getDoc(doc.id) || doc;
+    captureUtterances(live, user, repaired.text, currentDocState);
+
+    procStage.set("transcribe", "done", "Speech only — the silence was never sent.");
+    procStage.set("read", "active", `Writing ${label} from what you said.`);
+    const sync = window.TheraSync || {};
+    if (!sync.checkSection) {
+      procStage.fail("read", `The AI isn't available here, so ${label} wasn't written. What you said is in the transcript.`);
+      return;
+    }
+    let res;
+    try {
+      res = await sync.checkSection({ spoken: repaired.text, label, field });
+    } catch (e) { res = null; }
+    if (!res) {
+      procStage.fail("read", `Couldn't write ${label} from that recording. What you said is in the transcript.`);
+      return;
+    }
+    procStage.set("read", "done", "Written. Nothing is in the note yet — check it below.");
+    procStage.hide();
+    showCheckPanel(live, user, field, { filed: "", result: res, spoken: repaired.text });
+    const wrap = document.querySelector(`[data-fieldwrap="${field}"]`);
+    if (wrap) wrap.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  /* Repaint every section mic from the one piece of state that decides it.
+     Defined at module level because both the button handler and the stop path
+     need it, and they do not share a closure. */
+  function setSectionMicUI() {
+    for (const b of document.querySelectorAll("[data-fieldmic]")) {
+      const on = !!sectionRec && sectionRec.field === b.dataset.fieldmic;
+      b.classList.toggle("listening", on);
+      const wrap = b.closest("[data-fieldwrap]");
+      if (wrap) wrap.classList.toggle("dictating", on);
+      /* Every OTHER section mic is disabled while one is open. There is one
+         microphone on the device, and a second button that looks pressable is
+         a therapist dictating into a section that is not listening. */
+      b.disabled = !!sectionRec && !on;
+    }
+  }
+
+  /* What recording does, said before the microphone opens.
+
+     The one thing on it that matters: the note does NOT fill itself in as you
+     speak. That is the single most surprising property of this flow to anyone
+     who has used dictation software before, and a therapist who believes the
+     opposite spends the visit waiting for text that is never coming, then
+     assumes the microphone is broken.
+
+     Returns a promise for the therapist's answer, so the caller can simply
+     not start the recorder when they back out. */
+  function confirmRecording(doc, hasPrior) {
+    return new Promise((resolve) => {
+      const m = showModal(`
+        <h2>${hasPrior ? "Record more of this visit" : "Record this visit"}</h2>
+        <p style="font-size:13.5px; line-height:1.55; margin-top:-2px">
+          Speak normally, for as long as the patient needs. ${hasPrior
+            ? "This is added to what you already recorded, and it is all processed together."
+            : "Take the whole visit in one go."}</p>
+        <ul style="font-size:13px; line-height:1.6; padding-left: 18px; margin: 10px 0">
+          <li><b>The note does not fill itself in while you speak.</b> Nothing is written until you stop and approve it — so a detail the patient corrects later never reaches the chart.</li>
+          <li><b>You can still type.</b> Leave the recording screen at any time and write in any section; the microphone stays open and visible.</li>
+          <li><b>Only speech is charged.</b> Silence is skipped and never sent.</li>
+        </ul>
+        <div class="modal-actions">
+          <button class="btn" id="recCancel" type="button">Not now</button>
+          <button class="btn primary" id="recStart" type="button">🎤 Start recording</button>
+        </div>`);
+      let answered = false;
+      const done = (v) => { if (answered) return; answered = true; closeModal(); resolve(v); };
+      m.querySelector("#recCancel").addEventListener("click", () => done(false));
+      m.querySelector("#recStart").addEventListener("click", () => done(true));
+      /* Dismissing by clicking the backdrop is a "no". showModal wires that
+         click to closeModal directly, so the promise has to be settled from
+         the node going away or a therapist who clicked outside would leave
+         this pending forever and the record button dead. */
+      const root = document.getElementById("modalRoot");
+      const obs = new MutationObserver(() => {
+        if (!root.contains(m)) { obs.disconnect(); done(false); }
+      });
+      obs.observe(root, { childList: true, subtree: true });
+    });
+  }
+
+  /* ---- the processing screen ----
+
+     Owns the whole arc between Stop and the review: transcription, the
+     whole-visit read, and whatever failed on the way. It is a module-level
+     object rather than a closure because two callers drive it — the recorder,
+     which owns transcription, and runRefine(), which is a top-level function
+     and cannot see the recorder's scope.
+
+     Every step is a real step. `detail` carries the honest running count; no
+     step invents progress it cannot measure, and there is no bar creeping
+     across a call whose duration nobody knows. */
+  const procStage = {
+    el: () => document.getElementById("procStage"),
+    /* `scope` retitles the screen for a section run. Omitted, it resets to the
+       whole-visit wording — a section run must not leave "Writing Subjective"
+       standing on the next visit's processing screen. */
+    show(scope) {
+      const el = this.el();
+      if (!el) return;
+      const put = (sel, text) => {
+        const n = el.querySelector(sel);
+        if (n) n.textContent = text != null ? text : (n.dataset.default || "");
+      };
+      put("#procScope", scope ? "Processing this section" : "Processing this visit");
+      put('[data-title="read"]', scope ? `Writing ${scope}` : null);
+      put("#procNote", scope
+        ? `Nothing reaches ${scope} yet. When this finishes you get to read it and decide.`
+        : null);
+      /* Re-parented to <body> for the same stacking-context reason the
+         recording stage is: an ancestor already forms one, and a "full
+         screen" overlay resolved inside it paints under the sidebar. */
+      document.body.appendChild(el);
+      el.hidden = false;
+      document.body.classList.add("recording-stage");   // reuses the scroll lock
+      const actions = document.getElementById("procActions");
+      if (actions) { actions.hidden = true; actions.innerHTML = ""; }
+      const spin = el.querySelector(".proc-spin");
+      if (spin) spin.classList.remove("stopped");
+      /* Detail text is reset too, not just state. A second run through this
+         screen kept whatever the first one ended on — so a failed retry showed
+         the previous run's "Read." under a step that had not started, which is
+         the one place a therapist is reading closely for what went wrong. */
+      for (const k of ["captured", "transcribe", "read"]) {
+        const d = el.querySelector(`[data-detail="${k}"]`);
+        if (d) d.textContent = d.dataset.default || "";
+        this.set(k, "waiting");
+      }
+    },
+    hide() {
+      const el = this.el();
+      if (!el) return;
+      el.hidden = true;
+      document.body.classList.remove("recording-stage");
+    },
+    /* state: waiting | active | done | failed */
+    set(key, state, detail) {
+      const el = this.el();
+      if (!el) return;
+      const li = el.querySelector(`[data-step="${key}"]`);
+      if (!li) return;
+      li.dataset.state = state;
+      if (detail != null) {
+        const d = li.querySelector(`[data-detail="${key}"]`);
+        if (d) d.textContent = detail;
+      }
+    },
+    /* The screen has to be able to END on a failure. Without this a failed
+       transcription left a spinner turning over a step that was never coming
+       back, which reads as a hang rather than as the error it is — and the
+       recording is still on the device, which is the one thing the therapist
+       needs told. */
+    fail(key, message, onClose) {
+      this.set(key, "failed", message);
+      const el = this.el();
+      const actions = document.getElementById("procActions");
+      if (!el || !actions) return;
+      const spin = el.querySelector(".proc-spin");
+      if (spin) spin.classList.add("stopped");
+      actions.hidden = false;
+      actions.innerHTML = `<button class="btn primary" id="procClose" type="button">Back to the note</button>`;
+      actions.querySelector("#procClose").addEventListener("click", () => {
+        this.hide();
+        if (onClose) onClose();
+      });
+    },
+  };
+
+  /* ---- what the AI wrote for one section, drawn under that section ----
+
+     The offer, and only the offer. The note is not touched until the therapist
+     presses a button here — a section that rewrote itself the moment the
+     recording stopped would be the live-dictation mistake one layer up: text
+     arriving in a signed record that nobody chose to put there.
+
+     When the section is EMPTY this is a simple accept. When it already holds
+     something — the therapist typed while recording, or dictated into it
+     earlier — it becomes the same reconciliation the whole-visit review does,
+     marked the same way by the same function, because a therapist should not
+     have to learn two answers to one question. */
+  const CHECK_KIND = {
+    missed: ["warn", "said, but not written here"],
+    misplaced: ["warn", "may belong in another section"],
+    ambiguous: ["info", "worth a second look"],
+  };
+
+  /** Empty the section's panel. Shared so "the mic is closed" and "here is the
+      result" cannot disagree about who owns that space. */
+  function clearCheckPanel(field) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (host) { host.hidden = true; host.innerHTML = ""; }
+  }
+
+  function showCheckPanel(doc, user, field, state) {
+    const host = document.querySelector(`[data-fieldcheck="${field}"]`);
+    if (!host) return;
+    const close = () => { host.hidden = true; host.innerHTML = ""; };
+    const label = fieldLabel(doc.type, field);
+    const dismissable = (html) => {
+      host.hidden = false;
+      host.innerHTML = html;
+      host.querySelector("[data-checkclose]").addEventListener("click", close);
+    };
+
+    if (state.error) {
+      return dismissable(`<div class="dict-check-line warn">${esc(state.error)}
+        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`);
+    }
+
+    const out = state.result || {};
+    const issues = out.issues || [];
+    const drafted = String(out.tidied || "").trim();
+    const current = String(doc.data[field] || "").trim();
+
+    /* The recording carried nothing this section could use. Said plainly, and
+       the transcript is named — what was said IS kept, and a therapist who
+       believes their words vanished will simply say them again. */
+    if (!drafted) {
+      return dismissable(`<div class="dict-check-line warn">
+        Nothing in that recording belonged in ${esc(label)}. What you said is in the transcript.
+        <button class="btn small" data-checkclose="1" type="button">Dismiss</button></div>`);
+    }
+
+    const parts = current ? overlapSentences(current, drafted) : [];
+    const fresh = parts.filter((s) => !s.seen).length;
+
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="dict-check-head">✦ Written from what you said</div>
+      ${issues.length ? `<ul class="dict-check-issues">${issues.map((x) => {
+        const k = CHECK_KIND[x.kind] || CHECK_KIND.ambiguous;
+        return `<li><span class="chip ${k[0]}">${esc(k[1])}</span> ${esc(x.detail)}</li>`;
+      }).join("")}</ul>` : ""}
+      ${current ? `
+        <div class="rev-cmp">
+          <div class="rev-cmp-head">
+            <b>${fresh
+              ? `${fresh} of ${parts.length} sentence${parts.length > 1 ? "s" : ""} say something ${esc(label)} doesn't already`
+              : `${esc(label)} already says all of this`}</b>
+            <span class="rev-cmp-key"><i class="cmp-new"></i>new <i class="cmp-seen"></i>already there</span>
+          </div>
+          <p class="rev-cmp-body">${parts.map((s) =>
+            `<span class="${s.seen ? "cmp-seen" : "cmp-new"}">${esc(s.text)}</span>`).join(" ")}</p>
+        </div>` : ""}
+      <label class="dict-check-label">${current ? "What the recording said" : "Suggested wording"} — edit it, or leave it</label>
+      <textarea class="dict-check-text" rows="3">${esc(drafted)}</textarea>
+      <div class="dict-check-actions">
+        ${current
+          ? `<button class="btn small ai" data-checkuse="replace" type="button">Replace ${esc(label)}</button>
+             <button class="btn small" data-checkuse="append" type="button">Add to the end</button>
+             <button class="btn small" data-checkclose="1" type="button">Keep mine</button>`
+          : `<button class="btn small ai" data-checkuse="replace" type="button">Use this</button>
+             <button class="btn small" data-checkclose="1" type="button">Discard</button>`}
+        <span class="hint">Nothing changes in ${esc(label)} until you press one of these.</span>
+      </div>`;
+
+    host.querySelector("[data-checkclose]").addEventListener("click", close);
+    for (const btn of host.querySelectorAll("[data-checkuse]")) {
+      btn.addEventListener("click", () => {
+        const typed = host.querySelector(".dict-check-text").value.trim();
+        if (!typed) return close();
+        const text = btn.dataset.checkuse === "append" && current
+          ? `${current}${/[.!?]$/.test(current) ? "" : "."} ${typed}`
+          : typed;
+        const ta = document.querySelector(`textarea[data-field="${field}"]`);
+        if (ta) ta.value = text;
+        doc.data[field] = text;
+        /* Still machine-written. The therapist accepted a draft the recording
+           produced; they did not write the section themselves, and marking it
+           by hand would stop the whole-visit review from ever pre-ticking it. */
+        markAiFilled(doc, field, true);
+        S.updateDocData(doc.id, { [field]: text, aiFilled: doc.data.aiFilled }, user);
+        renderFieldGuide(doc);
+        close();
+      });
+    }
   }
 
   /* Subjective is, by definition, what the PATIENT reports. The live router
@@ -7235,9 +8092,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     /* The clinician is told what is reading their note, not who makes it. The
        model behind this has changed twice already and the name in front of a
        therapist mid-visit should not have to change with it. */
-    const m = showModal(`<h2>✦ Reviewing with AI…</h2>
-      <p style="font-size:13px">Reading the transcript to split patient vs clinician speech, clean up wording, and re-check the findings.</p>
-      <div class="empty-state">Working… this can take up to a minute or two on a long visit.</div>`);
+    /* Two ways in, one screen. Arriving from Process, the screen is already up
+       with transcription ticked off and this is its third step. Arriving from
+       the Review button on a typed or previously-transcribed note, there is no
+       screen yet — so it is raised here with the two earlier steps marked done,
+       because they genuinely are: the transcript being read already exists. */
+    const fresh = (procStage.el() || {}).hidden !== false;
+    if (fresh) {
+      procStage.show();
+      procStage.set("captured", "done", "Working from the transcript already on this note.");
+      procStage.set("transcribe", "done", "Already transcribed.");
+    }
+    procStage.set("read", "active",
+      "Splitting who spoke, correcting the body map, and drafting each section. A long visit can take a minute or two.");
     let result;
     try {
       /* No offline branch. A build with no sync layer has no AI either, and
@@ -7247,7 +8114,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         ? await sync.refineTranscript(utterances)
         : { aiFailed: true, unavailable: true, error: "AI review is not configured on this server." };
     } catch (e) {
-      closeModal();
+      procStage.hide();
       return refineFailed(doc, user, dstate, e.message, false);
     }
     /* The AI was asked and could not answer. Everything below this point
@@ -7256,7 +8123,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        the therapist a quietly downgraded note that looks like a reviewed one.
        Refuse it, say so, and let them decide. */
     if (result.aiFailed) {
-      closeModal();
+      procStage.hide();
       return refineFailed(doc, user, dstate, result.error, result.unavailable);
     }
     // counted the moment it runs, not when it is accepted: the call was made
@@ -7264,6 +8131,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // is not counted — a throttled request is rejected before it costs
     // anything, and this meter is the clinician's own usage.
     S.recordDocAiCall(doc.id);
+    procStage.set("read", "done", "Read. Nothing is on the chart yet — check it below.");
+    procStage.hide();
     openReviewModal(doc, user, dstate, result);
   }
 
@@ -7460,10 +8329,50 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const byHand = !!current && !isAiFilled(doc, field);
       return {
         key, field, hint, proposed, current, byHand,
+        /* `proposed` is the working copy and every edit moves it, so the AI's
+           own words have to be kept separately or "Use the AI's" would only
+           ever restore whatever was last typed over them. */
+        aiOriginal: proposed,
         apply: !!proposed && !byHand && proposed !== current,
         unchanged: !!proposed && proposed === current,
       };
     }).filter((r) => r.proposed || r.current);
+
+    /* The AI's draft, sentence by sentence, marked against what the therapist
+       already wrote. Only drawn when there is something on BOTH sides — with
+       an empty section there is nothing to compare and every sentence would
+       be "new", which is a paragraph of green saying nothing. */
+    const compareStripHtml = (r) => {
+      if (!r.proposed || !r.current) return "";
+      const parts = overlapSentences(r.current, r.proposed);
+      const fresh = parts.filter((s) => !s.seen).length;
+      return `
+        <div class="rev-cmp">
+          <div class="rev-cmp-head">
+            <b>${fresh ? `${fresh} of ${parts.length} sentence${parts.length > 1 ? "s" : ""} say something you didn't write` : "Everything here is already in your own words"}</b>
+            <span class="rev-cmp-key"><i class="cmp-new"></i>new <i class="cmp-seen"></i>you already wrote this</span>
+          </div>
+          <p class="rev-cmp-body">${parts.map((s) =>
+            `<span class="${s.seen ? "cmp-seen" : "cmp-new"}">${esc(s.text)}</span>`).join(" ")}</p>
+          <div class="rev-cmp-hint">Matched on wording, not on meaning — a sentence that says the same thing in different words will read as new. It changes nothing on its own; your tick decides what lands.</div>
+        </div>`;
+    };
+
+    /* Three ways to resolve one section, and none of them writes to the note.
+       Every button here edits the textarea below it, which is the single thing
+       that lands if the row is ticked — the same "no hidden third version"
+       rule openCompare() is built on. Blend is the only one that costs a call,
+       so it is the only one that can fail, and it says so in place. */
+    const sectionActionsHtml = (r, i) => {
+      if (!r.proposed || !r.current) return "";
+      return `
+        <div class="rev-sec-actions">
+          <button class="btn small" data-sec-mine="${i}" type="button">Keep mine</button>
+          <button class="btn small" data-sec-ai="${i}" type="button">Use the AI's</button>
+          <button class="btn small ai" data-sec-blend="${i}" type="button">✦ Blend both</button>
+          <span class="rev-sec-state" data-sec-state="${i}"></span>
+        </div>`;
+    };
 
     const sectionRowHtml = (r, i) => {
       const state = r.unchanged ? ["muted", "unchanged"]
@@ -7479,7 +8388,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             <span class="chip ${state[0]}">${esc(state[1])}</span>
             <span class="rev-hint">${esc(r.hint)}</span></div>
           ${r.byHand && r.proposed ? `<div class="rev-why">Currently in the note: “${esc(r.current.slice(0, 180))}${r.current.length > 180 ? "…" : ""}”</div>` : ""}
+          ${compareStripHtml(r)}
           <textarea data-sec-text="${i}" rows="2" class="rev-text" ${r.proposed ? "" : "disabled"}>${esc(r.proposed)}</textarea>
+          ${sectionActionsHtml(r, i)}
         </div>
       </div>`;
     };
@@ -7728,9 +8639,79 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     m.querySelectorAll("[data-sec-text]").forEach((t) => t.addEventListener("input", () => {
       sectionRows[Number(t.dataset.secText)].proposed = t.value;
     }));
+    /* The strip describes the text in the box, so it has to follow it — but on
+       `change` rather than `input`. Recomputing per keystroke re-colours a
+       paragraph under the caret while somebody is mid-word in it, which reads
+       as the screen fighting them. Settling on blur says the same thing and
+       stays still while they type. */
+    m.querySelectorAll("[data-sec-text]").forEach((t) => t.addEventListener("change", () => {
+      repaintCompare(Number(t.dataset.secText));
+    }));
     m.querySelectorAll("[data-sec-apply]").forEach((c) => c.addEventListener("change", () => {
       sectionRows[Number(c.dataset.secApply)].apply = c.checked;
       c.closest(".rev-section").classList.toggle("dropping", !c.checked);
+    }));
+
+    /* ---- resolving one section against what the therapist typed ----
+
+       All three buttons write into the textarea and stop there. Nothing here
+       reaches the note: the row's tick still decides that, and it is left
+       exactly as the therapist set it. Pressing "Keep mine" on an unticked
+       row does NOT tick it — the note already holds that text, so applying it
+       would be a write with no effect, and ticking on their behalf is how a
+       screen starts making decisions it was built to hand over. */
+    const secState = (i, txt) => {
+      const el = m.querySelector(`[data-sec-state="${i}"]`);
+      if (el) el.textContent = txt;
+    };
+    const repaintCompare = (i) => {
+      const row = m.querySelector(`[data-sec-text="${i}"]`);
+      if (!row) return;
+      const holder = row.closest(".rev-fbody");
+      const strip = holder && holder.querySelector(".rev-cmp");
+      if (!strip) return;
+      const temp = document.createElement("div");
+      temp.innerHTML = compareStripHtml(sectionRows[i]);
+      if (temp.firstElementChild) strip.replaceWith(temp.firstElementChild);
+    };
+    const setSectionText = (i, text, note) => {
+      const ta = m.querySelector(`[data-sec-text="${i}"]`);
+      if (!ta) return;
+      sectionRows[i].proposed = text;
+      ta.value = text;
+      fit(ta);
+      repaintCompare(i);
+      secState(i, note);
+    };
+    m.querySelectorAll("[data-sec-mine]").forEach((b) => b.addEventListener("click", () => {
+      const i = Number(b.dataset.secMine);
+      setSectionText(i, sectionRows[i].current, "using your wording");
+    }));
+    m.querySelectorAll("[data-sec-ai]").forEach((b) => b.addEventListener("click", () => {
+      const i = Number(b.dataset.secAi);
+      setSectionText(i, sectionRows[i].aiOriginal, "using the AI's wording");
+    }));
+    /* The one action here that costs a call, and the only one that can fail.
+       It is deliberately not offered as "merge and apply": the merged text
+       lands in the box for reading, and a therapist who does not like it still
+       has both originals one button away. */
+    m.querySelectorAll("[data-sec-blend]").forEach((b) => b.addEventListener("click", async () => {
+      const i = Number(b.dataset.secBlend);
+      const r = sectionRows[i];
+      const mine = String(r.current || "").trim();
+      const theirs = String(m.querySelector(`[data-sec-text="${i}"]`).value || "").trim();
+      if (!mine || !theirs) return secState(i, "nothing to blend");
+      b.disabled = true;
+      secState(i, "blending…");
+      try {
+        const sync = window.TheraSync || {};
+        const out = sync.blendNote
+          ? await sync.blendNote({ mine, ai: theirs, field: r.field, type: doc.type })
+          : null;
+        if (out && out.text) setSectionText(i, out.text, "blended — read it before you tick it");
+        else secState(i, "couldn't blend — edit by hand");
+      } catch (e) { secState(i, "couldn't blend — edit by hand"); }
+      finally { b.disabled = false; }
     }));
 
     bindFindingRows();

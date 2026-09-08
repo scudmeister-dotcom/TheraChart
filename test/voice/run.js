@@ -157,24 +157,119 @@ function gcloudToken() {
   catch { return null; }
 }
 
-/* One retry on a transport failure.
+/* Transport failures, retried and then survived.
 
    A POST to our own localhost server occasionally rejects with a bare
-   "fetch failed" — no status, no body — and it has now killed three otherwise
-   good runs partway through, each forfeiting the Google spend already incurred.
-   It is a transport hiccup rather than a result, so the honest handling is to
-   try once more; a second failure is reported as itself. */
-async function postWav(url, token, body) {
-  for (let attempt = 0; ; attempt++) {
+   "fetch failed" — no status, no body. One retry was the first answer to
+   that and it was not enough: runs still died partway through, forfeiting
+   the Google spend already incurred, and the throw travelled all the way out
+   of the script loop so the twenty scripts after it never ran either.
+
+   Two things changed. Retries back off rather than sitting at a flat second,
+   because whatever causes this is not over in one; and the last failure is
+   RETURNED rather than thrown, so one unlucky script costs one row instead of
+   the rest of the run.
+
+   Deliberately no retry on an HTTP error. A 4xx or 5xx is the server
+   answering, and an answer is a result — repeating it would only spend more
+   at Google to be told the same thing twice. Only a throw, which means the
+   request never landed, is worth another go. */
+const TRANSPORT_TRIES = 3;
+
+/* ---- fault injection, for testing the two paths above ----
+
+   The retry and the not-run accounting exist because of failures that are
+   rare, remote and impossible to summon on demand — which is exactly the kind
+   of code that rots untested until the night it matters. This makes them
+   summonable.
+
+     --fail-fetch <leg>:<script-id-prefix>:<n|all>
+
+   `leg` is `stt` or `note`. `n` is how many ATTEMPTS to fail before letting
+   the request through, so the two cases the hardening claims to handle can
+   each be produced deliberately:
+
+     stt:section/reason-short:2    two attempts fail, the third succeeds
+                                   → the retry recovers and the row scores
+     note:section/reason-short:all every attempt fails
+                                   → the row is NOT RUN, is left out of the
+                                     totals, and bars a baseline save
+
+   It throws the same bare TypeError undici raises, because the point is to
+   exercise the real catch rather than a stand-in for it. Inert unless the
+   flag is passed, and a malformed spec exits rather than running the whole
+   suite with the injection silently doing nothing. */
+const FAIL_FETCH = val("--fail-fetch", "");
+const injected = new Map();   // "leg|scriptId" -> attempts already failed
+let injector = null;
+if (FAIL_FETCH) {
+  const m = /^(stt|note):(.+):(\d+|all)$/.exec(FAIL_FETCH);
+  if (!m) {
+    console.error(`--fail-fetch must look like <stt|note>:<script-id-prefix>:<n|all>, got: ${FAIL_FETCH}`);
+    process.exit(2);
+  }
+  injector = { leg: m[1], prefix: m[2], times: m[3] === "all" ? Infinity : Number(m[3]) };
+  console.log(`  ⚠ FAULT INJECTION: failing the ${injector.leg} request for "${injector.prefix}"`
+    + ` ${injector.times === Infinity ? "every time" : `${injector.times} time(s)`} — this run is a test of the harness, not of the product.`);
+}
+
+/** Should this attempt be made to fail? Counts per leg+script, not per call. */
+function shouldInjectFailure(what, id) {
+  if (!injector || !id) return false;
+  const leg = what === "stt" ? "stt" : "note";
+  if (leg !== injector.leg || !id.startsWith(injector.prefix)) return false;
+  const key = `${leg}|${id}`;
+  const sofar = injected.get(key) || 0;
+  if (sofar >= injector.times) return false;
+  injected.set(key, sofar + 1);
+  return true;
+}
+
+/* "fetch failed" on its own names nothing. undici puts the real error on
+   `.cause`, and the code there is what separates the two failures that wear
+   this message — measured against each mode directly:
+
+     ECONNREFUSED     nothing is listening. The server PROCESS died; retrying
+                      cannot help and the exit code is the diagnosis.
+     UND_ERR_SOCKET   "other side closed" — the connection was destroyed
+                      mid-request while the server stayed up. A genuine blip,
+                      and the case the retry exists for.
+     ENOTFOUND        DNS. Not reachable for a localhost run.
+
+   Two days of "fetch failed" went undiagnosed because this string was thrown
+   away at the point it was caught. */
+const causeOf = (e) => {
+  const c = e && e.cause;
+  const code = c && (c.code || c.errno);
+  return code ? `${e.message} (${code}${c.message && c.message !== e.message ? `: ${c.message}` : ""})` : (e && e.message) || "fetch failed";
+};
+
+async function tryFetch(what, run, id) {
+  let last = null;
+  for (let attempt = 1; attempt <= TRANSPORT_TRIES; attempt++) {
     try {
-      return await fetch(url, { method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body });
+      /* Thrown BEFORE the request, so an injected failure costs nothing at
+         Google — the point is to test our handling, not to buy a real one. */
+      if (shouldInjectFailure(what, id)) throw new TypeError("fetch failed");
+      return { res: await run() };
     } catch (e) {
-      if (attempt) throw e;
-      console.log(`    (transport hiccup, retrying once: ${e.message})`);
-      await new Promise((r) => setTimeout(r, 1000));
+      last = e;
+      if (attempt < TRANSPORT_TRIES) {
+        const wait = attempt * 1500;
+        console.log(`    (${what}: transport failure, retrying in ${wait / 1000}s — ${causeOf(e)})`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
     }
   }
+  /* Never thrown. The caller records it against this script and carries on;
+     a run that loses one row to the network is worth far more than a run that
+     loses everything after it. */
+  return { transportError: `${causeOf(last)} (after ${TRANSPORT_TRIES} attempts)` };
+}
+
+async function postWav(url, token, body, id) {
+  return tryFetch("stt", () => fetch(url, { method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "audio/wav" }, body }), id);
 }
 
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
@@ -247,7 +342,8 @@ async function sweep(scripts, key) {
         for (let k = 0; k < TAKES; k++) {
           const t = takes.get(`${id}|${sc.id}|${k}`);
           const parts = await Promise.all(t.wavs.map(async (wav) => {
-            const r = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
+            const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav, sc.id);
+            if (transportError) return null;   // a lost sample; the median takes care of it
             const d = await r.json().catch(() => ({}));
             if (typeof d.billedSeconds === "number") billed += d.billedSeconds;
             return r.ok ? (d.text || "") : null;
@@ -503,6 +599,28 @@ async function sweep(scripts, key) {
     const results = [];
     let billedSeconds = 0, refineCalls = 0;
 
+    /* Did the server PROCESS die, as opposed to a connection dropping?
+
+       These are the two failures that both surface as "fetch failed", and
+       they want opposite responses: a dropped connection is worth retrying,
+       a dead server cannot be. Until the helper watched the child's exit
+       there was no way to tell them apart from out here, which is most of
+       why this went undiagnosed. Said once, not once per remaining script. */
+    let announced = false;
+    const serverGone = () => {
+      const x = s.exitInfo && s.exitInfo();
+      if (!x) return false;
+      if (!announced) {
+        announced = true;
+        console.log(`\n  ✗ THE SERVER PROCESS DIED — exit code ${x.code}, signal ${x.signal || "none"}.`);
+        console.log(`    Every request after this point can only fail. Stopping rather than`);
+        console.log(`    recording the rest of the suite as failures of the product.`);
+        const tail = s.log().trim().split("\n").slice(-15);
+        if (tail.length) console.log(`    --- last of the server log ---\n${tail.map((l) => "    " + l).join("\n")}`);
+      }
+      return true;
+    };
+
     for (const t of takes) {
       const sc = t.script;
       /* The take number rides in the reported id so N rows for one script stay
@@ -522,7 +640,10 @@ async function sweep(scripts, key) {
          product worth testing, not an implementation detail worth skipping. */
       const AUDIO_GAP_MARK = "[audio not transcribed — this part of the recording failed]";
       const parts = await Promise.all(t.wavs.map(async (wav) => {
-        const r = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav);
+        const { res: r, transportError } = await postWav(`${s.base}/api/stt?lang=${encodeURIComponent(sc.lang)}&model=chirp2&docId=`, token, wav, sc.id);
+        /* Nothing was billed for a request that never landed, so this is
+           summed only when Google actually answered. */
+        if (transportError) return { error: transportError, transport: true };
         const d = await r.json().catch(() => ({}));
         // billed outside the ok branch: a chunk that failed AT Google is still billed
         if (typeof d.billedSeconds === "number") billedSeconds += d.billedSeconds;
@@ -531,9 +652,21 @@ async function sweep(scripts, key) {
 
       const lost = parts.filter((p) => p.error);
       if (lost.length === parts.length) {
-        console.log(`STT FAILED — ${lost[0].error}`);
-        results.push({ id: rid, why: sc.why, sttError: lost[0].error, chunks: t.wavs.length,
-          earned: 0, possible: sc.expect.reduce((n, a) => n + a.weight, 0), failed: [], heardFailed: [] });
+        /* Two different things wear this shape, and conflating them is what
+           made a network outage read as a catastrophic regression.
+
+           `transport` means the request never reached the server: the script
+           did not RUN, so it has no score, and scoring it zero would drag the
+           run's average down for a reason that has nothing to do with the
+           product. It is excluded from the totals and reported on its own
+           line. Anything else is Google answering — that is a result, and it
+           keeps the zero it has always had. */
+        const infra = lost.every((p) => p.transport);
+        console.log(infra ? `NOT RUN — ${lost[0].error}` : `STT FAILED — ${lost[0].error}`);
+        results.push({ id: rid, why: sc.why, sttError: lost[0].error, infra, chunks: t.wavs.length,
+          earned: 0, possible: infra ? 0 : sc.expect.reduce((n, a) => n + a.weight, 0),
+          failed: [], heardFailed: [] });
+        if (infra && serverGone()) break;
         continue;
       }
       const heard = parts
@@ -547,22 +680,46 @@ async function sweep(scripts, key) {
         if (!new RegExp(`\\b${m}`, "i").test(heard)) heardFailed.push(`"${m}" never made it into the transcript`);
       }
 
-      let result = null, refineError = null;
+      let result = null, refineError = null, noteInfra = false;
       if (!NO_REFINE) {
-        /* One line, the way processRecording stitches a recording: the refine
-           pass has to find the speaker boundaries itself. */
-        const rr = await fetch(`${s.base}/api/refine`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify({ transcript: [heard] }),
-        });
-        const rd = await rr.json().catch(() => ({}));
-        refineCalls += 1;
-        if (rr.ok) result = rd; else refineError = rd.error || `HTTP ${rr.status}`;
+        /* Two chains, chosen by the script. A `section` script recorded ONE
+           box and is graded on what the section writer put in it; everything
+           else recorded a visit and is graded on the refine result.
+
+           Both send the transcript as ONE line, which is what the product
+           does — processRecording stitches its chunks before either endpoint
+           sees them, so the model has to find its own boundaries. */
+        const url = sc.section
+          ? `${s.base}/api/check-section`
+          : `${s.base}/api/refine`;
+        const body = sc.section
+          ? { spoken: heard, label: sc.section.label, field: sc.section.field }
+          : { transcript: [heard] };
+        /* This call had no protection at all, and it is where three runs
+           actually died: two scripts scored, the third threw, and everything
+           after it was lost. Same treatment as the STT leg now — retried,
+           then survived. */
+        const { res: rr, transportError } = await tryFetch(sc.section ? "check-section" : "refine",
+          () => fetch(url, {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }), sc.id);
+        if (transportError) {
+          refineError = transportError;
+          noteInfra = true;
+          serverGone();   // says so once, before the row is printed
+        } else {
+          const rd = await rr.json().catch(() => ({}));
+          refineCalls += 1;
+          if (rr.ok) result = rd; else refineError = rd.error || `HTTP ${rr.status}`;
+        }
       }
 
       /* A refine that fell back to the heuristic is not the thing under test —
-         same guard test/eval/run.js keeps, for the same reason. */
+         same guard test/eval/run.js keeps, for the same reason. The section
+         endpoint has no local fallback at all: it answers or it errors, so
+         there is nothing here for it to be caught by. */
       const fellBack = !!result && (/local/.test(result.source || "") || result.aiFailed === true);
 
       const graded = sc.expect.map((a) => {
@@ -572,17 +729,18 @@ async function sweep(scripts, key) {
         catch (e) { thrown = e.message; }
         return { name: a.name, weight: a.weight, ok, thrown, detail };
       });
-      const scored = graded.filter((g) => !g.skipped);
+      const scored = noteInfra ? [] : graded.filter((g) => !g.skipped);
       const earned = scored.reduce((n, g) => n + (g.ok ? g.weight : 0), 0);
       const possible = scored.reduce((n, g) => n + g.weight, 0);
 
-      console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : ` · note ${possible ? pct(earned / possible) : "n/a"}`}${fellBack ? "  ⚠ FELL BACK" : ""}`);
+      console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : (noteInfra ? "  · note NOT RUN"
+        : ` · ${sc.section ? "section" : "note"} ${possible ? pct(earned / possible) : "n/a"}`)}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
         id: rid, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
         wer: w.wer, refWords: w.ref, edits: w.edits,
         spoken: spokenText(sc), heard,
-        heardFailed, refineError, fellBack,
+        heardFailed, refineError, fellBack, infra: noteInfra,
         model: (parts.find((x) => x.model) || {}).model,
         graded, earned, possible,
         failed: graded.filter((g) => !g.skipped && !g.ok).map((g) => ({ name: g.name, detail: g.detail })),
@@ -595,6 +753,10 @@ async function sweep(scripts, key) {
     }
 
     /* ---------- report ---------- */
+    /* Scripts that never ran, as opposed to scripts that ran badly. Kept apart
+       everywhere below: out of the totals, on their own line, and — the part
+       that matters — barring a baseline save. */
+    const notRun = results.filter((r) => r.infra);
     const earned = results.reduce((n, r) => n + r.earned, 0);
     const possible = results.reduce((n, r) => n + r.possible, 0);
     const overall = possible ? earned / possible : 0;
@@ -604,7 +766,7 @@ async function sweep(scripts, key) {
     out = {
       tts: { model: MODEL_ID, voices }, project,
       audioSeconds, billedSeconds, sttUsd: Number(usd.toFixed(4)), refineCalls,
-      meanWer, earned, possible, overall, cases: results,
+      meanWer, earned, possible, overall, notRun: notRun.length, cases: results,
     };
 
     if (JSON_OUT) {
@@ -612,16 +774,33 @@ async function sweep(scripts, key) {
     } else {
       console.log(`\nTheraChart voice eval — ${MODEL_ID} → Chirp 2 (${project})${NO_REFINE ? " · transcription only" : ""}\n`);
       for (const r of results) {
-        if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ! STT failed: ${r.sttError}`); continue; }
+        if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ${r.infra ? "! NOT RUN — never reached the server" : "! STT failed"}: ${r.sttError}`); continue; }
         const p = r.possible ? r.earned / r.possible : 0;
-        console.log(`  ${NO_REFINE ? "░".repeat(20) : bar(p)} ${(NO_REFINE ? "" : pct(p)).padStart(6)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
+        /* A script whose note call never landed has no score, and printing it
+           as "0.0%" said the opposite of the NOT RUN line three rows below —
+           the whole point of the accounting above is that this is not a zero.
+           It gets the empty bar and the words instead. */
+        const label = r.infra ? "NOT RUN" : (NO_REFINE ? "" : pct(p));
+        console.log(`  ${NO_REFINE || r.infra ? "░".repeat(20) : bar(p)} ${label.padStart(7)}  ${r.id}  ·  WER ${pct(r.wer)} (${r.edits}/${r.refWords} words)${r.chunks > 1 ? ` · ${r.chunks} chunks` : ""}${r.fellBack ? "  ⚠ FELL BACK TO LOCAL" : ""}`);
         console.log(`  ${" ".repeat(20)}         ${r.why}${r.advisory ? "  [ADVISORY — reported, does not fail the run]" : ""}`);
         for (const h of r.heardFailed) console.log(`  ${" ".repeat(20)}         ✗ heard: ${h}`);
         for (const f of r.failed) console.log(`  ${" ".repeat(20)}         ✗ note: ${f.name}${f.detail ? `\n  ${" ".repeat(20)}             ${f.detail}` : ""}`);
         if (r.refineError) console.log(`  ${" ".repeat(20)}         ! refine: ${r.refineError}`);
       }
-      console.log(`\n  TRANSCRIPTION  mean word error ${pct(meanWer)} across ${results.length} script(s)`);
-      if (!NO_REFINE) console.log(`  NOTE           ${bar(overall)} ${pct(overall)}  (${earned}/${possible} weighted points)`);
+      const ran = results.length - notRun.length;
+      console.log(`\n  TRANSCRIPTION  mean word error ${pct(meanWer)} across ${ran} script(s)`);
+      /* An empty denominator is not a zero score. When every script that ran
+         lost its note call there is nothing to report, and "0.0%" would read
+         as a total failure of the product rather than of the network. */
+      if (!NO_REFINE) {
+        console.log(possible
+          ? `  NOTE           ${bar(overall)} ${pct(overall)}  (${earned}/${possible} weighted points)`
+          : `  NOTE           ${"░".repeat(20)} nothing scored — no note call completed`);
+      }
+      if (notRun.length) {
+        console.log(`  NOT RUN        ${notRun.length} script(s) never reached the server and are NOT in the numbers above:`);
+        for (const r of notRun) console.log(`                   ${r.id} — ${r.sttError || r.refineError}`);
+      }
 
       const bPath = path.join(__dirname, "baseline.json");
       const baseline = fs.existsSync(bPath) ? JSON.parse(fs.readFileSync(bPath, "utf8")) : null;
@@ -665,7 +844,19 @@ async function sweep(scripts, key) {
       ].filter(Boolean).join("\n"));
     }
 
-    if (SAVE) {
+    const short = results.length < scripts.length * TAKES;
+    if (SAVE && (notRun.length || short)) {
+      /* A baseline is the bar every later run is read against, and a run that
+         lost scripts to the network did not measure the bar — it measured the
+         network. Saving one anyway is how an outage becomes the recorded
+         expectation: it happened, the file went from 15 cases at 91.5% to 32
+         at 28.9%, and only a `git checkout` got it back. Refusing costs a
+         re-run; accepting costs the meaning of the file. */
+      console.log(`  BASELINE NOT SAVED — ${short
+        ? `the run stopped after ${results.length} of ${scripts.length * TAKES} script(s)`
+        : `${notRun.length} script(s) never reached the server`}.`);
+      console.log(`  A baseline from a partial run would record an outage as the bar. Re-run when the network is healthy.\n`);
+    } else if (SAVE) {
       const slim = { ...out, cases: out.cases.map(({ note, spoken, ...c }) => c) };
       fs.writeFileSync(path.join(__dirname, "baseline.json"), JSON.stringify(slim, null, 2));
       console.log(`  baseline saved to test/voice/baseline.json\n`);

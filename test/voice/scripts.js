@@ -1009,7 +1009,425 @@ const SCRIPTS = [
     },
     expect: [],
   },
+
+  /* ================================================================== *
+   * SECTION DICTATION — one section, recorded and written on its own
+   * ==================================================================
+   *
+   * A different chain from everything above. The scripts above record a whole
+   * visit and grade /api/refine; these record ONE section and grade
+   * /api/check-section, which writes that section's prose from the transcript
+   * and nothing else.
+   *
+   * A `section` field switches the runner over. `expect` is graded on the
+   * endpoint's answer — { tidied, issues } — rather than on a refine result,
+   * so the helpers below read that shape.
+   *
+   * What is being measured is narrower than the refine cases and matters just
+   * as much: this endpoint writes text straight into a section of a signed
+   * record, from ONE burst, with no whole-visit context to catch it. The two
+   * failures that would hurt are inventing a fact nobody said, and dropping
+   * one that was said. Both are weight 3 throughout.
+   *
+   * All turns are the clinician. Section dictation is a therapist talking to
+   * the note, not a conversation. */
+
+  /* ---------- helpers for the section shape ---------- */
+
+  /* 1. Subjective — the patient's report, relayed by the therapist.
+
+     The plainest case, and the baseline the rest are read against: ordinary
+     dictation with a laterality, a duration and a pain score in it. If this
+     one cannot hold three facts through TTS, STT and the model, nothing below
+     it is interpretable. */
+  {
+    id: "section/subjective-plain",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "the plainest section dictation — laterality, duration and a pain score must all survive",
+    turns: [
+      { who: "clinician", text: "Patient reports right shoulder pain for about two weeks." },
+      { who: "clinician", text: "It is worse at night, around seven out of ten." },
+      { who: "clinician", text: "She denies any numbness or tingling in the hand." },
+      { who: "clinician", text: "She has trouble reaching overhead to the cupboard." },
+    ],
+    /* `must` is a literal regex over the transcript, and Chirp 2 returns
+       "2 weeks" for spoken "two weeks" — correctly, at 0.0% word error, since
+       the WER normaliser reads number words and digits as the same token. The
+       duration is graded on the note below, where both spellings are accepted;
+       asking for it here only measured which form Google chose to write. */
+    heard: { wer: 0.15, must: ["right", "shoulder", "weeks"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the shoulder survived", weight: 3,
+        test: (r) => /shoulder/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the two-week duration survived", weight: 2,
+        test: (r) => /two weeks|2 weeks/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the 7/10 pain score survived", weight: 2,
+        test: (r) => /7\s*\/\s*10|seven out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the denial stayed a denial", weight: 3,
+        test: (r) => /denies|no numbness|without numbness|denied/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no body region nobody said", weight: 3,
+        test: (r) => !/\b(knee|ankle|hip|elbow|wrist|neck|foot)\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 2. Objective — measurements spoken into a prose box.
+
+     The interesting half is what the section must NOT swallow. Numbers spoken
+     here belong in the measurement table, and the endpoint has no table to
+     file them into — so the test is that the reading survives as text rather
+     than being silently dropped, and that no number is invented. */
+  {
+    id: "section/objective-measurements",
+    lang: "fil-PH",
+    section: { field: "objectiveText", label: "Objective" },
+    why: "spoken measurements have to reach the objective narrative intact, digit for digit",
+    turns: [
+      { who: "clinician", text: "Left knee flexion is one hundred ten degrees, extension lacking five degrees." },
+      { who: "clinician", text: "Quadriceps strength is four out of five, hamstrings four plus out of five." },
+      { who: "clinician", text: "There is mild swelling over the medial joint line." },
+      { who: "clinician", text: "Gait shows an antalgic pattern on the left." },
+    ],
+    heard: { wer: 0.2, must: ["knee", "flexion"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT side survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "flexion 110 survived digit for digit", weight: 3,
+        test: (r) => /110|one hundred ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the strength grade survived", weight: 2,
+        test: (r) => /4\s*\/\s*5|four out of five/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the swelling reached the section", weight: 1,
+        test: (r) => /swelling|swollen/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no measurement invented that was never spoken", weight: 3,
+        test: (r) => !/\b(120|130|90|100)\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 3. Plan — the section a transcript can least afford to have invented.
+
+     The Plan is what the next clinician follows. A model that pads it with a
+     plausible-sounding frequency nobody said is writing a prescription, so
+     "nothing invented" carries more weight here than "everything captured". */
+  {
+    id: "section/plan-no-invention",
+    lang: "fil-PH",
+    section: { field: "plan", label: "Plan" },
+    why: "the plan must carry what was said and not one frequency more",
+    turns: [
+      { who: "clinician", text: "Plan is to continue therapy twice a week for four weeks." },
+      { who: "clinician", text: "We will progress rotator cuff strengthening as tolerated." },
+      { who: "clinician", text: "Reassess range of motion at the next visit." },
+    ],
+    heard: { wer: 0.2, must: ["twice", "week"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the frequency survived exactly", weight: 3,
+        test: (r) => /twice a week|2x\/week|two times a week/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the four-week duration survived", weight: 2,
+        test: (r) => /four weeks|4 weeks/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no home programme invented — none was mentioned", weight: 3,
+        test: (r) => !/\bhep\b|home (exercise )?program/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      /* Word-bounded, and the boundaries are load-bearing: an unbounded /ice/
+         matched "tw(ice) a week" and failed this script for a plan that had
+         invented nothing at all. A negative assertion that fires on a
+         substring of an ordinary word is worse than no assertion — it reports
+         the model hallucinating when the model was correct. */
+      { name: "no modality invented — none was mentioned", weight: 3,
+        test: (r) => !/\bultrasound\b|\be-?stim\b|\btens\b|\bice\b|\bheat\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 4. Precautions — where a missed word is a hurt patient.
+
+     A weight limit and a time limit, spoken once. Losing either one turns a
+     restriction into a suggestion, so both are weight 3 and the transcript is
+     also required to carry the number. */
+  {
+    id: "section/precautions-limits",
+    lang: "fil-PH",
+    section: { field: "precautions", label: "Precautions" },
+    why: "a restriction that loses its number stops being a restriction",
+    turns: [
+      { who: "clinician", text: "Surgeon says no lifting over five kilos for six weeks." },
+      { who: "clinician", text: "No overhead reaching on the operated side." },
+      { who: "clinician", text: "Sling to be worn at night for another two weeks." },
+    ],
+    heard: { wer: 0.2, must: ["lifting", "weeks"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the five-kilo limit survived", weight: 3,
+        test: (r) => /five kilos|5 ?kg|5 kilos/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the six-week window survived", weight: 3,
+        test: (r) => /six weeks|6 weeks/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the overhead restriction survived", weight: 3,
+        test: (r) => /overhead/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      /* The instruction, not the noun.
+
+         Chirp 2 heard "sling" as "link" on one take in three, and what the
+         section writer did with it is the behaviour worth grading: it wrote
+         "Link to be worn at night" — faithful to the transcript, inventing
+         nothing — and raised an issue saying "'Link' is likely a transcription
+         error for 'sling'". Requiring the word `sling` marked that take failed
+         when the model had in fact done the only correct thing available to
+         it. Silently substituting the clinically-expected word is what a
+         model must NOT do here; flagging it is what it must. */
+      { name: "the night-time instruction survived, whatever the noun came back as", weight: 2,
+        test: (r) => /worn at night|at night/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "a misheard word is flagged, never silently corrected", weight: 3,
+        test: (r) => /sling/.test(secText(r))
+          || (r.issues || []).some((i) => /sling|transcription/i.test(i.detail || "")),
+        detail: (r) => `tidied: "${secText(r)}" · issues: ${JSON.stringify(r.issues || [])}` },
+    ],
+  },
+
+  /* 5. Past medical history — dates and conditions, nothing added.
+
+     Chirp 2 is at its weakest on bare years, and a PMH that gains a condition
+     nobody has is a chart that follows the patient forever. */
+  {
+    id: "section/pmh-conditions",
+    lang: "fil-PH",
+    section: { field: "pmh", label: "Past medical history" },
+    why: "conditions and years must arrive as spoken, and nothing may join them",
+    turns: [
+      { who: "clinician", text: "Type two diabetes diagnosed about ten years ago." },
+      { who: "clinician", text: "Hypertension, controlled on medication." },
+      { who: "clinician", text: "Right rotator cuff repair in two thousand nineteen." },
+    ],
+    heard: { wer: 0.25, must: ["diabetes"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the diabetes survived", weight: 3,
+        test: (r) => /diabetes/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the hypertension survived", weight: 3,
+        test: (r) => /hypertension|high blood/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the prior surgery survived", weight: 2,
+        test: (r) => /rotator cuff|repair/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no condition invented", weight: 3,
+        test: (r) => !/\basthma\b|\bcancer\b|\bstroke\b|\barthritis\b|\bcopd\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 6. Small talk aimed at a section.
+
+     The therapist pressed Dictate and then said nothing clinical. The endpoint
+     is instructed to return an empty string, and the panel says so rather than
+     writing pleasantries into a signed record.
+
+     The failure this guards against is the model being helpful — inventing a
+     line because a section was named and something was said. */
+  {
+    id: "section/nothing-clinical",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "a burst with nothing clinical in it must write nothing, not something polite",
+    turns: [
+      { who: "clinician", text: "Good morning, how was the traffic coming over here?" },
+      { who: "clinician", text: "Yes the parking lot does fill up after ten o'clock." },
+      { who: "clinician", text: "Let me just get this window open, it is warm today." },
+    ],
+    heard: { wer: 0.3, must: [] },
+    expect: [
+      { name: "nothing was written into the section", weight: 3,
+        test: (r) => secText(r).length === 0, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no symptom invented out of small talk", weight: 3,
+        test: (r) => !/pain|ache|sore|stiff|numb/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 7. Content aimed at the wrong section.
+
+     The therapist is dictating into Subjective and states an impression, which
+     is an Assessment line. The endpoint may not move it — the therapist aimed
+     the microphone and that outranks the model — so the correct behaviour is
+     to flag it as `misplaced` and leave the filing to the clinician. */
+  {
+    id: "section/misplaced-content",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "an impression dictated into Subjective is flagged, never silently re-filed",
+    turns: [
+      { who: "clinician", text: "Patient reports left elbow pain when gripping, about six out of ten." },
+      { who: "clinician", text: "In my assessment this is consistent with lateral epicondylitis." },
+      { who: "clinician", text: "She says it started after painting the house last month." },
+    ],
+    heard: { wer: 0.2, must: ["elbow"] },
+    expect: [
+      { name: "the patient's own report survived", weight: 3,
+        test: (r) => /elbow/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT side survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the misplaced impression is flagged", weight: 2,
+        test: (r) => (r.issues || []).some((i) => i.kind === "misplaced"),
+        detail: (r) => `issues: ${JSON.stringify(r.issues || [])}` },
+    ],
+  },
+
+  /* 8. Taglish into one section.
+
+     The headline dictation claim, at section scale. The section writer gets no
+     whole-visit context to lean on, so a code-switched burst is a harder read
+     than the same words inside a full conversation. */
+  {
+    id: "section/taglish-subjective",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "code-switched section dictation has to reach English prose with the facts intact",
+    turns: [
+      { who: "clinician", text: "Sabi ng patient masakit ang kanang balikat niya for two weeks na." },
+      { who: "clinician", text: "Mas masakit daw sa gabi, mga seven out of ten." },
+      { who: "clinician", text: "Hindi naman daw namamanhid ang kamay niya." },
+    ],
+    heard: { wer: 0.35, must: ["balikat"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the shoulder reached the note in English", weight: 3,
+        test: (r) => /shoulder/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived the translation", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the pain score survived", weight: 2,
+        test: (r) => /7\s*\/\s*10|seven/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the denial stayed a denial", weight: 3,
+        test: (r) => !/numbness|numb/.test(secText(r)) || /den(ies|ied)|no numbness|without/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 9. Assessment — an impression, dictated where it belongs.
+
+     The counterpart of the misplaced case: same kind of content, aimed at the
+     right box, and here it must be written rather than flagged. */
+  {
+    id: "section/assessment-impression",
+    lang: "fil-PH",
+    section: { field: "assessment", label: "Assessment" },
+    why: "an impression dictated into Assessment is written, not flagged as belonging elsewhere",
+    turns: [
+      { who: "clinician", text: "Assessment is subacromial impingement of the right shoulder." },
+      { who: "clinician", text: "Limited by pain rather than by true stiffness." },
+      { who: "clinician", text: "Good rehabilitation potential given her age and activity level." },
+    ],
+    heard: { wer: 0.25, must: ["shoulder"] },
+    expect: [
+      { name: "the impression was written", weight: 3,
+        test: (r) => /impingement|subacromial/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "content aimed at the right box is NOT flagged as misplaced", weight: 2,
+        test: (r) => !(r.issues || []).some((i) => i.kind === "misplaced"),
+        detail: (r) => `issues: ${JSON.stringify(r.issues || [])}` },
+    ],
+  },
+
+  /* 10. The confusable numbers, at section scale.
+
+     numbers/confusables grades these inside a whole visit. Here the same
+     digits are dictated into one box with no surrounding conversation to
+     disambiguate them, which is the harder ask and the likelier clinic case. */
+  {
+    id: "section/numbers-tight",
+    lang: "fil-PH",
+    section: { field: "objectiveText", label: "Objective" },
+    why: "digits dictated into one box, with no conversation around them to disambiguate",
+    turns: [
+      { who: "clinician", text: "Shoulder flexion one hundred fifteen degrees on the right." },
+      { who: "clinician", text: "Abduction ninety degrees. Internal rotation forty five degrees." },
+      { who: "clinician", text: "Pain at end range is four out of ten." },
+    ],
+    heard: { wer: 0.25, must: ["flexion"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "115 survived", weight: 3,
+        test: (r) => /115|one hundred fifteen/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "90 survived", weight: 3,
+        test: (r) => /\b90\b|ninety/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "45 survived", weight: 2,
+        test: (r) => /\b45\b|forty[- ]?five/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the 4/10 pain score survived", weight: 2,
+        test: (r) => /4\s*\/\s*10|four out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 11. Reason for referral — short, and mostly a name and a diagnosis.
+
+     The shortest burst a therapist would realistically record, and the one
+     most likely to be a single sentence. It is here because a section writer
+     that needs three sentences to work is no use on the box that gets one. */
+  {
+    id: "section/reason-short",
+    lang: "fil-PH",
+    section: { field: "reason", label: "Reason for referral" },
+    why: "a one-sentence burst — the shortest thing a therapist would record into a box",
+    turns: [
+      { who: "clinician", text: "Referred by Doctor Santos for right shoulder impingement, post arthroscopy." },
+    ],
+    heard: { wer: 0.3, must: ["shoulder"] },
+    expect: [
+      { name: "the section was written from one sentence", weight: 3,
+        test: (r) => secText(r).length > 10, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the referring doctor survived", weight: 2,
+        test: (r) => /santos/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* 12. A self-correction inside one burst.
+
+     The refine pass reads a whole conversation and can see a retraction three
+     sentences later. The section writer gets ONE burst — but the correction is
+     inside it, so it has no excuse. Pinning the wrong side is the most
+     consequential thing this app can do, at any scale. */
+  {
+    id: "section/self-correction",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "a therapist correcting themselves mid-burst must not leave both sides in the note",
+    turns: [
+      { who: "clinician", text: "Patient reports left knee pain going down stairs." },
+      { who: "clinician", text: "Sorry, correction, it is the right knee. The right knee is the painful one." },
+      { who: "clinician", text: "About five out of ten, and it feels unstable." },
+    ],
+    heard: { wer: 0.2, must: ["knee"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the corrected RIGHT knee is what got written", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the withdrawn LEFT is not left standing as a finding", weight: 3,
+        test: (r) => !/\bleft\b/.test(secText(r)) || /correct|not the left|initially/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the pain score survived", weight: 2,
+        test: (r) => /5\s*\/\s*10|five out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
 ];
+
+/** The section endpoint's answer, normalised for the assertions above. */
+const secText = (r) => norm((r && r.tidied) || "");
 
 /** The reference text a transcript is scored against: everything said, in order. */
 const spokenText = (s) => s.turns.map((t) => t.text).join(" ");
