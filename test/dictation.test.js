@@ -503,42 +503,39 @@ const settle = () => new Promise((r) => setImmediate(r));
         && /progress: \[/.test(SRC) && /discharge: \[/.test(SRC),
       "a type missing from the map silently loses its section microphones");
 
-    r.check("an aimed utterance skips the classifier entirely",
-      /const field = aimed \? aimedField\(doc\.type, clinical, aimed\) : fieldForSentence\(/.test(SRC),
-      "feeding the target to the classifier as a hint is exactly what this replaces");
+    /* Section AIMING is gone. It let a therapist point the live microphone at
+       one box, and every sentence filed there as it was spoken — the behaviour
+       record-first exists to remove, kept alive at section scale. A section mic
+       records now, and the AI writes the section from the whole burst, so
+       aimedField(), aimedAt and withAim() went with it. DICTATABLE stayed: it
+       still decides which sections get a Dictate button and a panel for the
+       result. What replaced those assertions is test/voice/ section/ and the
+       browser tests in e2e/recording.spec.js.
 
-    r.check("only a section this note type actually has can be aimed at",
-      /const aimed = target && isDictatable\(doc\.type, target\) \? target : null;/.test(SRC),
-      "a stale target from another note type would file text into a field that isn't on the page");
-
-    r.check("a value that reached a table is not also written into the prose",
-      /function aimedField\([\s\S]*?extractOutcomes\(sentence\)\.length\) return null;[\s\S]*?meas\.rom\.length \+ meas\.mmt\.length \+ meas\.special\.length\) return null;/.test(SRC),
-      "the same finding in the table and in the narrative is the same finding twice, free to disagree");
-
-    r.check("pressing a second section re-aims one mic instead of opening another",
-      /\} else if \(listening\) \{\s*\/\/ already open: just re-aim it\s*aimedAt = target;/.test(SRC),
-      "two live audio graphs on one device is the doubled-audio bug release() exists to prevent");
+       What survives here is the property that outlived the feature — there is
+       one microphone, and one thing the button does. */
+    r.check("the live mic is a plain toggle, with no aim left to set",
+      /async function toggleMic\(\) \{/.test(SRC)
+        && !/aimedAt|aimedField|withAim/.test(SRC),
+      "an aim no UI can set is a section-aiming feature the source still describes and the app no longer offers");
 
     r.check("pressing the lit button again stops the mic",
-      /if \(listening && aimedAt === target\) \{\s*\/\/ same button again: stop\s*listening = false;\s*engine\.stop\(\);/.test(SRC));
+      /if \(listening\) \{\s*\n\s*listening = false;\s*\n\s*engine\.stop\(\);/.test(SRC));
 
-    r.check("a failed start leaves nothing aimed",
-      /if \(ok === false\) \{ listening = false; aimedAt = null; \}/.test(SRC),
-      "an aim left set on a closed mic sends the next utterance somewhere nobody chose");
+    r.check("a failed start leaves the mic off, not half-open",
+      /if \(ok === false\) listening = false;/.test(SRC),
+      "a live flag on a closed mic makes the next press try to stop something that was never started");
 
-    r.check("stopping dictation from outside clears the aim too",
-      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; aimedAt = null; \}/.test(SRC));
+    r.check("stopping dictation from outside releases the engine",
+      /stop\(\) \{ if \(engine\) engine\.stop\(\); listening = false; \},/.test(SRC));
 
-    /* Where the mic is pointed has to ride ON the engine's status line: the
-       cloud engine rewrites that line every time a segment goes out, so
-       anything written beside it survives about a second. */
-    r.check("where the mic is filing rides on the engine's own status line",
-      /onStatus: \(msg, isListening\) => \{ statusEl\.textContent = withAim\(msg\);/.test(SRC),
-      "written separately it is overwritten by the next segment, and a therapist dictates into the wrong section");
-
-    r.check("the whole-visit button reads as off while a section is aimed",
-      /micBtn\.classList\.toggle\("listening", listening && !aimedAt\);/.test(SRC),
-      "two mic buttons both lit is two microphones as far as the therapist can tell");
+    /* The live engine paints the whole-visit button and nothing else. Section
+       buttons belong to setSectionMicUI() now, and repainting them from this
+       engine's state would switch one off mid-recording. */
+    r.check("the live engine does not repaint the section mics",
+      /micBtn\.classList\.toggle\("listening", listening\);/.test(SRC)
+        && !/sectionBtns\(\)\.forEach\(\(b\) => \{\s*\n\s*const on = listening/.test(SRC),
+      "a section mic drives its own recorder — the live engine turning it off would stop a recording nobody stopped");
   }
 
   /* ---------------- corrections are visible ---------------- */
@@ -755,7 +752,7 @@ const settle = () => new Promise((r) => setImmediate(r));
       "two recorders on one device is the doubled-audio bug the engine's release() exists to prevent");
 
     r.check("…nor over live dictation, which is closed first",
-      /if \(listening\) \{ await aimMic\(null\); \}/.test(SRC));
+      /if \(listening\) \{ await toggleMic\(\); \}/.test(SRC));
 
     r.check("…nor over another section that is already recording",
       /if \(sectionRecordingActive\(\)\) return;/.test(SRC)
