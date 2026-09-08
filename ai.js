@@ -497,16 +497,37 @@
        or show the effect of changing the level. */
     const u = data.usageMetadata || {};
     if (typeof opts.onUsage === "function") {
+      /* `candidatesTokenCount` is the ANSWER ALONE. Thinking is reported
+         beside it in `thoughtsTokenCount`, and the three counts add up to the
+         `totalTokenCount` the API also returns. Measured live against Vertex
+         (gemini-3.8-flash, 2026-09-07): prompt 79 + candidates 28 + thoughts
+         333 = total 440, for a one-sentence answer that really is 28 tokens.
+
+         We used to subtract thoughts back out of candidates, on the opposite
+         assumption. Thinking is on for every call and is always larger than a
+         tidied sentence, so the subtraction clamped `out` to ZERO on every
+         call the product has ever made: /api/usage reported every answer as
+         free, and answers bill at 5x input.
+
+         If a backend ever does fold thinking into candidates, its own three
+         counts will overshoot the total it reports alongside them — that, and
+         not our assumption, is what selects the subtraction. */
       const thoughts = Number(u.thoughtsTokenCount || 0);
+      const promptTokens = Number(u.promptTokenCount || 0);
+      const candidates = Number(u.candidatesTokenCount || 0);
+      const total = Number(u.totalTokenCount || 0);
+      const answer = total && promptTokens + candidates + thoughts > total
+        ? Math.max(0, candidates - thoughts)
+        : candidates;
       try {
         opts.onUsage({
           model: model,
           purpose: opts.purpose || "unknown",
           thinkingLevel: opts.thinkingLevel || THINKING_STANDARD,
-          in: Number(u.promptTokenCount || 0),
-          out: Math.max(0, Number(u.candidatesTokenCount || 0) - thoughts),
+          in: promptTokens,
+          out: answer,
           thinking: thoughts,
-          total: Number(u.totalTokenCount || 0),
+          total: total,
         });
       } catch (e) { /* metering must never break a clinical call */ }
     }

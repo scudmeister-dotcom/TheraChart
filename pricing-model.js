@@ -13,15 +13,23 @@
    of the metering work:
 
      MEASURED — provider list prices (dated, sourced in PRICING.md).
-     MEASURED — prompt sizes, built from the real builders in ai.js/insights.js:
-                refine 1,484 tokens on a 73-line transcript, insights 2,651 on a
-                12-visit chart plus a digest of 20 older visits.
+     MEASURED — prompt sizes, built from the real builders in ai.js/insights.js
+                and counted by Vertex's own countTokens (free) rather than
+                estimated from characters. See BANDS for what each one covers.
      MEASURED — ai.js's own live figures for thinking: ~2.3k tokens at "medium",
                 "up to ~7k" at "high".
      ESTIMATED — answer tokens, where inside "up to 7k" the deep path lands, and
                 how many dictation minutes a visit really takes. These are the
                 three numbers /api/usage replaces with real ones after a week of
                 live use, which is why every result here is a band, not a point.
+
+     Answer tokens stayed estimated LONGER THAN ANYONE THOUGHT. The meter that
+     was supposed to settle them subtracted thinking out of the answer count on
+     the belief that the API folded the two together — it does not (prompt,
+     answer and thinking are three separate counts that sum to the total), so
+     every answer metered as ZERO and /api/usage has never yet reported a real
+     `out`. Fixed in ai.js on 2026-09-07; the week of live use that replaces the
+     `out` bands below starts from that date, not from when metering shipped.
 
    Nothing here is metered for egress or storage; see PRICING.md. */
 
@@ -53,23 +61,40 @@ const RATES = {
    the same deep path that makes `insights` the biggest line here. The assistant
    is a headline feature on the landing page — "ask its AI assistant anything
    about the patient" — so a model that costed only refine+insights was costing
-   a product we do not sell. Their input sizes are taken from insights (both
-   send a chart digest); their frequencies are the estimate, and they are the
-   two frequencies /api/usage settles first, because it already meters every
-   Gemini call regardless of which endpoint made it. */
+   a product we do not sell. Their frequencies are still the estimate, and they
+   are the two frequencies /api/usage settles first, because it already meters
+   every Gemini call regardless of which endpoint made it.
+
+   `in` RE-MEASURED 2026-09-07 against gemini-3.8-flash's countTokens, on these
+   fixtures — the old figures were carried over from a prompt that has since
+   roughly doubled, and refine's was understating its input by 2.2x:
+
+     refine     3,567  refineSystem() + a 73-line whole-visit transcript in the
+                       style of test/eval/cases.js. The system prompt ALONE is
+                       2,507 of that, so refine's input barely moves with how
+                       long the visit was — it was 1,620 here.
+     insights   2,393  a 12-visit chart plus buildHistoryDigest of 20 older
+                       visits (was 2,820 — the digest earns its keep).
+     assistant  3,268  the same chart through assistantChartText() plus one
+                       question (was 2,900, taken from insights rather than
+                       measured; the assistant also sends objective and plan).
+     extract    2,164  extractSystem() + the 2-page image-only scan fixture
+                       (scan_4visit.pdf, 4 visits). The system prompt is 1,044
+                       and each scanned PAGE costs ~560, so a long chart scan
+                       runs well above this — it was 3,200. */
 const BANDS = {
   /* insights moved from thinkingLevel "high" to "medium" on 2026-08-21 after
      the eval scored 100% at both over three runs, so its `think` band is now
      the medium one (~2.3k) rather than the deep one (3.5k-7k). The assistant
      and extract-doc still run deep. */
-  low:  { refine: { in: 1620, out: 1000, think: 1800 }, insights: { in: 2820, out: 700,  think: 1800 },
-          assistant: { in: 2900, out: 400, think: 3500 }, extract: { in: 3200, out: 900,  think: 3500 },
+  low:  { refine: { in: 3567, out: 1000, think: 1800 }, insights: { in: 2393, out: 700,  think: 1800 },
+          assistant: { in: 3268, out: 400, think: 3500 }, extract: { in: 2164, out: 900,  think: 3500 },
           section: { in: 450, out: 25, think: 220 } },
-  base: { refine: { in: 1620, out: 1400, think: 2300 }, insights: { in: 2820, out: 1000, think: 2300 },
-          assistant: { in: 2900, out: 600, think: 5000 }, extract: { in: 3200, out: 1300, think: 5000 },
+  base: { refine: { in: 3567, out: 1400, think: 2300 }, insights: { in: 2393, out: 1000, think: 2300 },
+          assistant: { in: 3268, out: 600, think: 5000 }, extract: { in: 2164, out: 1300, think: 5000 },
           section: { in: 500, out: 35, think: 300 } },
-  high: { refine: { in: 1620, out: 1800, think: 2800 }, insights: { in: 2820, out: 1400, think: 2800 },
-          assistant: { in: 2900, out: 900, think: 7000 }, extract: { in: 3200, out: 1800, think: 7000 },
+  high: { refine: { in: 3567, out: 1800, think: 2800 }, insights: { in: 2393, out: 1400, think: 2800 },
+          assistant: { in: 3268, out: 900, think: 7000 }, extract: { in: 2164, out: 1800, think: 7000 },
           section: { in: 600, out: 60, think: 450 } },
 };
 
