@@ -27,6 +27,36 @@ function wav(seconds) {
   return buf;
 }
 
+/* Stands in for Gemini and reports usage the way the real API does, so the
+   meter's arithmetic can be checked without spending anything. */
+function stubGemini(usageMetadata) {
+  const http = require("http");
+  const srv = http.createServer((req, res) => {
+    req.on("data", () => { });
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ text: "Knee pain improved." }) }] } }],
+        usageMetadata,
+      }));
+    });
+  });
+  return new Promise((ok) => srv.listen(0, "127.0.0.1", () =>
+    ok({ base: `http://127.0.0.1:${srv.address().port}`, close: () => new Promise((done) => srv.close(done)) })));
+}
+
+/** What onUsage is handed for a call the model reported as `usageMetadata`. */
+async function metered(usageMetadata) {
+  const ai = require("../ai.js");
+  const stub = await stubGemini(usageMetadata);
+  let seen = null;
+  try {
+    await ai.geminiJson("tidy this", { type: "object", properties: { text: { type: "string" } } },
+      { key: "test-key", base: stub.base, retries: 1, purpose: "section", onUsage: (u) => { seen = u; } });
+  } finally { await stub.close(); }
+  return seen;
+}
+
 (async () => {
   const r = reporter("metering checker");
   /* The seeded accounts carry no password at all any more — they are opened
@@ -121,6 +151,49 @@ function wav(seconds) {
       "geminiThinking" in u.totals && "geminiOut" in u.totals,
       "thinking is the dominant cost and the lever we tune — folding it into output hides that");
     // pricing itself is checked from the operator's seat, further down
+
+    /* …and the split has to be ARITHMETIC, not just two field names.
+
+       The counts the API returns are three separate numbers — prompt, answer
+       (`candidatesTokenCount`), thinking (`thoughtsTokenCount`) — and they sum
+       to the total it reports beside them. Verified live on Vertex
+       (gemini-3.8-flash, 2026-09-07): 79 + 28 + 333 = 440, where 28 really was
+       the length of the one-sentence answer.
+
+       The meter used to subtract thinking back out of the answer count. Since
+       thinking runs on every call and always dwarfs a tidied sentence, that
+       clamped answer tokens to ZERO everywhere — the whole product's output,
+       which bills at 5x input, metered as free. These stub the model rather
+       than call it, so the check costs nothing to run. */
+    const vertexShape = await metered(
+      { promptTokenCount: 79, candidatesTokenCount: 28, thoughtsTokenCount: 333, totalTokenCount: 440 });
+    r.check("an answer is metered as the tokens it actually was",
+      vertexShape.out === 28,
+      `out=${vertexShape.out} — candidatesTokenCount is the answer alone; subtracting thinking from it reports every answer as free`);
+    r.check("…with thinking kept beside it, not folded in",
+      vertexShape.thinking === 333 && vertexShape.in === 79,
+      JSON.stringify(vertexShape));
+    r.check("…and the three parts still add up to the total the API reported",
+      vertexShape.in + vertexShape.out + vertexShape.thinking === vertexShape.total,
+      JSON.stringify(vertexShape));
+
+    /* The opposite convention, in case a backend ever reports it: an answer
+       count that already contains the thinking overshoots the total sent with
+       it, and that — rather than an assumption of ours — is what makes the
+       meter subtract. Counting 361 answer tokens beside 333 thinking ones
+       would bill the same thinking twice, at the output rate both times. */
+    const foldedShape = await metered(
+      { promptTokenCount: 79, candidatesTokenCount: 361, thoughtsTokenCount: 333, totalTokenCount: 440 });
+    r.check("a backend that folds thinking into the answer count is not double-counted",
+      foldedShape.out === 28 && foldedShape.thinking === 333,
+      JSON.stringify(foldedShape));
+
+    /* A model that reports nothing must still not break the call, and must not
+       invent volume either. */
+    const noUsage = await metered(undefined);
+    r.check("a call the model reported no usage for meters as zero, not as a guess",
+      noUsage && noUsage.in === 0 && noUsage.out === 0 && noUsage.thinking === 0,
+      JSON.stringify(noUsage));
 
     /* ---------------- which feature spent it ----------------
 

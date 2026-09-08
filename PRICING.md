@@ -31,10 +31,20 @@ change re-prices history instead of leaving it stale.
 FX: ₱61.5 = $1 (mid-August 2026).
 
 Prompt sizes are **measured** against the real builders in `ai.js` /
-`insights.js`: refine is 1,484 tokens on a 73-line transcript, insights is
-2,651 on a 12-visit chart plus a digest of 20 older visits. Thinking is
+`insights.js`, counted by Vertex's own `countTokens` and re-measured
+2026-09-07: refine is 3,567 tokens on a 73-line transcript (2,507 of that is
+the system prompt alone, which has roughly doubled since it was last costed),
+insights 2,393 on a 12-visit chart plus a digest of 20 older visits, the
+assistant 3,268 on the same chart, and a 2-page scan import 2,164. Thinking is
 measured too — `ai.js` records ~2.3k tokens at `medium` and "up to ~7k" at
 `high`. Answer tokens and the true depth of `high` are the estimated band.
+
+Answer tokens were supposed to stop being an estimate once `/api/usage` shipped,
+and did not: the meter subtracted thinking out of the answer count, on the
+belief that the API folded them together. It reports the two separately, so
+every answer metered as **zero** and no real `out` figure has ever been
+recorded. Fixed 2026-09-07 (`ai.js`, `geminiJsonOnce`) — the live figures that
+replace the `out` band start accruing from that date.
 
 ## One documented visit
 
@@ -42,14 +52,20 @@ A visit costs dictation minutes plus two Gemini calls: `refine` (the transcript
 cleanup, `medium` thinking) and `insights` (the chart review, `high` thinking,
 which re-runs when a new note changes the chart).
 
+Since 2026-09-07 it can also cost a third, several times over. A therapist who
+dictates section by section spends one `section` call per section RECORDED —
+modelled at four — where a therapist who records the whole visit spends none.
+It is the only line whose frequency is a workflow choice rather than an
+observation, and the only one that fires more than once a visit.
+
 Modelled at 2.9 billed dictation minutes — one 6-minute evaluation per eight
 2.5-minute daily notes. *Billed* means voiced audio only; silence is dropped
 before it is ever submitted.
 
 | | Dictation | AI | Total | Dictation's share |
 |---|---|---|---|---|
-| Today (intro rate) | ₱2.84 | ₱1.82 – ₱3.20 | **₱4.66 – ₱6.05** | 47–61% |
-| From January (list rate) | ₱2.84 | ₱3.64 – ₱6.41 | **₱6.48 – ₱9.25** | 31–44% |
+| Today (intro rate) | ₱2.84 | ₱2.21 – ₱3.65 | **₱5.05 – ₱6.49** | 44–56% |
+| From January (list rate) | ₱2.84 | ₱4.42 – ₱7.30 | **₱7.27 – ₱10.14** | 28–39% |
 
 **Dictation is about half the variable cost, not most of it** — and from
 January it is the *smaller* half. That is a change from where we started
@@ -59,29 +75,36 @@ prices ($0.024–$0.064/min) for a codebase that calls v2 at $0.016. Corrected
 there.
 
 Dictation stays the line worth *watching* even so, because it is the only one a
-human controls in the moment. The AI cost per note is fixed; the dictation cost
-is whatever someone leaves the microphone recording.
+human controls in the moment. The AI cost per note is no longer quite fixed —
+section dictation moves it — but it moves in whole calls a therapist chooses,
+where the dictation cost is whatever someone leaves the microphone recording.
+
+Note the top of the January band: **₱10.14 at the high end is over the ₱10 a
+visit** the plans are sized against. It is the pessimistic corner of three
+estimates stacked (deep thinking, long answers, four section calls), not a
+forecast — but it is the first time any corner of this table has crossed that
+line, and `/api/usage` now records real `out` tokens to settle it.
 
 ## Per seat, per month (22 working days, 2027 rate)
 
 | Visits/day | Visits/mo | Variable cost | Billed dictation |
 |---|---|---|---|
-| 6 | 132 | ₱855 – ₱1,221 | 381 min |
-| 8 | 176 | ₱1,141 – ₱1,628 | 508 min |
-| 12 | 264 | ₱1,711 – ₱2,442 | 763 min |
+| 6 | 132 | ₱959 – ₱1,339 | 381 min |
+| 8 | 176 | ₱1,279 – ₱1,785 | 508 min |
+| 12 | 264 | ₱1,918 – ₱2,677 | 763 min |
 
-At 8 visits/day, COGS is **₱1,473/seat/month** including an infrastructure
+At 8 visits/day, COGS is **₱1,616/seat/month** including an infrastructure
 share. That is the floor everything else is built on:
 
 | Gross margin | Price per seat |
 |---|---|
-| 60% | ₱3,700 |
-| 70% | ₱5,000 |
-| 75% | ₱5,900 |
-| 80% | ₱7,400 |
-| 85% | ₱9,900 |
+| 60% | ₱4,100 |
+| 70% | ₱5,400 |
+| 75% | ₱6,500 |
+| 80% | ₱8,100 |
+| 85% | ₱10,800 |
 
-Software-business margins (80%+) want ₱7,400/seat. That is almost certainly
+Software-business margins (80%+) want ₱8,100/seat. That is almost certainly
 above what a Philippine PT clinic will pay. The gap is the actual pricing
 problem, and it closes from both ends: charge nearer ₱3,500–5,000, and cut
 COGS.
