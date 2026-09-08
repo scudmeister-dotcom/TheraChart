@@ -118,9 +118,8 @@ const check = (name, cond, detail) => {
      liftBlock("  const DICTATABLE = {", "\n  };"),
      liftConst("isDictatable"),
      lift("  function splitSentences("),
-     lift("  function aimedField("),
      lift("  function fieldForSentence(")].join("\n")
-    + "\n  return { splitSentences, fieldForSentence, aimedField, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
+    + "\n  return { splitSentences, fieldForSentence, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
 
   const MAPS = new Function(
     [liftBlock("  const FIELD_SOURCES = {", "\n  };"),
@@ -196,10 +195,9 @@ const check = (name, cond, detail) => {
      liftBlock("  const DICTATABLE = {", "\n  };"),
      liftConst("isDictatable"),
      lift("  function splitSentences("),
-     lift("  function aimedField("),
      lift("  function fieldForSentence(")].join("\n")
-    + "\n  return { splitSentences, fieldForSentence, aimedField, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
-  const { aimedField, fieldForSentence, isDictatable, DICTATABLE } = R2;
+    + "\n  return { splitSentences, fieldForSentence, DICTATABLE, isDictatable };")(PR, CL, TREAT_RE);
+  const { fieldForSentence, isDictatable, DICTATABLE } = R2;
 
   // Every section named as dictatable must be a field the note type has.
   const FIELDS_OF = {
@@ -213,51 +211,31 @@ const check = (name, cond, detail) => {
       fields.every((f) => FIELDS_OF[type].includes(f)),
       `${fields.filter((f) => !FIELDS_OF[type].includes(f)).join(", ")} is not on a ${type}`);
   }
-  check("a section from another note type cannot be aimed at",
+  check("a section from another note type gets no Dictate button",
     !isDictatable("daily", "pmh") && !isDictatable("discharge", "subjective"),
-    "a stale target would file text into a field that isn't on the page");
+    "isDictatable gates both the button and the panel its result comes back into");
   check("the measurement table and the charge sheet are not dictated into",
     !Object.values(DICTATABLE).flat().some((f) => ["charges", "measurements", "goals", "outcomes"].includes(f)));
 
-  /* THE CASE THIS WHOLE FEATURE EXISTS FOR. The classifier sends a
-     clinician-voiced sentence out of Subjective — correctly, when it is
-     guessing. Aimed at Subjective, the therapist has already answered it. */
+  /* The classifier still decides where a live-dictated sentence lands, and
+     the case worth pinning is the one it gets right: a clinician-voiced
+     observation belongs in Objective, not in the patient's own words.
+
+     There used to be a counterpart here — aimedField(), which skipped the
+     classifier when the therapist pointed the microphone at one section. That
+     path is gone: a section mic records now and the AI writes the section from
+     the whole burst, so nothing files a sentence at a section as it is spoken.
+     See test/voice/ section/ for what replaced these. */
   const observed = "The right shoulder sits noticeably higher than the left";
   check("the classifier keeps a clinician's observation out of Subjective",
     fieldForSentence("eval", observed, "clinician") === "objectiveText",
     String(fieldForSentence("eval", observed, "clinician")));
-  check("…but an aimed microphone files it where the therapist aimed it",
-    aimedField("eval", observed, "subjective") === "subjective");
-
-  // and the reverse: a patient-voiced line aimed at Objective stays there
-  const reported = "My shoulder has been aching for two weeks";
-  check("a patient-voiced line aimed at Objective goes to Objective",
-    aimedField("eval", reported, "objectiveText") === "objectiveText");
-
-  /* Small talk is trimmed by the caller, but noteWorthy() — which stops the
-     classifier defaulting a stray line into Subjective — is deliberately not
-     applied to an aimed mic. A therapist holding the mic at a section has
-     answered the question it exists to ask. */
-  const terse = "Doing better";
-  check("a terse line the classifier would drop still files when aimed at",
-    aimedField("daily", terse, "subjective") === "subjective",
-    "an aimed mic that silently drops a short sentence reads as a broken mic");
-
-  /* The one thing an aimed mic must still refuse: a value that already went
-     into a table. The same finding in two places is free to disagree. */
-  check("a ROM reading is not also written into the prose",
-    aimedField("eval", "Shoulder flexion 120 degrees", "objectiveText") === null);
-  check("an MMT grade is not either",
-    aimedField("daily", "Quad strength 4 out of 5", "summary") === null);
-  check("a special test is not either",
-    aimedField("eval", "Positive Neer test", "objectiveText") === null);
-  check("a standardised score goes to the outcome table, not the narrative",
-    aimedField("eval", "LEFS is 58 out of 80", "subjective") === null);
 
   /* A pain rating is patient-reported prose AND a table row — it has always
-     been both, and aiming must not change that. */
+     been both, and the classifier still has to read it as the patient's. */
   check("a pain rating still reads as subjective prose",
-    aimedField("daily", "It is about a seven out of ten today", "subjective") === "subjective");
+    fieldForSentence("daily", "It is about a seven out of ten today", "patient") === "subjective",
+    String(fieldForSentence("daily", "It is about a seven out of ten today", "patient")));
 }
 
 /* ================================================================== *

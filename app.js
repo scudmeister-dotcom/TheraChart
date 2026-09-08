@@ -6734,7 +6734,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // would be lost); the doc can also have been signed in the meantime
       const live = S.getDoc(doc.id);
       if (!live || live.status === "signed") return;
-      routeUtterance(live, user, text, open ? currentDocState : null, !open, aimedAt);
+      routeUtterance(live, user, text, open ? currentDocState : null, !open);
     };
     const callbacks = {
       docId: doc.id,
@@ -6755,7 +6755,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         levelFill.classList.toggle("voiced", !!voiced);
         levelBar.style.left = pct(threshold) + "%";
       },
-      onStatus: (msg, isListening) => { statusEl.textContent = withAim(msg); if (isListening === false && !listening) setUI(); },
+      onStatus: (msg, isListening) => { statusEl.textContent = msg; if (isListening === false && !listening) setUI(); },
       /* A backstop stopped the mic itself; put the button back in step so the
          therapist can see it happened and tap once to resume. The REASON is
          carried through rather than just printed: onStatus writes it to the
@@ -6798,28 +6798,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          which has no aim, so without this the section-aimed path has no test
          that runs it. */
       window.__theraDict = engine;
-      window.__theraSay = (text, target) => { aimedAt = target || null; deliver(text); };
+      window.__theraSay = (text) => deliver(text);
     }
     makeEngine();
 
-    /* Which section the open microphone is aimed at, or null for the
-       whole-visit mic. There is only ever ONE microphone: pressing a second
-       button re-aims the same engine rather than opening another, because two
-       live audio graphs on one device is the doubled-audio bug the cloud
-       engine's release() exists to prevent. */
-    let aimedAt = null;
-
     const sectionBtns = () => document.querySelectorAll("[data-fieldmic]");
 
+    /* This paints the WHOLE-VISIT mic only. The section buttons are
+       setSectionMicUI()'s, and they are not this engine's to touch: a section
+       mic drives its own recorder now, so repainting them from the live
+       engine's state would switch one off in the middle of recording. */
     const setUI = () => {
-      micBtn.classList.toggle("listening", listening && !aimedAt);
-      micLabel.textContent = listening && !aimedAt ? "Stop listening" : "Listen & dictate live";
-      sectionBtns().forEach((b) => {
-        const on = listening && aimedAt === b.dataset.fieldmic;
-        b.classList.toggle("listening", on);
-        const wrap = b.closest("[data-fieldwrap]");
-        if (wrap) wrap.classList.toggle("dictating", on);
-      });
+      micBtn.classList.toggle("listening", listening);
+      micLabel.textContent = listening ? "Stop listening" : "Listen & dictate live";
       if (levelEl) {
         levelEl.hidden = !listening;
         if (!listening) levelFill.style.width = "0%";
@@ -6831,48 +6822,31 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       // the cloud engine writes its own richer status (model + queue); only the
       // browser engine needs setUI to set the "Listening…" line
       if (listening && !useCloud) {
-        statusEl.textContent = withAim(`Listening… (${langSel.selectedOptions[0].text})`);
+        statusEl.textContent = `Listening… (${langSel.selectedOptions[0].text})`;
       }
     };
 
-    /* Where an open microphone is filing, appended to whatever the engine had
-       to say for itself. It has to ride ON the engine's status line rather
-       than sit beside it: the cloud engine rewrites that line every time a
-       segment goes out, so anything written separately survives about a
-       second. Getting this wrong is expensive in the one way that matters —
-       a therapist who cannot see where the mic is pointed will dictate a
-       paragraph into the wrong section. */
-    const withAim = (msg) =>
-      listening && aimedAt ? `${msg} — filing into ${fieldLabel(doc.type, aimedAt)}` : msg;
+    /** Open or close the whole-visit live microphone.
 
-    /** Point the microphone at `target` (a field name, or null for the whole
-        visit). Pressing the button that is already lit turns it off; pressing
-        a different one re-aims without closing and reopening the mic, so the
-        therapist can walk down the note section by section without a
-        permission prompt or a lost half-second between each. */
-    async function aimMic(target) {
+        It used to take a `target` and could be aimed at one section, which is
+        what made a second press "re-aim" rather than "stop". Section mics
+        record now — they drive their own recorder and never touch this engine
+        — so there is one microphone here and one thing the button does. */
+    async function toggleMic() {
       if (!engine) return;
       autoStopNotice = ""; // the therapist has seen it and acted
-      if (listening && aimedAt === target) {   // same button again: stop
+      if (listening) {
         listening = false;
         engine.stop();
-      } else if (listening) {                  // already open: just re-aim it
-        aimedAt = target;
       } else {
-        aimedAt = target;
         listening = true;
         const ok = await Promise.resolve(engine.start());
-        if (ok === false) { listening = false; aimedAt = null; }
+        if (ok === false) listening = false;
       }
       setUI();
-      if (listening && aimedAt) {
-        statusEl.textContent = withAim(statusEl.textContent.split(" — filing into ")[0]);
-        const wrap = document.querySelector(`[data-fieldwrap="${aimedAt}"]`);
-        if (wrap) wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      }
     }
 
-    micBtn.addEventListener("click", () => aimMic(null));
+    micBtn.addEventListener("click", () => toggleMic());
     /* Section mics RECORD; they do not open the live engine. Same arc as the
        visit recorder — record, stop, transcribe, let the AI write it, approve
        — so a therapist meets one workflow rather than two. The live engine is
@@ -6881,7 +6855,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     sectionBtns().forEach((b) => b.addEventListener("click", async () => {
       const field = b.dataset.fieldmic;
       if (sectionRecordingActive()) return;      // stop is on the panel, not here
-      if (listening) { await aimMic(null); }     // one microphone: close the live one first
+      if (listening) { await toggleMic(); }      // one microphone: close the live one first
       if (activeRecording && activeRecording.isRecording && activeRecording.isRecording()) {
         showCheckPanel(doc, user, field, { error: "The whole visit is being recorded. Stop that first, or type into this section instead." });
         return;
@@ -6900,7 +6874,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
 
     activeDictation = {
-      stop() { if (engine) engine.stop(); listening = false; aimedAt = null; },
+      stop() { if (engine) engine.stop(); listening = false; },
     };
   }
 
@@ -7645,26 +7619,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
    * anything this code can infer from the words — so a target skips the
    * classifier entirely rather than being one more hint fed into it.
    */
-  /* The targeted counterpart of fieldForSentence(). The section is already
-     decided, so the only question left is whether this sentence belongs in
-     PROSE at all — and there is exactly one case where it does not: a value
-     that has already been filed into a table. "Shoulder flexion 120 degrees"
-     is a row in the measurement table; typing it into the objective narrative
-     as well puts the same finding in the chart twice, in two places that can
-     then disagree with each other.
-
-     Everything else goes in. Small talk was already trimmed by the caller,
-     and the noteWorthy() gate that guards the untargeted path is deliberately
-     NOT applied here: it exists to stop the classifier defaulting a stray
-     sentence into Subjective, and a therapist holding the microphone at a
-     section has answered that question themselves. */
-  function aimedField(type, sentence, target) {
-    if (CL.extractOutcomes(sentence).length) return null;   // → outcome table
-    const meas = PR.extractMeasurements(sentence);
-    if (meas.rom.length + meas.mmt.length + meas.special.length) return null; // → measurement table
-    return target;
-  }
-
   /* Store dictated lines in the transcript WITHOUT interpreting them.
 
      routeUtterance below is a one-way street: it pins a region the moment it
@@ -7693,7 +7647,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return n;
   }
 
-  function routeUtterance(doc, user, raw, dstate, silent, target) {
+  function routeUtterance(doc, user, raw, dstate, silent) {
     const parsed = PR.parseUtterance(raw);
     if (!parsed.text) return;
     const time = nowTime();
@@ -7751,7 +7705,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // the whole utterance to one field meant everything but the first match
     // was dropped: a daily note that mentioned any measurement lost its
     // subjective and treatment text entirely.
-    const aimed = target && isDictatable(doc.type, target) ? target : null;
     const filedTo = [];
     let heldBack = 0;
     for (const sentence of splitSentences(parsed.text)) {
@@ -7759,18 +7712,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          that is documentation and leave the wedding in the transcript. */
       const clinical = PR.trimToClinical(sentence);
       if (!clinical) { heldBack += 1; continue; }
-      const field = aimed ? aimedField(doc.type, clinical, aimed) : fieldForSentence(doc.type, clinical, voice);
+      const field = fieldForSentence(doc.type, clinical, voice);
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
       if (!filedTo.includes(field)) filedTo.push(field);
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
-    /* An aimed microphone that filed nothing needs to say so more loudly than
-       the roaming one does: the therapist spoke AT a section and watched it
-       stay empty, and "transcript only" alone reads as the mic not working. */
-    if (aimed && !filedTo.length && !nMeas && !nOut) {
-      routed.push(`nothing to file into ${fieldLabel(doc.type, aimed)} — it's in the transcript`);
-    }
     /* Say so out loud. A sentence that reaches the transcript and no section
        is the normal, correct outcome for small talk — but silence about it
        reads exactly like the mic missing a real complaint. */
