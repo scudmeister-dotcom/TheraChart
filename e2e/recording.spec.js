@@ -388,3 +388,102 @@ test.describe("reconciling the AI's draft with what the therapist typed", () => 
       .toBe(DRAFTED);
   });
 });
+
+/* The OTHER reconciliation screen — the one a server with no AI gets.
+
+   With the model available, a processed recording goes to the refine review.
+   Without it there is no whole-visit read, so the parser files the transcript
+   line by line and openCompare() puts what the therapist typed beside what the
+   routing produced. The e2e server has the AI blanked, which is exactly the
+   condition this screen exists for — so it needs no stubbing beyond the
+   transcription itself. */
+test.describe("comparing your own note with the recording, without an AI", () => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.grantPermissions(["microphone"]);
+    await fakeMic(page);
+  });
+
+  const TYPED = "Left knee pain going down stairs.";
+  const HEARD = "The left knee is swollen and it hurts going down stairs.";
+
+  async function processedWithoutAi(page) {
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "eval", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.goto(`/#/doc/${docId}`);
+    await page.locator("#recBtn").waitFor({ state: "visible" });
+
+    // the therapist's own words, typed before the recording is processed
+    await page.locator('textarea[data-field="subjective"]').fill(TYPED);
+
+    // Google stands in; everything else on this path is the real thing
+    await page.route("**/api/stt*", (route) => route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ text: HEARD, billedSeconds: 12 }),
+    }));
+
+    await page.locator("#recBtn").click();
+    await page.locator("#modalRoot .modal").getByRole("button", { name: /Start recording/ }).click();
+    await page.waitForTimeout(2500);
+    await page.locator("#recBtn").click();
+    await page.locator("#modalRoot .modal").getByRole("button", { name: "Process the visit" }).click();
+
+    await page.locator("#modalRoot .modal", { hasText: "Check the AI against your own notes" })
+      .waitFor({ state: "visible", timeout: 30_000 });
+    return docId;
+  }
+
+  const row = (page) => page.locator(".cmp-row").filter({ hasText: "Subjective" }).first();
+
+  test("it opens with the therapist's words beside the recording's", async ({ page }) => {
+    await processedWithoutAi(page);
+    const r = row(page);
+    await expect(r.locator(".cmp-mine")).toHaveValue(TYPED);
+    // the routed text is what the parser filed, which appends rather than replaces
+    await expect(r.locator(".cmp-ai")).toContainText("stairs");
+    await expect(page.locator("#modalRoot .modal"))
+      .toContainText("Nothing changes in the note until you press Apply");
+  });
+
+  test("keep mine copies across, and Apply writes what is on the right", async ({ page }) => {
+    const docId = await processedWithoutAi(page);
+    const r = row(page);
+    await r.getByRole("button", { name: "Keep mine" }).click();
+    await expect(r.locator(".cmp-ai")).toHaveValue(TYPED);
+
+    await page.locator("#cmpApply").click();
+    /* Apply closes the comparison and raises a Notice in its place —
+       alertBanner() is itself a modal — so "the screen is done" is the
+       comparison being gone, not the modal root being empty. */
+    await expect(page.locator("#modalRoot .modal")).not.toContainText("Check the AI against your own notes");
+    await expect(page.locator("#modalRoot .modal")).toContainText("read it once more before signing");
+    await expect.poll(() => page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId))
+      .toBe(TYPED);
+  });
+
+  test("leaving it alone changes nothing", async ({ page }) => {
+    const docId = await processedWithoutAi(page);
+    const before = await page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId);
+    await page.locator("#cmpCancel").click();
+    await expect(page.locator("#modalRoot .modal")).toHaveCount(0);
+    expect(await page.evaluate((id) => window.TheraStore.getDoc(id).data.subjective, docId)).toBe(before);
+  });
+
+  /* Blend cannot work HERE, and this pins that rather than pretending.
+
+     openCompare is only ever reached when sync.refine is not "gemini", which
+     is the same condition that makes /api/blend-note answer 503 — so the one
+     screen offering the button is the one screen where the service behind it
+     is guaranteed to be off. It degrades with a message rather than failing
+     silently, which is why this is a finding and not an outage. */
+  test("blend is offered on the one screen where it cannot work", async ({ page }) => {
+    await processedWithoutAi(page);
+    const r = row(page);
+    await expect(r.getByRole("button", { name: "Blend both" })).toBeVisible();
+    await r.getByRole("button", { name: "Blend both" }).click();
+    await expect(r.locator(".cmp-state")).toContainText("couldn't blend", { timeout: 15_000 });
+  });
+});
