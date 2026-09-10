@@ -1,57 +1,15 @@
 # Voice eval — the dictation chain, out loud
 
-> ## ⚠ OUTSTANDING: the baseline for the adversarial family has not been taken
+> ## The baseline for the adversarial family — taken 2026-09-10
 >
-> **What is left to do.** The 32 scripts added 2026-09-09 have no entry in
-> `baseline.json`, so nothing is measured against them yet. Take it with:
+> A clean full run: all 32 scripts scored, **no** NOT RUN, no retries, no
+> fallbacks. Mean word error **4.0%**, note/section **99.3%** (399/402),
+> `$0.143` of Speech-to-Text and 32 Vertex calls.
 >
-> ```
-> node test/voice/run.js --case "$(node -e 'console.log(require("./test/voice/scripts.js").SCRIPTS.slice(-32).map(s=>s.id).join(","))')" --save-baseline
-> ```
->
-> Costs about **$0.15** of Speech-to-Text plus 32 Vertex calls; the ElevenLabs
-> audio is already cached on disk, so the speech is free. Expect roughly
-> **27 of 32 at 100%** and mean word error near **4%** — that is what the
-> post-fix run scored on the 28 it managed. `history/resolved-not-current` is
-> the known-flaky one; see [After the fix](#after-the-fix).
->
-> **What "wait for STT" does NOT mean.** It has nothing to do with this
-> project's own infrastructure. `run.js` boots its own throwaway server on
-> localhost and calls Google Cloud Speech-to-Text directly — the Cloud Run
-> service and the (deleted) Cloud SQL instance are not in this path, and
-> nothing of ours needs to be switched on. What failed on 2026-09-09 was
-> **Google**, returning 5xx in bursts at the tail of two long runs, with Vertex
-> falling back once as well; the same audio transcribed perfectly in a fresh
-> process seconds later.
->
-> **How to tell it is healthy again** — one script, about a cent:
->
-> ```
-> node test/voice/run.js --case section/reason-plan-content
-> ```
->
-> A clean `WER … · section …%` row with no `retrying in` line means go. If it
-> 500s twice and reports `NOT RUN`, Google is still bad — wait, and if it stays
-> bad for a day check the Speech-to-Text quota on `therachart-prod` rather than
-> assuming it is transient.
->
-> The run itself is now safe to attempt at any time: a 5xx that survives the
-> retries is classed NOT RUN and **bars the baseline save**, so a bad hour can
-> no longer write itself in as the bar. See
-> [A degraded hour at Google](#a-degraded-hour-at-google-and-what-it-cost).
-
-Three things test dictation, and until now they stopped short of each other:
-
-| | what it proves | what it never sees |
-|---|---|---|
-| `test/dictation.test.js` | the recorder's backstops release the mic, don't double-start, don't gate out speech | any audio, any transcript |
-| `test/eval/run.js` | the note the model writes from a **clean typed** transcript | anything Chirp 2 got wrong |
-| **`test/voice/run.js`** | the note the model writes from **audio Google actually transcribed** | — |
-
-The gap between rows two and three is the reason this exists. A refine prompt
-that scores 100% on typed text can still produce a wrong chart in a clinic,
-because the text it gets there has been through Chirp 2 first. A run here scores
-both halves separately, so a failure says which one broke.
+> **Read the two flaky rows before trusting a diff against it.** See
+> [The note is not deterministic](#the-note-is-not-deterministic) — two
+> whole-visit scripts swing 25-30 points run to run on identical transcripts,
+> so a move on either of them is not evidence of anything on its own.
 
 ## Setup
 
@@ -398,9 +356,11 @@ at all — `assist/help-not-hep`, `section/subjective-help-not-hep`,
 behaviour `test/parser.test.js` has always asserted and the section scored 100%
 with it.
 
-**One new finding, and it is intermittent.** `history/resolved-not-current`
-scored 75% on this run against 100% on the two before it, at **0.0% word
-error** every time — so the transcript is not the variable. The patient says
+**One new finding, and it is intermittent** — since characterised properly in
+[The note is not deterministic](#the-note-is-not-deterministic).
+`history/resolved-not-current` scored 75% on this run against 100% on the two
+before it, at **0.0% word error** every time — so the transcript is not the
+variable. The patient says
 
 > "Last year naman my left shoulder was frozen, pero okay na yun, wala na akong
 > problema doon."
@@ -411,6 +371,42 @@ One observation in three is not a measurement — refine does not run at
 temperature zero, and this file's own rule is not to conclude from a single
 run — so this is logged, not diagnosed. The script to characterise it now
 exists; run it with `--takes` under `--sweep` before changing the prompt.
+
+### The note is not deterministic
+
+The clean baseline run turned up something the earlier runs had been hinting
+at, and it is now well enough evidenced to state: **the same audio produces a
+different note.** Not a different transcript — the transcript is byte-stable.
+
+| script | word error | note, run 1 | run 2 | run 3 |
+|---|---|---|---|---|
+| `referral/credential-not-a-grade` | 6.0%, 6.0%, 6.0% | 80% | 100% | 70% |
+| `history/resolved-not-current` | 0.0%, 0.0%, 0.0% | 100% | 75% | 100% |
+
+Word error is IDENTICAL across all three runs of both — same audio, same
+transcript, three different answers. And the variation lands on the **body-map
+pins**, which is the safety-critical output:
+
+- `history/resolved-not-current` once pinned `Shoulder|left` for a shoulder the
+  patient said was frozen *last year* and is fine now. A pin means *this is a
+  problem now*.
+- `referral/credential-not-a-grade` once pinned **nothing at all** —
+  `pinned: (none)` — for a visit whose clinician says "Left shoulder abduction
+  is ninety degrees". The shoulder being examined got no pin.
+
+**Where it is, and where it is not.** All five whole-visit scripts go through
+`/api/refine`, which runs at the `ai.js` default **temperature 0.2**. All
+twenty-seven section scripts go through `/api/check-section` at **temperature
+0.1** — and every one of them scored 100% in every run. The instability is on
+the refine path only. That is a correlation across three runs, not a controlled
+experiment, and the honest next step is `--sweep --takes` on those two scripts
+before anyone touches a temperature.
+
+**What it means for this baseline.** A row that swings 30 points on its own
+makes `--save-baseline` a moving target: a later run scoring 70% on
+`referral/credential-not-a-grade` has not regressed, and one scoring 100% has
+not improved. Treat a move on those two as noise until it has been run several
+times.
 
 ### A degraded hour at Google, and what it cost
 
