@@ -202,6 +202,35 @@ proven by an actual deploy:
 
 ## Go-live checklist
 
+> ### ⚠ REMOVE THE AUTO SIGN-IN FIRST — added 2026-09-10, local testing only
+>
+> `THERACHART_AUTO_SIGNIN=1` makes the sign-in screen open a demo account by
+> itself, so a tester on a laptop is not signing in by hand every reload. It is
+> **not a feature**, nothing depends on it, and it should be deleted rather
+> than merely left unset. Three call sites, all commented `LOCAL TESTING ONLY`:
+>
+> | file | what to delete |
+> |---|---|
+> | `server.js` | the `AUTO_SIGNIN` block, `autoSigninId()`, the `autoSignin:` line in `bootstrapInfo()`, and the boot-banner branch |
+> | `sync.js` | `sync.autoSignin = …` |
+> | `app.js` | the auto-click block at the end of the sign-in bindings |
+>
+> **It cannot reach production even if you forget**, which is why it was built
+> this way rather than as a raw auth bypass:
+>
+> - it adds **no new way to authenticate** — the browser still goes through
+>   `/api/demo-signin`, restricted to the seeded accounts `demoLogins()` lists,
+>   with no password in the exchange. It only presses the button.
+> - it needs the demo clinic on (`THERACHART_DEMO_LOGINS` or
+>   `THERACHART_DEMO_INVITE`), and step 5 below already scrubs both.
+> - **it refuses on Cloud Run.** `K_SERVICE` is set by the runtime and cannot be
+>   unset by a stale variable somebody forgot, so the one place it must never
+>   run is the one place it cannot. The boot banner says so out loud when it
+>   refuses.
+>
+> Verify with `grep -rn "AUTO_SIGNIN\|autoSignin" server.js sync.js app.js` —
+> it should print nothing.
+
 Work through this when moving off the cost hold and back to production.
 
 1. **Start Cloud SQL** and wait for `RUNNABLE` (~1–3 min):

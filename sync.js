@@ -743,6 +743,8 @@
         sync.googleClientId = boot.googleClientId || ""; // "" → login screen hides the Google button
         sync.testAccounts = boot.testAccounts || [];     // demo logins surfaced on the sign-in screen
         sync.demoInvite = !!boot.demoInvite;             // may a signed-in account ask for the demo clinic?
+        // LOCAL TESTING ONLY — remove with the AUTO_SIGNIN block in server.js.
+        sync.autoSignin = String(boot.autoSignin || "");  // demo account the sign-in screen opens by itself
 
         // token from a previous visit? resume and sync any queued work
         if (sync.token) {

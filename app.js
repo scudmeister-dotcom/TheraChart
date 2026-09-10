@@ -405,6 +405,32 @@
   // If the user leaves it untouched (see render()), it's auto-discarded.
   let pristineDraft = null;
 
+  /* ── LOCAL TESTING ONLY — DELETE WITH THE AUTO_SIGNIN BLOCK IN server.js ──
+
+     Signs a demo account in so a tester on a laptop is not doing it by hand on
+     every reload. A no-op unless the server armed it, and the server only arms
+     it on a demo box that is not Cloud Run — see THERACHART_AUTO_SIGNIN.
+
+     Deliberately fire-and-forget rather than blocking the router: render()
+     draws the landing page as it always would, the sign-in lands a moment
+     later and re-renders into the dashboard. Returning early instead would
+     leave a blank screen for the round trip, and would put a new way to fail
+     in front of every logged-out visitor on a machine where this is off.
+
+     `tried` is set BEFORE the request, not after, so a failure cannot spin:
+     render() runs on every route change and would otherwise retry forever. */
+  let autoSigninTried = false;
+  function maybeAutoSignin() {
+    const id = (window.TheraSync && window.TheraSync.autoSignin) || "";
+    if (!id || autoSigninTried) return;
+    autoSigninTried = true;
+    console.warn("[TheraChart] AUTO SIGN-IN is on — local testing only, see DEPLOY.md.");
+    Promise.resolve(S.loginAsDemo(id)).then((fail) => {
+      if (fail) return console.warn(`[TheraChart] auto sign-in failed: ${fail}`);
+      render();
+    }).catch((e) => console.warn(`[TheraChart] auto sign-in failed: ${e.message}`));
+  }
+
   function render() {
     if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; window.__theraSay = null; }
     if (activeRecording) { activeRecording.stop(); activeRecording = null; }
@@ -420,6 +446,7 @@
     // flips to the login form. A browser that has signed in before, or a deep
     // link into an app screen, goes straight to sign-in instead.
     if (!user) {
+      maybeAutoSignin();  // LOCAL TESTING ONLY — see below; no-op unless armed
       /* An explicit "← Back" outranks knowsAnAccount(). That flag is a GUESS
          about which page this visitor wants; a click is them saying it. A deep
          link into an app route still wins over both, because those screens
@@ -1746,6 +1773,7 @@ ${walkthroughMarkup()}`;
       }
       showSplash(() => { location.hash = "#/dashboard"; render(); });
     }));
+
     /* Request an account. The reply is deliberately the same whether or not the
        address is already known — the server decides that, and the wording here
        must not give it away either. */
@@ -7827,12 +7855,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
   }
 
+  /* Every field DICTATABLE offers the microphone on needs an entry here.
+
+     The fallback is `|| field`, which returns the raw camelCase property name
+     — and that string is not cosmetic. It is shown to the therapist ("Nothing
+     was recorded into goalsProgress"), and it is sent to the section writer as
+     `SECTION: <label>` (server.js), where it is the ONLY thing telling the
+     model which section it is writing. goalsProgress, outcome and
+     recommendations were missing until 2026-09-09, so all three shipped the
+     property name to both audiences. */
   function fieldLabel(type, field) {
     return ({
       reason: "Reason for referral", precautions: "Precautions", pmh: "Past medical history",
       subjective: "Subjective", objectiveText: "Objective", assessment: "Assessment", plan: "Plan",
       summary: type === "discharge" ? "Summary of care" : "Treatment summary",
       currentStatus: "Current status", updatedFindings: "Updated findings",
+      goalsProgress: "Progress toward goals", outcome: "Outcome",
+      recommendations: "Recommendations",
     })[field] || field;
   }
 

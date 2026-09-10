@@ -552,6 +552,29 @@ const settle = () => new Promise((r) => setImmediate(r));
       "a correction nobody can see is one nobody can disagree with");
   }
 
+  /* ---------------- every dictatable section can say its own name ----------------
+
+     fieldLabel() falls through to `|| field`, which hands back the raw
+     camelCase property name. That string is shown to the therapist ("Nothing
+     was recorded into goalsProgress") AND sent to the section writer as
+     `SECTION: <label>` (server.js), where it is the only thing telling the
+     model which section it is writing. goalsProgress, outcome and
+     recommendations were missing until 2026-09-09 — all three on the progress
+     and discharge notes, which is why seven evaluation fields' worth of
+     testing never noticed. */
+  {
+    const dictatable = (SRC.match(/const DICTATABLE = \{[\s\S]*?\n  \};/) || [""])[0];
+    const i = SRC.indexOf("function fieldLabel(type, field)");
+    const labels = i < 0 ? "" : SRC.slice(i, SRC.indexOf("\n  }", i));
+    const fields = [...new Set([...dictatable.matchAll(/"([a-zA-Z]+)"/g)].map((m) => m[1]))];
+    const unnamed = fields.filter((f) => labels.indexOf(f + ":") < 0);
+    r.check("DICTATABLE and fieldLabel were both found", fields.length >= 13 && labels.length > 0,
+      `fields=${fields.length} labels=${labels.length}`);
+    r.check("every field the microphone is offered on has a human label",
+      unnamed.length === 0,
+      `these fall through to their camelCase property name, on screen and in the AI prompt: ${unnamed.join(", ")}`);
+  }
+
   /* ---------------- recording is the default, live is a choice ----------------
 
      The order on screen is the argument, so it is worth a test: the live pass
