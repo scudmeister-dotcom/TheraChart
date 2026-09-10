@@ -1340,6 +1340,65 @@ const meas = (t) => parseUtterance(t).measurements;
   check("somebody needing help still needs help",
     fix("the patient needs help getting off the plinth") === "the patient needs help getting off the plinth");
 
+  /* ---- the guard has to be NEAR the word it is guarding ----
+
+     Until 2026-09-09 each guard was tested against the whole string, and
+     app.js hands correctDictation the entire stitched visit — so one clinician
+     saying "reviewed" armed `help -> HEP` over every "help" for the rest of
+     the recording, the patient's included. Measured end to end by
+     test/voice/scripts.js `section/recommendations-help-not-hep`: transcribed
+     at 0.0% word error, written into a signed discharge note as "will need hep
+     with compression stocking".
+
+     Each line below is a real sentence a therapist says, and each one was
+     rewritten before the fix. */
+  const armed = [
+    ["a review does not arm the patient's own 'help'",
+      "I reviewed her home programme and she still needs help getting off the plinth."],
+    ["…nor does an update", "We updated the plan because she needs help with the stairs at home."],
+    ["…nor compliance", "Compliance is good but the husband has to help her dress."],
+    ["…nor adherence", "Adherence is poor, she says she cannot do it without help."],
+    ["…nor issuing something else", "I issued a new brace and told her to ask for help if it slips."],
+    ["an assist level is not a home programme",
+      "Patient progressed to standing but needs help of one person."],
+    ["a possessive is not an abbreviation", "The session went well, they brought their exercise sheet."],
+  ];
+  for (const [name, line] of armed) check(name, fix(line) === line, fix(line));
+
+  /* The whole point: the guard word is in the CLINICIAN's sentence and every
+     "help" below it is the PATIENT's. parser.js claims in its own comment that
+     the patient's words are never touched; this is what makes that true. */
+  const visit = [
+    "Good morning po, kumusta ang tuhod ninyo.",
+    "It is better but I still need help going down the stairs.",
+    "My daughter has to help me put on my shoes in the morning.",
+    "We reviewed the home exercise programme last visit and you are doing well.",
+    "She needs help of one person for transfers.",
+  ].join(" ");
+  check("one 'reviewed' does not reach across a whole stitched visit", fix(visit) === visit, fix(visit));
+
+  /* The veto. A grade word one character away is not enough to overrule the
+     fact that the letters are attached to a person being credited. */
+  check("a named referrer's credential survives a grade in the same breath",
+    fix("The referring therapist was Maria Santos, MPT. Strength testing was requested.")
+      === "The referring therapist was Maria Santos, MPT. Strength testing was requested.",
+    fix("The referring therapist was Maria Santos, MPT. Strength testing was requested."));
+
+  /* …and the corrections all still fire, which is the half that makes the
+     window a fix rather than a deletion. Every guard word here is adjacent to
+     the abbreviation it governs, which is why 16 characters is enough. */
+  const stillFires = [
+    "reviewed help, compliance is good",
+    "I issued a help for her to do twice a day.",
+    "We updated her help this visit.",
+    "Her compliance with the help has been excellent.",
+    "Adherence to the help is poor, she does it once a week.",
+    "Progressed her help to include single leg balance.",
+  ];
+  check("HEP is still recovered wherever the programme is actually the subject",
+    stillFires.every((l) => /\bHEP\b/.test(fix(l))),
+    JSON.stringify(stillFires.filter((l) => !/\bHEP\b/.test(fix(l)))));
+
   // the reported fix list — a silent correction is one nobody can disagree with
   const r = correctDictation("MPT quad strength 4 out of 5");
   check("a correction reports what it changed", r.fixes.length === 1 && r.fixes[0].to === "MMT", JSON.stringify(r.fixes));

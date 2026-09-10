@@ -612,22 +612,80 @@
    *  patient's words are not touched — every entry below rewrites an
    *  abbreviation the CLINICIAN dictates, never a symptom or a complaint.
    *
-   *  Every rule is guarded by the words around it, because each wrong
-   *  reading is a legitimate English word somewhere else: an unguarded
-   *  "empty" -> "MMT" would rewrite an empty bladder. A rule that cannot be
-   *  guarded tightly does not go in the list — leaving a therapist to fix
-   *  one word costs less than silently rewriting the right one.
+   *  Every rule is guarded by the words around it — literally around it, see
+   *  GUARD_WINDOW — because each wrong reading is a legitimate English word
+   *  somewhere else: an unguarded "empty" -> "MMT" would rewrite an empty
+   *  bladder. A rule that cannot be guarded tightly does not go in the list —
+   *  leaving a therapist to fix one word costs less than silently rewriting
+   *  the right one.
+   *
+   *  server.js reached the same conclusion from the other end: "help" and
+   *  "tens" were REFUSED a place in STT_PHRASES because they have ordinary
+   *  near-homophones to steal from. "HEP" is on that list and boosted at 15,
+   *  so the acoustic path already has its shot at it; this rule is a second
+   *  guess on top of that, and it has to earn its place on proximity.
    * ---------------------------------------------------------------- */
 
-  /* Written as [wrong, right, guard]. The guard must match the SAME text,
-     and is what separates the clinical reading from the ordinary one. */
+  /* How far from the match a guard may sit, in characters.
+
+     THIS IS THE WHOLE SAFETY PROPERTY OF THE LIST. The guard used to be tested
+     against the entire string, and app.js hands correctDictation the whole
+     stitched visit (app.js:6718, and :7344 for a section) — so one clinician
+     saying "reviewed" armed `help -> HEP` over every "help" anyone said for the
+     rest of the recording, the patient's included. Measured end to end on
+     2026-09-09: "she will need help with the compression stocking" was
+     transcribed perfectly at 0.0% word error and written into a signed
+     discharge note as "will need hep with compression stocking" — a caregiver
+     instruction turned into an exercise programme.
+
+     16 is measured, not chosen, and the gap it sits in is wide. A guard that
+     genuinely belongs to its match is ADJACENT to it, because the guard words
+     ARE the verbs and nouns that govern the abbreviation: "HEP reviewed" (0),
+     "issued a HEP" (3), "updated her HEP" (5), "progressed her HEP" (5),
+     "adherence to the HEP" (8), "compliance with the HEP" (10). Ten is the
+     worst of them. The closest FALSE pairing measured is 23 — "Patient
+     progressed to standing but needs help of one person", where the guard
+     belongs to the walking and the "help" is an assist level — then 31, 54,
+     57 and 74 for the recordings in test/voice. Nothing observed lands
+     between 10 and 23, and 16 is the middle of that.
+
+     VETO_WINDOW is wider on purpose. A veto only ever PREVENTS a rewrite, so
+     the asymmetry that makes a broad guard dangerous makes a broad veto safe:
+     the cost of a missed correction is a therapist fixing one word, which is
+     the trade this list is built on. */
+  const GUARD_WINDOW = 16;
+  const VETO_WINDOW = 80;
+
+  /** Does `re` match within `window` characters either side of the match?
+      The slice is grown out to whitespace so a cut never invents a word. */
+  function near(text, start, len, re, window) {
+    let from = Math.max(0, start - window);
+    let to = Math.min(text.length, start + len + window);
+    while (from > 0 && !/\s/.test(text[from - 1])) from -= 1;
+    while (to < text.length && !/\s/.test(text[to])) to += 1;
+    return new RegExp(re.source, re.flags.replace(/[gy]/g, "")).test(text.slice(from, to));
+  }
+
+  /* Written as [wrong, right, guard, veto]. The guard must match NEAR the hit
+     — see GUARD_WINDOW — and is what separates the clinical reading from the
+     ordinary one. The optional veto refuses the rewrite outright when it
+     matches nearby, for the cases a proximity guard cannot reach on its own. */
   const DICTATION_FIXES = [
     /* Kim's field test, both directions of the same failure. "MMT" is heard
        as "MPT" — which is also a real credential (Master of Physical
        Therapy), so it is only corrected next to a muscle grade or the word
-       strength, never next to a therapist's name. */
+       strength, never next to a therapist's name.
+
+       The veto is what makes that last clause true, and it is the half a
+       proximity window cannot do. "…was Maria Santos, M P T. Strength testing
+       was requested" puts the grade word ONE character from the credential,
+       so no window separates them — but letters attached to a person being
+       credited are a qualification, and that reading wins. Measured: without
+       this, section/reason-credential rewrites a named therapist's
+       qualification into a muscle test. */
     [/\bM\.?\s?P\.?\s?T\b/g, "MMT",
-      /\b(?:strength|grade[ds]?|lakas|kusog)\b|[0-5]\s*(?:out\s+of|over|\/)\s*5/i],
+      /\b(?:strength|grade[ds]?|lakas|kusog)\b|[0-5]\s*(?:out\s+of|over|\/)\s*5/i,
+      /\b(?:referred|referring|referral|seen by|signed|therapist|physiotherapist|doctor|dr)\b/i],
     /* The same abbreviation with the letters said slowly, which is how a
        therapist spells it when the first pass got it wrong. */
     [/\b(?:em|m)\s+(?:pee|p)\s+(?:tee|t)\b/gi, "MMT",
@@ -667,10 +725,18 @@
     let t = String(raw || "");
     if (!t.trim()) return { text: t, fixes: [] };
     const fixes = [];
-    for (const [wrong, right, guard] of DICTATION_FIXES) {
-      if (guard && !guard.test(t)) continue;
+    for (const [wrong, right, guard, veto] of DICTATION_FIXES) {
       const re = new RegExp(wrong.source, wrong.flags);
-      t = t.replace(re, (hit) => {
+      /* Each HIT is judged on its own surroundings. The old code asked the
+         guard once about the whole string and then rewrote every occurrence,
+         which is how a guard word in the clinician's sentence reached into the
+         patient's. `arguments` rather than a named offset parameter so a rule
+         that grows a capture group later cannot silently shift it. */
+      t = t.replace(re, function (hit) {
+        const offset = arguments[arguments.length - 2];
+        const whole = arguments[arguments.length - 1];
+        if (guard && !near(whole, offset, hit.length, guard, GUARD_WINDOW)) return hit;
+        if (veto && near(whole, offset, hit.length, veto, VETO_WINDOW)) return hit;
         if (hit === right) return hit;         // already correct; nothing to report
         fixes.push({ from: hit, to: right });
         return right;

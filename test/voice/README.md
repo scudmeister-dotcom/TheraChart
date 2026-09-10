@@ -1,5 +1,45 @@
 # Voice eval — the dictation chain, out loud
 
+> ## ⚠ OUTSTANDING: the baseline for the adversarial family has not been taken
+>
+> **What is left to do.** The 32 scripts added 2026-09-09 have no entry in
+> `baseline.json`, so nothing is measured against them yet. Take it with:
+>
+> ```
+> node test/voice/run.js --case "$(node -e 'console.log(require("./test/voice/scripts.js").SCRIPTS.slice(-32).map(s=>s.id).join(","))')" --save-baseline
+> ```
+>
+> Costs about **$0.15** of Speech-to-Text plus 32 Vertex calls; the ElevenLabs
+> audio is already cached on disk, so the speech is free. Expect roughly
+> **27 of 32 at 100%** and mean word error near **4%** — that is what the
+> post-fix run scored on the 28 it managed. `history/resolved-not-current` is
+> the known-flaky one; see [After the fix](#after-the-fix).
+>
+> **What "wait for STT" does NOT mean.** It has nothing to do with this
+> project's own infrastructure. `run.js` boots its own throwaway server on
+> localhost and calls Google Cloud Speech-to-Text directly — the Cloud Run
+> service and the (deleted) Cloud SQL instance are not in this path, and
+> nothing of ours needs to be switched on. What failed on 2026-09-09 was
+> **Google**, returning 5xx in bursts at the tail of two long runs, with Vertex
+> falling back once as well; the same audio transcribed perfectly in a fresh
+> process seconds later.
+>
+> **How to tell it is healthy again** — one script, about a cent:
+>
+> ```
+> node test/voice/run.js --case section/reason-plan-content
+> ```
+>
+> A clean `WER … · section …%` row with no `retrying in` line means go. If it
+> 500s twice and reports `NOT RUN`, Google is still bad — wait, and if it stays
+> bad for a day check the Speech-to-Text quota on `therachart-prod` rather than
+> assuming it is transient.
+>
+> The run itself is now safe to attempt at any time: a 5xx that survives the
+> retries is classed NOT RUN and **bars the baseline save**, so a bad hour can
+> no longer write itself in as the bar. See
+> [A degraded hour at Google](#a-degraded-hour-at-google-and-what-it-cost).
+
 Three things test dictation, and until now they stopped short of each other:
 
 | | what it proves | what it never sees |
@@ -168,9 +208,14 @@ at Google at all.
 
 ## The scripts
 
-Twenty, in `scripts.js`. Fifteen aimed at something the codebase already
-worries about, and five more — the `lang/` matrix, described further down — that
-hold the visit fixed and vary only the language:
+Sixty-six, in `scripts.js`. Fifteen aimed at something the codebase already
+worries about; five more — the `lang/` matrix, described further down — that
+hold the visit fixed and vary only the language; two `probe/` instruments;
+twelve early `section/` cases; and thirty-two **adversarial** scripts added
+2026-09-09, described in [What the adversarial family
+found](#what-the-adversarial-family-found).
+
+The first fifteen:
 
 - **`shoulder/clinical-vocab`** — the `STT_PHRASES` boost list, spoken. MMT,
   AROM, Neer, Hawkins, scaption, subacromial, therex, HEP. That list was
@@ -208,6 +253,203 @@ hold the visit fixed and vary only the language:
 - **`lang/english-only`**, **`lang/tagalog-only`**, **`lang/cebuano-only`**,
   **`lang/taglish`**, **`lang/bisaya-english`** — one visit, five languages,
   nothing else changed. See [The language matrix](#the-language-matrix--lang).
+
+## The adversarial family — added 2026-09-09
+
+Thirty-two scripts written the other way round from everything above them.
+Instead of "does a normal visit survive?", each one was built by reading the
+code for the assumption a stage makes and then saying the sentence that
+violates it. Five record a whole visit; twenty-seven record a single section.
+
+They also close a coverage hole. `app.js` `DICTATABLE` offers the microphone on
+**thirteen** fields across the four note types, and every section script before
+this covered seven of them — all on the evaluation. `summary`,
+`currentStatus`, `updatedFindings`, `goalsProgress`, `outcome` and
+`recommendations` had never had a recording sent to them at all.
+
+### The runner was not testing the product
+
+`app.js` runs `PR.correctDictation` over the stitched transcript before either
+endpoint sees it — on the visit path (`app.js:6718`) and on the section path
+(`app.js:7344`). **`run.js` did not.** Every number this harness has ever
+produced was measured on Chirp 2's raw output, against a chain the clinic does
+not have.
+
+Nothing caught it because nothing ever fired: replaying all 32 baseline
+transcripts through `correctDictation` changes **zero** of them. The whole
+`DICTATION_FIXES` layer was unmeasured, and adding it to `run.js` therefore
+moves no existing baseline number.
+
+`run.js` now applies it between transcription and the endpoints. Word error is
+still scored on the RAW transcript, so the STT measurement is unchanged; what
+moved is what `/api/refine` and `/api/check-section` are handed. A repair that
+fires is printed on the row (`· repaired "help"→HEP`) and kept in `--json`,
+because a rule firing is a result. Scripts can assert on it with
+`heard.notAfterRepair`.
+
+### What the adversarial family found
+
+Mean word error **3.9%** across the 32, note/section score **97.3%**
+(391/402), no fallbacks, `$0.143` of Speech-to-Text. (That is the run BEFORE
+the fix; see [After the fix](#after-the-fix).) Almost everything held —
+the corrected-frequency plan, the withdrawn ROM figure, the untested side, the
+resolved finding, the uncommitted differential, `wala` (left) beside `walay`
+(none) in one Cebuano visit, and "no weight bearing **restrictions**" all
+survived intact.
+
+One thing did not, and it is the repair layer. **It has since been fixed** —
+what follows is what the run found, and [The fix](#the-fix) is what was done
+about it.
+
+**`help` becomes `HEP` in the patient's own words.** `parser.js` guards
+`help -> HEP` on `reviewed|issued|updated|progressed|compliance|adherence`. The
+guard is tested against the **whole utterance**, and `app.js` hands
+`correctDictation` the entire stitched visit — so one clinician saying
+"reviewed" arms the rule over every "help" anyone says for the rest of the
+recording. `section/recommendations-help-not-hep` is the clean case, at 0.0%
+word error:
+
+```
+spoken      she will need help with the compression stocking for another month
+Chirp 2     she will need help with the compression stocking for another month
+repaired    she will need HEP  with the compression stocking for another month
+written     "patient will need hep with compression stocking for another month."
+```
+
+Perfect transcription, corrupted record. A caregiver instruction — she cannot
+manage the stocking alone — became a home exercise programme in a signed
+discharge note. `assist/help-not-hep` rewrites three of the patient's sentences
+from one clinician "reviewed", including "she needs the help of one person for
+transfers", which is an assistance level.
+
+Two invariants `parser.js` states about itself are violated by this:
+
+- *"The patient's words are not touched — every entry below rewrites an
+  abbreviation the CLINICIAN dictates, never a symptom or a complaint."*
+- *"never where somebody needs help, which is the far commoner sentence in a
+  clinic."*
+
+The same defect is structural, not specific to `help`. `MPT -> MMT` is
+documented as firing "never next to a therapist's name", but the guard is not
+proximity-based either: a visit that names a referring MPT *and* records a
+strength grade anywhere rewrites the person's qualification.
+`referral/credential-not-a-grade` escaped only because Chirp 2 wrote `mpt` in
+lower case and that rule alone carries no `i` flag — a capitalisation away from
+firing. `the exercises -> therex` fired on `section/summary-therex-collision`
+and the note survived it; `their exercise -> therex` produces "they brought
+therex sheet".
+
+### The fix
+
+One shape for all four rules: the guard is tested against a **window around the
+match** rather than the whole transcript (`GUARD_WINDOW`, parser.js), and each
+hit is judged on its own surroundings instead of the rule being armed once for
+the whole string.
+
+**16 characters, and the gap it sits in is wide.** A guard that genuinely
+belongs to its match is adjacent to it, because the guard words *are* the verbs
+and nouns that govern the abbreviation — "HEP reviewed" (0), "issued a HEP" (3),
+"updated her HEP" (5), "progressed her HEP" (5), "adherence to the HEP" (8),
+"compliance with the HEP" (10). Ten is the worst of them. The closest false
+pairing is 23 — "Patient progressed to standing but needs help of one person",
+where the guard belongs to the walking and the "help" is an assist level — then
+31, 54, 57 and 74 for the recordings here. Nothing observed lands between 10
+and 23.
+
+A window cannot reach one case: "…was Maria Santos, M P T. **Strength** testing
+was requested" puts the grade word one character from the credential. That
+needed a second mechanism — an optional **veto**, checked in a wider window,
+which refuses the rewrite when the letters sit next to an attribution
+(`referred`, `referring`, `therapist`, `doctor`…). A veto only ever *prevents* a
+rewrite, so the asymmetry that makes a broad guard dangerous makes a broad veto
+safe.
+
+Every existing assertion in `test/parser.test.js` still passes — all six HEP
+constructions, both MMT directions, AROM, PROM, therex, the prom night and the
+promise — and the false pairings are now covered by regression tests there, the
+whole-visit one included.
+
+`app.js` `fieldLabel()` gained the three missing entries, and
+`test/dictation.test.js` now fails if any field `DICTATABLE` offers the
+microphone on lacks a human label.
+
+### Two transcription observations
+
+- **"Goal one" comes back as "gold one"**, all three times, at 12.8% word error
+  on `section/goals-not-met`. The section still scored 14/14 — the model reads
+  through it — but it is the highest word error in the family.
+- **`goalsProgress`, `outcome` and `recommendations` have no `fieldLabel()`
+  entry** (`app.js:7830`), so the app sends the raw camelCase field name as
+  `SECTION: <label>` (`server.js:2084`) and shows it to the therapist —
+  "Nothing was recorded into goalsProgress." The four scripts on those fields
+  carry the wrong labels deliberately, and all scored 100%: this is a
+  user-visible string bug, not a measurable AI-quality one.
+
+### After the fix
+
+28 of the 32 scored on the re-run (the other four were lost to the outage
+below, not to a result). **27 of the 28 at 100%.**
+
+All five scripts aimed at the repair layer now pass with the repair not firing
+at all — `assist/help-not-hep`, `section/subjective-help-not-hep`,
+`section/plan-help-not-hep`, `referral/credential-not-a-grade` and
+`section/reason-credential`. The one repair still reported is
+`"the exercises" -> therex` on `section/summary-therex-collision`, which is the
+behaviour `test/parser.test.js` has always asserted and the section scored 100%
+with it.
+
+**One new finding, and it is intermittent.** `history/resolved-not-current`
+scored 75% on this run against 100% on the two before it, at **0.0% word
+error** every time — so the transcript is not the variable. The patient says
+
+> "Last year naman my left shoulder was frozen, pero okay na yun, wala na akong
+> problema doon."
+
+and the note pinned `Shoulder|left` alongside the correct `Ankle|right`. A pin
+says *this is a problem now*, and a shoulder that resolved a year ago is not.
+One observation in three is not a measurement — refine does not run at
+temperature zero, and this file's own rule is not to conclude from a single
+run — so this is logged, not diagnosed. The script to characterise it now
+exists; run it with `--takes` under `--sweep` before changing the prompt.
+
+### A degraded hour at Google, and what it cost
+
+Worth recording because it nearly wrote itself into the bar. Re-running the
+family after the fix, Speech-to-Text 500'd the **tail** of two consecutive
+paid runs — eleven scripts, then four. Every one of them transcribed perfectly
+in a fresh process seconds later, so the audio, the language codes and the
+scripts were all fine; Google was simply having a bad hour.
+
+Two things were wrong with how the runner took that:
+
+1. **A 5xx was not retried.** Only a *thrown* fetch was. But `/api/stt` answers
+   500 when Google fails behind it, and that is a response, not a throw — so it
+   fell straight through as a scored zero. Retrying costs money (a segment that
+   reached Google is billed even when it fails, so a retried chunk is paid
+   twice) and it is worth it: half a cent against a whole script's audio and
+   refine call.
+2. **A 5xx counted as a result.** It dropped a run from 97.3% to 60.6% and
+   `--save-baseline` wrote that happily. A baseline is the bar every later run
+   is measured against; recording somebody else's outage in it is worse than
+   having no baseline at all.
+
+Both are fixed. A 5xx that survives the retries is now classed the same as a
+request that never landed — the script is **NOT RUN**, kept out of the totals,
+and it **bars the baseline save**. A 4xx still scores, because that is the
+audio being rejected, which is something a change of ours can cause.
+
+`--fail-fetch` grew an optional status so neither path has to wait for another
+bad hour to be exercised, and neither costs anything at Google:
+
+```
+# a blip the retry should absorb — the row still scores
+node test/voice/run.js --case section/reason-plan-content \
+  --fail-fetch stt:section/reason-plan-content:2:500
+
+# a degraded hour — the row is NOT RUN and the baseline save is refused
+node test/voice/run.js --case section/reason-plan-content,section/reason-credential \
+  --fail-fetch stt:section/reason-plan-content:all:500 --save-baseline
+```
 
 ## Can ElevenLabs actually speak Tagalog and Cebuano?
 

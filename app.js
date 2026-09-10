@@ -7827,12 +7827,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (log) log.textContent = routed.length ? "Filed: " + routed.join(" · ") : "Heard (saved to transcript)";
   }
 
+  /* Every field DICTATABLE offers the microphone on needs an entry here.
+
+     The fallback is `|| field`, which returns the raw camelCase property name
+     — and that string is not cosmetic. It is shown to the therapist ("Nothing
+     was recorded into goalsProgress"), and it is sent to the section writer as
+     `SECTION: <label>` (server.js), where it is the ONLY thing telling the
+     model which section it is writing. goalsProgress, outcome and
+     recommendations were missing until 2026-09-09, so all three shipped the
+     property name to both audiences. */
   function fieldLabel(type, field) {
     return ({
       reason: "Reason for referral", precautions: "Precautions", pmh: "Past medical history",
       subjective: "Subjective", objectiveText: "Objective", assessment: "Assessment", plan: "Plan",
       summary: type === "discharge" ? "Summary of care" : "Treatment summary",
       currentStatus: "Current status", updatedFindings: "Updated findings",
+      goalsProgress: "Progress toward goals", outcome: "Outcome",
+      recommendations: "Recommendations",
     })[field] || field;
   }
 
