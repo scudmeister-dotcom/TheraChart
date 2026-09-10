@@ -4,7 +4,8 @@
 >
 > A clean full run: all 32 scripts scored, **no** NOT RUN, no retries, no
 > fallbacks. Mean word error **4.0%**, note/section **99.3%** (399/402),
-> `$0.143` of Speech-to-Text and 32 Vertex calls.
+> `$0.143` of Speech-to-Text and 32 Vertex calls. Merged with the original 32,
+> `baseline.json` now holds **64** cases at 4.6% / 98.9%.
 >
 > **Read the two flaky rows before trusting a diff against it.** See
 > [The note is not deterministic](#the-note-is-not-deterministic) — two
@@ -407,6 +408,54 @@ makes `--save-baseline` a moving target: a later run scoring 70% on
 `referral/credential-not-a-grade` has not regressed, and one scoring 100% has
 not improved. Treat a move on those two as noise until it has been run several
 times.
+
+### A false alarm in the pairing detector — found 2026-09-10, fixed
+
+`history/resolved-not-current` is a Taglish visit recorded under `fil-PH`, and
+`PR.pairingMismatch` read it as **Cebuano** — the one failure
+`test/pairing.test.js` calls out as mattering most, because a false alarm tells
+a therapist whose pairing was CORRECT to change it, and every visit afterwards
+pays.
+
+    heard   …last year naman my left shoulder was frozen pero okay na yun
+            wala na akong problema doon…
+
+    ceb-PH markers  ["wala na", "akong"]      fil-PH markers  ["naman"]
+
+"Wala na akong problema doon" is ordinary Tagalog — *I don't have a problem
+with that any more*. Both markers spell real Cebuano words and both are also
+everyday Tagalog, which is exactly the Rule 2 the marker list documents for
+itself ("the OTHER language has a different everyday word for the same thing").
+
+The corpus settled it. Across all 64 transcripts, only two Cebuano markers ever
+fired inside a Tagalog visit, and they were these two:
+
+| marker | Tagalog visits | Cebuano visits |
+|---|---|---|
+| `wala na` | 1 | **0** |
+| `akong` | 1 | 1 |
+
+`wala na` had never once identified a Cebuano visit. `akong`'s single Cebuano
+visit carries seven other markers. So `nay?` lost its optional `y` — `wala nay`
+is Cebuano, bare `wala na` is both — and `akong` came off the list, while
+`akoang` stayed because Tagalog has no such form. After the change: **0** false
+positives, all **5** Cebuano visits still caught on a Tagalog device, and the
+reverse direction unmoved at 8.
+
+This is what a corpus is for, and it is why the baseline has to keep every
+script's transcript — see below.
+
+### `--save-baseline` used to delete the scripts it did not run
+
+A `--case`-scoped save wrote its own results out whole, silently dropping every
+row the run did not cover. Saving the 32 adversarial scripts took the file from
+the original 32 to those 32 — and broke `test/pairing.test.js`, which reads
+`cases[].heard` as the only corpus of REAL Chirp 2 output this repo has.
+
+A baseline is a corpus as well as a bar. The save now merges: rows this run did
+not produce are carried across untouched, score aggregates are recomputed over
+the whole set, and the line it prints says so — `1 script(s) from this run,
+63 carried over, 64 in the file`.
 
 ### A degraded hour at Google, and what it cost
 

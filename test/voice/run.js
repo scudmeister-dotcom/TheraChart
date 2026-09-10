@@ -963,9 +963,47 @@ async function sweep(scripts, key) {
         : `${notRun.length} script(s) got no answer about the product`}.`);
       console.log(`  A baseline from a partial run would record an outage as the bar. Re-run when the network is healthy.\n`);
     } else if (SAVE) {
-      const slim = { ...out, cases: out.cases.map(({ note, spoken, ...c }) => c) };
-      fs.writeFileSync(path.join(__dirname, "baseline.json"), JSON.stringify(slim, null, 2));
-      console.log(`  baseline saved to test/voice/baseline.json\n`);
+      /* MERGE, never replace. A --case run measures a SUBSET, and writing its
+         results out whole silently deletes every script it did not cover.
+
+         That is not hypothetical twice over. The guard above exists because a
+         partial run once took the file from 15 cases to 32 at 28.9%; and on
+         2026-09-10 a `--case`-scoped save of the 32 adversarial scripts
+         dropped the original 32 — which broke test/pairing.test.js, because
+         `cases[].heard` is the only corpus of REAL Chirp 2 output this repo
+         has and that test reads it to check its language markers against
+         actual transcripts. A baseline is a corpus as well as a bar.
+
+         So rows this run did not produce are carried across untouched, and the
+         score aggregates are recomputed over the whole merged set. The cost
+         fields describe the run that just happened and are left as they are —
+         they are bookkeeping for a run, not a property of the corpus. */
+      /* Re-read rather than reusing the copy the report block loaded: that
+         one is scoped to the human-readable report, which --json skips
+         entirely, and reaching for it here threw a ReferenceError that only
+         appeared on a --save-baseline run. */
+      const priorPath = path.join(__dirname, "baseline.json");
+      const prior = fs.existsSync(priorPath)
+        ? JSON.parse(fs.readFileSync(priorPath, "utf8")) : null;
+      const slim = out.cases.map(({ note, spoken, ...c }) => c);
+      const ran = new Set(slim.map((c) => c.id));
+      const kept = ((prior && prior.cases) || []).filter((c) => !ran.has(c.id));
+      const cases = [...kept, ...slim];
+      const scored = cases.filter((c) => !c.infra);
+      const wers = scored.filter((c) => typeof c.wer === "number");
+      const earnedAll = scored.reduce((n, c) => n + (c.earned || 0), 0);
+      const possibleAll = scored.reduce((n, c) => n + (c.possible || 0), 0);
+      const merged = {
+        ...out,
+        cases,
+        meanWer: wers.length ? wers.reduce((n, c) => n + c.wer, 0) / wers.length : 0,
+        earned: earnedAll,
+        possible: possibleAll,
+        overall: possibleAll ? earnedAll / possibleAll : 0,
+      };
+      fs.writeFileSync(priorPath, JSON.stringify(merged, null, 2));
+      console.log(`  baseline saved to test/voice/baseline.json — ${slim.length} script(s) from this run`
+        + `${kept.length ? `, ${kept.length} carried over` : ""}, ${cases.length} in the file\n`);
     }
   } catch (e) {
     /* "fetch failed" on a localhost call means the server went away, and the

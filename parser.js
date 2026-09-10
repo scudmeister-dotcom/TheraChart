@@ -794,8 +794,20 @@
      Tagalog word that does — no invented vocabulary. */
   const CEB_MARKERS = new RegExp("\\b(?:"
     + "kaayo|gihapon|unsa|unsay|unsaon|ngano|kanus-?a|karon|gikan|hangtod"
-    + "|imong|nimo|akong|nako|among|atong|amoang|akoang"
-    + "|dili|walay|wala\\s+(?:nay?|pay?|koy?|may?|gyuy?)|gyud|gyuy|lagi"
+    /* `akong` is OUT, and it is the clearest illustration of Rule 2 on this
+       list. It is a real Cebuano possessive ("akong balay"), but Tagalog
+       spells the same letters as `ako` + the linker `-ng`, and "wala na akong
+       problema doon" is ordinary Tagalog. It fired on exactly one visit in the
+       corpus and that visit was TAGALOG. Its one Cebuano visit carries seven
+       other markers, so removing it costs no detection at all. `akoang` stays:
+       Tagalog has no such form. */
+    + "|imong|nimo|nako|among|atong|amoang|akoang"
+    /* `wala nay` keeps the `y`. `nay?` also matched bare "wala na", which is
+       the SAME phrase in both languages — Rule 2 again — and it never once
+       identified a Cebuano visit in the corpus while producing a false alarm
+       on a Tagalog one. The Cebuano visits are carried by `wala may` and
+       `wala gyuy`, which Tagalog does not spell. */
+    + "|dili|walay|wala\\s+(?:nay|pay?|koy?|may?|gyuy?)|gyud|gyuy|lagi"
     + "|naa\\s+(?:ba)?y?|aduna|adunay|lisod|naglisod|maglisod|gamay|bug-?at"
     + "|maayo(?:ng)?|nindot|gibati|hubag|pamanhid|paglihok|lihok"
     + "|tiil|bukton|abaga|liog|kamot|tudlo|kumagko|bat-?ang|buol-?buol"
