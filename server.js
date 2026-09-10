@@ -710,6 +710,10 @@ function bootstrapInfo() {
        the accounts — knowing a demo exists reveals nothing, and the client
        needs it to decide whether to offer the button at all. */
     demoInvite: DEMO_INVITE_ENABLED,
+    /* LOCAL TESTING ONLY — remove with the AUTO_SIGNIN block below. Always ""
+       unless this is a demo box that is not Cloud Run, and always an id
+       demoLogins() already publishes here, so it discloses nothing new. */
+    autoSignin: autoSigninId(),
   };
 }
 
@@ -745,6 +749,56 @@ const DEMO_LOGINS_ENABLED = process.env.THERACHART_DEMO_LOGINS === "1";
    INVITE and not LOGINS. */
 const DEMO_INVITE_ENABLED = process.env.THERACHART_DEMO_INVITE === "1";
 const DEMO_ACCOUNTS_AVAILABLE = DEMO_LOGINS_ENABLED || DEMO_INVITE_ENABLED;
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LOCAL TESTING ONLY — DELETE THIS BLOCK AND ITS THREE CALLERS BEFORE
+   DEPLOYING. Added 2026-09-10 so a tester on a laptop is not retyping a
+   sign-in; it is not a feature and nothing in the product depends on it.
+   Callers: bootstrapInfo() below, the boot banner, sync.js and app.js.
+
+   THERACHART_AUTO_SIGNIN=<email|user id> makes the sign-in screen open that
+   demo account by itself. `=1` also works and takes whichever account the
+   picker happens to list FIRST — which is seed order, not a promise, and on a
+   seeded clinic that is an admin in an empty tenant rather than the therapist
+   holding the demo charts. Name the address when you care which chart data you
+   land in: THERACHART_AUTO_SIGNIN=maria@therachart.demo.
+
+   It adds NO new way to authenticate. The browser still goes through
+   /api/demo-signin — the same endpoint the picker uses, still restricted to
+   the seeded accounts demoLogins() lists, still never touching a password.
+   All this does is press the button for you.
+
+   TWO INDEPENDENT LOCKS, either of which alone makes it inert:
+
+     1. the demo clinic must be on. Without THERACHART_DEMO_LOGINS or
+        THERACHART_DEMO_INVITE there is nothing to sign in to, and DEPLOY.md
+        already scrubs both before a deploy.
+     2. it refuses on Cloud Run. K_SERVICE is set by the runtime and cannot be
+        unset by a stale env var someone forgot to clear, so the one place this
+        must never run is the one place it cannot.
+
+   A refusal is LOUD — the boot banner says it was asked for and denied —
+   because a silent refusal teaches nobody anything. */
+const AUTO_SIGNIN_ASKED = String(process.env.THERACHART_AUTO_SIGNIN || "").trim();
+const ON_CLOUD_RUN = !!process.env.K_SERVICE;
+const AUTO_SIGNIN_REFUSED = !AUTO_SIGNIN_ASKED ? ""
+  : ON_CLOUD_RUN ? "this is Cloud Run"
+    : !DEMO_ACCOUNTS_AVAILABLE ? "the demo clinic is not enabled here"
+      : "";
+const AUTO_SIGNIN = AUTO_SIGNIN_ASKED && !AUTO_SIGNIN_REFUSED ? AUTO_SIGNIN_ASKED : "";
+
+/** The demo account to open, as a user id — or "" for nobody.
+    Resolved against demoLogins() so it can never name real staff, whatever
+    the environment variable says. */
+function autoSigninId() {
+  if (!AUTO_SIGNIN) return "";
+  const want = AUTO_SIGNIN.toLowerCase();
+  const list = demoLogins(true);
+  const hit = want === "1" ? list[0]
+    : list.find((a) => String(a.id).toLowerCase() === want
+      || String(a.email || "").toLowerCase() === want);
+  return hit ? String(hit.id) : "";
+}
 const SEEDED_DEMO_IDS = new Set(store.SEEDED_DEMO_USER_IDS);
 /** `authed` callers get the list even when it is not published publicly. */
 function demoLogins(authed) {
@@ -2437,6 +2491,16 @@ async function start() {
       console.log(`  demo logins: ON — published on the sign-in screen${demo && demo.users ? `, restored ${demo.users} account(s)` : ""}${demo && demo.content ? ", seeded the demo clinic" : ""}`);
     } else if (DEMO_INVITE_ENABLED) {
       console.log(`  demo clinic: invite-only — offered to signed-in accounts, not published${demo && demo.users ? `, restored ${demo.users} account(s)` : ""}${demo && demo.content ? ", seeded the demo clinic" : ""}`);
+    }
+    /* LOCAL TESTING ONLY — remove with the AUTO_SIGNIN block. OUTSIDE the demo
+       branches above on purpose: the refusal is the line that most needs to be
+       seen, and it happens precisely when the demo clinic is off. */
+    if (AUTO_SIGNIN) {
+      const who = autoSigninId();
+      console.log(`  \u26a0 AUTO SIGN-IN: ON — the sign-in screen opens ${who ? store.getUser(who).email : `"${AUTO_SIGNIN}" (NO MATCHING DEMO ACCOUNT — nothing will happen)`} by itself.`);
+      console.log(`    LOCAL TESTING ONLY. Unset THERACHART_AUTO_SIGNIN before deploying; see DEPLOY.md.`);
+    } else if (AUTO_SIGNIN_REFUSED) {
+      console.log(`  \u26a0 AUTO SIGN-IN: REFUSED — THERACHART_AUTO_SIGNIN is set, but ${AUTO_SIGNIN_REFUSED}. Signing in normally.`);
     }
     console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
