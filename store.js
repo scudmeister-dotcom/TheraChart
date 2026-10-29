@@ -393,6 +393,14 @@
           googleSub: null, status: "pending", note: "Front-desk relief, weekends",
           createdAt: t(0, 7, 50), _mod: t(0, 7, 50) },
       ],
+      // Schedule change requests: a therapist can see the calendar but not
+      // change it, so they ask. One seeded so the admin's queue isn't empty.
+      scheduleRequests: [
+        { id: "sr-jose", kind: "other", requestedBy: "u-jose", status: "pending",
+          date: t(3, 12, 0).slice(0, 10), time: "", patientId: null, apptId: null,
+          note: "Seminar that afternoon — please keep me free from 1 PM.",
+          createdAt: t(-1, 16, 40), _mod: t(-1, 16, 40) },
+      ],
       sessionUserId: null,
       clinics: {
         "clinic-demo": {
@@ -420,7 +428,7 @@
 
     // Everything seeded above belongs to the demo clinic; stamp it so a second
     // clinic — and any brand-new account — starts empty instead of inheriting it.
-    ["patients", "documents", "appointments", "audit", "accessRequests", "users"].forEach((k) => {
+    ["patients", "documents", "appointments", "audit", "accessRequests", "scheduleRequests", "users"].forEach((k) => {
       (seedState[k] || []).forEach((rec) => { if (!rec.clinicId) rec.clinicId = "clinic-demo"; });
     });
 
@@ -458,6 +466,7 @@
     // Defensive defaults for keys added after a blob was first persisted
     // (load()/importAll do no migration, so guard collections used elsewhere).
     if (!Array.isArray(state.accessRequests)) state.accessRequests = [];
+    if (!Array.isArray(state.scheduleRequests)) state.scheduleRequests = [];
     save();
     return state;
   }
@@ -545,6 +554,15 @@
     if (user.role === "frontdesk") return true; // scheduling + intake only
     return !licenseExpired(user);
   }
+
+  /** May this user book or cancel visits directly? The admin and the front
+      desk run the schedule; a therapist can see every column but changes it
+      by asking (requestScheduleChange). Checked here and again on the server,
+      which keeps the last saved schedule if anyone else pushes a change. */
+  function canEditSchedule(user) {
+    return !!(user && user.active && (user.role === "admin" || user.role === "frontdesk"));
+  }
+  const SCHEDULE_LOCKED = "Only the admin or the front desk can change the schedule. Send them a request instead.";
 
   /** Can this user create/edit/sign clinical documents? */
   function canDocument(user) {
@@ -1051,7 +1069,8 @@
     // presenter just created.
     const demoPatients = state.patients.filter((p) => (p.clinicId || DEFAULT_CLINIC) === "clinic-demo");
     if (!demoPatients.length) {
-      for (const key of ["patients", "documents", "appointments", "accessRequests"]) {
+      for (const key of ["patients", "documents", "appointments", "accessRequests", "scheduleRequests"]) {
+        if (!Array.isArray(state[key])) state[key] = [];
         const have = new Set((state[key] || []).map((r) => r.id));
         for (const rec of fresh[key] || []) if (!have.has(rec.id)) state[key].push({ ...rec });
       }
@@ -1286,6 +1305,7 @@
     state.documents = state.documents.filter(notMine);
     state.appointments = (state.appointments || []).filter(notMine);
     state.accessRequests = (state.accessRequests || []).filter((q) => q.clinicId !== clinicId);
+    state.scheduleRequests = (state.scheduleRequests || []).filter(notMine);
     // the deleted clinic's own log goes with it; the operator's record of the
     // deletion is written below, into the operator's clinic
     state.audit = (state.audit || []).filter(notMine);
@@ -2231,6 +2251,7 @@
 
   function bookAppointment({ patientId, therapistId, start, note }, byUser) {
     load();
+    if (!canEditSchedule(byUser)) return { error: SCHEDULE_LOCKED };
     const startDate = new Date(start);
     if (isNaN(startDate.getTime())) return { error: "Invalid appointment time." };
     // Overlap, not an exact time match: two visits that merely start at
@@ -2270,6 +2291,7 @@
       still goes through. Returns { booked:[appt], skipped:[{start,reason}] }. */
   function bookSeries({ patientId, therapistId, starts, note }, byUser) {
     load();
+    if (!canEditSchedule(byUser)) return { error: SCHEDULE_LOCKED, booked: [], skipped: [] };
     const booked = [], skipped = [];
     for (const start of starts || []) {
       const res = bookAppointment({ patientId, therapistId, start, note }, byUser);
@@ -2397,6 +2419,7 @@
 
   function cancelAppointment(apptId, byUser) {
     load();
+    if (!canEditSchedule(byUser)) return { error: SCHEDULE_LOCKED };
     const appt = state.appointments.find((a) => a.id === apptId);
     if (!appt) return { error: "Appointment not found." };
     appt.status = "cancelled";
@@ -2405,6 +2428,111 @@
     save();
     audit(byUser.id, "appointment-cancelled", appt.id);
     return { appt };
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Schedule change requests — how someone who can't edit the calendar
+   *  asks for a change. Kinds: "book" a visit, "move" or "cancel" an
+   *  existing one, or "other" (time off, a change to hours). The admin or
+   *  front desk approves — which makes the change where it can be made
+   *  automatically — or declines with a reason. Kept in state so it syncs
+   *  like any other collection; the server enforces who may do what.
+   * ---------------------------------------------------------------- */
+  const REQUEST_KINDS = ["book", "move", "cancel", "other"];
+
+  function scheduleRequests() {
+    load();
+    return state.scheduleRequests.filter(mine).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  function requestScheduleChange({ kind, date, time, patientId, apptId, therapistId, note }, byUser) {
+    load();
+    if (!byUser || !byUser.active) return { error: "Sign in to send a request." };
+    if (!REQUEST_KINDS.includes(kind)) return { error: "Choose what you'd like changed." };
+    if ((kind === "move" || kind === "cancel") && !state.appointments.some((a) => a.id === apptId && a.status !== "cancelled")) {
+      return { error: "Pick the visit you want changed." };
+    }
+    if (kind === "book" && !getPatient(patientId)) return { error: "Pick the patient to book." };
+    if (kind !== "cancel" && !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return { error: "Pick a date." };
+    if ((kind === "book" || kind === "move") && !/^\d{2}:\d{2}$/.test(time || "")) return { error: "Pick a time." };
+    if (kind === "other" && !String(note || "").trim()) return { error: "Say what you need — e.g. time off from 1 PM." };
+    const now = new Date().toISOString();
+    const req = {
+      id: uid("sr"), kind, requestedBy: byUser.id, status: "pending",
+      date: kind === "cancel" ? "" : date, time: kind === "cancel" ? "" : (time || ""),
+      patientId: kind === "book" ? patientId : null,
+      apptId: kind === "move" || kind === "cancel" ? apptId : null,
+      // who the visit is with: the column they asked from, else themselves
+      therapistId: kind === "book" ? ((therapistId && getUser(therapistId) && therapistId) || (byUser.role === "frontdesk" ? null : byUser.id)) : null,
+      note: String(note || "").trim().slice(0, 500), createdAt: now,
+      clinicId: byUser.clinicId || currentClinicId(),
+    };
+    touch(req);
+    state.scheduleRequests.push(req);
+    save();
+    audit(byUser.id, "schedule-requested", `${kind}${req.date ? ` ${req.date}` : ""}`);
+    return { request: req };
+  }
+
+  /** The requester takes back a request nobody has answered yet. */
+  function withdrawScheduleRequest(id, byUser) {
+    load();
+    const req = state.scheduleRequests.find((r) => r.id === id && mine(r));
+    if (!req) return { error: "Request not found." };
+    if (req.requestedBy !== byUser.id) return { error: "Only the person who sent it can withdraw it." };
+    if (req.status !== "pending") return { error: "That request has already been answered." };
+    req.status = "withdrawn";
+    req.resolvedAt = new Date().toISOString();
+    touch(req);
+    save();
+    audit(byUser.id, "schedule-request-withdrawn", req.kind);
+    return { request: req };
+  }
+
+  /** Approve or decline. Approving a book/move/cancel makes that change, so
+      the admin doesn't redo it by hand; a clash leaves the request pending
+      and says why. "other" requests are approved as a record only. */
+  function resolveScheduleRequest(id, decision, byUser, { response, therapistId } = {}) {
+    load();
+    if (!canEditSchedule(byUser)) return { error: SCHEDULE_LOCKED };
+    const req = state.scheduleRequests.find((r) => r.id === id && mine(r));
+    if (!req) return { error: "Request not found." };
+    if (req.status !== "pending") return { error: "That request has already been answered." };
+    const result = {};
+    if (decision === "approved") {
+      const start = req.date && req.time ? new Date(`${req.date}T${req.time}`).toISOString() : null;
+      const old = req.apptId ? state.appointments.find((a) => a.id === req.apptId) : null;
+      if ((req.kind === "move" || req.kind === "cancel") && (!old || old.status === "cancelled")) {
+        return { error: "That visit was already cancelled." };
+      }
+      if ((req.kind === "book" || req.kind === "move") && !start) {
+        return { error: "The request has no time on it — book it from the calendar, then mark it approved." };
+      }
+      if (req.kind === "book") {
+        const res = bookAppointment({ patientId: req.patientId, therapistId: therapistId || req.therapistId, start, note: req.note }, byUser);
+        if (res.error) return res;
+        result.appt = res.appt;
+      } else if (req.kind === "move") {
+        // book the new time first: if it clashes, the old visit is untouched
+        const res = bookAppointment({ patientId: old.patientId, therapistId: old.therapistId, start, note: old.note }, byUser);
+        if (res.error) return res;
+        cancelAppointment(old.id, byUser);
+        result.appt = res.appt;
+      } else if (req.kind === "cancel") {
+        cancelAppointment(old.id, byUser);
+      }
+      if (result.appt) req.resultApptId = result.appt.id;
+    } else if (decision !== "declined") {
+      return { error: "Unknown decision." };
+    }
+    req.status = decision;
+    req.resolvedBy = byUser.id;
+    req.resolvedAt = new Date().toISOString();
+    req.response = String(response || "").trim().slice(0, 500);
+    touch(req);
+    save();
+    audit(byUser.id, decision === "approved" ? "schedule-request-approved" : "schedule-request-declined", req.kind);
+    return { request: req, ...result };
   }
 
   /* ---------------------------------------------------------------- *
@@ -2555,6 +2683,14 @@
       }
       merged.accessRequests = [...byId.values()];
     }
+    {
+      const byId = new Map();
+      for (const r of [...(merged.scheduleRequests || []), ...(local.scheduleRequests || [])]) {
+        const prev = byId.get(r.id);
+        if (!prev || mtime(r) > mtime(prev)) byId.set(r.id, r);
+      }
+      merged.scheduleRequests = [...byId.values()];
+    }
     // clinic name map: keep server entries, fill in any the server hasn't seen
     merged.clinics = { ...(local.clinics || {}), ...(merged.clinics || {}) };
     merged.sessionUserId = null;
@@ -2597,6 +2733,7 @@
     patientDictation,
     // calendar — appointments() is clinic-scoped; allAppointments() is unscoped (server reminders)
     appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
+    canEditSchedule, scheduleRequests, requestScheduleChange, withdrawScheduleRequest, resolveScheduleRequest,
     // admin
     // settings are per clinic; settingsFor(id) is for server-side lookups by record
     settings, settingsFor, updateSettings, updateUser,

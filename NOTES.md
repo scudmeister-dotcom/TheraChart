@@ -6,6 +6,54 @@ ship*, or a decision that has been made and not yet carried out.
 
 ---
 
+## Product queue — asked for, not started yet
+
+Requests Amador has made and parked for later, newest first. Pick the next one
+from here when asked "what's still open". Strike an item through (or delete it)
+once it ships.
+
+**Done 2026-10-29** (branch `claude/app-restart-data-management-582a9b`)
+- ~~Clearer break between the work-queue sections~~ — each section is its own
+  card (coloured top edge, header band, count) with page background between.
+- ~~Rearrange the work queue~~ — Amador meant the *items*, not the sections,
+  and wanted the controls **on each list**: a Filter button in each section
+  header (Finish and sign, Today's visits, Follow up) opens a panel with sort
+  (Most overdue — default — / Name / Type / My order), what to show (note
+  type; note status for visits; kind for follow-ups) and one patient. The
+  header shows what's applied with a ✕. ⠿ drag per item; sort and order are
+  saved per user and per section in this browser. Housekeeping has no filter
+  (it's a collapsed summary).
+  **Paging decision:** no pages — each section shows 5 then "Show all N"; the
+  filters are the way to narrow a long list. Revisit if a clinic routinely has
+  50+ items in one section.
+- Calendar with many PTs: the time column stays pinned while the board scrolls
+  sideways. (The 4 extra PTs used to check this — Paolo, Rhea, Mark, Kristine —
+  exist only in the local Postgres demo data, not in the seed.)
+- ~~Patients list too tight on a phone~~ — one card per patient under 720px.
+- ~~Only admins change the calendar~~ — **admin and front desk** schedule
+  (Amador's call: front desk keeps booking, it's most of that role); therapists
+  see every column and send a "Request a change" (book / move / cancel /
+  other). Approving makes the change. Enforced in store.js
+  (`canEditSchedule`) and in server.js `graftPushedState`;
+  `test/schedulerequest.test.js` pins both.
+  *Possible follow-up:* a therapist only sees the answer on the calendar's
+  "My requests" — nothing tells them on the dashboard when it's answered.
+
+**Left over from the typed-findings work (2026-10-28)**
+1. **Editing an entry doesn't re-file it.** Changing "6/10" to "4/10" in an
+   entry leaves the pain reading at 6/10. Deleting an entry does take back what
+   it added (`deleteEntry`); editing should do the same and file the new text.
+2. **Landing and walkthrough screenshots still show the microphone.** The copy
+   no longer mentions dictation but the pictures predate the pause. Recapture
+   with `tools/capture-screenshots.js` against a server without
+   `THERACHART_DICTATION`.
+3. **Draft history.** Nothing records who changed what on a draft before it is
+   signed — a gap for audits and for "proper data management".
+4. **Pricing still counts dictation minutes.** A business decision, not code —
+   see PRICING.md.
+
+---
+
 ## Legal documents a clinic may ask for
 
 **Status:** not written, and **the product now says nothing about any of this**.

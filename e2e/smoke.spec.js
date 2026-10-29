@@ -13,52 +13,7 @@
    they run in seconds and never flake. */
 
 const { test, expect } = require("@playwright/test");
-
-/** Sign in by PICKING the account, from a clean browser profile.
-
-    Not by typing a password: the seeded demo accounts hold none — the server
-    strips their credentials on every boot so a leaked "1234" opens nothing —
-    and /api/login refuses them outright while the demo picker is available.
-    Clicking a row is the only way in, and it is the way a demo visitor comes
-    in too, which makes it the more faithful thing to test. */
-async function signIn(page, email) {
-  await page.goto("/");
-  /* Sign the previous test's user out FIRST, through the app's own button.
-
-     Clearing localStorage under a running app only looks like a clean slate:
-     the old instance is still live, still holds the token in memory, and its
-     6-second sync poll calls store.save() the moment the server's rev moves —
-     writing the session straight back into the storage we just emptied. Then
-     reload() restores it and the next sign-in never happens. Ending the session
-     before clearing leaves nothing to write back. */
-  const signOut = page.locator("#logoutBtn");
-  if (await signOut.count()) {
-    await signOut.click();
-    await page.locator("#logoutBtn").waitFor({ state: "detached" });
-  }
-  // start from a blank slate: no cached session, no service worker serving
-  // yesterday's bundle, no previous clinic's records in localStorage
-  await page.evaluate(async () => {
-    for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
-    for (const k of await caches.keys()) await caches.delete(k);
-    localStorage.clear();
-  });
-  // reload(), NOT goto("/") — when the previous test left us on a hash route
-  // like /#/facility, goto("/") is a same-document navigation, so the app is
-  // never re-created and stays signed in as the previous user.
-  await page.reload();
-
-  const entry = page.getByRole("button", { name: /^sign in/i }).first();
-  await entry.waitFor({ state: "visible" });
-  await entry.click();
-  // The demo panel renders open, so the row is clickable straight away.
-  await page.locator(".ta-row", { hasText: email }).click();
-
-  // The branded splash covers the app briefly AND repeats the clinic name, so
-  // any text assertion made too early matches twice. Let it clear first.
-  await page.locator(".splash-sub").waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
-  await expect(page.getByText(/Good day,/i)).toBeVisible();
-}
+const { signIn } = require("./helpers.js");
 
 /** The clinic name as shown in the dashboard subtitle (not the splash). */
 const clinicSubtitle = (page) => page.locator(".sub").first();
@@ -88,10 +43,13 @@ test.describe("TheraChart", () => {
     await expect(clinicSubtitle(page)).toContainText("Physical Therapy Center");
     await page.getByRole("link", { name: /^patients$/i }).first().click();
 
-    // the three seeded demo patients, by name, on screen
-    await expect(page.getByText("Bautista, Mark Anthony")).toBeVisible();
-    await expect(page.getByText("Gonzales, Marilou")).toBeVisible();
-    await expect(page.getByText("Villanueva, Mateo")).toBeVisible();
+    // the three seeded demo patients, by name, in the patient list — scoped to
+    // the table because the dashboard's work queue names them too, and an
+    // assertion that lands before the route changes would match those
+    const list = page.locator("#patTable");
+    await expect(list.getByText("Bautista, Mark Anthony")).toBeVisible();
+    await expect(list.getByText("Gonzales, Marilou")).toBeVisible();
+    await expect(list.getByText("Villanueva, Mateo")).toBeVisible();
 
     // and the app is talking to the server, not silently in on-device mode
     await expect(page.getByText(/Synced with clinic server/i)).toBeVisible();
@@ -369,7 +327,8 @@ test.describe("TheraChart", () => {
     await page.locator("#st-name").fill("Bayanihan PT Center");
     await page.locator("#st-slot").fill("30");
     await page.locator("#st-prog").fill("8");
-    await page.locator("#st-audio").check();
+    // (session-audio review is a dictation setting, hidden while dictation is
+    // paused — this runs against the default build, so it isn't on the page)
     await page.locator("#stSave").click();
 
     await expect
@@ -377,8 +336,7 @@ test.describe("TheraChart", () => {
         { message: "the setting should persist to the clinic server", timeout: 10_000 })
       .toBe(30);
 
-    // the other clinic must be completely unaffected — audioReview especially,
-    // since it governs whether patient dictation audio is retained at all
+    // the other clinic must be completely unaffected
     const theirs = (await serverState(request, "fresh@therachart.demo")).settings;
     expect({ name: theirs.facilityName, slot: theirs.slotMinutes, prog: theirs.progressEvery, audio: theirs.audioReview })
       .toEqual({ name: "New Clinic", slot: 45, prog: 5, audio: false });

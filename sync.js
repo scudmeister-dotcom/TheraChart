@@ -35,6 +35,7 @@
     dirty: Number(lsGet(LS_DIRTY) || 0),
     lastSync: Number(lsGet(LS_LASTSYNC) || 0),
     stt: { available: lsGet(LS_STT) === "1" }, // Google Cloud Speech-to-Text availability from the server
+    dictation: false, // the server's DICTATION_ENABLED; paused unless it says true
     ai: null, // { refine, insights, model } when an AI backend is reachable
     lastError: null,
   };
@@ -243,6 +244,7 @@
       const data = await res.json();
       if (!data || data.server !== "therachart") return;
       sync.mode = "server";
+      sync.dictation = data.dictation === true;
       sync.stt = data.stt || { available: false };
       lsSet(LS_STT, sync.stt.available ? "1" : "0");
       // refresh the AI-engine indicator too, so it isn't stale after reconnect
@@ -729,6 +731,11 @@
       if (data && data.server === "therachart") {
         sync.mode = "server";
         sync.rev = data.rev;
+        /* Dictation is paused unless the server says otherwise (see
+           DICTATION_ENABLED in server.js). Anything short of an explicit
+           true — an older server, static hosting with no server at all —
+           keeps every microphone control out of the page. */
+        sync.dictation = data.dictation === true;
         sync.stt = data.stt || { available: false };
         sync.refine = data.refine || "local"; // "gemini" | "local"
         lsSet(LS_SEEN, "1");

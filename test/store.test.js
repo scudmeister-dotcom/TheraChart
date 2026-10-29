@@ -195,9 +195,11 @@ const overlap = store.bookAppointment({ patientId: "p-juan", therapistId: "u-mar
 check("an overlapping (not identical) booking is refused too", !!overlap.error);
 const otherPt = store.bookAppointment({ patientId: "p-juan", therapistId: "u-grace", start: overlapStart, note: "" }, ana);
 check("the same time is still bookable for a different therapist", !otherPt.error);
-store.cancelAppointment(otherPt.appt.id, maria);
-const cancelled = store.cancelAppointment(booked.appt.id, maria);
-check("cancellation recorded in history", cancelled.appt.history.some((h) => h.action === "cancelled" && h.userId === "u-maria"));
+// a therapist sees the schedule but changes it by request (test/schedulerequest.test.js)
+check("a therapist cannot cancel a visit", !!store.cancelAppointment(booked.appt.id, maria).error);
+store.cancelAppointment(otherPt.appt.id, ana);
+const cancelled = store.cancelAppointment(booked.appt.id, ana);
+check("cancellation recorded in history", cancelled.appt.history.some((h) => h.action === "cancelled" && h.userId === "u-ana"));
 
 // --- plan-of-care goals -----------------------------------------------------
 {
