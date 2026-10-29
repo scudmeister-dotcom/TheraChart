@@ -642,7 +642,6 @@
     const canBack = crumbs.length > 1;
     const crumbBar = crumbs.length ? `
       <div class="crumbbar">
-        ${canBack ? `<button class="crumb-back" id="crumbBack" title="Back">${ICON.back}<span>Back</span></button>` : ""}
         <nav class="crumbs">${crumbs.map((c, i) =>
           i === crumbs.length - 1
             ? `<span class="crumb current">${esc(c.label)}</span>`
@@ -657,6 +656,7 @@
       <div class="brand">
         <div class="logo">${ICON.logo}</div>
         <div class="brand-text"><b>Thera<em>Chart</em></b><span>Clinic EMR</span></div>
+        ${canBack ? `<button class="nav-back" id="crumbBack" type="button" title="Back" aria-label="Back">${ICON.back}<span>Back</span></button>` : ""}
       </div>
       <button class="note-pin" id="notePin" type="button" hidden></button>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
