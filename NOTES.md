@@ -18,7 +18,8 @@ once it ships.
 - ~~Rearrange the work queue~~ — Amador meant the *items*, not the sections,
   and wanted the controls **on each list**: a Filter button in each section
   header (Finish and sign, Today's visits, Follow up) opens a panel with sort
-  (Most overdue — default — / Name / Type / My order), what to show (note
+  (Default order = most overdue first / Name / Type; dragging makes a
+  "Custom order" with a "Reset to default order" button), what to show (note
   type; note status for visits; kind for follow-ups) and one patient. The
   header shows what's applied with a ✕. ⠿ drag per item; sort and order are
   saved per user and per section in this browser. Housekeeping has no filter
@@ -38,6 +39,18 @@ once it ships.
   `test/schedulerequest.test.js` pins both.
   *Possible follow-up:* a therapist only sees the answer on the calendar's
   "My requests" — nothing tells them on the dashboard when it's answered.
+
+- ~~A list with 50+ items~~ — built B + C + E: past 12 items a list is
+  grouped (notes by age, visits by time of day, follow-ups by kind; by letter
+  or kind under the Name/Type sorts), most urgent group open; each item's ⋯
+  menu has Move to top / Move to bottom / Pin to top (pins sit in their own
+  group); dragging auto-scrolls near the screen edge. Custom order is shown
+  flat. Not built: "Show 10 more" and a search box inside a list.
+- ~~Sort persists per account~~ — sort, hand order and pins are saved on the
+  user record (`store.setMyPrefs`, `prefs.queue`) and synced; only the owner's
+  push may change them (server `graftPushedState`, `test/prefs.test.js`).
+- ~~Tiles open their section~~ — scroll there, open every group, and the
+  progress-report tile filters Follow up to progress reports.
 
 **Left over from the typed-findings work (2026-10-28)**
 1. **Editing an entry doesn't re-file it.** Changing "6/10" to "4/10" in an

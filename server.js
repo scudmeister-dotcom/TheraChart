@@ -693,6 +693,11 @@ function graftPushedState(pushed, user) {
       if (Object.prototype.hasOwnProperty.call(existing, f)) merged[f] = existing[f];
       else delete merged[f];
     }
+    // display preferences are each person's own: nobody else's push sets them
+    if (pushedUser.id !== user.id) {
+      if (Object.prototype.hasOwnProperty.call(existing, "prefs")) merged.prefs = existing.prefs;
+      else delete merged.prefs;
+    }
     merged.clinicId = cid; // never movable by a push, even by an admin
     reconciled.push(merged);
   }

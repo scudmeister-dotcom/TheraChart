@@ -49,6 +49,15 @@
   const fmtTime = (iso) =>
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
+  // "Oct 29 · 7:00 AM" — the year only when it isn't this one, for tight tables
+  const fmtShortDT = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    const opts = { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) };
+    return `${d.toLocaleDateString([], opts)} · ${fmtTime(iso)}`;
+  };
+  // reminder channels are stored as "email+sms" / "sms"; shown as words
+  const channelLabel = (m) => String(m || "").split("+").map((x) => (x.trim().toLowerCase() === "sms" ? "SMS" : x.trim().charAt(0).toUpperCase() + x.trim().slice(1))).join(" + ");
   const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B");
   /* Money, always with its sign. Whole pesos read as whole pesos; a price
      with centavos keeps both digits rather than being rounded into a figure
@@ -649,6 +658,7 @@
         <div class="logo">${ICON.logo}</div>
         <div class="brand-text"><b>Thera<em>Chart</em></b><span>Clinic EMR</span></div>
       </div>
+      <button class="note-pin" id="notePin" type="button" hidden></button>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
       <div class="nav">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
@@ -2051,7 +2061,10 @@ ${walkthroughMarkup()}`;
      QUEUE_PAGE items with "Show all" rather than pages: the most urgent work
      stays on screen, and the filters are the way to narrow a long list. */
   const QUEUE_PAGE = 5;
-  const QUEUE_SORTS = [["overdue", "Most overdue"], ["name", "Name"], ["type", "Type"], ["mine", "My order"]];
+  // "Default order" is most overdue first. A hand arrangement isn't a sort to
+  // pick: dragging an item makes it ("Custom order"), and Reset undoes it.
+  const QUEUE_SORTS = [["overdue", "Default order"], ["name", "Name"], ["type", "Type"]];
+  const sortLabel = (k) => (k === "mine" ? "Custom order" : (QUEUE_SORTS.find(([x]) => x === k) || [, k])[1]);
   // what each list can be narrowed to, in the order "Type" sorts by
   const QUEUE_KINDS = {
     drafts: [["eval", "Evals"], ["daily", "Daily notes"], ["progress", "Progress reports"], ["discharge", "Discharges"]],
@@ -2059,27 +2072,54 @@ ${walkthroughMarkup()}`;
     follow: [["request", "Schedule requests"], ["progress", "Progress reports"], ["auth", "Authorisations"], ["order", "Doctor's orders"], ["goal", "Goals"], ["billing", "Billing"], ["licence", "Licences"], ["other", "Other"]],
   };
   QUEUE_KINDS.house = QUEUE_KINDS.follow;
+  /* Sort, hand order and pins are saved on the person's account (store
+     setMyPrefs), so they follow them across devices and survive the app
+     closing. An earlier build kept them in this browser only; that copy is
+     read once and moved onto the account. */
   const LS_QUEUE_ITEMS = "therachart-queue-items";
-  const queuePrefs = (user) => {
-    try { return (JSON.parse(localStorage.getItem(LS_QUEUE_ITEMS) || "{}") || {})[user.id] || {}; } catch { return {}; }
-  };
-  function setQueuePrefs(user, patch) {
-    try {
-      const m = JSON.parse(localStorage.getItem(LS_QUEUE_ITEMS) || "{}") || {};
-      const next = { ...(m[user.id] || {}), ...patch };
-      Object.keys(next).forEach((k) => { if (next[k] == null) delete next[k]; });
-      m[user.id] = next;
-      localStorage.setItem(LS_QUEUE_ITEMS, JSON.stringify(m));
-    } catch { /* private browsing — the order just doesn't stick */ }
+  function queuePrefs(user) {
+    const saved = S.myPrefs(user).queue;
+    if (saved) return saved;
+    let legacy = null;
+    try { legacy = (JSON.parse(localStorage.getItem(LS_QUEUE_ITEMS) || "{}") || {})[user.id] || null; } catch { /* unreadable */ }
+    if (legacy) {
+      S.setMyPrefs(user, "queue", legacy);
+      try { localStorage.removeItem(LS_QUEUE_ITEMS); } catch { /* fine */ }
+    }
+    return legacy || {};
   }
-  // per-section kind/patient filters, which list is expanded, which panel is open
-  const queueFilter = { by: {}, expanded: new Set(), open: null };
+  function setQueuePrefs(user, patch) {
+    const next = { ...queuePrefs(user), ...patch };
+    Object.keys(next).forEach((k) => { if (next[k] == null) delete next[k]; });
+    S.setMyPrefs(user, "queue", next);
+  }
+  /* A long list is grouped (by age, time of day or kind) rather than paged:
+     paging would split a drag across pages. Past QUEUE_GROUP_AT items the
+     list is shown as collapsible groups, the most urgent open first. */
+  const QUEUE_GROUP_AT = 12;
+  // per-section kind/patient filters, which list is expanded, which panel is
+  // open, and which groups are open (`${section}|${group}` → true/false)
+  const queueFilter = { by: {}, expanded: new Set(), open: null, groups: new Map(), openAll: null };
   // per-section sorts; an older build saved one sort for the whole queue
   const sortMap = (prefs) => (prefs.sort && typeof prefs.sort === "object" ? prefs.sort : {});
   let queuePopCleanup = null; // removes the open panel's document listeners
   const secFilter = (id) => queueFilter.by[id] || (queueFilter.by[id] = { kind: "all", patient: "all" });
   const followKind = (text) => (/Progress report/.test(text) ? "progress" : /uthoris|authorised/.test(text) ? "auth"
     : /order/.test(text) ? "order" : /goal/.test(text) ? "goal" : /billing/.test(text) ? "billing" : "other");
+
+  /** Which group an item falls in for a long list: by name range or kind when
+      sorted that way, otherwise each list's natural chunks — notes by age,
+      visits by time of day, follow-ups by kind. Groups keep the order in which
+      they first appear in the sorted list, so the most urgent leads. */
+  const NAME_RANGES = [["a", "A–F", /^[a-f]/i], ["g", "G–L", /^[g-l]/i], ["m", "M–R", /^[m-r]/i], ["s", "S–Z", /^[s-z]/i]];
+  function queueGroupOf(secId, sort, it, kinds) {
+    const kindLabel = () => [it.kind, (kinds.find(([k]) => k === it.kind) || [, "Other"])[1]];
+    if (sort === "name") { const r = NAME_RANGES.find(([, , re]) => re.test(it.name)); return r ? [r[0], r[1]] : ["#", "Other"]; }
+    if (sort === "type" || secId === "follow" || secId === "house") return kindLabel();
+    if (secId === "drafts") return it.age > 30 ? ["old", "Over 30 days old"] : it.age > 7 ? ["mid", "8–30 days old"] : ["new", "Last 7 days"];
+    if (secId === "today") return it.hour < 12 ? ["am", "Morning"] : it.hour < 17 ? ["pm", "Afternoon"] : ["eve", "Evening"];
+    return ["all", "All"];
+  }
 
   /** Apply the person's sort to one section's items. Default order is the
       order the section was built in (most overdue / earliest first). */
@@ -2101,7 +2141,7 @@ ${walkthroughMarkup()}`;
     if (dashState.forUser !== user.id) {
       dashState.forUser = user.id;
       dashState.scope = user.role !== "frontdesk" ? user.id : "clinic";
-      queueFilter.by = {}; queueFilter.expanded.clear(); queueFilter.open = null;
+      queueFilter.by = {}; queueFilter.expanded.clear(); queueFilter.open = null; queueFilter.groups.clear();
     }
     // a staff member removed since the scope was picked falls back to the clinic
     if (dashState.scope !== "clinic" && !S.getUser(dashState.scope)) dashState.scope = "clinic";
@@ -2117,8 +2157,18 @@ ${walkthroughMarkup()}`;
       ? `${total} thing${total === 1 ? "" : "s"} outstanding${w.overdueDrafts.length ? ` · <b>${w.overdueDrafts.length} overdue</b>` : ""}`
       : "Nothing outstanding";
 
-    const tile = (num, label, target, tone) => `
-      <a class="stat-tile ${num && tone ? tone : ""}" href="#q-${target}" data-qjump="${target}">
+    /* Each tile carries an icon in its category's colour — the same colour as
+       the queue section it jumps to — so the four read apart before the label
+       is read. The tile's tint still says how urgent it is. */
+    const TILE_ICONS = {
+      notes: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
+      visits: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="M12 13v3l2 1.2"/>',
+      progress: '<path d="M4 19h16"/><path d="m5 15 4.5-4.5 3.5 3.5L19 8"/><path d="M15 8h4v4"/>',
+      follow: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+    };
+    const tile = (num, label, target, tone, icon, kind) => `
+      <a class="stat-tile ${num && tone ? tone : ""}" href="#q-${target}" data-qjump="${target}"${kind ? ` data-qkindjump="${kind}"` : ""}>
+        <span class="stat-ico ico-${icon}" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TILE_ICONS[icon]}</svg></span>
         <div class="stat-num">${num}</div><div class="stat-label">${label}</div></a>`;
 
     // one row of the work queue: a grip to move it, and the link itself
@@ -2131,13 +2181,14 @@ ${walkthroughMarkup()}`;
           <span class="q-chips">${chips || ""}</span>
           <span class="q-go">${esc(action)} →</span>
         </a>
+        <button class="q-menu-btn" type="button" data-qmenu="${esc(key)}" aria-label="More for ${title}: move or pin" aria-haspopup="menu" title="Move or pin">⋯</button>
       </div>`;
     const pName = (pid) => S.patientName(S.getPatient(pid)) || "";
 
     const draftItems = w.drafts.map((d) => {
       const overdue = daysSince(d.createdAt) >= DRAFT_OVERDUE_DAYS;
       return {
-        key: d.id, kind: d.type, pid: d.patientId, name: pName(d.patientId),
+        key: d.id, kind: d.type, pid: d.patientId, name: pName(d.patientId), age: daysSince(d.createdAt),
         html: qrow({
           key: d.id,
           tag: `<span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>`,
@@ -2153,7 +2204,7 @@ ${walkthroughMarkup()}`;
       const state = !note ? `<span class="chip warn">no note yet</span>`
         : note.status === "signed" ? `<span class="chip good">signed</span>` : `<span class="chip info">draft started</span>`;
       return {
-        key: appt.id, kind: !note ? "nonote" : note.status === "signed" ? "signed" : "draft", pid: appt.patientId, name: pName(appt.patientId),
+        key: appt.id, kind: !note ? "nonote" : note.status === "signed" ? "signed" : "draft", pid: appt.patientId, name: pName(appt.patientId), hour: new Date(appt.start).getHours(),
         html: qrow({
           key: appt.id,
           tag: `<span class="q-time num">${fmtTime(appt.start)}</span>`,
@@ -2212,7 +2263,11 @@ ${walkthroughMarkup()}`;
 
     // ---- per-section filters
     const prefs = queuePrefs(user);
-    const sortOf = (id) => { const v = sortMap(prefs)[id]; return QUEUE_SORTS.some(([k]) => k === v) ? v : "overdue"; };
+    const sortOf = (id) => {
+      const v = sortMap(prefs)[id];
+      if (v === "mine") return (prefs.order || {})[id] ? "mine" : "overdue";
+      return QUEUE_SORTS.some(([k]) => k === v) ? v : "overdue";
+    };
     const label = (pairs, k) => (pairs.find(([x]) => x === k) || [, k])[1];
 
     // each section is its own card with a coloured header and a count, with
@@ -2230,11 +2285,41 @@ ${walkthroughMarkup()}`;
       const filtering = f.kind !== "all" || f.patient !== "all";
       const shown = sorted.filter(matches);
       if (sec.id === "house" && !sec.items.length) return "";
-      const open = queueFilter.expanded.has(sec.id);
-      const visible = open ? shown : shown.slice(0, QUEUE_PAGE);
-      const more = shown.length - visible.length;
-      const list = shown.length ? `<div class="q-list" data-qlist="${sec.id}">${visible.map((it) => it.html).join("")}</div>
-        ${shown.length > QUEUE_PAGE ? `<button class="q-more" type="button" data-qmore="${sec.id}">${open ? "Show fewer" : `Show all ${shown.length} <span class="q-more-n">+${more} more</span>`}</button>` : ""}`
+      // pinned items sit above everything, in the order they were pinned
+      const pinnedKeys = (prefs.pinned || {})[sec.id] || [];
+      const pinned = pinnedKeys.map((k) => shown.find((it) => it.key === k)).filter(Boolean);
+      const rest = shown.filter((it) => !pinnedKeys.includes(it.key));
+      const listOf = (items, extra) => `<div class="q-list" data-qlist="${sec.id}"${extra || ""}>${items.map((it) => it.html).join("")}</div>`;
+      const pinnedHtml = pinned.length ? `<div class="q-group q-pinned">
+          <div class="q-ghead static"><span class="q-gico" aria-hidden="true">📌</span>Pinned<span class="q-gcount">${pinned.length}</span></div>
+          ${listOf(pinned, ' data-qpinned="1"')}</div>` : "";
+      let restHtml = "";
+      if (rest.length > QUEUE_GROUP_AT && sort !== "mine") {
+        const groups = [];
+        for (const it of rest) {
+          const [gk, gl] = queueGroupOf(sec.id, sort, it, kinds);
+          let g = groups.find((x) => x.key === gk);
+          if (!g) groups.push((g = { key: gk, label: gl, items: [] }));
+          g.items.push(it);
+        }
+        if (queueFilter.openAll === sec.id) groups.forEach((g) => queueFilter.groups.set(`${sec.id}|${g.key}`, true));
+        restHtml = groups.map((g, i) => {
+          const id = `${sec.id}|${g.key}`;
+          const isOpen = queueFilter.groups.has(id) ? queueFilter.groups.get(id) : i === 0;
+          return `<div class="q-group">
+            <button class="q-ghead" type="button" data-qgroup="${esc(id)}" aria-expanded="${isOpen}">
+              <span class="q-gchev" aria-hidden="true">${isOpen ? "▾" : "▸"}</span>${esc(g.label)}<span class="q-gcount">${g.items.length}</span></button>
+            ${isOpen ? listOf(g.items) : ""}</div>`;
+        }).join("");
+      } else if (rest.length) {
+        const open = queueFilter.expanded.has(sec.id) || queueFilter.openAll === sec.id;
+        const visible = open ? rest : rest.slice(0, QUEUE_PAGE);
+        const more = rest.length - visible.length;
+        restHtml = `${pinned.length ? `<div class="q-ghead static q-rest">Everything else<span class="q-gcount">${rest.length}</span></div>` : ""}${listOf(visible)}
+          ${rest.length > QUEUE_PAGE ? `<button class="q-more" type="button" data-qmore="${sec.id}">${open ? "Show fewer" : `Show all ${rest.length} <span class="q-more-n">+${more} more</span>`}</button>` : ""}`;
+      }
+      if (queueFilter.openAll === sec.id) queueFilter.openAll = null;
+      const list = shown.length ? `<div class="q-body">${pinnedHtml}${restHtml}</div>`
         : filtering ? `<div class="q-empty">Nothing here matches this filter. <button class="btn-link" type="button" data-qclear="${sec.id}">Clear filter</button></div>`
         : `<div class="q-empty">✓ ${sec.empty}</div>`;
       // the section's whole current order, for saving a move (bindQueueReorder)
@@ -2242,7 +2327,7 @@ ${walkthroughMarkup()}`;
 
       // what is narrowing this list, said in the header so it's never a surprise
       const active = [
-        sort !== "overdue" ? label(QUEUE_SORTS, sort) : "",
+        sort !== "overdue" ? sortLabel(sort) : "",
         f.kind !== "all" ? label(kinds, f.kind) : "",
         f.patient !== "all" ? pName(f.patient) : "",
       ].filter(Boolean);
@@ -2254,7 +2339,9 @@ ${walkthroughMarkup()}`;
         <div class="q-pop" role="dialog" aria-label="Filter ${esc(sec.title)}" data-qpop="${sec.id}">
           <div class="q-pop-head"><b>Filter ${esc(sec.title)}</b><button class="q-pop-x" type="button" data-qclose aria-label="Close">✕</button></div>
           <div class="q-pop-group"><span class="fglabel">Sort by</span><div class="fchips">${QUEUE_SORTS.map(([k, l]) => opt("data-qsort", k, l, sort === k)).join("")}</div>
-            ${sort === "mine" ? `<p class="q-pop-tip">Drag ⠿ to put items where you want them.${(prefs.order || {})[sec.id] ? ` <button class="btn-link" type="button" data-qreset="${sec.id}">Reset my order</button>` : ""}</p>` : ""}</div>
+            ${sort === "mine"
+              ? `<p class="q-pop-tip q-custom"><b>Custom order</b> — you've arranged this list by hand. <button class="btn small" type="button" data-qreset="${sec.id}">Reset to default order</button></p>`
+              : `<p class="q-pop-tip">Drag ⠿ on any item to arrange the list yourself.</p>`}</div>
           ${present.length > 1 || f.kind !== "all" ? `<div class="q-pop-group"><span class="fglabel">Show</span><div class="fchips">
             ${opt("data-qkind", "all", "All", f.kind === "all", sec.items.filter((it) => f.patient === "all" || it.pid === f.patient).length)}
             ${present.map(([k, l]) => opt("data-qkind", k, l, f.kind === k, sec.items.filter((it) => it.kind === k && (f.patient === "all" || it.pid === f.patient)).length)).join("")}</div></div>` : ""}
@@ -2326,10 +2413,10 @@ ${walkthroughMarkup()}`;
 <div class="dash-summary">${who && !isMe ? `${esc(who.name)} — ` : ""}${summary}</div>
 
 <div class="stat-tiles">
-  ${tile(w.drafts.length, "Unsigned notes", "drafts", w.overdueDrafts.length ? "danger" : "accent")}
-  ${tile(w.visits.length, `Visits today${w.visitsNoNote.length ? ` · ${w.visitsNoNote.length} without a note` : ""}`, "today", w.visitsNoNote.length ? "accent" : "")}
-  ${tile(w.progressDue.length, "Progress reports due", "follow", "accent")}
-  ${tile(w.followUps.length - w.progressDue.length + w.licences.length + w.requests.length, "Other follow-ups", "follow", "accent")}
+  ${tile(w.drafts.length, "Unsigned notes", "drafts", w.overdueDrafts.length ? "danger" : "accent", "notes")}
+  ${tile(w.visits.length, `Visits today${w.visitsNoNote.length ? ` · ${w.visitsNoNote.length} without a note` : ""}`, "today", w.visitsNoNote.length ? "accent" : "", "visits")}
+  ${tile(w.progressDue.length, "Progress reports due", "follow", "accent", "progress", w.progressDue.length ? "progress" : "")}
+  ${tile(w.followUps.length - w.progressDue.length + w.licences.length + w.requests.length, "Other follow-ups", "follow", "accent", "follow")}
 </div>
 
 <div class="work-queue" id="workQueue">
@@ -2342,7 +2429,7 @@ ${team}`;
   /* The queue's filter bar, "Show all", and moving an item by its ⠿ grip.
      Pointer events rather than HTML drag-and-drop, so it works with a finger
      on a phone; arrow keys move a focused grip one place. An item moves within
-     its own section. Moving one switches the sort to "My order" and saves it. */
+     its own section. Moving one makes the list's "Custom order" and saves it. */
   function bindQueueReorder(user, rerender) {
     const on = (sel, ev, fn) => document.querySelectorAll(sel).forEach((el) => el.addEventListener(ev, (e) => fn(el, e)));
     const prefsOf = () => queuePrefs(user);
@@ -2356,9 +2443,11 @@ ${team}`;
     });
     on("[data-qpop]", "click", (el, e) => e.stopPropagation());
     on("[data-qclose]", "click", (el, e) => { e.preventDefault(); queueFilter.open = null; rerender(); });
+    // a hand arrangement can't be picked again once left, so leaving it drops it
+    const withoutOrder = (sec) => { const order = { ...(prefsOf().order || {}) }; delete order[sec]; return order; };
     on("[data-qsort]", "click", (el) => {
       const sec = el.dataset.qsecOf;
-      setQueuePrefs(user, { sort: { ...sortMap(prefsOf()), [sec]: el.dataset.qsort } });
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: el.dataset.qsort } });
       rerender();
     });
     on("[data-qkind]", "click", (el) => { secFilter(el.dataset.qsecOf).kind = el.dataset.qkind; rerender(); });
@@ -2367,13 +2456,12 @@ ${team}`;
       e.preventDefault(); e.stopPropagation();
       const sec = el.dataset.qclear;
       queueFilter.by[sec] = { kind: "all", patient: "all" };
-      setQueuePrefs(user, { sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
       rerender();
     });
     on("[data-qreset]", "click", (el) => {
       const sec = el.dataset.qreset;
-      const order = { ...(prefsOf().order || {}) }; delete order[sec];
-      setQueuePrefs(user, { order, sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
       rerender();
     });
     on("[data-qmore]", "click", (el) => {
@@ -2406,19 +2494,86 @@ ${team}`;
 
     /* Save a section's new order. Only the visible items moved, so they are
        put back into the positions the visible items held in the section's full
-       current order — items hidden by a filter or past "Show all" keep theirs. */
+       current order — items hidden by a filter, a closed group or past "Show
+       all" keep theirs. The pinned group is its own short list: moving within
+       it reorders the pins and leaves the rest of the list alone. */
+    const focusGrip = (key) => { const g = key && document.querySelector(`[data-qgrip="${CSS.escape(key)}"]`); if (g) g.focus(); };
+    const saveOrder = (sec, next, focusKey) => {
+      const prefs = queuePrefs(user);
+      setQueuePrefs(user, { sort: { ...sortMap(prefs), [sec]: "mine" }, order: { ...(prefs.order || {}), [sec]: next } });
+      rerender(); focusGrip(focusKey);
+    };
+    const savePins = (sec, next, focusKey) => {
+      const prefs = queuePrefs(user);
+      setQueuePrefs(user, { pinned: { ...(prefs.pinned || {}), [sec]: next } });
+      rerender(); focusGrip(focusKey);
+    };
+    const fullOf = (sec) => document.querySelector(`[data-qsec="${sec}"]`).dataset.qfull.split("\n").filter(Boolean);
     const commit = (list, startKeys, focusKey) => {
       const sec = list.dataset.qlist;
-      const prefs = queuePrefs(user);
-      const full = list.closest(".q-section").dataset.qfull.split("\n").filter(Boolean);
       const now = [...list.querySelectorAll("[data-qkey]")].map((el) => el.dataset.qkey);
+      if (list.dataset.qpinned) return savePins(sec, now, focusKey);
+      const full = fullOf(sec);
       const slots = full.map((k, i) => (startKeys.includes(k) ? i : -1)).filter((i) => i >= 0);
       const next = full.slice();
       slots.forEach((slot, j) => { next[slot] = now[j]; });
-      setQueuePrefs(user, { sort: { ...sortMap(prefs), [sec]: "mine" }, order: { ...(prefs.order || {}), [sec]: next } });
-      rerender();
-      if (focusKey) { const g = document.querySelector(`[data-qgrip="${CSS.escape(focusKey)}"]`); if (g) g.focus(); }
+      saveOrder(sec, next, focusKey);
     };
+
+    // Move to top / bottom and pin, from each item's ⋯ menu — for long lists
+    // where dragging an item forty rows is the wrong tool
+    const act = (sec, key, what, inPinned) => {
+      const pins = ((queuePrefs(user).pinned || {})[sec] || []).slice();
+      if (what === "pin") return savePins(sec, [key, ...pins.filter((k) => k !== key)]);
+      if (what === "unpin") return savePins(sec, pins.filter((k) => k !== key));
+      if (inPinned) {
+        const rest = pins.filter((k) => k !== key);
+        return savePins(sec, what === "top" ? [key, ...rest] : [...rest, key]);
+      }
+      const rest = fullOf(sec).filter((k) => k !== key);
+      saveOrder(sec, what === "top" ? [key, ...rest] : [...rest, key]);
+    };
+    let closeMenu = null;
+    document.querySelectorAll("[data-qmenu]").forEach((btn) => btn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const wasOpen = btn.getAttribute("aria-expanded") === "true";
+      if (closeMenu) closeMenu();
+      if (wasOpen) return;
+      const key = btn.dataset.qmenu;
+      const sec = btn.closest("[data-qsec]").dataset.qsec;
+      const inPinned = !!btn.closest("[data-qpinned]");
+      const menu = document.createElement("div");
+      menu.className = "q-menu";
+      menu.setAttribute("role", "menu");
+      menu.innerHTML = `
+        <button type="button" role="menuitem" data-qact="top">⤒ Move to top</button>
+        <button type="button" role="menuitem" data-qact="bottom">⤓ Move to bottom</button>
+        <button type="button" role="menuitem" data-qact="${inPinned ? "unpin" : "pin"}">📌 ${inPinned ? "Unpin" : "Pin to top"}</button>`;
+      btn.after(menu);
+      btn.setAttribute("aria-expanded", "true");
+      const outside = (ev) => { if (!menu.contains(ev.target) && ev.target !== btn) closeMenu(); };
+      const onKey = (ev) => { if (ev.key === "Escape") { closeMenu(); btn.focus(); } };
+      closeMenu = () => {
+        menu.remove(); btn.setAttribute("aria-expanded", "false");
+        document.removeEventListener("click", outside, true); document.removeEventListener("keydown", onKey);
+        closeMenu = null;
+      };
+      setTimeout(() => document.addEventListener("click", outside, true));
+      document.addEventListener("keydown", onKey);
+      menu.querySelectorAll("[data-qact]").forEach((b) => b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const what = b.dataset.qact;
+        closeMenu();
+        act(sec, key, what, inPinned);
+      }));
+      menu.querySelector("button").focus();
+    }));
+
+    // group headers open and close their group
+    document.querySelectorAll("[data-qgroup]").forEach((b) => b.addEventListener("click", () => {
+      queueFilter.groups.set(b.dataset.qgroup, b.getAttribute("aria-expanded") !== "true");
+      rerender();
+    }));
 
     document.querySelectorAll("[data-qlist]").forEach((list) => {
       const items = () => [...list.querySelectorAll(":scope > [data-qkey]")];
@@ -2426,9 +2581,15 @@ ${team}`;
         const item = g.closest("[data-qkey]");
         g.addEventListener("click", (e) => e.preventDefault());
         g.addEventListener("keydown", (e) => {
+          const start = items().map((el) => el.dataset.qkey);
+          if (e.key === "Home" || e.key === "End") {
+            e.preventDefault();
+            if (e.key === "Home") list.prepend(item); else list.append(item);
+            if (items().map((el) => el.dataset.qkey).join() !== start.join()) commit(list, start, item.dataset.qkey);
+            return;
+          }
           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
           e.preventDefault();
-          const start = items().map((el) => el.dataset.qkey);
           const sib = e.key === "ArrowUp" ? item.previousElementSibling : item.nextElementSibling;
           if (!sib || !sib.matches("[data-qkey]")) return;
           if (e.key === "ArrowUp") list.insertBefore(item, sib); else list.insertBefore(sib, item);
@@ -2440,14 +2601,31 @@ ${team}`;
           const start = items().map((el) => el.dataset.qkey);
           item.classList.add("q-dragging");
           document.body.classList.add("q-sorting");
-          // listen on the window: moving the item in the DOM drops pointer capture
-          const move = (ev) => {
+          let lastY = e.clientY;
+          const place = () => {
             const others = items().filter((el) => el !== item);
-            const before = others.find((el) => { const r = el.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+            const before = others.find((el) => { const r = el.getBoundingClientRect(); return lastY < r.top + r.height / 2; });
             if (before) { if (item.nextElementSibling !== before) list.insertBefore(item, before); }
             else if (others.length && others[others.length - 1].nextElementSibling !== item) others[others.length - 1].after(item);
           };
+          /* Near the top or bottom edge the page scrolls by itself, faster the
+             closer the finger is, so an item can travel a long list in one
+             drag. The phone's bottom tab bar counts as the edge. */
+          const EDGE = 80;
+          const bar = document.querySelector(".tabbar");
+          const bottomEdge = () => window.innerHeight - (bar && bar.offsetHeight ? bar.offsetHeight : 0);
+          let raf = 0;
+          const tick = () => {
+            const top = lastY - EDGE, bottom = bottomEdge() - EDGE - lastY;
+            const v = top < 0 ? Math.max(-24, top / 3) : bottom < 0 ? Math.min(24, -bottom / 3) : 0;
+            if (v) { window.scrollBy(0, v); place(); }
+            raf = requestAnimationFrame(tick);
+          };
+          raf = requestAnimationFrame(tick);
+          // listen on the window: moving the item in the DOM drops pointer capture
+          const move = (ev) => { lastY = ev.clientY; place(); };
           const up = () => {
+            cancelAnimationFrame(raf);
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
             window.removeEventListener("pointercancel", up);
@@ -2487,11 +2665,26 @@ ${team}`;
       el.addEventListener("click", (e) => { e.preventDefault(); setScope(el.dataset.scope); });
       el.addEventListener("keydown", (e) => { if (e.key === "Enter") setScope(el.dataset.scope); });
     });
-    // tiles scroll to their queue section instead of changing the route
+    /* A tile opens its section: every group and the full list shown, the
+       progress-report tile filtered to progress reports, then scrolled into
+       view with a brief highlight so the eye lands on it. */
     document.querySelectorAll("[data-qjump]").forEach((a) => a.addEventListener("click", (e) => {
       e.preventDefault();
-      const el = document.getElementById(`q-${a.dataset.qjump}`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      const sec = a.dataset.qjump;
+      queueFilter.expanded.add(sec);
+      queueFilter.openAll = sec;
+      if (a.dataset.qkindjump) secFilter(sec).kind = a.dataset.qkindjump;
+      else if (sec === "follow") secFilter(sec).kind = "all";
+      rerender();
+      const el = document.getElementById(`q-${sec}`);
+      if (!el) return;
+      // the redraw restores the remembered scroll next frame; make the section
+      // the remembered spot so that restore lands here too
+      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - 16);
+      scrollMem[location.hash || "#/dashboard"] = top;
+      window.scrollTo({ top, behavior: "smooth" });
+      el.classList.add("q-flash");
+      setTimeout(() => el.classList.remove("q-flash"), 1500);
     }));
     // a follow-up opens the patient on the tab that holds it
     document.querySelectorAll("[data-ptab-goto]").forEach((a) => a.addEventListener("click", () => {
@@ -8883,10 +9076,37 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      also meant its width transition never had two frames to run between. */
   let fieldGuideSig = null;
 
+  /* The same count, pinned where it's always in view: in the top bar on a
+     phone, under the logo on the desktop rail. It belongs to whichever note is
+     open, and tapping it scrolls back to the full guide. */
+  function renderNotePin(doc, done, total, tone) {
+    const pin = document.getElementById("notePin");
+    if (!pin) return;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const meta = docMeta(doc.type);
+    pin.hidden = false;
+    pin.title = `${doc.title}: ${done} of ${total} sections written — show what's left`;
+    pin.setAttribute("aria-label", pin.title);
+    pin.innerHTML = `<span class="np-head"><span class="doc-tag ${meta.cls}">${meta.short}</span><span class="np-name">Note completeness</span></span>
+      <span class="np-row"><span class="np-track"><span class="np-fill tone-${tone}" style="width:${pct}%"></span></span><span class="np-count"><b>${done}</b>/${total}</span></span>`;
+    if (!pin.dataset.bound) {
+      pin.dataset.bound = "1";
+      pin.addEventListener("click", () => {
+        const g = document.getElementById("fieldGuide");
+        if (g) g.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }
+
   function renderFieldGuide(doc) {
     const host = document.getElementById("fieldGuide");
     if (!host) return;
     const parts = noteParts(doc);
+    {
+      // the pin is redrawn with the shell, so it is refreshed even when the guide isn't
+      const d = parts.filter((p) => p.done).length;
+      renderNotePin(doc, d, parts.length, d >= parts.length ? "good" : d ? "warn" : "muted");
+    }
     const sig = `${doc.id}|${parts.map((p) => (p.done ? "1" : "0")).join("")}`;
     if (sig === fieldGuideSig && host.firstElementChild) return;
     fieldGuideSig = sig;
@@ -10417,7 +10637,7 @@ ${isGoogleAccount(user)
         if (here.length) return `<div class="cal-cell">${here.map((a) => `
           <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientCallName(S.getPatient(a.patientId)))}
           <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
-        return `<div class="cal-cell"><span class="slot-free ${canEdit ? "" : "ask"}" data-slot="${slot}" data-ther="${t.id}"${canEdit ? "" : ` title="Ask for this slot"`}>${canEdit ? "+ available" : "available · ask"}</span></div>`;
+        return `<div class="cal-cell"><span class="slot-free ${canEdit ? "" : "ask"}" data-slot="${slot}" data-ther="${t.id}"${canEdit ? "" : ` title="Ask for this slot"`}>${canEdit ? "+ Available" : "Available · Ask"}</span></div>`;
       }).join("")}`).join("")}
   </div>
 </div>`;
@@ -10470,14 +10690,14 @@ ${scheduleRequestsCard(user)}
   <p style="font-size:12.5px; color:var(--muted); margin:0 0 10px">
     Each booking schedules an email/SMS reminder 3 days before and the morning of the visit.
     In this on-device demo the sending is <b>simulated</b> — connecting a real SMS/email gateway is a deployment step.</p>
-  ${upcomingReminders.length ? `<table class="list"><thead><tr><th>When</th><th>Patient</th><th>Visit</th><th>Channel</th><th>Status</th></tr></thead><tbody>
+  ${upcomingReminders.length ? `<div class="table-scroll"><table class="list rem-table"><thead><tr><th>Patient</th><th>Visit</th><th>Reminder goes out</th><th>Channel</th><th>Status</th></tr></thead><tbody>
     ${upcomingReminders.map((r) => `<tr>
-      <td class="num">${fmtDT(r.when)}</td>
-      <td>${esc(S.patientName(S.getPatient(r.appt.patientId)))}</td>
-      <td class="num">${fmtDT(r.appt.start)}</td>
-      <td>${esc(r.method)}</td>
-      <td><span class="chip ${r.status.startsWith("sent") ? "good" : "info"}">${esc(r.status)}</span></td></tr>`).join("")}
-  </tbody></table>` : `<div class="empty-state">No upcoming reminders.</div>`}
+      <td class="rem-pt"><b>${esc(S.patientName(S.getPatient(r.appt.patientId)))}</b></td>
+      <td class="num rem-dt" data-label="Visit">${fmtShortDT(r.appt.start)}</td>
+      <td class="num rem-dt" data-label="Reminder goes out">${fmtShortDT(r.when)}</td>
+      <td data-label="Channel">${esc(channelLabel(r.method))}</td>
+      <td data-label="Status"><span class="chip ${r.status.startsWith("sent") ? "good" : "info"}">${esc(r.status)}</span></td></tr>`).join("")}
+  </tbody></table></div>` : `<div class="empty-state">No upcoming reminders.</div>`}
 </div>`;
   }
 
@@ -10600,7 +10820,7 @@ ${body}
 <h3 style="margin-top:10px">Change history</h3>
 <table class="list"><tbody>${a.history.map((h) => `<tr><td>${esc(h.action)}</td><td>${esc((S.getUser(h.userId) || {}).name || "—")}</td><td class="num">${fmtDT(h.time)}</td></tr>`).join("")}</tbody></table>
 <h3 style="margin-top:10px">Reminders</h3>
-<table class="list"><tbody>${a.reminders.map((r) => `<tr><td class="num">${fmtDT(r.when)}</td><td>${esc(r.method)}</td><td><span class="chip info">${esc(r.status)}</span></td></tr>`).join("") || "<tr><td>None</td></tr>"}</tbody></table>
+<table class="list"><tbody>${a.reminders.map((r) => `<tr><td class="num">${fmtDT(r.when)}</td><td>${esc(channelLabel(r.method))}</td><td><span class="chip info">${esc(r.status)}</span></td></tr>`).join("") || "<tr><td>None</td></tr>"}</tbody></table>
 <div class="modal-actions">
   <a class="btn small" href="${gcal}" target="_blank" rel="noopener">Add to Google Calendar</a>
   <a class="btn small" href="#/patient/${p.id}" id="apChart">Open chart</a>

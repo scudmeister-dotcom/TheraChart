@@ -2593,6 +2593,26 @@
     return u;
   }
 
+  /** A person's own display preferences (e.g. how they sort their work
+      queue), kept on their account so they follow them to any device and
+      survive the app closing. Only ever written for the signed-in user; the
+      server refuses a push that changes anyone else's (graftPushedState). */
+  function myPrefs(user) {
+    const u = user && getUser(user.id);
+    return (u && u.prefs) || {};
+  }
+  function setMyPrefs(user, key, value) {
+    load();
+    const u = user && getUser(user.id);
+    if (!u) return { error: "Not signed in." };
+    const next = { ...(u.prefs || {}) };
+    if (value == null) delete next[key]; else next[key] = value;
+    u.prefs = next;
+    touch(u);
+    save();
+    return { prefs: next };
+  }
+
   function exportAll() {
     load();
     return JSON.stringify(state, null, 2);
@@ -2736,7 +2756,7 @@
     canEditSchedule, scheduleRequests, requestScheduleChange, withdrawScheduleRequest, resolveScheduleRequest,
     // admin
     // settings are per clinic; settingsFor(id) is for server-side lookups by record
-    settings, settingsFor, updateSettings, updateUser,
+    settings, settingsFor, updateSettings, updateUser, myPrefs, setMyPrefs,
     // access requests (pending-approval queue)
     accessRequests, pendingAccessRequestsAllClinics, requestAccess, approveAccessRequest, declineAccessRequest,
     addClinic,

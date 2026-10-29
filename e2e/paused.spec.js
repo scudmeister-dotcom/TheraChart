@@ -9,11 +9,15 @@
    Runs in the "paused" project, against a server started WITHOUT the flag. */
 
 const { test, expect } = require("@playwright/test");
-const { signIn } = require("./helpers.js");
+const { signIn, waitForSync } = require("./helpers.js");
 
 const MIC_CONTROLS = "#micBtn, #recBtn, #recBar, #langSel, [data-fieldmic], #interim, #audioReview";
 
 test.describe("dictation paused", () => {
+  // saves reach the server in the background; let each test's last one land
+  // before its page closes, or the next test inherits a stale server state
+  test.afterEach(async ({ page }) => { await waitForSync(page).catch(() => {}); });
+
   test("a note has no microphone controls, and typed findings pin the body map", async ({ page }) => {
     await signIn(page, "maria@therachart.demo");
 
@@ -174,7 +178,7 @@ test.describe("dictation paused", () => {
     await page.mouse.move(grip.x + grip.width / 2, first.y + 4, { steps: 8 });
     await page.mouse.up();
     await expect(page.locator("#q-drafts .q-item").first().locator(".q-main")).toHaveText(second);
-    await expect(page.locator("#q-drafts .q-active")).toContainText("My order");
+    await expect(page.locator("#q-drafts .q-active")).toContainText("Custom order");
 
     // kept across a reload; arrow keys move a focused grip; Reset goes back
     await page.reload();
@@ -183,9 +187,72 @@ test.describe("dictation paused", () => {
     await page.keyboard.press("ArrowDown");
     await expect(page.locator("#q-drafts .q-item").nth(1).locator(".q-main")).toHaveText(second);
     await page.locator('[data-qfilter="drafts"]').click();
-    await pop.locator("[data-qreset]").click();
+    await expect(pop).toContainText("Custom order");
+    await expect(pop.locator('[data-qsort="overdue"]')).toHaveText("Default order");
+    await pop.getByRole("button", { name: "Reset to default order" }).click();
     await expect(drafts).toHaveText(before);
     await expect(pop.locator('[data-qsort="overdue"]')).toHaveClass(/\bon\b/);
+  });
+
+  test("a tile opens its section and brings it into view", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    await page.locator('[data-qjump="follow"]').last().click();
+    await expect(page.locator("#q-follow")).toBeInViewport();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('[data-qjump="drafts"]').click();
+    await expect(page.locator("#q-drafts")).toBeInViewport();
+    // the whole list is shown, nothing held back behind "Show all"
+    await expect(page.locator("#q-drafts .q-more", { hasText: "Show all" })).toHaveCount(0);
+  });
+
+  test("a long list is grouped, items move and pin from their menu, and it all follows the account", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    // enough unsigned notes, of different ages, to pass the grouping threshold
+    await page.evaluate(() => {
+      const S = window.TheraStore, me = S.currentUser(), pid = S.patients()[0].id;
+      for (let i = 0; i < 14; i++) {
+        const r = S.createDoc(pid, "daily", me);
+        const d = (r && r.doc) || r;
+        const when = new Date(); when.setDate(when.getDate() - i * 4); d.createdAt = when.toISOString();
+      }
+      S.save();
+    });
+    await waitForSync(page);
+    await page.reload();
+    const heads = page.locator("#q-drafts [data-qgroup]");
+    await expect(heads.first()).toContainText("Over 30 days old");
+    await expect(heads.first()).toHaveAttribute("aria-expanded", "true");
+    await expect(heads.nth(1)).toHaveAttribute("aria-expanded", "false");
+    await heads.nth(1).click();
+    await expect(page.locator("#q-drafts [data-qgroup]").nth(1)).toHaveAttribute("aria-expanded", "true");
+
+    // pin the second item: it moves into a Pinned group at the top
+    const second = page.locator("#q-drafts .q-item").nth(1);
+    const key = await second.getAttribute("data-qkey");
+    await second.locator("[data-qmenu]").click();
+    await page.locator(".q-menu").getByRole("menuitem", { name: /Pin to top/ }).click();
+    await expect(page.locator(`#q-drafts [data-qpinned] [data-qkey="${key}"]`)).toHaveCount(1);
+
+    // move the first unpinned item to the bottom: the list becomes Custom order
+    const first = page.locator("#q-drafts .q-group:not(.q-pinned) .q-item").first();
+    const fkey = await first.getAttribute("data-qkey");
+    await first.locator("[data-qmenu]").click();
+    await page.locator(".q-menu").getByRole("menuitem", { name: /Move to bottom/ }).click();
+    await expect(page.locator("#q-drafts .q-active")).toContainText("Custom order");
+    await page.locator("#q-drafts [data-qmore]").click();
+    await expect(page.locator("#q-drafts .q-list:not([data-qpinned]) > .q-item").last()).toHaveAttribute("data-qkey", fkey);
+
+    // a fresh browser (signIn clears storage): the pin and the order come back from the account
+    await waitForSync(page);
+    await signIn(page, "maria@therachart.demo");
+    await expect(page.locator(`#q-drafts [data-qpinned] [data-qkey="${key}"]`)).toHaveCount(1);
+    await expect(page.locator("#q-drafts .q-active")).toContainText("Custom order");
+
+    // tidy up for the tests after this one
+    await page.locator(`#q-drafts [data-qpinned] [data-qkey="${key}"] [data-qmenu]`).click();
+    await page.locator(".q-menu").getByRole("menuitem", { name: /Unpin/ }).click();
+    await page.locator("#q-drafts .q-active-x").click();
+    await expect(page.locator("#q-drafts [data-qpinned]")).toHaveCount(0);
   });
 
   test("Back from a chart opened on the dashboard returns to the dashboard", async ({ page }) => {
@@ -239,6 +306,26 @@ test.describe("dictation paused", () => {
     // it leaves the waiting list and shows as answered
     await expect(page.locator("#calRequests > .rq-row", { hasText: "Patient asked for this slot" })).toHaveCount(0);
     await expect(page.locator("#calRequests details")).toContainText("approved");
+  });
+
+  test("an open note keeps its completeness in view while scrolling", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "daily", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.goto(`/#/doc/${docId}`);
+    const pin = page.locator("#notePin");
+    await expect(pin).toBeVisible();
+    const before = await pin.locator(".np-count").textContent();
+    await page.mouse.wheel(0, 3000);
+    await expect(pin).toBeInViewport();
+    await page.locator('textarea[data-field="assessment"]').fill("Tolerated treatment well.");
+    await expect(pin.locator(".np-count")).not.toHaveText(before);
+    // and it leaves with the note
+    await page.goto("/#/dashboard");
+    await expect(pin).toBeHidden();
   });
 
   test("each work-queue section is its own block with a count", async ({ page }) => {

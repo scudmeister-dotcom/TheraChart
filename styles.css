@@ -226,6 +226,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: flex; align-items: center; gap: 11px;
   padding: 20px 18px 16px;
 }
+/* Note completeness, pinned: under the logo on the desktop rail, in the top
+   bar on a phone (see the mobile block). Shown only while a note is open. */
+.note-pin {
+  display: flex; flex-direction: column; gap: 6px; margin: 0 14px 12px; padding: 10px 12px;
+  border-radius: 12px; border: 1px solid var(--side-border); cursor: pointer; text-align: left;
+  background: color-mix(in srgb, #fff 6%, transparent); color: var(--side-fg); font: inherit;
+}
+.note-pin[hidden] { display: none; }
+.note-pin:hover { background: color-mix(in srgb, #fff 11%, transparent); }
+.np-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--side-sub); }
+.np-head .doc-tag { margin: 0; }
+.np-row { display: flex; align-items: center; gap: 10px; }
+.np-track { flex: 1; height: 6px; border-radius: 999px; background: color-mix(in srgb, #fff 16%, transparent); overflow: hidden; }
+.np-fill { display: block; height: 100%; border-radius: 999px; transition: width .35s ease; }
+.np-fill.tone-good { background: var(--good); }
+.np-fill.tone-warn { background: var(--review); }
+.np-fill.tone-muted { background: color-mix(in srgb, #fff 35%, transparent); }
+.np-count { font-size: 12px; color: var(--side-sub); white-space: nowrap; }
+.np-count b { color: var(--side-wordmark); font-size: 13px; }
 .sidebar .brand .logo {
   width: 38px; height: 38px; border-radius: 11px;
   display: grid; place-items: center; flex: none;
@@ -639,6 +658,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: inline-block; padding: 2px 9px; border-radius: 999px;
   font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
 }
+/* Labels read as sentence case — "Sent (logged)", "No note yet", "Overdue ·
+   3 days old" — wherever they come from, including statuses the server writes. */
+.chip::first-letter { text-transform: uppercase; }
 .chip.good { background: var(--good-soft); color: var(--good); }
 .chip.warn { background: var(--review-soft); color: var(--review); }
 .chip.bad { background: var(--danger-soft); color: var(--danger); }
@@ -1263,6 +1285,15 @@ tr.rowlink .doc-tag { margin-right: 6px; }
   padding: 16px 18px; transition: border-color 0.14s, transform 0.12s, box-shadow 0.14s;
 }
 a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+.stat-tile { position: relative; }
+.stat-ico {
+  position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 10px;
+  display: grid; place-items: center; color: var(--ic); background: color-mix(in srgb, var(--ic) 13%, var(--panel));
+}
+.stat-ico.ico-notes { --ic: var(--accent); }
+.stat-ico.ico-visits { --ic: var(--dt-eval); }
+.stat-ico.ico-progress { --ic: var(--dt-progress); }
+.stat-ico.ico-follow { --ic: var(--review); }
 .stat-tile .stat-num { font-size: 30px; font-weight: 700; line-height: 1; letter-spacing: -0.5px; }
 .stat-tile .stat-label { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
 .stat-tile.accent { border-color: color-mix(in srgb, var(--review) 55%, var(--border)); background: color-mix(in srgb, var(--review-soft) 60%, var(--panel)); }
@@ -1545,6 +1576,23 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .slot-free { color: color-mix(in srgb, var(--muted) 70%, transparent); cursor: pointer; border-radius: 7px; padding: 3px 6px; }
 .slot-free:hover { background: var(--accent-soft); color: var(--accent); }
 .slot-free.ask { font-size: 12px; }
+/* reminders: dates on one line; one card per reminder on a phone */
+.rem-table { width: 100%; }
+.rem-table .rem-dt { white-space: nowrap; }
+@media (max-width: 720px) {
+  .rem-table, .rem-table tbody { display: block; }
+  .rem-table thead { display: none; }
+  .rem-table tbody tr {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; padding: 12px 14px; margin-bottom: 10px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
+  }
+  .list.rem-table td { display: block; padding: 0; border: none; min-width: 0; font-size: 13px; }
+  .rem-table .rem-pt { grid-column: 1 / -1; font-size: 15px; }
+  .rem-table td[data-label]::before {
+    content: attr(data-label); display: block; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 1px;
+  }
+}
 
 /* schedule change requests (calendar) */
 .rq-card h2 { display: flex; align-items: center; gap: 8px; }
@@ -2347,6 +2395,12 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   .sidebar .brand-text b { font-size: 15px; }
   .sidebar .brand-text span { font-size: 9px; letter-spacing: 2px; }
   .sidebar .spacer { display: none; }
+  /* in the top bar the pin is a compact pill: type, bar, count */
+  .note-pin { flex: none; flex-direction: row; align-items: center; gap: 8px; margin: 0; padding: 6px 10px; border-radius: 999px; }
+  .note-pin .np-name { display: none; }
+  .note-pin .np-track { width: 54px; flex: none; }
+  /* the logo alone says whose app this is while the pill needs the room */
+  .sidebar:has(.note-pin:not([hidden])) .brand-text { display: none; }
   .sidebar .userchip { border-top: none; margin: 0; padding: 0; gap: 8px; flex: none; }
   .sidebar .userchip .who { display: none; }          /* name shown in the page header instead */
   .sidebar .userchip .avatar { width: 32px; height: 32px; font-size: 12px; }
@@ -3163,7 +3217,7 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
   background: var(--panel); box-shadow: var(--shadow); scroll-margin-top: 16px;
   position: relative; /* no overflow:hidden — the Filter panel hangs below the header */
 }
-.q-section:has(.q-pop) { z-index: 5; }
+.q-section:has(.q-pop), .q-section:has(.q-menu) { z-index: 5; }
 #q-today { --qc: var(--dt-eval); }
 #q-follow { --qc: var(--review); }
 #q-house { --qc: var(--muted); }
@@ -3172,9 +3226,28 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
   background: color-mix(in srgb, var(--qc) 9%, var(--panel));
 }
 .q-section .q-head h3 { font-size: 14.5px; }
-.q-section > .q-list, .q-section > .q-empty, .q-house > .q-list, .q-house > .q-empty { padding: 10px 12px 12px; }
+.q-section > .q-body, .q-section > .q-empty, .q-house > .q-body, .q-house > .q-empty { padding: 10px 12px 12px; }
 .q-house[open] > .q-head { border-bottom: 1px solid var(--border); }
-.q-section > .q-head + .q-list, .q-section > .q-head + .q-empty { border-top: 1px solid var(--border); }
+.q-section > .q-head + .q-body, .q-section > .q-head + .q-empty { border-top: 1px solid var(--border); }
+/* groups inside a long list, and the pinned group on top */
+.q-body { display: flex; flex-direction: column; gap: 8px; }
+.q-body > .q-more { width: 100%; margin: 0; }
+.q-group { display: flex; flex-direction: column; gap: 6px; }
+.q-ghead {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border-radius: 9px;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--qc) 6%, var(--panel));
+  font-size: 12.5px; font-weight: 700; color: var(--ink); cursor: pointer; text-align: left;
+}
+.q-ghead:hover { border-color: var(--qc); }
+.q-ghead.static { cursor: default; background: none; border-style: dashed; }
+.q-ghead.static:hover { border-color: var(--border); }
+.q-gchev { color: var(--muted); width: 12px; }
+.q-gcount { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.q-pinned .q-ghead { border-color: color-mix(in srgb, var(--qc) 45%, var(--border)); background: color-mix(in srgb, var(--qc) 9%, var(--panel)); border-style: solid; }
+/* a tile's target section glows briefly when it opens */
+.q-section.q-flash { animation: q-flash 1.4s ease-out; }
+@keyframes q-flash { 0%, 30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--qc) 45%, transparent), var(--shadow); } 100% { box-shadow: var(--shadow); } }
+@media (prefers-reduced-motion: reduce) { .q-section.q-flash { animation: none; } }
 .q-count {
   font-size: 12px; font-weight: 700; min-width: 22px; padding: 1px 8px; border-radius: 999px; text-align: center;
   background: var(--qc); color: #fff;
@@ -3208,13 +3281,27 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
 .q-pop .fchip.on { background: var(--qc); border-color: var(--qc); color: #fff; }
 .q-pop select { min-height: var(--control-h); font-size: 13px; padding: 4px 8px; border-radius: 8px; }
 .q-pop-tip { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.q-pop-tip.q-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--ink); }
 .q-pop-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 @media (max-width: 640px) {
   /* on a phone the panel spans the card instead of hanging off the button */
   .q-filter-wrap { position: static; }
   .q-pop { left: 10px; right: 10px; width: auto; top: auto; margin-top: 8px; }
 }
-.q-item { display: flex; align-items: center; gap: 2px; }
+.q-item { display: flex; align-items: center; gap: 2px; position: relative; }
+.q-menu-btn {
+  flex: none; border: none; background: none; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1;
+  padding: 6px 6px; margin-right: -6px; border-radius: 6px; opacity: .55;
+}
+.q-item:hover .q-menu-btn, .q-menu-btn:focus-visible, .q-menu-btn[aria-expanded="true"] { opacity: 1; }
+.q-menu-btn:hover, .q-menu-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.q-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 25; min-width: 180px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 14px 34px rgba(15, 23, 42, .18);
+  display: flex; flex-direction: column;
+}
+.q-menu button { border: none; background: none; text-align: left; padding: 9px 10px; border-radius: 8px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.q-menu button:hover, .q-menu button:focus-visible { background: var(--hover); }
 .q-item > .q-row { flex: 1; min-width: 0; }
 .q-grip {
   flex: none; align-self: center; border: none; background: none; cursor: grab;

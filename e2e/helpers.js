@@ -9,7 +9,17 @@ const { expect } = require("@playwright/test");
     and /api/login refuses them outright while the demo picker is available.
     Clicking a row is the only way in, and it is the way a demo visitor comes
     in too, which makes it the more faithful thing to test. */
+/** Wait until every local change has reached the server. Saves — notes,
+    queue preferences — are pushed in the background, so a test that changes
+    something and then reloads or signs in afresh must let the push land
+    first, or the server still holds the old state. */
+async function waitForSync(page) {
+  await page.waitForFunction(() => !window.TheraSync || !window.TheraSync.token || window.TheraSync.dirty === 0, null, { timeout: 15_000 });
+}
+
 async function signIn(page, email) {
+  // the previous test's last change must reach the server before we sign out
+  if (page.url().startsWith("http")) await waitForSync(page).catch(() => {});
   await page.goto("/");
   /* Sign the previous test's user out FIRST, through the app's own button.
 
@@ -48,4 +58,4 @@ async function signIn(page, email) {
   await expect(page.getByText(/Good day,/i)).toBeVisible();
 }
 
-module.exports = { signIn };
+module.exports = { signIn, waitForSync };
