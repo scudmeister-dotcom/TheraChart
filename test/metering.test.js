@@ -63,8 +63,9 @@ async function metered(usageMetadata) {
      through /api/demo-signin, which authorises the CALLER rather than checking
      a secret. So this file needs the demo present in order to get a session,
      and reads the seeded admin as what she is: an ordinary clinic admin, not
-     the platform owner. */
-  const s = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+     the platform owner. Dictation is paused by default; this file meters
+     /api/stt, so it runs with it on. */
+  const s = await startServer({ THERACHART_DEMO_LOGINS: "1", THERACHART_DICTATION: "1" });
 
   try {
     const maria = (await s.demoSignIn("u-maria")).data.token;

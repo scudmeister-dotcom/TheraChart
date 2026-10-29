@@ -13,6 +13,13 @@ const { defineConfig, devices } = require("@playwright/test");
 
 const PORT = Number(process.env.E2E_PORT || 8123);
 const DATA = "/tmp/therachart-e2e";
+/* Dictation is paused by default (THERACHART_DICTATION, see server.js). The
+   specs that drive the recorder and the pairing need it on, so they get their
+   own server; everything else runs against the default build, the one a
+   clinic actually sees. */
+const PAUSED_PORT = PORT + 1;
+const PAUSED_DATA = "/tmp/therachart-e2e-paused";
+const DICTATION_SPECS = /(recording|codeswitch|pairing)\.spec\.js$/;
 
 module.exports = defineConfig({
   testDir: "./e2e",
@@ -35,19 +42,29 @@ module.exports = defineConfig({
     video: "off",
   },
 
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "paused", testIgnore: DICTATION_SPECS, use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${PAUSED_PORT}` } },
+    { name: "dictation", testMatch: DICTATION_SPECS, use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${PORT}` } },
+  ],
 
-  webServer: {
+  webServer: [{
     /* THERACHART_DEMO_LOGINS=1 because the seeded demo accounts hold no
        password (store.stripDemoCredentials runs on every boot), and /api/login
        refuses them outright on a server that offers the picker. The picker IS
        the door now — so the tests have to come in through it, the same way a
        demo visitor does. */
-    command: `rm -rf ${DATA} && mkdir -p ${DATA} && THERACHART_DATA=${DATA} PORT=${PORT} THERACHART_DEMO_LOGINS=1 GEMINI_API_KEY= GCP_PROJECT= node server.js`,
+    command: `rm -rf ${DATA} && mkdir -p ${DATA} && THERACHART_DATA=${DATA} PORT=${PORT} THERACHART_DEMO_LOGINS=1 THERACHART_DICTATION=1 GEMINI_API_KEY= GCP_PROJECT= node server.js`,
     url: `http://127.0.0.1:${PORT}/api/ping`,
     reuseExistingServer: false,  // always a clean, seeded database
     timeout: 30_000,
     stdout: "ignore",
     stderr: "pipe",
-  },
+  }, {
+    command: `rm -rf ${PAUSED_DATA} && mkdir -p ${PAUSED_DATA} && THERACHART_DATA=${PAUSED_DATA} PORT=${PAUSED_PORT} THERACHART_DEMO_LOGINS=1 GEMINI_API_KEY= GCP_PROJECT= node server.js`,
+    url: `http://127.0.0.1:${PAUSED_PORT}/api/ping`,
+    reuseExistingServer: false,
+    timeout: 30_000,
+    stdout: "ignore",
+    stderr: "pipe",
+  }],
 });

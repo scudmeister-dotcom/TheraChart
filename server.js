@@ -186,6 +186,19 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || ai.DEFAULT_MODEL;
 const GEMINI_INSIGHTS_MODEL = process.env.GEMINI_INSIGHTS_MODEL || ai.DEFAULT_INSIGHTS_MODEL;
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_VERTEX = /^(1|true|yes|on)$/i.test(process.env.GEMINI_VERTEX || "");
+
+/* Dictation is PAUSED by default (2026-10-28). The product is being built
+   around typed findings — a therapist types what the patient reports and
+   what they measured, and the local parser files it and pins the body map —
+   so speech-to-text, the recorder and every microphone control are switched
+   off and hidden unless THERACHART_DICTATION=1. The code and its tests are
+   kept whole so turning it back on is this one setting, not a restore.
+
+   Off means off on the server too, not just hidden in the page: /api/stt
+   refuses, and STT reports unavailable, so nothing can bill Speech-to-Text
+   while the feature is paused. The AI writing helpers (review/polish, insights,
+   the assistant) are separate and follow the Gemini configuration as before. */
+const DICTATION_ENABLED = /^(1|true|yes|on)$/i.test(process.env.THERACHART_DICTATION || "");
 // Gemini 3.x publisher models are served from the "global" Vertex location —
 // regional endpoints (e.g. us-central1) 404 on them. Pin GEMINI_LOCATION only
 // if data residency requires it AND the models exist in that region.
@@ -535,7 +548,7 @@ function publicState() {
    Records predating tenancy carry no clinicId; they belong to the demo
    clinic, matching store.js's own fallback. Keep the two in step. */
 const DEFAULT_CLINIC = "clinic-demo";
-const TENANT_COLLECTIONS = ["patients", "documents", "appointments", "audit", "accessRequests", "users"];
+const TENANT_COLLECTIONS = ["patients", "documents", "appointments", "audit", "accessRequests", "scheduleRequests", "users"];
 const clinicOf = (rec) => (rec && rec.clinicId) || DEFAULT_CLINIC;
 const clinicOfUser = (user) => (user && user.clinicId) || DEFAULT_CLINIC;
 const sameClinic = (rec, user) => clinicOf(rec) === clinicOfUser(user);
@@ -602,6 +615,38 @@ function graftPushedState(pushed, user) {
   }
   if (dropped) console.warn(`[tenancy] dropped ${dropped} record(s) from another clinic in a push by ${user.id}`);
 
+  /* The schedule is changed only by the admin or the front desk
+     (store.canEditSchedule). The page hides the controls from everyone else,
+     but a push is just JSON, so anyone else's appointments are replaced by
+     the saved ones here: a therapist's device can read the calendar, never
+     write it. */
+  const mineOf = (k) => (server[k] || []).filter((r) => clinicOf(r) === cid);
+  const othersOf = (k) => (out[k] || []).filter((r) => clinicOf(r) !== cid);
+  if (!store.canEditSchedule(user)) out.appointments = othersOf("appointments").concat(mineOf("appointments"));
+
+  /* Schedule requests: start from what the server holds, so a push can never
+     delete one, then accept only the changes this person may make — a new
+     pending request of their own, withdrawing their own, or (admin / front
+     desk) answering one. */
+  {
+    const saved = new Map(mineOf("scheduleRequests").map((r) => [r.id, r]));
+    const pushedReqs = (out.scheduleRequests || []).filter((r) => r && clinicOf(r) === cid);
+    const scheduler = store.canEditSchedule(user);
+    for (const r of pushedReqs) {
+      if (!r.id || typeof r.id !== "string") continue;
+      const prior = saved.get(r.id);
+      if (!prior) {
+        if (r.requestedBy === user.id && r.status === "pending") saved.set(r.id, { ...r, clinicId: cid });
+        continue;
+      }
+      if (prior.status !== "pending") continue; // answered requests are final
+      const withdrawing = r.status === "withdrawn" && prior.requestedBy === user.id;
+      const answering = scheduler && (r.status === "approved" || r.status === "declined");
+      if (withdrawing || answering) saved.set(r.id, { ...prior, ...r, requestedBy: prior.requestedBy, clinicId: cid });
+    }
+    out.scheduleRequests = othersOf("scheduleRequests").concat([...saved.values()]);
+  }
+
   /* Signed notes are append-only records. store.js's offline merge already
      says "a signed status always beats a draft" and unions signatures and
      amendments — but that only governs the merge path, so a straight PUT could
@@ -647,6 +692,11 @@ function graftPushedState(pushed, user) {
       if (mayEdit && Object.prototype.hasOwnProperty.call(pushedUser, f)) continue;
       if (Object.prototype.hasOwnProperty.call(existing, f)) merged[f] = existing[f];
       else delete merged[f];
+    }
+    // display preferences are each person's own: nobody else's push sets them
+    if (pushedUser.id !== user.id) {
+      if (Object.prototype.hasOwnProperty.call(existing, "prefs")) merged.prefs = existing.prefs;
+      else delete merged.prefs;
     }
     merged.clinicId = cid; // never movable by a push, even by an admin
     reconciled.push(merged);
@@ -859,7 +909,7 @@ function gcloudPath() {
   ].find((p) => p && fs.existsSync(p)) || null;
   return _gcloudBin;
 }
-function sttConfigured() { return !!(GCP_PROJECT && sttCredentialSource()); }
+function sttConfigured() { return DICTATION_ENABLED && !!(GCP_PROJECT && sttCredentialSource()); }
 function sttStatus() { return { available: sttConfigured(), models: Object.keys(STT_MODELS), location: STT_LOCATION }; }
 
 // ---- OAuth access token (cached until shortly before expiry) ----
@@ -1412,7 +1462,7 @@ const server = http.createServer(async (req, res) => {
   try {
     /* ---------- API ---------- */
     if (url.pathname === "/api/ping") {
-      return json(res, 200, { ok: true, server: "therachart", rev, stt: sttStatus(), refine: geminiActive() ? "gemini" : "unavailable" });
+      return json(res, 200, { ok: true, server: "therachart", rev, dictation: DICTATION_ENABLED, stt: sttStatus(), refine: geminiActive() ? "gemini" : "unavailable" });
     }
     if (url.pathname === "/api/bootstrap") {
       return json(res, 200, bootstrapInfo());
@@ -1440,7 +1490,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/ai-status") {
       const mode = geminiActive() ? "gemini" : "unavailable";
       // assistant is model-only (no local fallback): available only when Gemini/Vertex is configured
-      return json(res, 200, { refine: mode, insights: mode, assistant: geminiActive() ? mode : "unavailable", model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), stt: sttStatus() });
+      return json(res, 200, { refine: mode, insights: mode, assistant: geminiActive() ? mode : "unavailable", model: GEMINI_MODEL, insightsModel: GEMINI_INSIGHTS_MODEL, provider: vertexConfigured() ? "vertex" : (activeGeminiKey() ? "api" : "local"), engine: geminiEngineDesc(), dictation: DICTATION_ENABLED, stt: sttStatus() });
     }
     if (url.pathname === "/api/login" && req.method === "POST") {
       const body = await readBody(req);
@@ -2196,6 +2246,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (url.pathname === "/api/stt" && req.method === "POST") {
+        if (!DICTATION_ENABLED) return json(res, 404, { error: "Dictation is turned off on this server." });
         const lang = (url.searchParams.get("lang") || STT_LANG_DEFAULT).replace(/[^a-z-]/gi, "");
         // digits must survive the scrub or "chirp2" arrives as "chirp" — an
         // unknown key, so the clinic would get the fallback model with no sign
@@ -2441,7 +2492,7 @@ async function start() {
     console.log(`  files: ${filesInfo.backend === "gcs" ? `Google Cloud Storage (bucket ${filesInfo.bucket})` : filesInfo.dir + " (local disk — ephemeral on Cloud Run; set GCS_BUCKET)"}`);
     console.log(`  reminders: checking every 60s${process.env.REMINDER_WEBHOOK ? " → " + process.env.REMINDER_WEBHOOK : " (logged; set REMINDER_WEBHOOK to deliver)"}`);
     console.log(`  AI cleanup: ${geminiEngineDesc()}${geminiActive() ? ` — refine/extract: ${GEMINI_MODEL} · insights: ${GEMINI_INSIGHTS_MODEL}` : ""}`);
-    console.log(`  dictation: ${sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
+    console.log(`  dictation: ${!DICTATION_ENABLED ? "PAUSED — hidden in the app, /api/stt refused (set THERACHART_DICTATION=1 to bring it back)" : sttConfigured() ? `Google Cloud Speech-to-Text (project ${GCP_PROJECT}, ${STT_LOCATION})` : "browser engine only (set GCP_PROJECT + credentials for Google Cloud STT — see GOOGLE_SETUP.md)"}`);
     console.log(`  audio review (default clinic): ${audioReviewOn(DEFAULT_CLINIC) ? `ON — consented segments kept up to ${audioReviewDays(DEFAULT_CLINIC)} days in ${filesInfo.backend === "gcs" ? "Cloud Storage" : "local files"}, then auto-deleted` : "off (no audio stored)"}`);
     audioSweep().catch((e) => console.error("[audio] initial sweep failed:", e.message));
   });

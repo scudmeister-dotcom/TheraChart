@@ -45,6 +45,18 @@
       "autoPort": true
     },
     {
+      "name": "therachart-local-pg-noai",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "THERACHART_DEMO_LOGINS=1",
+        "DATABASE_URL=postgresql://therachart:localdev@localhost:5432/therachart",
+        "node",
+        "server.js"
+      ],
+      "port": 8080,
+      "autoPort": true
+    },
+    {
       "name": "therachart-invite",
       "runtimeExecutable": "env",
       "runtimeArgs": [

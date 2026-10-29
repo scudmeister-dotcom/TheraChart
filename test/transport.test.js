@@ -109,7 +109,8 @@ function rawGet(base, path, headers) {
      bites: a scrub of [^a-z_] turns it into "chirp", and a clinic transcribing
      on a fallback model sees no error, just worse Taglish. */
   {
-    const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1" });
+    // dictation is paused by default, so the routing it checks needs it on
+    const s2 = await startServer({ THERACHART_DEMO_LOGINS: "1", THERACHART_DICTATION: "1" });
     try {
       const login = await s2.demoSignIn("u-maria"); // demo box: entered from the panel
       const token = login.data.token;

@@ -184,7 +184,7 @@ const OTHER = { "fil-PH": "ceb-PH", "ceb-PH": "fil-PH" };
     /id="st-lang"/.test(SRC) && /Dictation language for this clinic/.test(SRC));
 
   r.check("…and saves it guarded to the two codes Chirp 2 is offered",
-    /dictationLang: document\.getElementById\("st-lang"\)\.value === "ceb-PH" \? "ceb-PH" : "fil-PH",/.test(SRC),
+    /patch\.dictationLang = langSel\.value === "ceb-PH" \? "ceb-PH" : "fil-PH";/.test(SRC),
     "an unguarded save lets a stale value become what every new device starts on");
 
   r.check("the note's <select> opens on the pairing it will actually send",

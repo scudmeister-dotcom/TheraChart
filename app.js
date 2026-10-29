@@ -38,11 +38,26 @@
     }[c]));
 
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+  /* Dictation is paused unless the server turns it on (THERACHART_DICTATION=1,
+     see DICTATION_ENABLED in server.js). Every microphone control, recorder,
+     language picker and dictation-only setting asks this before it draws, so
+     with it off the app is a typed-findings EMR with no trace of the mic. */
+  const dictationOn = () => !!(window.TheraSync && window.TheraSync.dictation);
   const fmtDate = (iso) =>
     iso ? new Date(iso).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "—";
   const fmtTime = (iso) =>
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
+  // "Oct 29 · 7:00 AM" — the year only when it isn't this one, for tight tables
+  const fmtShortDT = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    const opts = { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) };
+    return `${d.toLocaleDateString([], opts)} · ${fmtTime(iso)}`;
+  };
+  // reminder channels are stored as "email+sms" / "sms"; shown as words
+  const channelLabel = (m) => String(m || "").split("+").map((x) => (x.trim().toLowerCase() === "sms" ? "SMS" : x.trim().charAt(0).toUpperCase() + x.trim().slice(1))).join(" + ");
   const fmtBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B");
   /* Money, always with its sign. Whole pesos read as whole pesos; a price
      with centavos keeps both digits rather than being rounded into a figure
@@ -94,7 +109,8 @@
   /* scroll memory: return to where you were when navigating back */
   const scrollMem = {};
   function restoreScroll(hash) {
-    requestAnimationFrame(() => window.scrollTo(0, scrollMem[hash] || 0));
+    // same key the scroll listener writes: the bare home URL is "#/dashboard"
+    requestAnimationFrame(() => window.scrollTo(0, scrollMem[hash || "#/dashboard"] || 0));
   }
 
   function showModal(html) {
@@ -511,6 +527,33 @@
     setTimeout(finish, reduce ? 350 : 1500);
   }
 
+  /* Where the current visit to a chart began. Opening a patient from the
+     dashboard and pressing Back should land on the dashboard, not on the
+     Patients list the user never looked at — so the trail into a patient,
+     note or intake starts at whichever top-level screen they came in from,
+     and the sidebar/tab bar keep that screen highlighted. Set on each
+     hashchange (see boot); a chart opened by typed URL or reload starts at
+     Patients, as before. */
+  const CHART_ROUTES = ["patient", "doc", "intake"];
+  const ORIGINS = {
+    dashboard: { label: "Dashboard", hash: "#/dashboard" },
+    patients: { label: "Patients", hash: "#/patients" },
+    drafts: { label: "Unsigned drafts", hash: "#/drafts" },
+    calendar: { label: "Calendar", hash: "#/calendar" },
+  };
+  let chartOrigin = ORIGINS.patients;
+  let prevHash = "";
+  const routeOf = (hash) => ((hash || "").replace(/^#\//, "").split("/")[0] || "dashboard").split("?")[0];
+  function noteNavigation(from, to) {
+    prevHash = from === "" || from === "#/" ? "#/dashboard" : from; // home is reached at #/ too
+    if (CHART_ROUTES.includes(routeOf(to)) && !CHART_ROUTES.includes(routeOf(from))) {
+      chartOrigin = ORIGINS[routeOf(from)] || ORIGINS.patients;
+    }
+  }
+  // which main nav entry is "where we are": a chart counts under its origin
+  const navActive = (navHash, hash) => hash.startsWith(navHash) ||
+    (CHART_ROUTES.includes(routeOf(hash)) && navHash === chartOrigin.hash);
+
   /* Breadcrumb trail for the current location — powers the back button and
      the "remember where I was" navigation inside a patient. */
   function breadcrumbFor(hash, user) {
@@ -522,13 +565,13 @@
       if (p) trail.push({ label: S.patientName(p), hash: `#/patient/${pid}` });
     };
     if (route === "patients") trail.push({ label: "Patients", hash: "#/patients" });
-    else if (route === "patient") { trail.push({ label: "Patients", hash: "#/patients" }); patientCrumb((seg[1] || "").split("?")[0]); }
+    else if (route === "patient") { trail.push(chartOrigin); patientCrumb((seg[1] || "").split("?")[0]); }
     else if (route === "doc") {
       const d = S.getDoc(seg[1]);
-      trail.push({ label: "Patients", hash: "#/patients" });
+      trail.push(chartOrigin);
       if (d) { patientCrumb(d.patientId); trail.push({ label: d.title, hash }); }
     } else if (route === "intake") {
-      trail.push({ label: "Patients", hash: "#/patients" });
+      trail.push(chartOrigin);
       const editId = (hash.split("?edit=")[1] || "").trim();
       if (editId) { patientCrumb(editId); trail.push({ label: "Edit info", hash }); }
       else trail.push({ label: "New intake", hash });
@@ -553,8 +596,7 @@
       if (n.adminOnly && user.role !== "admin") return "";
       if (n.ownerOnly && !isOwner()) return "";
       const disabled = n.emr && !emrAllowed;
-      const active = hash.startsWith(n.hash) ||
-        (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
+      const active = navActive(n.hash, hash);
       return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
         <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span></a>`;
     };
@@ -566,8 +608,7 @@
     // --- mobile bottom bar: the three main workflow destinations as a
     //     segmented pill slider, with a highlight that slides to where we are.
     const primaryNav = NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash));
-    const isTabActive = (n) => hash.startsWith(n.hash) ||
-      (n.hash === "#/patients" && /^#\/(patient\/|intake|doc\/)/.test(hash));
+    const isTabActive = (n) => navActive(n.hash, hash);
     const activeTabIdx = primaryNav.findIndex(isTabActive);
     const tabbar = `
       <nav class="tabbar" style="--tab-count:${primaryNav.length}; --tab-index:${activeTabIdx < 0 ? 0 : activeTabIdx}">
@@ -601,7 +642,6 @@
     const canBack = crumbs.length > 1;
     const crumbBar = crumbs.length ? `
       <div class="crumbbar">
-        ${canBack ? `<button class="crumb-back" id="crumbBack" title="Back">${ICON.back}<span>Back</span></button>` : ""}
         <nav class="crumbs">${crumbs.map((c, i) =>
           i === crumbs.length - 1
             ? `<span class="crumb current">${esc(c.label)}</span>`
@@ -616,7 +656,9 @@
       <div class="brand">
         <div class="logo">${ICON.logo}</div>
         <div class="brand-text"><b>Thera<em>Chart</em></b><span>Clinic EMR</span></div>
+        ${canBack ? `<button class="nav-back" id="crumbBack" type="button" title="Back" aria-label="Back">${ICON.back}<span>Back</span></button>` : ""}
       </div>
+      <button class="note-pin" id="notePin" type="button" hidden></button>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
       <div class="nav">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
@@ -676,7 +718,13 @@
     // paint the top-bar sync dot with the live connection state
     if (window.TheraSync && window.TheraSync.refreshBadge) window.TheraSync.refreshBadge();
     const back = document.getElementById("crumbBack");
-    if (back) back.addEventListener("click", () => { location.hash = crumbs[crumbs.length - 2].hash; });
+    /* Back returns to the screen the user actually came from when it is on
+       this trail (a draft opened straight from the dashboard goes back to the
+       dashboard, not to the patient's chart); otherwise one step up the trail. */
+    if (back) back.addEventListener("click", () => {
+      const prev = crumbs.slice(0, -1).find((c) => c.hash === prevHash);
+      location.hash = (prev || crumbs[crumbs.length - 2]).hash;
+    });
     if (bind) bind(user);
     if (drawerPid) wireAssistantDrawer(drawerPid, user);
     restoreScroll(hash);
@@ -813,6 +861,9 @@
   });
 
   function renderLanding() {
+    // dictation is paused unless the server turns it on; the page only
+    // promises what the app in front of the visitor actually does
+    const voice = dictationOn();
     const privacyPoint = (icon, title, body) => `
       <div class="lp-privacy-card">
         <div class="lp-privacy-ico">${icon}</div>
@@ -855,25 +906,33 @@
   <section class="lp-hero">
     <div class="lp-hero-copy">
       <div class="lp-eyebrow">Physical therapy EMR · built for the clinic floor</div>
-      <h1>Chart by voice.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
-      <p class="lp-lead">Press <b>Listen &amp; dictate live</b> and speak the way you normally would. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English and Tagalog together, or English and Cebuano together</b>, both languages understood in the same sentence. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>
+      ${voice ? `<h1>Chart by voice.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
+      <p class="lp-lead">Press <b>Listen &amp; dictate live</b> and speak the way you normally would. TheraChart pins what the patient says to a body map, files ROM, strength and pain into the right fields, and keeps the full transcript — in <b>English and Tagalog together, or English and Cebuano together</b>, both languages understood in the same sentence. Then ask its AI assistant anything about the patient, answered <b>only</b> from that patient's own chart.</p>` : `<h1>Chart it once.<br>Map the body.<br><span class="lp-accent">Trust the record.</span></h1>
+      <p class="lp-lead">Type what the patient reports and what you measured, the way you'd write it on paper. TheraChart pins each finding to a body map, files ROM, strength and pain into the right fields, and keeps every patient's evaluations, daily notes and progress reports in one place — with a clinic dashboard that shows exactly what is still outstanding.</p>`}
       <div class="lp-cta">
         <button class="btn primary lp-cta-btn" id="lpStart">Sign in to get started</button>
         <button class="btn ghost lp-cta-btn" data-open-walkthrough type="button">See how it works</button>
       </div>
-      <div class="lp-trust">🔒 Records live in an <b>encrypted Google Cloud database</b> under a signed data protection agreement, with your clinic's charts walled off from every other clinic's by a check on the server. Dictation audio is transcribed and discarded by default, and Google's Vertex AI terms bar your patients' data from training its models.</div>
+      <div class="lp-trust">🔒 Records live in an <b>encrypted Google Cloud database</b> under a signed data protection agreement, with your clinic's charts walled off from every other clinic's by a check on the server. ${voice ? "Dictation audio is transcribed and discarded by default, and " : ""}Google's Vertex AI terms bar your patients' data from training its models.</div>
     </div>
     <div class="lp-hero-shot">
-      <img src="marketing-screenshots/walkthrough/05-dictation-body-map.jpg" alt="TheraChart dictation and body map" loading="lazy" />
+      ${voice
+        ? `<img src="marketing-screenshots/walkthrough/05-dictation-body-map.jpg" alt="TheraChart dictation and body map" loading="lazy" />`
+        : `<img src="marketing-screenshots/walkthrough/02-patient-overview.jpg" alt="TheraChart patient chart" loading="lazy" />`}
     </div>
   </section>
 
   <section class="lp-features" id="features">
     <h2 class="lp-section-title">Everything a session needs — in one flow</h2>
     <div class="lp-feature-grid">
-      ${feature("🎤", "Voice-first dictation", "Speak naturally. Findings pin to the body map and measurements sort themselves into ROM, MMT, special tests and pain — no typing between patients.")}
+      ${voice
+        ? feature("🎤", "Voice-first dictation", "Speak naturally. Findings pin to the body map and measurements sort themselves into ROM, MMT, special tests and pain — no typing between patients.")
+        : feature("✍", "Findings in, chart filed", "Type a finding once — “sharp pain left knee 6/10”, “knee flexion 110 degrees” — and it is pinned to the body map and sorted into ROM, MMT, special tests and pain.")}
       ${feature("🗺️", "Body-mapped findings", "Every symptom lands on a front/back body map with severity, so the whole picture is visible at a glance — and carries onto the printed chart as a labelled list of findings.")}
-      ${feature("🌐", "Bilingual dictation", "Choose <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — your clinic's pairing is the default on every device, any note can change it, and if a visit comes back sounding like the other language the note says so and offers to switch.")}
+      ${voice
+        ? feature("🌐", "Bilingual dictation", "Choose <b>English &amp; Tagalog</b> or <b>English &amp; Cebuano</b> — your clinic's pairing is the default on every device, any note can change it, and if a visit comes back sounding like the other language the note says so and offers to switch.")
+        : feature("📋", "Outstanding work, at a glance", "One dashboard for unsigned notes, progress reports due, expiring authorisations and today's visits — and a search that finds any patient or therapist from one box.")}
+      ${!voice ? feature("✦", "Optional AI polish", "When you want it, AI rewrites your entries into clear, professional note sections. You see every change and choose what to keep — the note is complete without it.") : ""}
       ${feature("✦", "Grounded AI assistant", "Ask about a patient's history, trends or precautions. Answers are drawn strictly from that patient's records — it cites its sources and says so when something isn't documented.")}
       ${feature("📈", "Clinical insights", "Cross-visit connections, ROM/pain trends and red flags surfaced as decision support for a licensed PT — never a diagnosis.")}
       ${feature("🛡️", "Privacy by design", "Your own database, walled off per clinic. E-signed notes that lock, amendments that are authorised and audited, and a plain-English page naming exactly which data leaves the clinic and where it goes.")}
@@ -902,7 +961,7 @@
         Every record carries the clinic it belongs to, and every read is filtered by the signed-in user's clinic
         <b>on the server</b> — not hidden in the screen, where a determined browser could go round it.
         It is the single most tested thing in this application.`)}
-      ${privacyPoint("🎤", "The audio is gone before the note is saved", `
+      ${!voice ? "" : privacyPoint("🎤", "The audio is gone before the note is saved", `
         Dictation streams to Google Speech-to-Text, comes back as text, and the audio is discarded from memory —
         only the transcript reaches the chart. A clinic can turn on a short review window for
         <b>consenting patients only</b>; it is off unless someone deliberately turns it on, and the audio is
@@ -932,14 +991,14 @@
     <p class="lp-privacy-lead">The practical questions, before the price. Nothing here needs an IT person.</p>
     <div class="lp-start-grid">
       <div class="lp-start-card">
-        <h3>A browser and a microphone</h3>
+        <h3>${voice ? "A browser and a microphone" : "Just a browser"}</h3>
         <p>Nothing to install and no server to run. TheraChart opens in any current browser on a laptop, tablet or phone,
-          and adds itself to the home screen so it launches like an app. Dictation uses the device's own microphone —
-          a laptop's built-in one is enough in an ordinary treatment room.</p>
+          and adds itself to the home screen so it launches like an app.${voice ? ` Dictation uses the device's own microphone —
+          a laptop's built-in one is enough in an ordinary treatment room.` : ""}</p>
       </div>
       <div class="lp-start-card">
         <h3>A connection, for the parts that need one</h3>
-        <p>Dictation and the AI run on the server, so those need internet. Charts already on the device stay readable
+        <p>${voice ? "Dictation and the AI run" : "Syncing and the optional AI run"} on the server, so those need internet. Charts already on the device stay readable
           without it, and anything written while the connection is down is counted and merged the moment it returns —
           the sign-in screen tells you which of the two you are in.</p>
       </div>
@@ -961,7 +1020,7 @@
 
   <section class="lp-pricing" id="pricing">
     <h2 class="lp-section-title">Pricing</h2>
-    <p class="lp-pricing-lead">One price per clinic, not per therapist. Every plan includes the AI — dictation, the note it writes, the chart review and the assistant. Add as many staff as you need.</p>
+    <p class="lp-pricing-lead">One price per clinic, not per therapist. ${voice ? "Every plan includes the AI — dictation, the note it writes, the chart review and the assistant." : "Every plan includes the optional AI — note polish, the chart review and the assistant."} Add as many staff as you need.</p>
 
     <div class="lp-tiers">
       ${tier("Solo", 3450, 130, "A single practitioner starting out.", false)}
@@ -970,7 +1029,7 @@
       ${tier("Group", 32900, 1450, "Several branches under one organisation.", false)}
     </div>
 
-    <div class="lp-price-notes">
+    ${voice ? `<div class="lp-price-notes">
       <div class="lp-price-note">
         <b>Two things are included, counted separately.</b> A visit counts once, whether the note was dictated or typed. Dictation is a <b>single monthly pool</b> — your visits × 6 minutes, yours in full from the 1st — so it makes no difference whether you do many short visits or a few long evaluations. You are only past your plan on the one you actually exceed.
       </div>
@@ -980,7 +1039,14 @@
       <div class="lp-price-note">
         <b>Past your plan:</b> ₱42 per extra visit, ₱7 per extra dictation minute. Both reset monthly and neither rolls over. Going over is meant to be a signal rather than a bill — if it happens two months running, move up a plan.
       </div>
-    </div>
+    </div>` : `<div class="lp-price-notes">
+      <div class="lp-price-note">
+        <b>Priced by visits.</b> A visit counts once, however long the note. You are only past your plan when you actually exceed your visits for the month.
+      </div>
+      <div class="lp-price-note">
+        <b>Past your plan:</b> ₱42 per extra visit. It resets monthly and does not roll over. Going over is meant to be a signal rather than a bill — if it happens two months running, move up a plan.
+      </div>
+    </div>`}
     <div class="lp-price-foot">Prices in Philippine pesos, per clinic per month. No per-seat fee and no separate charge for AI.</div>
   </section>
 
@@ -1116,11 +1182,11 @@ ${walkthroughMarkup()}`;
     <p class="bug-intro">Every report makes the app better for the clinicians who use it next — thank you for taking the time. Nothing here is too small to send.</p>
 
     <div class="field"><label for="bugSummary">What happened? *</label>
-      <textarea id="bugSummary" rows="2" placeholder="e.g. The measurement table stayed empty after I dictated the knee angles"></textarea></div>
+      <textarea id="bugSummary" rows="2" placeholder="e.g. The measurement table stayed empty after I typed the knee angles"></textarea></div>
     <div class="field"><label for="bugExpected">What did you expect instead?</label>
       <textarea id="bugExpected" rows="2" placeholder="e.g. I expected to see 120 degrees of knee flexion listed"></textarea></div>
     <div class="field"><label for="bugSteps">What were you doing just before?</label>
-      <textarea id="bugSteps" rows="2" placeholder="e.g. Opened a patient chart, started a daily note, pressed Listen and read out two measurements"></textarea></div>
+      <textarea id="bugSteps" rows="2" placeholder="e.g. Opened a patient chart, started a daily note, typed two measurements and pressed Add to note"></textarea></div>
 
     <div class="field"><label>How much does it get in your way?</label>
       <div class="bug-sevs" id="bugSevs">${BUG_SEVERITIES.map((sv, i) =>
@@ -1490,7 +1556,31 @@ ${walkthroughMarkup()}`;
     },
   ];
 
+  /* The same tour with dictation paused: the steps that described speaking
+     describe typing instead, so the tour never shows a control the app has
+     hidden. Only the words change — the screenshots are still the dictation
+     build's and want recapturing. */
+  const WALKTHROUGH_TYPED = {
+    "05-dictation-body-map": {
+      title: "Type the findings once. The chart files them.",
+      here: "Type what the patient reports and what you found into <b>Add findings</b> — <i>“sharp pain in the left knee, 6/10, worse on stairs”</i>. The body area is pinned on the map with its severity, the pain score goes to the measurement table, and the sentence lands in the right section of the note.",
+      where: "Inside any note · <b>Findings &amp; body map</b>, top left",
+    },
+    "06-measurements-filed": {
+      here: 'Type <i>"right shoulder abduction 90 degrees, external rotation 45, deltoid strength 4 over 5"</i> and all three land as separate, labelled measurements — joint, motion, side and value — without you naming the joint twice.',
+    },
+    "07-ai-review": {
+      title: "An optional second read before you sign.",
+      here: "When you want it, the AI reads your entries and offers a cleaner, more professional version of each section. <b>You approve every line</b> — nothing enters the chart until you accept it and sign, and the note is complete without it.",
+      where: "Inside any note · <b>✦ Polish wording with AI</b>",
+    },
+  };
+  const walkthroughSteps = () => (dictationOn()
+    ? WALKTHROUGH
+    : WALKTHROUGH.map((s) => Object.assign({}, s, WALKTHROUGH_TYPED[s.shot] || {})));
+
   function walkthroughMarkup() {
+    const WALKTHROUGH = walkthroughSteps();
     const slides = WALKTHROUGH.map((s, i) => `
       <figure class="wt-slide ${i === 0 ? "on" : ""}" data-wt-slide="${i}" ${i === 0 ? "" : 'aria-hidden="true"'}>
         <div class="wt-shotwrap">
@@ -1889,75 +1979,763 @@ ${walkthroughMarkup()}`;
 
   /* ================= DASHBOARD ================= */
 
-  function dashboardView(user) {
+  /* Whose work the dashboard shows: "me", "clinic", or a staff id picked from
+     the search. A therapist starts on their own queue and front desk/admin
+     accounts start on the clinic's, because that is the question each of them
+     opens the app with. Kept in memory only — it is a view, not a setting. */
+  const dashState = { scope: null, forUser: null };
+
+  /* Who a patient's outstanding work belongs to. There is no assigned
+     therapist on a patient record, so it is whoever wrote the most recent
+     note, falling back to whoever the latest visit is booked with. */
+  function patientOwner(p) {
+    const docs = S.docsFor(p.id);
+    if (docs.length) return docs[docs.length - 1].createdBy;
+    const appts = S.appointments().filter((a) => a.patientId === p.id && a.status !== "cancelled")
+      .sort((a, b) => (a.start < b.start ? 1 : -1));
+    return appts.length ? appts[0].therapistId : null;
+  }
+
+  const daysSince = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+  const ageLabel = (iso) => { const d = daysSince(iso); return d === 0 ? "today" : d === 1 ? "1 day old" : `${d} days old`; };
+  /* A draft older than this is no longer "today's paperwork" — it is a note a
+     payer or a covering therapist may already be missing. */
+  const DRAFT_OVERDUE_DAYS = 2;
+
+  /* Everything the dashboard needs, computed once per render and filtered to
+     the chosen scope. The patient-level items come from needsAttention() — the
+     same checklist the patient chart shows — so the two can never disagree
+     about what is outstanding. */
+  function workload(user, scope) {
+    const owns = (id) => scope === "clinic" || id === scope;
+    const today = todayIso();
     const patients = S.patients();
-    const due = patients.filter((p) => S.progressDue(p.id));
-    const drafts = S.documents().filter((d) => d.status === "draft");
-    const todays = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
-    const expSoon = S.staff().filter((u) => u.active && S.licenseExpiresSoon(u));
-    const upcoming = S.appointments().filter((a) => a.status === "booked" && a.start >= new Date().toISOString()).length;
+    const docs = S.documents();
 
-    // A single "needs attention" list for the whole clinic — same organizing
-    // idea as the patient chart's Overview, so the important things surface
-    // instead of being spread across banners.
-    const attn = [];
-    expSoon.forEach((u) => attn.push({ level: "warn", text: `${u.name} — license ${u.license.number} expires ${fmtDate(u.license.expires)}`, href: "#/facility", action: "Staff" }));
-    due.forEach((p) => attn.push({ level: "warn", text: `${S.patientName(p)} — progress report due (${S.visitCount(p.id)} visits)`, href: `#/patient/${p.id}`, action: "Open chart" }));
-    if (drafts.length) attn.push({ level: "info", text: `${drafts.length} unsigned draft${drafts.length > 1 ? "s" : ""} across the clinic`, href: "#/drafts", action: "Review" });
+    const drafts = docs.filter((d) => d.status === "draft" && owns(d.createdBy))
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)); // oldest first: the most overdue leads
+    const overdueDrafts = drafts.filter((d) => daysSince(d.createdAt) >= DRAFT_OVERDUE_DAYS);
 
-    const tile = (num, label, href, accent) => {
-      const inner = `<div class="stat-num">${num}</div><div class="stat-label">${label}</div>`;
-      return href ? `<a class="stat-tile ${accent && num ? "accent" : ""}" href="${href}">${inner}</a>`
-        : `<div class="stat-tile ${accent && num ? "accent" : ""}">${inner}</div>`;
+    const visits = S.apptsOn(today).filter((a) => a.status !== "cancelled" && owns(a.therapistId))
+      .sort((a, b) => (a.start < b.start ? -1 : 1))
+      .map((a) => {
+        const note = docs.filter((d) => d.patientId === a.patientId && d.createdAt.slice(0, 10) === today)
+          .sort((x, y) => (x.status === "signed" ? -1 : 1))[0] || null;
+        return { appt: a, note };
+      });
+    const visitsNoNote = visits.filter((v) => !v.note);
+
+    // patient-level follow-ups: drafts and today's-visit items are already
+    // their own sections, so they are left out here rather than counted twice
+    const followUps = [];
+    const housekeeping = [];
+    patients.forEach((p) => {
+      const owner = patientOwner(p);
+      if (scope !== "clinic" && owner !== scope) return;
+      needsAttention(p).forEach((it) => {
+        if (it.tab === "documents" && it.status === "draft") return;
+        if (/^Visit booked today/.test(it.text)) return;
+        const row = Object.assign({ patient: p, owner }, it);
+        (it.level === "warn" ? followUps : housekeeping).push(row);
+      });
+    });
+    const progressDue = followUps.filter((r) => /^Progress report due/.test(r.text));
+
+    // staff licences are the clinic's problem, so they only show clinic-wide
+    const licences = scope === "clinic" && user.role === "admin"
+      ? S.staff().filter((u) => u.active && S.licenseExpiresSoon(u)) : [];
+
+    // change requests wait on whoever runs the schedule, on their own view
+    const requests = S.canEditSchedule(user) && (scope === "clinic" || scope === user.id)
+      ? S.scheduleRequests().filter((r) => r.status === "pending") : [];
+
+    return { drafts, overdueDrafts, visits, visitsNoNote, followUps, progressDue, housekeeping, licences, requests };
+  }
+
+  /* The work queue is each person's own to arrange, one list at a time.
+     Every section has its own Filter button: sort (most overdue first by
+     default, or name, type, or the person's own order), what kind of item to
+     show, and one patient. Items move by their ⠿ grip. The sort and the order
+     are kept per user and per section in this browser, like the collapsed
+     note groups; the kind/patient filters last for the visit. Sections show
+     QUEUE_PAGE items with "Show all" rather than pages: the most urgent work
+     stays on screen, and the filters are the way to narrow a long list. */
+  const QUEUE_PAGE = 5;
+  // "Default order" is most overdue first. A hand arrangement isn't a sort to
+  // pick: dragging an item makes it ("Custom order"), and Reset undoes it.
+  const QUEUE_SORTS = [["overdue", "Default order"], ["name", "Name"], ["type", "Type"]];
+  const sortLabel = (k) => (k === "mine" ? "Custom order" : (QUEUE_SORTS.find(([x]) => x === k) || [, k])[1]);
+  // what each list can be narrowed to, in the order "Type" sorts by
+  const QUEUE_KINDS = {
+    drafts: [["eval", "Evals"], ["daily", "Daily notes"], ["progress", "Progress reports"], ["discharge", "Discharges"]],
+    today: [["nonote", "No note yet"], ["draft", "Draft started"], ["signed", "Signed"]],
+    follow: [["request", "Schedule requests"], ["progress", "Progress reports"], ["auth", "Authorisations"], ["order", "Doctor's orders"], ["goal", "Goals"], ["billing", "Billing"], ["licence", "Licences"], ["other", "Other"]],
+  };
+  QUEUE_KINDS.house = QUEUE_KINDS.follow;
+  /* Sort, hand order and pins are saved on the person's account (store
+     setMyPrefs), so they follow them across devices and survive the app
+     closing. An earlier build kept them in this browser only; that copy is
+     read once and moved onto the account. */
+  const LS_QUEUE_ITEMS = "therachart-queue-items";
+  function queuePrefs(user) {
+    const saved = S.myPrefs(user).queue;
+    if (saved) return saved;
+    let legacy = null;
+    try { legacy = (JSON.parse(localStorage.getItem(LS_QUEUE_ITEMS) || "{}") || {})[user.id] || null; } catch { /* unreadable */ }
+    if (legacy) {
+      S.setMyPrefs(user, "queue", legacy);
+      try { localStorage.removeItem(LS_QUEUE_ITEMS); } catch { /* fine */ }
+    }
+    return legacy || {};
+  }
+  function setQueuePrefs(user, patch) {
+    const next = { ...queuePrefs(user), ...patch };
+    Object.keys(next).forEach((k) => { if (next[k] == null) delete next[k]; });
+    S.setMyPrefs(user, "queue", next);
+  }
+  /* A long list is grouped (by age, time of day or kind) rather than paged:
+     paging would split a drag across pages. Past QUEUE_GROUP_AT items the
+     list is shown as collapsible groups, the most urgent open first. */
+  const QUEUE_GROUP_AT = 12;
+  // per-section kind/patient filters, which list is expanded, which panel is
+  // open, and which groups are open (`${section}|${group}` → true/false)
+  const queueFilter = { by: {}, expanded: new Set(), open: null, groups: new Map(), openAll: null };
+  // per-section sorts; an older build saved one sort for the whole queue
+  const sortMap = (prefs) => (prefs.sort && typeof prefs.sort === "object" ? prefs.sort : {});
+  let queuePopCleanup = null; // removes the open panel's document listeners
+  const secFilter = (id) => queueFilter.by[id] || (queueFilter.by[id] = { kind: "all", patient: "all" });
+  const followKind = (text) => (/Progress report/.test(text) ? "progress" : /uthoris|authorised/.test(text) ? "auth"
+    : /order/.test(text) ? "order" : /goal/.test(text) ? "goal" : /billing/.test(text) ? "billing" : "other");
+
+  /** Which group an item falls in for a long list: by name range or kind when
+      sorted that way, otherwise each list's natural chunks — notes by age,
+      visits by time of day, follow-ups by kind. Groups keep the order in which
+      they first appear in the sorted list, so the most urgent leads. */
+  const NAME_RANGES = [["a", "A–F", /^[a-f]/i], ["g", "G–L", /^[g-l]/i], ["m", "M–R", /^[m-r]/i], ["s", "S–Z", /^[s-z]/i]];
+  function queueGroupOf(secId, sort, it, kinds) {
+    const kindLabel = () => [it.kind, (kinds.find(([k]) => k === it.kind) || [, "Other"])[1]];
+    if (sort === "name") { const r = NAME_RANGES.find(([, , re]) => re.test(it.name)); return r ? [r[0], r[1]] : ["#", "Other"]; }
+    if (sort === "type" || secId === "follow" || secId === "house") return kindLabel();
+    if (secId === "drafts") return it.age > 30 ? ["old", "Over 30 days old"] : it.age > 7 ? ["mid", "8–30 days old"] : ["new", "Last 7 days"];
+    if (secId === "today") return it.hour < 12 ? ["am", "Morning"] : it.hour < 17 ? ["pm", "Afternoon"] : ["eve", "Evening"];
+    return ["all", "All"];
+  }
+
+  /** Apply the person's sort to one section's items. Default order is the
+      order the section was built in (most overdue / earliest first). */
+  function sortQueueItems(items, sort, saved, kinds) {
+    const base = items.map((it, i) => ({ it, i }));
+    const by = (f) => base.sort((a, b) => f(a, b) || a.i - b.i).map((x) => x.it);
+    const rank = (k) => { const i = (kinds || []).findIndex(([x]) => x === k); return i < 0 ? 99 : i; };
+    if (sort === "name") return by((a, b) => a.it.name.localeCompare(b.it.name));
+    if (sort === "type") return by((a, b) => rank(a.it.kind) - rank(b.it.kind));
+    if (sort === "mine" && saved && saved.length) {
+      const pos = new Map(saved.map((k, i) => [k, i]));
+      // anything new since they arranged it goes after, in default order
+      return by((a, b) => (pos.has(a.it.key) ? pos.get(a.it.key) : 1e6) - (pos.has(b.it.key) ? pos.get(b.it.key) : 1e6));
+    }
+    return items.slice();
+  }
+
+  function dashboardView(user) {
+    if (dashState.forUser !== user.id) {
+      dashState.forUser = user.id;
+      dashState.scope = user.role !== "frontdesk" ? user.id : "clinic";
+      queueFilter.by = {}; queueFilter.expanded.clear(); queueFilter.open = null; queueFilter.groups.clear();
+    }
+    // a staff member removed since the scope was picked falls back to the clinic
+    if (dashState.scope !== "clinic" && !S.getUser(dashState.scope)) dashState.scope = "clinic";
+    const scope = dashState.scope;
+    const w = workload(user, scope);
+    const who = scope === "clinic" ? null : S.getUser(scope);
+    const isMe = scope === user.id;
+    const firstName = (u) => esc(u.name.split(",")[0].split(" ")[0]);
+    const nameOf = (id) => esc((S.getUser(id) || {}).name || "—");
+
+    const total = w.drafts.length + w.visitsNoNote.length + w.followUps.length + w.licences.length + w.requests.length;
+    const summary = total
+      ? `${total} thing${total === 1 ? "" : "s"} outstanding${w.overdueDrafts.length ? ` · <b>${w.overdueDrafts.length} overdue</b>` : ""}`
+      : "Nothing outstanding";
+
+    /* Each tile carries an icon in its category's colour — the same colour as
+       the queue section it jumps to — so the four read apart before the label
+       is read. The tile's tint still says how urgent it is. */
+    const TILE_ICONS = {
+      notes: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
+      visits: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="M12 13v3l2 1.2"/>',
+      progress: '<path d="M4 19h16"/><path d="m5 15 4.5-4.5 3.5 3.5L19 8"/><path d="M15 8h4v4"/>',
+      follow: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
     };
+    const tile = (num, label, target, tone, icon, kind) => `
+      <a class="stat-tile ${num && tone ? tone : ""}" href="#q-${target}" data-qjump="${target}"${kind ? ` data-qkindjump="${kind}"` : ""}>
+        <span class="stat-ico ico-${icon}" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TILE_ICONS[icon]}</svg></span>
+        <div class="stat-num">${num}</div><div class="stat-label">${label}</div></a>`;
+
+    // one row of the work queue: a grip to move it, and the link itself
+    const qrow = ({ key, tag, title, sub, chips, href, ptab, pid, action, level }) => `
+      <div class="q-item" data-qkey="${esc(key)}">
+        <button class="q-grip" type="button" data-qgrip="${esc(key)}" aria-label="Move ${title} — drag, or use the arrow keys" title="Drag to reorder">⠿</button>
+        <a class="q-row ${level || ""}" href="${href}"${ptab ? ` data-ptab-goto="${ptab}" data-pid="${pid}"` : ""}>
+          <span class="q-tag">${tag}</span>
+          <span class="q-main"><b>${title}</b><small>${sub}</small></span>
+          <span class="q-chips">${chips || ""}</span>
+          <span class="q-go">${esc(action)} →</span>
+        </a>
+        <button class="q-menu-btn" type="button" data-qmenu="${esc(key)}" aria-label="More for ${title}: move or pin" aria-haspopup="menu" title="Move or pin">⋯</button>
+      </div>`;
+    const pName = (pid) => S.patientName(S.getPatient(pid)) || "";
+
+    const draftItems = w.drafts.map((d) => {
+      const overdue = daysSince(d.createdAt) >= DRAFT_OVERDUE_DAYS;
+      return {
+        key: d.id, kind: d.type, pid: d.patientId, name: pName(d.patientId), age: daysSince(d.createdAt),
+        html: qrow({
+          key: d.id,
+          tag: `<span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span>`,
+          title: esc(pName(d.patientId)),
+          sub: `${esc(d.title)}${scope === "clinic" || !isMe ? ` · ${nameOf(d.createdBy)}` : ""}`,
+          chips: `<span class="chip ${overdue ? "bad" : "warn"}">${overdue ? "overdue · " : ""}${ageLabel(d.createdAt)}</span>`,
+          href: `#/doc/${d.id}`, action: "Finish & sign", level: overdue ? "bad" : "warn",
+        }),
+      };
+    });
+
+    const visitItems = w.visits.map(({ appt, note }) => {
+      const state = !note ? `<span class="chip warn">no note yet</span>`
+        : note.status === "signed" ? `<span class="chip good">signed</span>` : `<span class="chip info">draft started</span>`;
+      return {
+        key: appt.id, kind: !note ? "nonote" : note.status === "signed" ? "signed" : "draft", pid: appt.patientId, name: pName(appt.patientId), hour: new Date(appt.start).getHours(),
+        html: qrow({
+          key: appt.id,
+          tag: `<span class="q-time num">${fmtTime(appt.start)}</span>`,
+          title: esc(pName(appt.patientId)),
+          sub: `${esc(appt.note || "Visit")}${scope === "clinic" || !isMe ? ` · ${nameOf(appt.therapistId)}` : ""}`,
+          chips: state,
+          href: note ? `#/doc/${note.id}` : `#/patient/${appt.patientId}`,
+          ptab: note ? null : "documents", pid: appt.patientId,
+          action: !note ? "Start note" : note.status === "signed" ? "Open" : "Continue",
+          level: note ? "" : "warn",
+        }),
+      };
+    });
+
+    const followItem = (r) => {
+      const key = `${r.patient.id}|${r.tab || ""}|${r.text.split(/[—(]/)[0].trim()}`;
+      return {
+        key, kind: followKind(r.text), pid: r.patient.id, name: S.patientName(r.patient),
+        html: qrow({
+          key,
+          tag: `<span class="q-ico">${/Progress report/.test(r.text) ? "📈" : /uthoris|authorised/.test(r.text) ? "🪪" : /order/.test(r.text) ? "🩺" : /goal/.test(r.text) ? "🎯" : /billing/.test(r.text) ? "₱" : "•"}</span>`,
+          title: esc(S.patientName(r.patient)),
+          sub: `${esc(r.text)}${(scope === "clinic" || !isMe) && r.owner ? ` · ${nameOf(r.owner)}` : ""}`,
+          href: `#/patient/${r.patient.id}`, ptab: r.tab, pid: r.patient.id, action: r.action, level: r.level,
+        }),
+      };
+    };
+    const licenceItems = w.licences.map((u) => ({
+      key: `lic-${u.id}`, kind: "licence", pid: null, name: u.name,
+      html: qrow({
+        key: `lic-${u.id}`, tag: `<span class="q-ico">🪪</span>`, title: esc(u.name),
+        sub: `Licence ${esc(u.license.number)} expires ${fmtDate(u.license.expires)}`,
+        href: "#/facility", action: "Staff", level: "warn",
+      }),
+    }));
+    const requestItems = w.requests.map((r) => {
+      const appt = r.apptId ? S.appointments().find((a) => a.id === r.apptId) : null;
+      const pid = r.patientId || (appt && appt.patientId) || null;
+      const requester = (S.getUser(r.requestedBy) || {}).name || "Someone";
+      return {
+        key: r.id, kind: "request", pid, name: pid ? pName(pid) : requester,
+        html: qrow({
+          key: r.id, tag: `<span class="q-ico">🗓️</span>`, title: esc(requester),
+          sub: `Asks to ${esc(requestSummary(r, true))}`,
+          href: "#/calendar", action: "Review", level: "info",
+        }),
+      };
+    });
+
+    const SECTIONS = [
+      { id: "drafts", n: 1, title: "Finish and sign", hint: `Drafts older than ${DRAFT_OVERDUE_DAYS} days are overdue.`, items: draftItems, empty: "Every note is signed." },
+      { id: "today", n: 2, title: "Today's visits", hint: "Each visit and whether its note exists.", items: visitItems, empty: `No visits booked today. <a href="#/calendar">Open the calendar</a>` },
+      { id: "follow", n: 3, title: "Follow up", hint: `${w.requests.length ? "Schedule requests, p" : "P"}rogress reports, authorisations, doctor's orders, goals and billing.`, items: [...requestItems, ...w.followUps.map(followItem), ...licenceItems], empty: "No follow-ups waiting." },
+      { id: "house", n: null, title: "Housekeeping", hint: "Smaller gaps — files, future bookings, goals not set", items: w.housekeeping.map(followItem), empty: "" },
+    ];
+
+    // ---- per-section filters
+    const prefs = queuePrefs(user);
+    const sortOf = (id) => {
+      const v = sortMap(prefs)[id];
+      if (v === "mine") return (prefs.order || {})[id] ? "mine" : "overdue";
+      return QUEUE_SORTS.some(([k]) => k === v) ? v : "overdue";
+    };
+    const label = (pairs, k) => (pairs.find(([x]) => x === k) || [, k])[1];
+
+    // each section is its own card with a coloured header and a count, with
+    // page background between them, so the lists never run into one another
+    const count = (k, of) => `<span class="q-count ${k ? "" : "zero"}">${of != null && of !== k ? `${k} of ${of}` : k}</span>`;
+    const renderSection = (sec) => {
+      const f = secFilter(sec.id);
+      const kinds = QUEUE_KINDS[sec.id];
+      // forget a patient or kind that has left this list since it was picked
+      if (f.patient !== "all" && !sec.items.some((it) => it.pid === f.patient)) f.patient = "all";
+      if (f.kind !== "all" && !sec.items.some((it) => it.kind === f.kind)) f.kind = "all";
+      const sort = sortOf(sec.id);
+      const sorted = sortQueueItems(sec.items, sort, (prefs.order || {})[sec.id], kinds);
+      const matches = (it) => (f.kind === "all" || it.kind === f.kind) && (f.patient === "all" || it.pid === f.patient);
+      const filtering = f.kind !== "all" || f.patient !== "all";
+      const shown = sorted.filter(matches);
+      if (sec.id === "house" && !sec.items.length) return "";
+      // pinned items sit above everything, in the order they were pinned
+      const pinnedKeys = (prefs.pinned || {})[sec.id] || [];
+      const pinned = pinnedKeys.map((k) => shown.find((it) => it.key === k)).filter(Boolean);
+      const rest = shown.filter((it) => !pinnedKeys.includes(it.key));
+      const listOf = (items, extra) => `<div class="q-list" data-qlist="${sec.id}"${extra || ""}>${items.map((it) => it.html).join("")}</div>`;
+      const pinnedHtml = pinned.length ? `<div class="q-group q-pinned">
+          <div class="q-ghead static"><span class="q-gico" aria-hidden="true">📌</span>Pinned<span class="q-gcount">${pinned.length}</span></div>
+          ${listOf(pinned, ' data-qpinned="1"')}</div>` : "";
+      let restHtml = "";
+      if (rest.length > QUEUE_GROUP_AT && sort !== "mine") {
+        const groups = [];
+        for (const it of rest) {
+          const [gk, gl] = queueGroupOf(sec.id, sort, it, kinds);
+          let g = groups.find((x) => x.key === gk);
+          if (!g) groups.push((g = { key: gk, label: gl, items: [] }));
+          g.items.push(it);
+        }
+        if (queueFilter.openAll === sec.id) groups.forEach((g) => queueFilter.groups.set(`${sec.id}|${g.key}`, true));
+        restHtml = groups.map((g, i) => {
+          const id = `${sec.id}|${g.key}`;
+          const isOpen = queueFilter.groups.has(id) ? queueFilter.groups.get(id) : i === 0;
+          return `<div class="q-group">
+            <button class="q-ghead" type="button" data-qgroup="${esc(id)}" aria-expanded="${isOpen}">
+              <span class="q-gchev" aria-hidden="true">${isOpen ? "▾" : "▸"}</span>${esc(g.label)}<span class="q-gcount">${g.items.length}</span></button>
+            ${isOpen ? listOf(g.items) : ""}</div>`;
+        }).join("");
+      } else if (rest.length) {
+        const open = queueFilter.expanded.has(sec.id) || queueFilter.openAll === sec.id;
+        const visible = open ? rest : rest.slice(0, QUEUE_PAGE);
+        const more = rest.length - visible.length;
+        restHtml = `${pinned.length ? `<div class="q-ghead static q-rest">Everything else<span class="q-gcount">${rest.length}</span></div>` : ""}${listOf(visible)}
+          ${rest.length > QUEUE_PAGE ? `<button class="q-more" type="button" data-qmore="${sec.id}">${open ? "Show fewer" : `Show all ${rest.length} <span class="q-more-n">+${more} more</span>`}</button>` : ""}`;
+      }
+      if (queueFilter.openAll === sec.id) queueFilter.openAll = null;
+      const list = shown.length ? `<div class="q-body">${pinnedHtml}${restHtml}</div>`
+        : filtering ? `<div class="q-empty">Nothing here matches this filter. <button class="btn-link" type="button" data-qclear="${sec.id}">Clear filter</button></div>`
+        : `<div class="q-empty">✓ ${sec.empty}</div>`;
+      // the section's whole current order, for saving a move (bindQueueReorder)
+      const full = `data-qfull="${esc(sorted.map((it) => it.key).join("\n"))}"`;
+
+      // what is narrowing this list, said in the header so it's never a surprise
+      const active = [
+        sort !== "overdue" ? sortLabel(sort) : "",
+        f.kind !== "all" ? label(kinds, f.kind) : "",
+        f.patient !== "all" ? pName(f.patient) : "",
+      ].filter(Boolean);
+      const nOn = (sort !== "overdue") + (f.kind !== "all") + (f.patient !== "all");
+      const present = kinds.filter(([k]) => sec.items.some((it) => it.kind === k));
+      const pts = [...new Map(sec.items.filter((it) => it.pid).map((it) => [it.pid, it.name])).entries()].sort((x, y) => x[1].localeCompare(y[1]));
+      const opt = (attr, val, text, on, n) => `<button class="fchip ${on ? "on" : ""}" type="button" ${attr}="${esc(val)}" data-qsec-of="${sec.id}">${text}${n != null ? ` <span class="fchip-n">${n}</span>` : ""}</button>`;
+      const panel = queueFilter.open === sec.id ? `
+        <div class="q-pop" role="dialog" aria-label="Filter ${esc(sec.title)}" data-qpop="${sec.id}">
+          <div class="q-pop-head"><b>Filter ${esc(sec.title)}</b><button class="q-pop-x" type="button" data-qclose aria-label="Close">✕</button></div>
+          <div class="q-pop-group"><span class="fglabel">Sort by</span><div class="fchips">${QUEUE_SORTS.map(([k, l]) => opt("data-qsort", k, l, sort === k)).join("")}</div>
+            ${sort === "mine"
+              ? `<p class="q-pop-tip q-custom"><b>Custom order</b> — you've arranged this list by hand. <button class="btn small" type="button" data-qreset="${sec.id}">Reset to default order</button></p>`
+              : `<p class="q-pop-tip">Drag ⠿ on any item to arrange the list yourself.</p>`}</div>
+          ${present.length > 1 || f.kind !== "all" ? `<div class="q-pop-group"><span class="fglabel">Show</span><div class="fchips">
+            ${opt("data-qkind", "all", "All", f.kind === "all", sec.items.filter((it) => f.patient === "all" || it.pid === f.patient).length)}
+            ${present.map(([k, l]) => opt("data-qkind", k, l, f.kind === k, sec.items.filter((it) => it.kind === k && (f.patient === "all" || it.pid === f.patient)).length)).join("")}</div></div>` : ""}
+          ${pts.length > 1 || f.patient !== "all" ? `<div class="q-pop-group"><span class="fglabel">Patient</span>
+            <select data-qpatient="${sec.id}" aria-label="Show one patient"><option value="all">All patients</option>
+              ${pts.map(([id, n]) => `<option value="${esc(id)}" ${f.patient === id ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>` : ""}
+          <div class="q-pop-foot">${nOn ? `<button class="btn small" type="button" data-qclear="${sec.id}">Clear all</button>` : ""}<button class="btn small primary" type="button" data-qclose>Done</button></div>
+        </div>` : "";
+      // Housekeeping is a collapsed <summary>; a panel inside it would toggle it
+      const filterBtn = sec.items.length && sec.id !== "house" ? `<span class="q-filter-wrap">
+        <button class="q-filter ${nOn ? "on" : ""}" type="button" data-qfilter="${sec.id}" aria-expanded="${queueFilter.open === sec.id}" aria-haspopup="dialog">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filter${nOn ? ` <span class="q-filter-n">${nOn}</span>` : ""}</button>${panel}</span>` : "";
+      const chips = active.length ? `<span class="q-active">${active.map(esc).join(" · ")}<button class="q-active-x" type="button" data-qclear="${sec.id}" aria-label="Clear the filter on ${esc(sec.title)}">✕</button></span>` : "";
+      const head = `<h3>${sec.n ? `${sec.n} · ` : ""}${sec.title}</h3>${count(shown.length, filtering ? sec.items.length : null)}${chips}<span class="q-hint">${sec.hint}</span>${filterBtn}`;
+      if (sec.id === "house") {
+        return `<section class="q-section" id="q-house" data-qsec="house" ${full}><details class="q-house">
+          <summary class="q-head">${head}</summary>${list}</details></section>`;
+      }
+      return `<section class="q-section" id="q-${sec.id}" data-qsec="${sec.id}" ${full}><div class="q-head">${head}</div>${list}</section>`;
+    };
+    const queueHtml = SECTIONS.map(renderSection).join("");
+
+    // team view: only meaningful clinic-wide with more than one clinician
+    const clinicians = S.staff().filter((u) => u.active && u.role !== "frontdesk");
+    const team = scope === "clinic" && clinicians.length > 1 ? (() => {
+      const rows = clinicians.map((u) => {
+        const t = workload(user, u.id);
+        const oldest = t.drafts[0];
+        return `<tr class="team-row" data-scope="${esc(u.id)}" tabindex="0">
+          <td><b>${esc(u.name)}</b><small class="team-role">${esc(roleLabel(u))}</small></td>
+          <td class="num">${t.visits.length}${t.visitsNoNote.length ? ` <span class="chip warn">${t.visitsNoNote.length} no note</span>` : ""}</td>
+          <td class="num">${t.drafts.length}${t.overdueDrafts.length ? ` <span class="chip bad">${t.overdueDrafts.length} overdue</span>` : ""}</td>
+          <td class="num">${t.followUps.length}</td>
+          <td class="num">${oldest ? ageLabel(oldest.createdAt) : "—"}</td>
+          <td><span class="q-go">View →</span></td></tr>`;
+      }).join("");
+      return `<div class="card">
+        <h2>Team workload</h2>
+        <div class="table-scroll"><table class="list team-table">
+          <thead><tr><th>Clinician</th><th>Visits today</th><th>Unsigned notes</th><th>Follow-ups</th><th>Oldest draft</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table></div></div>`;
+    })() : "";
+
+    const scopeBtn = (val, label) => `<button class="fchip ${scope === val ? "on" : ""}" data-scope="${esc(val)}" type="button">${label}</button>`;
 
     return `
 <div class="page-head">
-  <div><h1>Good day, ${esc(user.name.split(",")[0].split(" ")[0])}</h1>
+  <div><h1>Good day, ${firstName(user)}</h1>
   <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.currentClinicName())}</div></div>
 </div>
 
+<div class="card dash-bar">
+  <div class="dash-search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="dashSearch" type="search" autocomplete="off" placeholder="Search patients and therapists — name, phone, physician, email…" aria-label="Search patients and therapists" />
+    <div class="dash-results" id="dashResults" hidden></div>
+  </div>
+  <div class="dash-scope">
+    <span class="fglabel">Showing</span>
+    <div class="fchips">
+      ${user.role !== "frontdesk" ? scopeBtn(user.id, "My work") : ""}
+      ${scopeBtn("clinic", "Whole clinic")}
+      ${who && !isMe ? `<span class="fchip on scope-person">${esc(who.name)}<button class="scope-x" data-scope="${user.role !== "frontdesk" ? esc(user.id) : "clinic"}" type="button" aria-label="Stop showing ${esc(who.name)}'s work">✕</button></span>` : ""}
+    </div>
+  </div>
+</div>
+
+<div class="dash-summary">${who && !isMe ? `${esc(who.name)} — ` : ""}${summary}</div>
+
 <div class="stat-tiles">
-  ${tile(patients.length, "Patients on file", "#/patients", false)}
-  ${tile(todays.length, "Visits today", "#/calendar", false)}
-  ${tile(drafts.length, "Unsigned drafts", "#/drafts", true)}
-  ${tile(due.length, "Progress reports due", null, true)}
+  ${tile(w.drafts.length, "Unsigned notes", "drafts", w.overdueDrafts.length ? "danger" : "accent", "notes")}
+  ${tile(w.visits.length, `Visits today${w.visitsNoNote.length ? ` · ${w.visitsNoNote.length} without a note` : ""}`, "today", w.visitsNoNote.length ? "accent" : "", "visits")}
+  ${tile(w.progressDue.length, "Progress reports due", "follow", "accent", "progress", w.progressDue.length ? "progress" : "")}
+  ${tile(w.followUps.length - w.progressDue.length + w.licences.length + w.requests.length, "Other follow-ups", "follow", "accent", "follow")}
 </div>
 
-<div class="card">
-  <h2>Needs attention</h2>
-  ${attn.length ? `<div class="attn-list">${attn.map((it) => `
-    <a class="attn-item ${it.level}" href="${it.href}">
-      <span class="attn-dot"></span>
-      <span class="attn-text">${esc(it.text)}</span>
-      <span class="attn-go">${esc(it.action)} →</span>
-    </a>`).join("")}</div>`
-    : `<div class="empty-state" style="padding:12px">✓ Nothing outstanding — licenses current, progress reports up to date.</div>`}
+<div class="work-queue" id="workQueue">
+  ${queueHtml}
 </div>
 
-<div class="cards-2">
-  <div class="card">
-    <h2>Today's schedule</h2>
-    ${todays.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>Time</th><th>Patient</th><th>Therapist</th></tr></thead><tbody>
-      ${todays.map((a) => `<tr class="rowlink" data-href="#/patient/${a.patientId}">
-        <td class="num">${fmtTime(a.start)}</td>
-        <td>${esc(S.patientName(S.getPatient(a.patientId)))}</td>
-        <td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="empty-state">No visits scheduled today. <a href="#/calendar">Open the calendar</a> to book one.</div>`}
-  </div>
-  <div class="card">
-    <h2>Unsigned drafts</h2>
-    ${drafts.length
-      ? `<a class="jumbo-link" href="#/drafts">
-           <div><b>${drafts.length} draft${drafts.length > 1 ? "s" : ""} waiting</b><small>Review and sign across the clinic</small></div>
-           <span class="jumbo-arrow">→</span>
-         </a>`
-      : `<div class="empty-state">Everything is signed. ✓</div>`}
-  </div>
-</div>`;
+${team}`;
   }
 
-  function bindDashboard() { bindRowLinks(); }
+  /* The queue's filter bar, "Show all", and moving an item by its ⠿ grip.
+     Pointer events rather than HTML drag-and-drop, so it works with a finger
+     on a phone; arrow keys move a focused grip one place. An item moves within
+     its own section. Moving one makes the list's "Custom order" and saves it. */
+  function bindQueueReorder(user, rerender) {
+    const on = (sel, ev, fn) => document.querySelectorAll(sel).forEach((el) => el.addEventListener(ev, (e) => fn(el, e)));
+    const prefsOf = () => queuePrefs(user);
+    // a choice in the panel applies at once and keeps the panel open
+    on("[data-qfilter]", "click", (el, e) => {
+      e.preventDefault(); e.stopPropagation(); // inside Housekeeping's <summary>: don't toggle it
+      queueFilter.open = queueFilter.open === el.dataset.qfilter ? null : el.dataset.qfilter;
+      rerender();
+      const pop = document.querySelector("[data-qpop] .fchip.on, [data-qpop] button");
+      if (pop) pop.focus();
+    });
+    on("[data-qpop]", "click", (el, e) => e.stopPropagation());
+    on("[data-qclose]", "click", (el, e) => { e.preventDefault(); queueFilter.open = null; rerender(); });
+    // a hand arrangement can't be picked again once left, so leaving it drops it
+    const withoutOrder = (sec) => { const order = { ...(prefsOf().order || {}) }; delete order[sec]; return order; };
+    on("[data-qsort]", "click", (el) => {
+      const sec = el.dataset.qsecOf;
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: el.dataset.qsort } });
+      rerender();
+    });
+    on("[data-qkind]", "click", (el) => { secFilter(el.dataset.qsecOf).kind = el.dataset.qkind; rerender(); });
+    on("[data-qpatient]", "change", (el) => { secFilter(el.dataset.qpatient).patient = el.value; rerender(); });
+    on("[data-qclear]", "click", (el, e) => {
+      e.preventDefault(); e.stopPropagation();
+      const sec = el.dataset.qclear;
+      queueFilter.by[sec] = { kind: "all", patient: "all" };
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
+      rerender();
+    });
+    on("[data-qreset]", "click", (el) => {
+      const sec = el.dataset.qreset;
+      setQueuePrefs(user, { order: withoutOrder(sec), sort: { ...sortMap(prefsOf()), [sec]: "overdue" } });
+      rerender();
+    });
+    on("[data-qmore]", "click", (el) => {
+      const id = el.dataset.qmore;
+      if (queueFilter.expanded.has(id)) queueFilter.expanded.delete(id); else queueFilter.expanded.add(id);
+      rerender();
+    });
+    // the panel closes on Escape or a click anywhere else
+    if (queuePopCleanup) queuePopCleanup();
+    if (document.querySelector("[data-qpop]")) {
+      const outside = (e) => {
+        if (e.target.closest("[data-qpop], [data-qfilter]")) return;
+        queuePopCleanup(); queueFilter.open = null;
+        if (document.getElementById("workQueue")) rerender();
+      };
+      const onKey = (e) => {
+        if (e.key !== "Escape") return;
+        const sec = queueFilter.open;
+        queuePopCleanup(); queueFilter.open = null; rerender();
+        const b = document.querySelector(`[data-qfilter="${sec}"]`); if (b) b.focus();
+      };
+      document.addEventListener("click", outside, true);
+      document.addEventListener("keydown", onKey);
+      queuePopCleanup = () => {
+        document.removeEventListener("click", outside, true);
+        document.removeEventListener("keydown", onKey);
+        queuePopCleanup = null;
+      };
+    }
+
+    /* Save a section's new order. Only the visible items moved, so they are
+       put back into the positions the visible items held in the section's full
+       current order — items hidden by a filter, a closed group or past "Show
+       all" keep theirs. The pinned group is its own short list: moving within
+       it reorders the pins and leaves the rest of the list alone. */
+    const focusGrip = (key) => { const g = key && document.querySelector(`[data-qgrip="${CSS.escape(key)}"]`); if (g) g.focus(); };
+    const saveOrder = (sec, next, focusKey) => {
+      const prefs = queuePrefs(user);
+      setQueuePrefs(user, { sort: { ...sortMap(prefs), [sec]: "mine" }, order: { ...(prefs.order || {}), [sec]: next } });
+      rerender(); focusGrip(focusKey);
+    };
+    const savePins = (sec, next, focusKey) => {
+      const prefs = queuePrefs(user);
+      setQueuePrefs(user, { pinned: { ...(prefs.pinned || {}), [sec]: next } });
+      rerender(); focusGrip(focusKey);
+    };
+    const fullOf = (sec) => document.querySelector(`[data-qsec="${sec}"]`).dataset.qfull.split("\n").filter(Boolean);
+    const commit = (list, startKeys, focusKey) => {
+      const sec = list.dataset.qlist;
+      const now = [...list.querySelectorAll("[data-qkey]")].map((el) => el.dataset.qkey);
+      if (list.dataset.qpinned) return savePins(sec, now, focusKey);
+      const full = fullOf(sec);
+      const slots = full.map((k, i) => (startKeys.includes(k) ? i : -1)).filter((i) => i >= 0);
+      const next = full.slice();
+      slots.forEach((slot, j) => { next[slot] = now[j]; });
+      saveOrder(sec, next, focusKey);
+    };
+
+    // Move to top / bottom and pin, from each item's ⋯ menu — for long lists
+    // where dragging an item forty rows is the wrong tool
+    const act = (sec, key, what, inPinned) => {
+      const pins = ((queuePrefs(user).pinned || {})[sec] || []).slice();
+      if (what === "pin") return savePins(sec, [key, ...pins.filter((k) => k !== key)]);
+      if (what === "unpin") return savePins(sec, pins.filter((k) => k !== key));
+      if (inPinned) {
+        const rest = pins.filter((k) => k !== key);
+        return savePins(sec, what === "top" ? [key, ...rest] : [...rest, key]);
+      }
+      const rest = fullOf(sec).filter((k) => k !== key);
+      saveOrder(sec, what === "top" ? [key, ...rest] : [...rest, key]);
+    };
+    let closeMenu = null;
+    document.querySelectorAll("[data-qmenu]").forEach((btn) => btn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const wasOpen = btn.getAttribute("aria-expanded") === "true";
+      if (closeMenu) closeMenu();
+      if (wasOpen) return;
+      const key = btn.dataset.qmenu;
+      const sec = btn.closest("[data-qsec]").dataset.qsec;
+      const inPinned = !!btn.closest("[data-qpinned]");
+      const menu = document.createElement("div");
+      menu.className = "q-menu";
+      menu.setAttribute("role", "menu");
+      menu.innerHTML = `
+        <button type="button" role="menuitem" data-qact="top">⤒ Move to top</button>
+        <button type="button" role="menuitem" data-qact="bottom">⤓ Move to bottom</button>
+        <button type="button" role="menuitem" data-qact="${inPinned ? "unpin" : "pin"}">📌 ${inPinned ? "Unpin" : "Pin to top"}</button>`;
+      btn.after(menu);
+      btn.setAttribute("aria-expanded", "true");
+      const outside = (ev) => { if (!menu.contains(ev.target) && ev.target !== btn) closeMenu(); };
+      const onKey = (ev) => { if (ev.key === "Escape") { closeMenu(); btn.focus(); } };
+      closeMenu = () => {
+        menu.remove(); btn.setAttribute("aria-expanded", "false");
+        document.removeEventListener("click", outside, true); document.removeEventListener("keydown", onKey);
+        closeMenu = null;
+      };
+      setTimeout(() => document.addEventListener("click", outside, true));
+      document.addEventListener("keydown", onKey);
+      menu.querySelectorAll("[data-qact]").forEach((b) => b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const what = b.dataset.qact;
+        closeMenu();
+        act(sec, key, what, inPinned);
+      }));
+      menu.querySelector("button").focus();
+    }));
+
+    // group headers open and close their group
+    document.querySelectorAll("[data-qgroup]").forEach((b) => b.addEventListener("click", () => {
+      queueFilter.groups.set(b.dataset.qgroup, b.getAttribute("aria-expanded") !== "true");
+      rerender();
+    }));
+
+    document.querySelectorAll("[data-qlist]").forEach((list) => {
+      const items = () => [...list.querySelectorAll(":scope > [data-qkey]")];
+      list.querySelectorAll("[data-qgrip]").forEach((g) => {
+        const item = g.closest("[data-qkey]");
+        g.addEventListener("click", (e) => e.preventDefault());
+        g.addEventListener("keydown", (e) => {
+          const start = items().map((el) => el.dataset.qkey);
+          if (e.key === "Home" || e.key === "End") {
+            e.preventDefault();
+            if (e.key === "Home") list.prepend(item); else list.append(item);
+            if (items().map((el) => el.dataset.qkey).join() !== start.join()) commit(list, start, item.dataset.qkey);
+            return;
+          }
+          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+          e.preventDefault();
+          const sib = e.key === "ArrowUp" ? item.previousElementSibling : item.nextElementSibling;
+          if (!sib || !sib.matches("[data-qkey]")) return;
+          if (e.key === "ArrowUp") list.insertBefore(item, sib); else list.insertBefore(sib, item);
+          commit(list, start, item.dataset.qkey);
+        });
+        g.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          const start = items().map((el) => el.dataset.qkey);
+          item.classList.add("q-dragging");
+          document.body.classList.add("q-sorting");
+          let lastY = e.clientY;
+          const place = () => {
+            const others = items().filter((el) => el !== item);
+            const before = others.find((el) => { const r = el.getBoundingClientRect(); return lastY < r.top + r.height / 2; });
+            if (before) { if (item.nextElementSibling !== before) list.insertBefore(item, before); }
+            else if (others.length && others[others.length - 1].nextElementSibling !== item) others[others.length - 1].after(item);
+          };
+          /* Near the top or bottom edge the page scrolls by itself, faster the
+             closer the finger is, so an item can travel a long list in one
+             drag. The phone's bottom tab bar counts as the edge. */
+          const EDGE = 80;
+          const bar = document.querySelector(".tabbar");
+          const bottomEdge = () => window.innerHeight - (bar && bar.offsetHeight ? bar.offsetHeight : 0);
+          let raf = 0;
+          const tick = () => {
+            const top = lastY - EDGE, bottom = bottomEdge() - EDGE - lastY;
+            const v = top < 0 ? Math.max(-24, top / 3) : bottom < 0 ? Math.min(24, -bottom / 3) : 0;
+            if (v) { window.scrollBy(0, v); place(); }
+            raf = requestAnimationFrame(tick);
+          };
+          raf = requestAnimationFrame(tick);
+          // listen on the window: moving the item in the DOM drops pointer capture
+          const move = (ev) => { lastY = ev.clientY; place(); };
+          const up = () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            item.classList.remove("q-dragging");
+            document.body.classList.remove("q-sorting");
+            if (items().map((el) => el.dataset.qkey).join() !== start.join()) commit(list, start);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+          window.addEventListener("pointercancel", up);
+        });
+      });
+    });
+  }
+
+  /* One box for the two lookups a clinic does all day: a patient (open their
+     chart) or a colleague (see their workload). Patients match on name, phone
+     and referring physician; staff on name, role and email. */
+  function dashSearchResults(q) {
+    const ql = q.trim().toLowerCase();
+    if (!ql) return { patients: [], staff: [] };
+    const has = (...xs) => xs.filter(Boolean).join(" ").toLowerCase().includes(ql);
+    const patients = S.patients()
+      .filter((p) => has(p.firstName, p.lastName, `${p.firstName} ${p.lastName}`, `${p.lastName}, ${p.firstName}`, p.phone, p.referringPhysician))
+      .sort((a, b) => (a.lastName < b.lastName ? -1 : 1)).slice(0, 6);
+    const staff = S.staff()
+      .filter((u) => u.active && has(u.name, u.email, roleLabel(u)))
+      .sort((a, b) => (a.name < b.name ? -1 : 1)).slice(0, 5);
+    return { patients, staff };
+  }
+
+  function bindDashboard(user) {
+    user = user || S.currentUser();
+    const rerender = () => renderShell(location.hash, dashboardView(user), user, bindDashboard);
+    const setScope = (val) => { dashState.scope = val; rerender(); };
+    document.querySelectorAll("[data-scope]").forEach((el) => {
+      el.addEventListener("click", (e) => { e.preventDefault(); setScope(el.dataset.scope); });
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") setScope(el.dataset.scope); });
+    });
+    /* A tile opens its section: every group and the full list shown, the
+       progress-report tile filtered to progress reports, then scrolled into
+       view with a brief highlight so the eye lands on it. */
+    document.querySelectorAll("[data-qjump]").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const sec = a.dataset.qjump;
+      queueFilter.expanded.add(sec);
+      queueFilter.openAll = sec;
+      if (a.dataset.qkindjump) secFilter(sec).kind = a.dataset.qkindjump;
+      else if (sec === "follow") secFilter(sec).kind = "all";
+      rerender();
+      const el = document.getElementById(`q-${sec}`);
+      if (!el) return;
+      // the redraw restores the remembered scroll next frame; make the section
+      // the remembered spot so that restore lands here too
+      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - 16);
+      scrollMem[location.hash || "#/dashboard"] = top;
+      window.scrollTo({ top, behavior: "smooth" });
+      el.classList.add("q-flash");
+      setTimeout(() => el.classList.remove("q-flash"), 1500);
+    }));
+    // a follow-up opens the patient on the tab that holds it
+    document.querySelectorAll("[data-ptab-goto]").forEach((a) => a.addEventListener("click", () => {
+      patientTab = a.dataset.ptabGoto;
+      patientTabFor = a.dataset.pid;
+    }));
+    bindQueueReorder(user, rerender);
+
+    const input = document.getElementById("dashSearch");
+    const box = document.getElementById("dashResults");
+    if (!input || !box) return;
+    let active = -1;
+    const items = () => [...box.querySelectorAll(".dr-item")];
+    const choose = (el) => {
+      if (!el) return;
+      if (el.dataset.staff) { setScope(el.dataset.staff); return; }
+      location.hash = el.dataset.href;
+    };
+    const draw = () => {
+      const { patients, staff } = dashSearchResults(input.value);
+      active = -1;
+      if (!input.value.trim()) { box.hidden = true; box.innerHTML = ""; return; }
+      const prow = (p) => `<button class="dr-item" type="button" data-href="#/patient/${p.id}">
+          <span class="dr-av">${esc(((p.firstName || "")[0] || "") + ((p.lastName || "")[0] || ""))}</span>
+          <span class="dr-main"><b>${esc(S.patientName(p))}</b><small>${esc([p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · "))}</small></span>
+          <span class="dr-go">Open chart</span></button>`;
+      const srow = (u) => {
+        const t = workload(user, u.id);
+        return `<button class="dr-item" type="button" data-staff="${esc(u.id)}">
+          <span class="dr-av staff">${esc(u.name.split(" ").map((x) => x[0]).join("").slice(0, 2))}</span>
+          <span class="dr-main"><b>${esc(u.name)}</b><small>${esc(roleLabel(u))}${u.role !== "frontdesk" ? ` · ${t.drafts.length} unsigned · ${t.visits.length} visit${t.visits.length === 1 ? "" : "s"} today` : ""}</small></span>
+          <span class="dr-go">${u.role === "frontdesk" ? "" : "View work"}</span></button>`;
+      };
+      box.innerHTML = (patients.length ? `<div class="dr-group">Patients</div>${patients.map(prow).join("")}` : "")
+        + (staff.length ? `<div class="dr-group">Therapists &amp; staff</div>${staff.map(srow).join("")}` : "")
+        + (!patients.length && !staff.length ? `<div class="dr-none">No patient or staff member matches “${esc(input.value.trim())}”.</div>` : "");
+      box.hidden = false;
+      items().forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); choose(el); }));
+    };
+    const highlight = () => items().forEach((el, i) => el.classList.toggle("on", i === active));
+    input.addEventListener("input", draw);
+    input.addEventListener("focus", () => { if (input.value.trim()) draw(); });
+    input.addEventListener("blur", () => { box.hidden = true; });
+    input.addEventListener("keydown", (e) => {
+      const list = items();
+      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(list.length - 1, active + 1); highlight(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); highlight(); }
+      else if (e.key === "Enter") { e.preventDefault(); choose(list[active >= 0 ? active : 0]); }
+      else if (e.key === "Escape") { input.value = ""; draw(); }
+    });
+  }
 
   /* ================= UNSIGNED DRAFTS (clinic-wide) ================= */
 
@@ -2063,13 +2841,15 @@ ${walkthroughMarkup()}`;
       const rows = S.patients()
         .filter((p) => !ql || [p.firstName, p.lastName, p.phone, p.referringPhysician].join(" ").toLowerCase().includes(ql))
         .sort((a, b) => (a.lastName < b.lastName ? -1 : 1))
+        // data-label names each cell for the phone layout, where the table
+        // becomes one card per patient (styles.css, #patTable)
         .map((p) => `<tr class="rowlink" data-href="#/patient/${p.id}">
-          <td><b>${esc(S.patientName(p))}</b></td>
-          <td class="num">${esc(p.dob)} (${age(p.dob)})</td>
-          <td class="num">${esc(p.phone)}</td>
-          <td>${esc(p.referringPhysician || "—")}</td>
-          <td class="num">${S.visitCount(p.id)}${S.progressDue(p.id) ? ' <span class="chip info">progress due</span>' : ""}</td>
-          <td><span class="chip muted">open →</span></td></tr>`).join("");
+          <td class="pt-name"><b>${esc(S.patientName(p))}</b></td>
+          <td class="num pt-dob" data-label="Born">${esc(p.dob)} (${age(p.dob)})</td>
+          <td class="num pt-phone" data-label="Phone">${esc(p.phone)}</td>
+          <td class="pt-doc" data-label="Referred by">${esc(p.referringPhysician || "—")}</td>
+          <td class="num pt-visits" data-label="Visits">${S.visitCount(p.id)}${S.progressDue(p.id) ? ' <span class="chip info">progress due</span>' : ""}</td>
+          <td class="pt-open"><span class="chip muted">open →</span></td></tr>`).join("");
       tbody.innerHTML = rows || `<tr><td colspan="6"><div class="empty-state">No patients found.</div></td></tr>`;
       bindRowLinks();
     };
@@ -2666,7 +3446,7 @@ ${tabStrip}
           <tr><td style="color:var(--muted)">Visits documented</td><td class="num">${S.visitCount(p.id)}</td></tr>
           ${authRow}
           <tr><td style="color:var(--muted)">Toward next progress report</td><td class="num">${prog.done}/${prog.every}</td></tr>
-          ${dictationRow(p)}
+          ${dictationOn() ? dictationRow(p) : ""}
         </tbody></table>
       </div>`;
 
@@ -2822,7 +3602,7 @@ ${tabStrip}
     }
     if (!aiReviewAvailable()) {
       el.innerHTML = `<div class="ins-head"><h2>✦ AI chart review</h2></div>
-        <div class="banner warn" style="margin-top:6px">AI review is unavailable on this server. Dictation, the body map and the measurement table all work as normal — the note is written and signed the usual way.</div>`;
+        <div class="banner warn" style="margin-top:6px">AI review is unavailable on this server. ${dictationOn() ? "Dictation, the body map" : "Findings, the body map"} and the measurement table all work as normal — the note is written and signed the usual way.</div>`;
       return;
     }
     if (aiReviewRuns[p.id]) return renderAiReviewCard(el, p, user, "running");
@@ -3484,7 +4264,11 @@ ${rows.length ? `<table>
       .filter((a) => a.patientId === p.id && a.status === "booked" && a.start >= new Date(new Date().setHours(0, 0, 0, 0)).toISOString())
       .sort((a, b) => (a.start < b.start ? -1 : 1));
 
-    const form = ths.length ? `
+    const canEdit = S.canEditSchedule(user);
+    const form = !canEdit ? `
+      <div class="bulk-actions"><button class="btn primary" id="bkRequest" type="button">Request a booking</button>
+      <span class="hint">The admin or front desk books it and you'll see their answer on the calendar.</span></div>`
+      : ths.length ? `
       <div class="bulk-form">
         <div class="field"><label>Therapist</label><select id="bkTherapist">${ths.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
         <div class="field"><label>Start date</label><input type="date" id="bkStart" value="${todayIso()}" /></div>
@@ -3502,8 +4286,8 @@ ${rows.length ? `<table>
     return `
       <div class="card sched-card sched-book">
         <div class="sched-cardhead"><span class="sched-ico">🗓️</span>
-          <div><h2>Schedule recurring visits</h2>
-          <p class="sched-cardsub">Generate a recurring schedule in one step — preview every visit (and any conflicts) before it's booked. Each visit gets the usual automatic reminders.</p></div>
+          <div><h2>${canEdit ? "Schedule recurring visits" : "Ask for visits"}</h2>
+          <p class="sched-cardsub">${canEdit ? "Generate a recurring schedule in one step — preview every visit (and any conflicts) before it's booked. Each visit gets the usual automatic reminders." : "Only the admin or front desk changes the schedule. Send them a request for a time, and add any details — e.g. a course of 12 visits."}</p></div>
         </div>
         ${form}
       </div>
@@ -3513,7 +4297,7 @@ ${rows.length ? `<table>
         </div>
         ${upcoming.length ? `<div class="table-scroll"><table class="list"><thead><tr><th>When</th><th>Therapist</th><th>Note</th><th></th></tr></thead><tbody>
           ${upcoming.map((a) => `<tr><td class="num">${fmtDT(a.start)}</td><td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td><td>${esc(a.note || "")}</td>
-            <td style="text-align:right"><button class="btn small" data-cancelappt="${a.id}">Cancel</button></td></tr>`).join("")}
+            <td style="text-align:right">${canEdit ? `<button class="btn small" data-cancelappt="${a.id}">Cancel</button>` : `<button class="btn small" data-reqappt="${a.id}">Request change</button>`}</td></tr>`).join("")}
         </tbody></table></div>` : `<div class="empty-state">No upcoming visits booked.</div>`}
       </div>
       <div class="card sched-card sched-history">
@@ -3777,8 +4561,15 @@ ${rows.length ? `<table>
   }
 
   function bindSchedule(p, user) {
+    const redraw = () => renderShell(location.hash, patientView(user), user, bindPatient);
     const prev = document.getElementById("bkPreviewBtn");
     if (prev) prev.addEventListener("click", () => renderBulkPreview(p, user));
+    const ask = document.getElementById("bkRequest");
+    if (ask) ask.addEventListener("click", () => scheduleRequestModal(user, { kind: "book", patientId: p.id }, redraw));
+    document.querySelectorAll("[data-reqappt]").forEach((b) => b.addEventListener("click", () => {
+      const a = S.appointments().find((x) => x.id === b.dataset.reqappt);
+      if (a) scheduleRequestModal(user, { kind: "move", apptId: a.id, date: localIso(new Date(a.start)), time: hhmm(a.start) }, redraw);
+    }));
     document.querySelectorAll("[data-cancelappt]").forEach((b) =>
       b.addEventListener("click", () => {
         const res = S.cancelAppointment(b.dataset.cancelappt, user);
@@ -4224,12 +5015,12 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
        screen; this is the right one when the therapist is writing up. */
     const ta = (field, label, placeholder, rows) => {
       const src = fieldSourceOf(doc.type, field);
-      const meta = SOURCE_META[src];
+      const meta = sourceMeta()[src];
       /* Labelled, not a bare icon. This is a new affordance on a screen that
          already has several, and a therapist who does not notice it goes on
          re-sorting one long dictation by hand — which is the thing it exists
          to end. The word costs a few pixels the label row has to spare. */
-      const mic = editable && isDictatable(doc.type, field)
+      const mic = editable && dictationOn() && isDictatable(doc.type, field)
         ? `<button type="button" class="field-mic" data-fieldmic="${field}"
              title="Record straight into ${esc(label)} — nothing is written until you stop, then the AI writes this section from what you said"
              aria-label="Dictate into ${esc(label)}"><span class="field-mic-dot"></span>🎤 <span class="field-mic-word">Dictate</span></button>`
@@ -4280,7 +5071,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("pmh", "Past medical history", "Relevant conditions, surgeries…")) +
         group("Subjective", "What the patient reports",
           ["subjective"],
-          ta("subjective", "Subjective", "What the patient reports — type it, or press Dictate and speak")) +
+          ta("subjective", "Subjective", `What the patient reports — type it${dictationOn() ? ", or press Dictate and speak" : ""}`)) +
         group("Objective", "What you observed and measured",
           ["objectiveText", "@measurements", "@outcomes"],
           ta("objectiveText", "Objective findings (narrative)", "Observations; measured values go to the tables below") +
@@ -4300,7 +5091,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("subjective", "Subjective", "Patient-reported status today")) +
         group("Objective", "What you did, and what you measured",
           ["summary", "@measurements"],
-          ta("summary", "Treatment summary", "Treatments performed this visit — type it, or press Dictate and speak") +
+          ta("summary", "Treatment summary", `Treatments performed this visit — type it${dictationOn() ? ", or press Dictate and speak" : ""}`) +
           measurementEditor(doc, editable)) +
         group("Assessment", "How they responded to treatment",
           ["assessment"],
@@ -4358,6 +5149,22 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         ${doc.amendments.map((a) => `<div class="amendment"><b>Amendment</b> · ${esc(a.name)} · ${fmtDT(a.time)}<br>${esc(a.text)}<br><small style="color:var(--muted)">Authorization reason: ${esc(a.reason)}</small></div>`).join("")}
       </div>`;
 
+    /* The typed-findings box. With dictation paused it leads the panel — it
+       is how findings reach the note, not a fallback for a missed sentence —
+       and it keeps the same id and the same routeUtterance path, so one line
+       in still files the measurements, the section text and the body-map pin. */
+    const typedBox = (primary) => primary ? `<div class="typed-dictation typed-primary">
+      <label for="typedDictation">Add findings</label>
+      <p class="typed-why">One finding per line — what the patient reports, or what you measured. Measurements go to the table, the text to the right section, and body areas are pinned on the map.</p>
+      <div class="finding-rows" id="findingRows" role="list"></div>
+      <button class="finding-more" id="findingMore" type="button">＋ Another finding</button>
+      <div class="typed-dictation-actions"><span class="hint">Enter starts the next line · ${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"}+Enter adds them all</span><button class="btn small primary" id="typedDictationAdd" type="button">＋ Add to note</button></div>
+    </div>` : `<div class="typed-dictation">
+      <label for="typedDictation">Type it out — anything the mic missed</label>
+      <textarea id="typedDictation" rows="3" placeholder="No mic, or dictation missed something? Type here and press Enter to file it into the note (Shift+Enter for a new line)…"></textarea>
+      <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
+    </div>`;
+
     view.innerHTML = `
 <div class="doc-page ${meta.cls}">
 <div class="page-head doc-head ${meta.cls}">
@@ -4380,7 +5187,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 <div class="doc-layout">
   <div class="card map-card">
     <div class="map-card-head">
-      <h2>Dictation &amp; body map</h2>
+      <h2>${dictationOn() ? "Dictation &amp; body map" : "Findings &amp; body map"}</h2>
       <div class="sev-legend">
         <span><i class="sev-dot sev-high"></i>severe</span>
         <span><i class="sev-dot sev-mid"></i>moderate</span>
@@ -4388,7 +5195,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <span><i class="sev-dot sev-none"></i>resolved</span>
       </div>
     </div>
-    ${editable ? `
+    ${!dictationOn() ? (editable ? typedBox(true) : "") : editable ? `
     <!-- Recording is the way in now, and live dictation is the deliberate
          choice below it. The order is the argument: the live pass pins a
          region the moment it hears the word and cannot take it back, so a
@@ -4449,7 +5256,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div id="cleanupSummary"></div>
     <div class="lang-mismatch" id="langMismatch" hidden></div>
     <div class="transcript-head" style="margin-top:12px">
-      <h3>Transcript <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? "click a line to edit · click the speaker tag to relabel" : "click a finding to see its source"}</span></h3>
+      <h3>${dictationOn() ? "Transcript" : "Entries"} <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? (dictationOn() ? "click a line to edit · click the speaker tag to relabel" : "click a line to edit · ✕ deletes it and what it added") : "click a finding to see its source"}</span></h3>
       ${editable ? (() => {
         /* Disabled rather than hidden when there is no AI. A button that
            vanishes reads as a bug or a permission the therapist has lost; one
@@ -4458,19 +5265,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
            wired as the backstop, for a server that goes unavailable between
            the page loading and the click. */
         const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
+        /* With dictation paused the AI is an optional extra, not a step in
+           charting: the note is complete without it, and the button offers a
+           more professional, easier-to-read version for the therapist to
+           accept or ignore. The review screen behind it is unchanged —
+           nothing reaches the note until they approve it. */
+        if (!dictationOn()) {
+          return `<button class="btn small" id="refineBtn"${aiOn ? "" : " disabled"} title="${aiOn
+            ? "Optional — AI rewrites your entries into clear, professional note sections. You see every change and choose what to keep."
+            : "AI polish isn't configured on this server — the note works the same without it"}">✦ Polish wording with AI <span class="opt-tag">optional</span></button>`;
+        }
         return `<button class="btn small" id="refineBtn"${aiOn ? "" : " disabled"} title="${aiOn
           ? "AI re-reads the whole conversation, splits patient vs clinician, and cleans up the findings"
           : "AI review isn't configured on this server — write and sign the note as usual"}">✦ Review &amp; clean up with AI</button>`;
       })() : ""}
     </div>
     <div class="transcript-log" id="docTranscript"></div>
-    <div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>
-    ${editable ? `<div class="typed-dictation">
-      <label for="typedDictation">Type it out — anything the mic missed</label>
-      <textarea id="typedDictation" rows="3" placeholder="No mic, or dictation missed something? Type here and press Enter to file it into the note (Shift+Enter for a new line)…"></textarea>
-      <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
-    </div>` : ""}
-    ${editable ? `
+    ${dictationOn() ? `<div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>` : ""}
+    ${editable && dictationOn() ? typedBox(false) : ""}
+    ${editable && dictationOn() ? `
     <!-- Where the recorder controls MOVE to while a visit is being recorded.
          Empty on purpose: wireRecorder() relocates the real #recBar and the
          two meters into these slots and puts them back afterwards, so the
@@ -4545,7 +5358,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <button class="btn small rec-dock-back" id="recDockBack" type="button">Full screen ↗</button>
       </div>
     </div>` : ""}
-    ${S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
+    ${dictationOn() && S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
     <div class="route-log" id="routeLog"></div>
   </div>
   <div class="doc-fields ${meta.cls}">
@@ -4571,7 +5384,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       g.addEventListener("toggle", () => setGroupCollapsed(g.dataset.group, !g.open)));
     renderInsightsCard(doc, user);
     renderAssistant(document.getElementById("docAssistant"), doc.patientId, user, { compact: true });
-    if (S.settings().audioReview) bindAudioReview(doc, user, editable);
+    if (dictationOn() && S.settings().audioReview) bindAudioReview(doc, user, editable);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
     document.getElementById("printDocBtn").addEventListener("click", () => {
@@ -4614,8 +5427,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     // ------- speech -------
     if (editable) {
-      startDictation(doc, user, dstate);
-      const typed = document.getElementById("typedDictation");
+      if (dictationOn()) startDictation(doc, user, dstate);
+      if (document.getElementById("findingRows")) bindFindingRows(doc, user, dstate);
+      const typed = document.getElementById("findingRows") ? null : document.getElementById("typedDictation");
       const submitTyped = () => {
         const text = typed.value.trim();
         if (!text) return;
@@ -4630,8 +5444,115 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTyped(); }
       });
       const typedAdd = document.getElementById("typedDictationAdd");
-      if (typedAdd) typedAdd.addEventListener("click", submitTyped);
+      if (typed && typedAdd) typedAdd.addEventListener("click", submitTyped);
     }
+  }
+
+  /* The findings box: one row per finding, so "one finding per line" is
+     something the therapist can see rather than a rule they have to know.
+     Enter starts the next row (the way a list does in any editor), so nobody
+     has to discover Shift+Enter; Add to note files every row at once, each as
+     its own entry. A pasted or dictated-in block of lines is split into rows.
+
+     The first row keeps the box's old id, #typedDictation, so filling it and
+     pressing #typedDictationAdd still files one finding exactly as before. */
+  function bindFindingRows(doc, user, dstate) {
+    const wrap = document.getElementById("findingRows");
+    const addBtn = document.getElementById("typedDictationAdd");
+    const more = document.getElementById("findingMore");
+    const EXAMPLES = ["e.g. Sharp pain in the left knee, 6/10, worse on stairs", "e.g. Left knee flexion 110 degrees, quad strength 4/5"];
+    const rows = () => [...wrap.querySelectorAll(".frow-input")];
+    const fit = (ta) => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+
+    const renumber = () => {
+      const list = rows();
+      list.forEach((ta, i) => {
+        if (i === 0) ta.id = "typedDictation"; else ta.removeAttribute("id");
+        ta.placeholder = EXAMPLES[i] || "Next finding…";
+        ta.setAttribute("aria-label", `Finding ${i + 1}`);
+        ta.closest(".frow").querySelector(".frow-n").textContent = i + 1;
+      });
+      // the remove button means nothing on the only row
+      wrap.classList.toggle("single", list.length === 1);
+      const n = list.filter((ta) => ta.value.trim()).length;
+      addBtn.textContent = n > 1 ? `＋ Add ${n} findings to note` : "＋ Add to note";
+    };
+
+    const makeRow = (value, after) => {
+      const row = document.createElement("div");
+      row.className = "frow";
+      row.setAttribute("role", "listitem");
+      row.innerHTML = `<span class="frow-n" aria-hidden="true"></span>
+        <textarea class="frow-input" rows="1"></textarea>
+        <button class="frow-x" type="button" title="Remove this line" aria-label="Remove this line">✕</button>`;
+      const ta = row.querySelector("textarea");
+      ta.value = value || "";
+      if (after) after.after(row); else wrap.appendChild(row);
+      wire(ta);
+      renumber();
+      fit(ta);
+      return ta;
+    };
+
+    // "a, b\nc" arriving in one row — a paste, or a test filling the box —
+    // becomes one row per line
+    const splitInto = (ta) => {
+      if (!ta.value.includes("\n")) return;
+      const [first, ...rest] = ta.value.split("\n").map((l) => l.trim());
+      ta.value = first;
+      fit(ta);
+      let at = ta.closest(".frow");
+      rest.filter(Boolean).forEach((line) => { at = makeRow(line, at).closest(".frow"); });
+      renumber();
+    };
+
+    const removeRow = (ta, focusPrev) => {
+      const list = rows();
+      if (list.length === 1) { ta.value = ""; fit(ta); renumber(); ta.focus(); return; }
+      const i = list.indexOf(ta);
+      ta.closest(".frow").remove();
+      renumber();
+      const next = rows()[focusPrev ? Math.max(0, i - 1) : Math.min(i, rows().length - 1)];
+      next.focus();
+      if (focusPrev) next.setSelectionRange(next.value.length, next.value.length);
+    };
+
+    const submit = () => {
+      const lines = rows().map((ta) => ta.value.trim()).filter(Boolean);
+      if (!lines.length) { rows()[0].focus(); return; }
+      lines.forEach((line) => routeUtterance(doc, user, line, dstate));
+      if (lines.length > 1) {
+        const log = document.getElementById("routeLog");
+        if (log) log.textContent = `Filed ${lines.length} findings — each one is listed under Entries below.`;
+      }
+      wrap.innerHTML = "";
+      makeRow(); makeRow();
+      rows()[0].focus();
+    };
+
+    function wire(ta) {
+      ta.addEventListener("input", () => { splitInto(ta); fit(ta); renumber(); });
+      ta.addEventListener("keydown", (e) => {
+        const list = rows(), i = list.indexOf(ta);
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+        else if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          // Enter on a row that already has an empty one below just moves there
+          const below = list[i + 1];
+          (below && !below.value.trim() ? below : makeRow("", ta.closest(".frow"))).focus();
+        } else if (e.key === "Backspace" && !ta.value && list.length > 1) { e.preventDefault(); removeRow(ta, true); }
+        else if (e.key === "ArrowUp" && i > 0 && ta.selectionStart === 0) { e.preventDefault(); list[i - 1].focus(); }
+        else if (e.key === "ArrowDown" && i < list.length - 1 && ta.selectionEnd === ta.value.length) { e.preventDefault(); list[i + 1].focus(); }
+      });
+      ta.closest(".frow").querySelector(".frow-x").addEventListener("click", () => removeRow(ta, false));
+    }
+
+    makeRow(); makeRow();
+    more.addEventListener("click", () => {
+      const empty = rows().find((ta) => !ta.value.trim());
+      (empty || makeRow()).focus();
+    });
+    addBtn.addEventListener("click", submit);
   }
 
   /* ---- measurement tables ---- */
@@ -4654,10 +5575,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     (d.special || []).forEach((r, i) => rows.push(`<tr><td>Special test</td><td>${esc(r.name)}</td><td>${esc(r.result)}</td><td>${del("special", i)}</td></tr>`));
     (d.pain || []).forEach((r, i) => rows.push(`<tr><td>Pain</td><td>${esc(r.location || "—")}</td><td class="num">${r.score}/10</td><td>${del("pain", i)}</td></tr>`));
     return `
-<div class="field"><label>Objective measurements — filled automatically from dictation</label>
+<div class="field"><label>Objective measurements — filled automatically from ${dictationOn() ? "dictation" : "your findings"}</label>
   <div class="table-scroll"><table class="list" id="measTable">
     <thead><tr><th>Type</th><th>Detail</th><th>Value</th><th></th></tr></thead>
-    <tbody>${rows.join("") || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">None yet — dictate e.g. “shoulder flexion 120 degrees”, “quad strength 4 out of 5”, “pain 6 out of 10”, “positive Neer test”.</div></td></tr>`}</tbody>
+    <tbody>${rows.join("") || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">None yet — ${dictationOn() ? "dictate" : "type"} e.g. “shoulder flexion 120 degrees”, “quad strength 4 out of 5”, “pain 6 out of 10”, “positive Neer test”.</div></td></tr>`}</tbody>
   </table></div>
   ${editable ? `<div class="measure-add">
     <input id="measInput" placeholder='Type a measurement, e.g. "left knee flexion 95 degrees" and press Enter' />
@@ -4842,7 +5763,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   <label>Outcome measures</label>
   <div class="table-scroll"><table class="list">
     <thead><tr><th>Measure</th><th class="num">Score</th><th></th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="3"><div class="empty-state" style="padding:10px">None recorded${editable ? " — add one below, or dictate e.g. “LEFS 52 out of 80”." : "."}</div></td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="3"><div class="empty-state" style="padding:10px">None recorded${editable ? ` — add one below, or ${dictationOn() ? "dictate" : "type"} e.g. “LEFS 52 out of 80”.` : "."}</div></td></tr>`}</tbody>
   </table></div>
   ${editable ? `<div class="outcome-add">
     <select id="outcomeTool">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
@@ -5120,11 +6041,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return n;
   }
 
-  function mergeMeasurements(doc, meas) {
+  /* uttId, when given, is the entry that filed the reading — so deleting that
+     entry can take its readings back with it. A reading typed straight into
+     the measurement table has none, and no entry can remove it. */
+  function mergeMeasurements(doc, meas, uttId) {
     let n = 0;
     for (const k of ["rom", "mmt", "special", "pain"]) {
       if (!doc.data[k]) doc.data[k] = [];
-      for (const item of meas[k] || []) { doc.data[k].push(item); n++; }
+      for (const item of meas[k] || []) {
+        if (uttId != null) item.uttId = uttId;
+        doc.data[k].push(item); n++;
+      }
     }
     return n;
   }
@@ -5218,7 +6145,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
       </div>`).join("")
-      : `<div class="empty-state" style="padding:8px">Body areas the patient mentions will be pinned here automatically.</div>`;
+      : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Body areas the patient mentions will be pinned here automatically." : "Body areas in your findings are pinned here automatically."}</div>`;
     /* Said once, above the list, rather than repeated on every row. The chips
        mark WHICH pins are unconfirmed; this says what unconfirmed means. */
     if (pts.some((p) => p.provisional)) {
@@ -5337,16 +6264,21 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!box) return;
     const editable = dstate && dstate.editable;
     const t = doc.data.transcript || [];
+    /* Who spoke only means something for a recorded conversation. With
+       dictation paused every entry is the therapist's own writing, so the
+       patient/clinician toggle goes and each row shows when it was added. */
+    const voice = dictationOn();
     box.innerHTML = t.length ? t.map((u, i) => `
       <div class="utt ${u.speaker ? "utt-" + u.speaker : ""}" data-utt="${i}">
         <span class="utt-meta">
-          ${editable
+          ${voice && editable
         ? `<span class="spk-toggle" data-spk="${i}" role="button" tabindex="0" title="Click to relabel speaker">${speakerTag(u.speaker || "")}</span>`
-        : (u.speaker ? speakerTag(u.speaker) : `<span class="utt-time">${esc(u.time || "")}</span>`)}
+        : (voice && u.speaker ? speakerTag(u.speaker) : `<span class="utt-time">${esc(u.time || "")}</span>`)}
         </span>
         <span class="utt-text" ${editable ? `contenteditable="true" data-edittext="${i}"` : ""}>${uttHtml(u.text, marksByUtt ? marksByUtt.get(i) : null)}</span>
+        ${editable ? `<button class="utt-del" type="button" data-delutt="${i}" title="Delete this entry and what it added to the note" aria-label="Delete entry">✕</button>` : ""}
       </div>`).join("")
-      : `<div class="empty-state" style="padding:8px">Everything said while listening is saved here, word for word.</div>`;
+      : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Everything said while listening is saved here, word for word." : "Each finding you add is listed here, word for word."}</div>`;
     if (!marksByUtt) box.scrollTop = box.scrollHeight;
 
     if (editable) {
@@ -5373,6 +6305,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         el.addEventListener("click", () => relabel(Number(el.dataset.spk)));
         el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); relabel(Number(el.dataset.spk)); } });
       });
+      box.querySelectorAll("[data-delutt]").forEach((el) =>
+        el.addEventListener("click", () => deleteEntry(doc, user, Number(el.dataset.delutt), dstate)));
     }
 
     /* Checked here rather than at each of the three places a transcript can
@@ -5382,6 +6316,82 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        dictation delivers one short utterance at a time, and no single sentence
        should be enough to tell a clinic it has the wrong language set. */
     renderLangMismatch(doc, editable);
+  }
+
+  /* Take a sentence back out of a section, undoing appendField(). Returns null
+     when the sentence is no longer there word for word — the therapist has
+     edited it, and their edit is not ours to delete. */
+  function removeSentence(text, sentence) {
+    const at = (text || "").lastIndexOf(sentence);
+    if (at < 0) return null;
+    const head = text.slice(0, at).replace(/\s+$/, "");
+    const tail = text.slice(at + sentence.length).replace(/^\.?\s*/, "");
+    return head && tail ? `${head} ${tail}` : head || tail;
+  }
+
+  /* Delete one entry and everything it put in the note: its pins (and a pin
+     left with no notes at all), the readings it filed, the outcome scores it
+     set, and the sentences it appended to a section. An entry is the source
+     of those things, so removing only the line would leave a body-map pin and
+     a pain score in the chart with nothing behind them.
+
+     Entries are addressed by position (uttId), so every later entry's pins and
+     readings move down one. A short Undo puts the whole note back. */
+  function deleteEntry(doc, user, i, dstate) {
+    const d = doc.data;
+    const entry = (d.transcript || [])[i];
+    if (!entry) return;
+    const before = JSON.parse(JSON.stringify(d));
+    const filed = entry.filed || {};
+    const keptIn = [];
+
+    (filed.text || []).forEach(({ field, sentence }) => {
+      const next = removeSentence(d[field], sentence);
+      if (next === null) { if (!keptIn.includes(field)) keptIn.push(field); }
+      else d[field] = next;
+    });
+    MEASUREMENT_KEYS.forEach((k) => { if (d[k]) d[k] = d[k].filter((m) => m.uttId !== i); });
+    let outcomesChanged = false;
+    (filed.outcomes || []).forEach((o) => {
+      const cur = (d.outcomes || []).find((x) => x.toolId === o.toolId);
+      // only if nothing since has changed it again
+      if (!cur || cur.score !== o.score) return;
+      if (o.prev == null) d.outcomes = d.outcomes.filter((x) => x !== cur); else cur.score = o.prev;
+      outcomesChanged = true;
+    });
+    d.mapPoints = (d.mapPoints || []).map((pt) => Object.assign(pt, { notes: pt.notes.filter((n) => n.uttId !== i) }))
+      .filter((pt) => pt.notes.length);
+
+    d.transcript.splice(i, 1);
+    const shift = (o) => { if (o && typeof o.uttId === "number" && o.uttId > i) o.uttId -= 1; };
+    d.mapPoints.forEach((pt) => pt.notes.forEach(shift));
+    MEASUREMENT_KEYS.forEach((k) => (d[k] || []).forEach(shift));
+
+    S.updateDocData(doc.id, d, user);
+    redrawEntryEffects(doc, user, dstate, outcomesChanged);
+
+    const log = document.getElementById("routeLog");
+    if (!log) return;
+    log.innerHTML = `Entry deleted${keptIn.length
+      ? ` — the text you edited in ${keptIn.map((f) => esc(fieldLabel(doc.type, f))).join(", ")} was left as you wrote it`
+      : ", with what it added to the note"}. <button class="btn-link" id="undoDelEntry" type="button">Undo</button>`;
+    document.getElementById("undoDelEntry").addEventListener("click", () => {
+      Object.keys(d).forEach((k) => { if (!(k in before)) delete d[k]; });
+      Object.assign(d, before);
+      S.updateDocData(doc.id, d, user);
+      redrawEntryEffects(doc, user, dstate, true);
+      log.textContent = "Entry restored.";
+    });
+  }
+
+  function redrawEntryEffects(doc, user, dstate, outcomes) {
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    drawTranscript(doc, null, dstate);
+    refreshMeasTable(doc);
+    if (outcomes) refreshOutcomes(doc, user);
+    document.querySelectorAll("textarea[data-field]").forEach((t) => { t.value = doc.data[t.dataset.field] || ""; });
+    renderFieldGuide(doc);
   }
 
   /* ---- dictation + routing ---- */
@@ -6084,7 +7094,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
   function dictationLine(doc) {
     const s = Number((doc.data || {})._dictationSeconds) || 0;
-    if (!s || doc.status !== "signed") return "";
+    if (!s || doc.status !== "signed" || !dictationOn()) return "";
     return `<div class="dict-total" id="dictTotal">🎙 <b>${mmssOf(s)}</b> of dictation billed on this visit`
       + `<span class="hint"> · pauses aren't counted — only speech</span></div>`;
   }
@@ -7741,14 +8751,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const time = nowTime();
     if (!doc.data.transcript) doc.data.transcript = [];
     const uttId = doc.data.transcript.length;
-    doc.data.transcript.push({ time, text: parsed.text });
+    /* `filed` is the entry's receipt: the sentences it appended and the
+       outcome scores it set, so deleting the entry can undo exactly that.
+       Pins and readings carry the entry's uttId themselves. */
+    const filed = { text: [], outcomes: [] };
+    doc.data.transcript.push({ time, text: parsed.text, filed });
 
     const routed = [];
-    const nMeas = mergeMeasurements(doc, parsed.measurements);
+    const nMeas = mergeMeasurements(doc, parsed.measurements, uttId);
     if (nMeas) routed.push(`${nMeas} measurement${nMeas > 1 ? "s" : ""} → Objective`);
 
     // standardised scores ("LEFS 52 out of 80") file into the outcome table
-    const nOut = mergeOutcomes(doc, CL.extractOutcomes(parsed.text));
+    const foundOutcomes = CL.extractOutcomes(parsed.text) || [];
+    foundOutcomes.forEach((o) => {
+      const was = (doc.data.outcomes || []).find((x) => x.toolId === o.toolId);
+      filed.outcomes.push({ toolId: o.toolId, score: o.score, prev: was ? was.score : null });
+    });
+    const nOut = mergeOutcomes(doc, foundOutcomes);
     if (nOut) routed.push(`${nOut} outcome measure${nOut > 1 ? "s" : ""} → Outcomes`);
 
     /* map points — skip mentions that are only part of a measurement
@@ -7803,6 +8822,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const field = fieldForSentence(doc.type, clinical, voice);
       if (!field) { heldBack += 1; continue; }
       appendField(doc, field, cap(clinical), silent);
+      filed.text.push({ field, sentence: cap(clinical) });
       if (!filedTo.includes(field)) filedTo.push(field);
     }
     for (const f of filedTo) routed.push(`text → ${fieldLabel(doc.type, f)}`);
@@ -7926,6 +8946,24 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      therapist a year on — and "the clinician" is who the record means. It also
      stops the AI-filled sections reading as finished: the therapist reviews
      and edits every one of them before it is signed. */
+  /* The same three sources, described for a clinic with dictation paused:
+     typed findings fill a section, the AI only polishes on request. */
+  const SOURCE_META_TYPED = {
+    filled: {
+      tone: "muted", mark: "↳", label: "Filled from your findings",
+      blurb: "Findings you type above the body map file here. Edit freely before signing — the optional AI polish can tidy the wording.",
+    },
+    drafted: {
+      tone: "warn", mark: "↳", label: "Filled if a finding fits",
+      blurb: "Files here only when a finding clearly belongs. Usually you write it; it is always yours to confirm.",
+    },
+    yours: {
+      tone: "muted", mark: "✍", label: "You write",
+      blurb: "Nothing files here automatically — write this section yourself.",
+    },
+  };
+  const sourceMeta = () => (dictationOn() ? SOURCE_META : SOURCE_META_TYPED);
+
   const SOURCE_META = {
     filled: {
       tone: "muted", mark: "✦", label: "AI fills · clinician reviews",
@@ -8038,10 +9076,37 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      also meant its width transition never had two frames to run between. */
   let fieldGuideSig = null;
 
+  /* The same count, pinned where it's always in view: in the top bar on a
+     phone, under the logo on the desktop rail. It belongs to whichever note is
+     open, and tapping it scrolls back to the full guide. */
+  function renderNotePin(doc, done, total, tone) {
+    const pin = document.getElementById("notePin");
+    if (!pin) return;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const meta = docMeta(doc.type);
+    pin.hidden = false;
+    pin.title = `${doc.title}: ${done} of ${total} sections written — show what's left`;
+    pin.setAttribute("aria-label", pin.title);
+    pin.innerHTML = `<span class="np-head"><span class="doc-tag ${meta.cls}">${meta.short}</span><span class="np-name">Note completeness</span></span>
+      <span class="np-row"><span class="np-track"><span class="np-fill tone-${tone}" style="width:${pct}%"></span></span><span class="np-count"><b>${done}</b>/${total}</span></span>`;
+    if (!pin.dataset.bound) {
+      pin.dataset.bound = "1";
+      pin.addEventListener("click", () => {
+        const g = document.getElementById("fieldGuide");
+        if (g) g.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }
+
   function renderFieldGuide(doc) {
     const host = document.getElementById("fieldGuide");
     if (!host) return;
     const parts = noteParts(doc);
+    {
+      // the pin is redrawn with the shell, so it is refreshed even when the guide isn't
+      const d = parts.filter((p) => p.done).length;
+      renderNotePin(doc, d, parts.length, d >= parts.length ? "good" : d ? "warn" : "muted");
+    }
     const sig = `${doc.id}|${parts.map((p) => (p.done ? "1" : "0")).join("")}`;
     if (sig === fieldGuideSig && host.firstElementChild) return;
     fieldGuideSig = sig;
@@ -8069,13 +9134,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         ${todo.length
           ? `<div class="field-guide-todo">
                <span class="field-guide-label">Waiting on the clinician:</span>
-               ${todo.map((t) => `<span class="chip ${SOURCE_META[t.source].tone}" title="${esc(SOURCE_META[t.source].blurb)}">${esc(t.label)}</span>`).join("")}
+               ${todo.map((t) => `<span class="chip ${sourceMeta()[t.source].tone}" title="${esc(sourceMeta()[t.source].blurb)}">${esc(t.label)}</span>`).join("")}
              </div>`
           : `<div class="field-guide-todo"><span class="chip good">Nothing outstanding</span>
-               <span class="field-guide-label">Every section either has content or fills itself from dictation.</span></div>`}
+               <span class="field-guide-label">${dictationOn() ? "Every section either has content or fills itself from dictation." : "Every section has content or fills from your findings."}</span></div>`}
         <div class="field-guide-legend">
           ${["filled", "drafted", "yours"].map((src) => {
-            const m = SOURCE_META[src];
+            const m = sourceMeta()[src];
             return `<span title="${esc(m.blurb)}"><i class="src-mark src-${src}">${m.mark}</i>${esc(m.label)}</span>`;
           }).join("")}
         </div>
@@ -8484,7 +9549,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       <div class="field" id="revMeas">${measBlockHtml()}</div>
       ${yoursNow.length ? `<div class="rev-yours">
         <b>The review does not write these — the clinician does:</b>
-        ${yoursNow.map((t) => `<span class="chip ${SOURCE_META[t.source].tone}">${esc(t.label)}</span>`).join("")}
+        ${yoursNow.map((t) => `<span class="chip ${sourceMeta()[t.source].tone}">${esc(t.label)}</span>`).join("")}
       </div>` : ""}`;
 
     const dialogueHtml = result.dialogue.map((d, i) => `
@@ -9156,7 +10221,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     if (!assistantAvailable()) {
       container.innerHTML = `
         <div class="asst-head"><h2>✦ Ask about this patient</h2></div>
-        <div class="banner warn" style="margin-top:6px">The AI assistant isn't configured on this server, so it's unavailable. Clinical notes and dictation still work as normal.</div>`;
+        <div class="banner warn" style="margin-top:6px">The AI assistant isn't configured on this server, so it's unavailable. Clinical notes${dictationOn() ? " and dictation" : ""} still work as normal.</div>`;
       return;
     }
     // when a persistKey is given, reuse the stored conversation so it survives
@@ -9538,6 +10603,7 @@ ${isGoogleAccount(user)
   }
 
   function calendarView(user) {
+    const canEdit = S.canEditSchedule(user);
     const ths = therapists();
     // forget any hidden ids for providers that no longer exist
     [...calHidden].forEach((id) => { if (!ths.some((t) => t.id === id)) calHidden.delete(id); });
@@ -9545,7 +10611,7 @@ ${isGoogleAccount(user)
     const appts = S.apptsOn(calDate);
     const { byKey: apptsBySlot, outside: offHours } = bucketAppointments(appts, slots, S.settings().slotMinutes);
     const cols = ths.filter((t) => !calHidden.has(t.id));
-    const minW = Math.max(480, 72 + cols.length * 168); // keep columns readable; scroll when many
+    const minW = Math.max(480, 72 + cols.length * 150); // keep columns readable; scroll when many
 
     // hidden providers keep their bookings off the board on purpose; a hidden
     // column is the user's own doing, so those don't belong in the overflow list
@@ -9561,7 +10627,7 @@ ${isGoogleAccount(user)
       ? `<div class="empty-state" style="padding:22px">The facility is closed on this day.</div>`
       : `
 <div class="cal-scroll">
-  <div class="cal-grid" style="grid-template-columns: 72px repeat(${cols.length}, minmax(168px, 1fr)); min-width: ${minW}px">
+  <div class="cal-grid" style="grid-template-columns: 72px repeat(${cols.length}, minmax(150px, 1fr)); min-width: ${minW}px">
     <div class="cal-cell cal-head cal-corner">Time</div>
     ${cols.map((t) => `<div class="cal-cell cal-head">${esc(t.name)}${S.licenseExpired(t) ? ' <span class="chip bad">expired</span>' : ""}</div>`).join("")}
     ${slots.map((slot) => `
@@ -9571,7 +10637,7 @@ ${isGoogleAccount(user)
         if (here.length) return `<div class="cal-cell">${here.map((a) => `
           <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientCallName(S.getPatient(a.patientId)))}
           <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
-        return `<div class="cal-cell"><span class="slot-free" data-slot="${slot}" data-ther="${t.id}">+ available</span></div>`;
+        return `<div class="cal-cell"><span class="slot-free ${canEdit ? "" : "ask"}" data-slot="${slot}" data-ther="${t.id}"${canEdit ? "" : ` title="Ask for this slot"`}>${canEdit ? "+ Available" : "Available · Ask"}</span></div>`;
       }).join("")}`).join("")}
   </div>
 </div>`;
@@ -9595,11 +10661,13 @@ ${isGoogleAccount(user)
 
     return `
 <div class="page-head">
-  <div><h1>Calendar</h1><div class="sub">All bookings record who created or changed them</div></div>
+  <div><h1>Calendar</h1><div class="sub">${canEdit ? "All bookings record who created or changed them" : "You can see every schedule. Changes go through the admin or front desk — send a request."}</div></div>
   <div class="page-actions">
+    ${canEdit ? "" : `<button class="btn primary" id="calRequest" type="button">Request a change</button>`}
     <button class="btn" id="printSchedBtn">Print schedule</button>
   </div>
 </div>
+${scheduleRequestsCard(user)}
 <div class="card">
   <div class="cal-toolbar">
     <button class="btn small" id="calPrev">←</button>
@@ -9622,14 +10690,14 @@ ${isGoogleAccount(user)
   <p style="font-size:12.5px; color:var(--muted); margin:0 0 10px">
     Each booking schedules an email/SMS reminder 3 days before and the morning of the visit.
     In this on-device demo the sending is <b>simulated</b> — connecting a real SMS/email gateway is a deployment step.</p>
-  ${upcomingReminders.length ? `<table class="list"><thead><tr><th>When</th><th>Patient</th><th>Visit</th><th>Channel</th><th>Status</th></tr></thead><tbody>
+  ${upcomingReminders.length ? `<div class="table-scroll"><table class="list rem-table"><thead><tr><th>Patient</th><th>Visit</th><th>Reminder goes out</th><th>Channel</th><th>Status</th></tr></thead><tbody>
     ${upcomingReminders.map((r) => `<tr>
-      <td class="num">${fmtDT(r.when)}</td>
-      <td>${esc(S.patientName(S.getPatient(r.appt.patientId)))}</td>
-      <td class="num">${fmtDT(r.appt.start)}</td>
-      <td>${esc(r.method)}</td>
-      <td><span class="chip ${r.status.startsWith("sent") ? "good" : "info"}">${esc(r.status)}</span></td></tr>`).join("")}
-  </tbody></table>` : `<div class="empty-state">No upcoming reminders.</div>`}
+      <td class="rem-pt"><b>${esc(S.patientName(S.getPatient(r.appt.patientId)))}</b></td>
+      <td class="num rem-dt" data-label="Visit">${fmtShortDT(r.appt.start)}</td>
+      <td class="num rem-dt" data-label="Reminder goes out">${fmtShortDT(r.when)}</td>
+      <td data-label="Channel">${esc(channelLabel(r.method))}</td>
+      <td data-label="Status"><span class="chip ${r.status.startsWith("sent") ? "good" : "info"}">${esc(r.status)}</span></td></tr>`).join("")}
+  </tbody></table></div>` : `<div class="empty-state">No upcoming reminders.</div>`}
 </div>`;
   }
 
@@ -9652,9 +10720,15 @@ ${isGoogleAccount(user)
         redraw();
       }));
 
+    const canEdit = S.canEditSchedule(user);
     document.querySelectorAll(".slot-free").forEach((s) =>
-      s.addEventListener("click", () => bookingModal(user, s.dataset.slot, s.dataset.ther))
+      s.addEventListener("click", () => canEdit
+        ? bookingModal(user, s.dataset.slot, s.dataset.ther)
+        : scheduleRequestModal(user, { kind: "book", date: calDate, time: hhmm(s.dataset.slot), therapistId: s.dataset.ther }, redraw))
     );
+    const req = document.getElementById("calRequest");
+    if (req) req.addEventListener("click", () => scheduleRequestModal(user, { kind: "book", date: calDate }, redraw));
+    bindScheduleRequests(user, redraw);
     document.querySelectorAll(".slot-appt").forEach((s) =>
       s.addEventListener("click", () => apptModal(user, s.dataset.appt))
     );
@@ -9746,20 +10820,186 @@ ${body}
 <h3 style="margin-top:10px">Change history</h3>
 <table class="list"><tbody>${a.history.map((h) => `<tr><td>${esc(h.action)}</td><td>${esc((S.getUser(h.userId) || {}).name || "—")}</td><td class="num">${fmtDT(h.time)}</td></tr>`).join("")}</tbody></table>
 <h3 style="margin-top:10px">Reminders</h3>
-<table class="list"><tbody>${a.reminders.map((r) => `<tr><td class="num">${fmtDT(r.when)}</td><td>${esc(r.method)}</td><td><span class="chip info">${esc(r.status)}</span></td></tr>`).join("") || "<tr><td>None</td></tr>"}</tbody></table>
+<table class="list"><tbody>${a.reminders.map((r) => `<tr><td class="num">${fmtDT(r.when)}</td><td>${esc(channelLabel(r.method))}</td><td><span class="chip info">${esc(r.status)}</span></td></tr>`).join("") || "<tr><td>None</td></tr>"}</tbody></table>
 <div class="modal-actions">
   <a class="btn small" href="${gcal}" target="_blank" rel="noopener">Add to Google Calendar</a>
   <a class="btn small" href="#/patient/${p.id}" id="apChart">Open chart</a>
-  <button class="btn small danger" id="apCancel">Cancel visit</button>
+  ${S.canEditSchedule(user)
+    ? `<button class="btn small danger" id="apCancel">Cancel visit</button>`
+    : `<button class="btn small primary" id="apRequest">Request a change</button>`}
   <button class="btn small" id="apClose">Close</button>
 </div>`);
     m.querySelector("#apClose").addEventListener("click", closeModal);
     m.querySelector("#apChart").addEventListener("click", closeModal);
-    m.querySelector("#apCancel").addEventListener("click", () => {
-      S.cancelAppointment(a.id, user);
+    const cancel = m.querySelector("#apCancel");
+    if (cancel) cancel.addEventListener("click", () => {
+      const res = S.cancelAppointment(a.id, user);
+      if (res.error) return alertBanner(res.error);
       closeModal();
       render();
     });
+    const ask = m.querySelector("#apRequest");
+    if (ask) ask.addEventListener("click", () => {
+      closeModal();
+      scheduleRequestModal(user, { kind: "move", apptId: a.id, date: localIso(new Date(a.start)), time: hhmm(a.start) }, render);
+    });
+  }
+
+  /* ---------- schedule change requests ----------
+     A therapist sees the whole calendar but can't change it; they ask, and
+     the admin or front desk answers. See store.requestScheduleChange. */
+  const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const fmtHhmm = (t) => (t ? fmtTime(new Date(`2000-01-01T${t}`).toISOString()) : "");
+  const REQUEST_KIND_LABEL = { book: "Book a visit", move: "Move a visit", cancel: "Cancel a visit", other: "Something else — time off, a change to my hours" };
+
+  /** One line saying what a request asks for. `bare` drops the leading capital
+      so it can follow "Asks to …". */
+  function requestSummary(r, bare) {
+    const appt = r.apptId ? S.appointments().find((a) => a.id === r.apptId) : null;
+    const pname = (pid) => S.patientCallName(S.getPatient(pid)) || "a patient";
+    const when = `${r.date ? fmtDate(r.date + "T12:00:00") : ""}${r.time ? ` at ${fmtHhmm(r.time)}` : ""}`;
+    const withWho = r.therapistId && r.therapistId !== r.requestedBy ? ` with ${(S.getUser(r.therapistId) || {}).name || "another PT"}` : "";
+    const text = r.kind === "book" ? `book ${pname(r.patientId)}${withWho} on ${when}`
+      : r.kind === "move" ? `move ${appt ? `${pname(appt.patientId)}'s visit on ${fmtDT(appt.start)}` : "a visit"} to ${when}`
+      : r.kind === "cancel" ? `cancel ${appt ? `${pname(appt.patientId)}'s visit on ${fmtDT(appt.start)}` : "a visit"}`
+      : `${when ? `${when}: ` : ""}${r.note}`;
+    return bare ? text : text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  function scheduleRequestModal(user, preset, done) {
+    const pre = preset || {};
+    const pats = S.patients().slice().sort((a, b) => (a.lastName < b.lastName ? -1 : 1));
+    const now = new Date().toISOString();
+    // visits that can be moved or cancelled: your own upcoming ones, plus the one clicked
+    const visits = S.appointments()
+      .filter((a) => a.status === "booked" && a.start >= now && (a.therapistId === user.id || a.id === pre.apptId))
+      .sort((a, b) => (a.start < b.start ? -1 : 1));
+    const timeOpts = (date, sel) => {
+      const slots = date ? S.slotsForDay(date) : [];
+      return slots.length
+        ? slots.map((sl) => `<option value="${hhmm(sl)}" ${hhmm(sl) === sel ? "selected" : ""}>${fmtTime(sl)}</option>`).join("")
+        : `<option value="">Closed this day</option>`;
+    };
+    const m = showModal(`
+<h2>Request a schedule change</h2>
+<p class="hint" style="margin-top:0">Goes to the admin and front desk. You'll see their answer under <b>My requests</b> on the calendar.</p>
+<div class="field"><label for="rqKind">What do you need?</label><select id="rqKind">
+  ${Object.entries(REQUEST_KIND_LABEL).map(([k, l]) => `<option value="${k}" ${k === (pre.kind || "book") ? "selected" : ""}>${l}</option>`).join("")}
+</select></div>
+<div class="field" data-rq="visit"><label for="rqAppt">Which visit</label><select id="rqAppt">
+  ${visits.length ? visits.map((a) => `<option value="${a.id}" ${a.id === pre.apptId ? "selected" : ""}>${fmtDT(a.start)} · ${esc(S.patientCallName(S.getPatient(a.patientId)))}</option>`).join("") : `<option value="">You have no upcoming visits</option>`}
+</select></div>
+<div class="field" data-rq="patient"><label for="rqPat">Patient</label><select id="rqPat">
+  ${pats.map((p) => `<option value="${p.id}" ${p.id === pre.patientId ? "selected" : ""}>${esc(S.patientName(p))}</option>`).join("")}
+</select></div>
+<div class="field" data-rq="ther"><label for="rqTher">With</label><select id="rqTher">
+  ${therapists().map((t) => `<option value="${t.id}" ${t.id === (pre.therapistId || user.id) ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
+</select></div>
+<div class="rq-when" data-rq="when">
+  <div class="field"><label for="rqDate"><span data-rq-datelabel>Date</span></label><input type="date" id="rqDate" value="${esc(pre.date || todayIso())}" /></div>
+  <div class="field" data-rq="time"><label for="rqTime">Time</label><select id="rqTime">${timeOpts(pre.date || todayIso(), pre.time)}</select></div>
+</div>
+<div class="field"><label for="rqNote">Details <span class="hint" data-rq-optional>(optional)</span></label>
+  <textarea id="rqNote" rows="2" placeholder="e.g. Patient asked for an earlier slot"></textarea></div>
+<div class="error" id="rqErr"></div>
+<div class="modal-actions">
+  <button class="btn" id="rqCancel" type="button">Cancel</button>
+  <button class="btn primary" id="rqSend" type="button">Send request</button>
+</div>`);
+    const $ = (sel) => m.querySelector(sel);
+    const sync = () => {
+      const k = $("#rqKind").value;
+      m.querySelector('[data-rq="visit"]').hidden = !(k === "move" || k === "cancel");
+      m.querySelector('[data-rq="patient"]').hidden = k !== "book";
+      m.querySelector('[data-rq="ther"]').hidden = k !== "book";
+      m.querySelector('[data-rq="when"]').hidden = k === "cancel";
+      m.querySelector('[data-rq="time"]').hidden = k === "other";
+      m.querySelector("[data-rq-datelabel]").textContent = k === "move" ? "New date" : "Date";
+      m.querySelector("[data-rq-optional]").hidden = k === "other";
+      $("#rqNote").placeholder = k === "other" ? "e.g. Seminar that afternoon — keep me free from 1 PM"
+        : k === "cancel" ? "e.g. Patient is travelling that week" : "e.g. Patient asked for an earlier slot";
+    };
+    sync();
+    $("#rqKind").addEventListener("change", sync);
+    $("#rqDate").addEventListener("change", () => { $("#rqTime").innerHTML = timeOpts($("#rqDate").value, $("#rqTime").value); });
+    $("#rqCancel").addEventListener("click", closeModal);
+    $("#rqSend").addEventListener("click", () => {
+      const res = S.requestScheduleChange({
+        kind: $("#rqKind").value, apptId: $("#rqAppt").value, patientId: $("#rqPat").value, therapistId: $("#rqTher").value,
+        date: $("#rqDate").value, time: $("#rqTime").value, note: $("#rqNote").value,
+      }, user);
+      if (res.error) { $("#rqErr").textContent = res.error; return; }
+      closeModal();
+      if (done) done(); else render();
+    });
+  }
+
+  /* Pending requests for whoever runs the schedule (answer them here), or the
+     sender's own requests and their answers for everyone else. */
+  function scheduleRequestsCard(user) {
+    const canEdit = S.canEditSchedule(user);
+    const all = S.scheduleRequests();
+    const statusChip = (r) => `<span class="chip ${r.status === "approved" ? "good" : r.status === "declined" ? "bad" : r.status === "pending" ? "warn" : "muted"}">${esc(r.status)}</span>`;
+    const by = (id) => esc((S.getUser(id) || {}).name || "—");
+    const row = (r, actions) => `
+      <div class="rq-row" data-rqid="${r.id}">
+        <div class="rq-main">
+          <b>${canEdit ? `${by(r.requestedBy)} — ` : ""}${esc(requestSummary(r))}</b>
+          <small>${r.note && r.kind !== "other" ? `“${esc(r.note)}” · ` : ""}sent ${fmtDT(r.createdAt)}${r.resolvedBy ? ` · ${esc(r.status)} by ${by(r.resolvedBy)}` : ""}${r.response ? ` — “${esc(r.response)}”` : ""}</small>
+        </div>
+        <div class="rq-actions">${actions}</div>
+      </div>`;
+    if (canEdit) {
+      const pending = all.filter((r) => r.status === "pending");
+      const answered = all.filter((r) => r.status !== "pending").slice(0, 10);
+      if (!pending.length && !answered.length) return "";
+      const approveLabel = { book: "Book it", move: "Move it", cancel: "Cancel visit", other: "Approve" };
+      return `<div class="card rq-card" id="calRequests">
+        <h2>Change requests ${pending.length ? `<span class="chip warn">${pending.length} waiting</span>` : ""}</h2>
+        ${pending.length ? pending.map((r) => row(r, `
+          <button class="btn small primary" data-rq-approve="${r.id}" type="button">${approveLabel[r.kind]}</button>
+          <button class="btn small" data-rq-decline="${r.id}" type="button">Decline</button>`)).join("")
+          : `<div class="empty-state">No requests waiting.</div>`}
+        ${answered.length ? `<details class="rq-older"><summary>Answered recently (${answered.length})</summary>
+          ${answered.map((r) => row(r, statusChip(r))).join("")}</details>` : ""}
+      </div>`;
+    }
+    const mine = all.filter((r) => r.requestedBy === user.id).slice(0, 10);
+    return `<div class="card rq-card" id="calRequests">
+      <h2>My requests</h2>
+      ${mine.length ? mine.map((r) => row(r, `${statusChip(r)}${r.status === "pending" ? ` <button class="btn-link" data-rq-withdraw="${r.id}" type="button">Withdraw</button>` : ""}`)).join("")
+        : `<div class="empty-state">Nothing requested yet. Click a free slot, a visit, or <b>Request a change</b>.</div>`}
+    </div>`;
+  }
+
+  function bindScheduleRequests(user, redraw) {
+    document.querySelectorAll("[data-rq-withdraw]").forEach((b) => b.addEventListener("click", () => {
+      const res = S.withdrawScheduleRequest(b.dataset.rqWithdraw, user);
+      if (res.error) return alertBanner(res.error);
+      redraw();
+    }));
+    document.querySelectorAll("[data-rq-approve]").forEach((b) => b.addEventListener("click", () => {
+      const res = S.resolveScheduleRequest(b.dataset.rqApprove, "approved", user);
+      if (res.error) return alertBanner(`Couldn't approve: ${res.error}`);
+      redraw();
+    }));
+    document.querySelectorAll("[data-rq-decline]").forEach((b) => b.addEventListener("click", () => {
+      const m = showModal(`
+<h2>Decline this request?</h2>
+<p style="font-size:13px">${esc(requestSummary(S.scheduleRequests().find((r) => r.id === b.dataset.rqDecline) || {}))}</p>
+<div class="field"><label for="rqReason">Reason <span class="hint">(shown to them)</span></label>
+  <input id="rqReason" placeholder="e.g. Fully booked — try Thursday" /></div>
+<div class="modal-actions">
+  <button class="btn" id="rqKeep" type="button">Back</button>
+  <button class="btn danger" id="rqNo" type="button">Decline</button>
+</div>`);
+      m.querySelector("#rqKeep").addEventListener("click", closeModal);
+      m.querySelector("#rqNo").addEventListener("click", () => {
+        S.resolveScheduleRequest(b.dataset.rqDecline, "declined", user, { response: m.querySelector("#rqReason").value });
+        closeModal();
+        redraw();
+      });
+    }));
   }
 
   const gcalTime = (iso) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -9816,6 +11056,10 @@ ${ths.map((t) => {
     "doctor-order-actioned": { emoji: "✅", label: "actioned a doctor's order", tone: "tone-patient" },
     "doctor-entry-removed": { emoji: "🗑", label: "removed a doctor's entry", tone: "tone-patient" },
     "schedule-printed": { emoji: "🖨", label: "printed the schedule", tone: "tone-doc" },
+    "schedule-requested": { emoji: "🗓", label: "requested a schedule change", tone: "tone-sched" },
+    "schedule-request-withdrawn": { emoji: "↩️", label: "withdrew a schedule request", tone: "tone-sched" },
+    "schedule-request-approved": { emoji: "✅", label: "approved a schedule request", tone: "tone-sched" },
+    "schedule-request-declined": { emoji: "🚫", label: "declined a schedule request", tone: "tone-sched" },
     "ai-chart-review": { emoji: "✦", label: "ran an AI chart review", tone: "tone-ai" },
     "transcript-refined": { emoji: "✦", label: "cleaned up a transcript", tone: "tone-ai" },
     "insights-generated": { emoji: "✦", label: "generated insights", tone: "tone-ai" },
@@ -9904,10 +11148,10 @@ ${ths.map((t) => {
         <p><b>Where, exactly.</b> Unless your clinic chose otherwise at setup, the application and database run in a <b>United States</b> region, which means your records leave the Philippines to be stored and processed. A closer region (Singapore or Jakarta) can be chosen at deployment — ask your administrator which one you are on.</p>
         <p><b>Whose records they are.</b> Your clinic's. We hold them for you and act on your instructions; Google holds them for us under the agreement above. No account outside your clinic can open them, including ours.</p>
         <p style="margin-bottom:0">You stay in control: <b>Export backup</b> takes the whole record set with you in an open format, and <b>Erase all data</b> removes it. Neither needs our permission — there is no lock-in.</p>` },
-      { emoji: "🎤", title: "Voice dictation", body: `
+      ...(!dictationOn() ? [] : [{ emoji: "🎤", title: "Voice dictation", body: `
         <p>When you dictate, the audio streams to <b>Google Cloud Speech-to-Text</b> in ${where(sttLoc)}, which turns it into text and sends it straight back. It is a paid Google Cloud service under the agreement above — <b>not</b> a free consumer speech service, and not a phone's built-in dictation.</p>
         <p><b>By default the audio is held only in memory and discarded</b> the moment it is transcribed. Only the transcript is saved to the chart.</p>
-        <p style="margin-bottom:0"><b>Optional session-audio review.</b> A clinic can turn on a feature — <b>off by default</b> — that briefly keeps dictation audio <b>for patients who have consented</b>, so a clinician can replay it to check the transcript. Kept audio is <b>deleted the moment the note is signed</b>, or after the clinic's retention window, whichever comes first. The patient's consent is recorded in their chart.</p>` },
+        <p style="margin-bottom:0"><b>Optional session-audio review.</b> A clinic can turn on a feature — <b>off by default</b> — that briefly keeps dictation audio <b>for patients who have consented</b>, so a clinician can replay it to check the transcript. Kept audio is <b>deleted the moment the note is signed</b>, or after the clinic's retention window, whichever comes first. The patient's consent is recorded in their chart.</p>` }]),
       { emoji: "✦", title: `AI cleanup & insights${geminiOn ? " (Gemini)" : ""}`, body: geminiOn
         ? `<p>When you press <b>✦ Review &amp; clean up</b>, ask for <b>insights</b>, or use the <b>patient assistant</b>, the note's <b>text</b> — never the audio — is sent to <b>Google Gemini on Vertex AI</b>, served from ${where(geminiLoc)}. <b>Importing a scanned PDF</b> of past visits sends that document the same way.</p>
         <p>That text can include the patient's name and clinical detail, so treat it as what it is: <b>health information leaving your clinic's region for processing</b>. Google's Vertex AI service terms state that customer prompts and responses are <b>not used to train Google's models</b> and are not sold. Your administrator should keep a copy of those terms with your clinic's records of processing.</p>
@@ -10228,7 +11472,7 @@ ${privacyInfoAccordion(geminiOn)}
 <div class="card allowance">
   <div class="allowance-head">
     <div><h2>Plan usage — ${esc(month)}</h2>
-      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits and ${minutesOf(u.fairUseMinutes)} of dictation</div></div>
+      <div class="sub">${esc(u.planName)} plan · ${u.allowance} visits${dictationOn() ? ` and ${minutesOf(u.fairUseMinutes)} of dictation` : ""}</div></div>
     ${u.estimatedOverage ? `<div class="allowance-count bad"><b>${peso(u.estimatedOverage)}</b><span>overage so far</span></div>` : ""}
   </div>
 
@@ -10240,20 +11484,20 @@ ${privacyInfoAccordion(geminiOn)}
       : `${u.remaining} left`}</div>
   </div>
 
-  <div class="meter">
+  ${!dictationOn() ? "" : `<div class="meter">
     <div class="meter-head"><span>Dictation</span><b class="${mTone}">${minutesOf(u.minutesUsed)} <span>of ${minutesOf(u.includedMinutes)}</span></b></div>
     <div class="allowance-bar"><div class="allowance-fill ${mTone}" style="width:${mPct}%"></div></div>
     <div class="meter-foot">${minsOver
       ? `${minutesOf(u.excessMinutes)} over · ${peso(u.excessMinutes * u.overagePerMinute)} at ${peso(u.overagePerMinute)}/min`
       : `${minutesOf(u.spareMinutes)} left · one pool for the whole month`}</div>
-  </div>
+  </div>`}
 
   ${over ? `<div class="banner warn">${u.overBy} visit${u.overBy > 1 ? "s" : ""} past the ${u.allowance} included, at ${peso(u.overagePerVisit)} each. If this is a normal month, the next plan up costs less.</div>` : ""}
   ${project ? `<div class="banner">At this pace you'll finish around <b>${u.projectedVisits} visits</b>. Nothing stops working — extra visits bill at ${peso(u.overagePerVisit)} each.</div>` : ""}
   <div class="allowance-note">
-    Resets ${esc(resets)}; neither meter rolls over.
+    ${dictationOn() ? `Resets ${esc(resets)}; neither meter rolls over.
     Dictation is one pool for the whole month, and only speech is counted.
-    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} used dictation this month.` : "No dictation recorded yet this month."}
+    ${u.dictatedVisits ? `${u.dictatedVisits} of ${u.visits} visit${u.visits === 1 ? "" : "s"} used dictation this month.` : "No dictation recorded yet this month."}` : `Resets ${esc(resets)}; unused visits don't roll over.`}
   </div>
 </div>`;
   }
@@ -10277,8 +11521,8 @@ ${privacyInfoAccordion(geminiOn)}
   <table class="list"><tbody>
     <tr>${k("Plan")}<td><b>${esc(u.planName)}</b></td></tr>
     <tr>${k("Visits included")}<td>${u.allowance} a month</td></tr>
-    <tr>${k("Dictation included")}<td>${minutesOf(u.fairUseMinutes)} a month</td></tr>
-    <tr>${k("Beyond the plan")}<td>₱${st.overagePerVisit} a visit · ₱${st.overagePerMinute} a dictation minute</td></tr>
+    ${dictationOn() ? `<tr>${k("Dictation included")}<td>${minutesOf(u.fairUseMinutes)} a month</td></tr>` : ""}
+    <tr>${k("Beyond the plan")}<td>₱${st.overagePerVisit} a visit${dictationOn() ? ` · ₱${st.overagePerMinute} a dictation minute` : ""}</td></tr>
     <tr>${k("Clinic since")}<td>${c.createdAt ? fmtDate(c.createdAt) : "—"}</td></tr>
     <tr>${k("Allowance resets")}<td>${esc(resets)}</td></tr>
   </tbody></table>
@@ -10333,11 +11577,11 @@ ${pricesCard(user)}
           ${["Solo", "Practice", "Clinic", "Group"].map((p) => `<option value="${p}" ${st.planName === p ? "selected" : ""}>${p}</option>`).join("")}
         </select></div>
       <div class="field"><label>Visits included per month</label><input id="st-allowance" type="number" min="1" max="10000" value="${st.visitAllowance}" /></div>
-      <div class="field"><label>Dictation pool rate (min per visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
-      <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>
+      ${dictationOn() ? `<div class="field"><label>Dictation pool rate (min per visit)</label><input id="st-fairuse" type="number" min="1" max="60" value="${st.fairUseMinutesPerVisit}" /></div>
+      <div class="field"><label>Hard stop per visit (min)</label><input id="st-maxdict" type="number" min="5" max="180" value="${st.maxDictationMinutesPerVisit}" /></div>` : ""}
     </div>
-    <div class="hint" style="margin:-4px 0 8px">Operator only — this is what the clinic is billed against. The hard stop is a runaway-microphone backstop, not a limit; set it well above any real visit.</div>` : ""}
-    <div class="field" style="border-top:1px solid var(--border); padding-top:12px; max-width:320px">
+    <div class="hint" style="margin:-4px 0 8px">Operator only — this is what the clinic is billed against.${dictationOn() ? " The hard stop is a runaway-microphone backstop, not a limit; set it well above any real visit." : ""}</div>` : ""}
+    ${dictationOn() ? `<div class="field" style="border-top:1px solid var(--border); padding-top:12px; max-width:320px">
       <label>Dictation language for this clinic</label>
       <select id="st-lang">
         <option value="fil-PH" ${(st.dictationLang || "fil-PH") === "fil-PH" ? "selected" : ""}>English &amp; Tagalog</option>
@@ -10351,7 +11595,7 @@ ${pricesCard(user)}
         Allow temporary session-audio review</label>
       <div class="hint" style="margin:4px 0 8px">Off by default. Keeps dictation audio for <b>consenting patients only</b> so a clinician can re-check the transcript. Deleted when the note is signed, or after the window below — whichever is first.</div>
       <div class="field" style="max-width:220px"><label>Auto-delete kept audio after (days)</label><input id="st-audio-days" type="number" min="1" max="90" value="${st.audioReviewDays || 7}" /></div>
-    </div>
+    </div>` : ""}
     <button class="btn primary" id="stSave">Save settings</button>
   </div>
   <div class="card">
@@ -10468,13 +11712,19 @@ ${pricesCard(user)}
         dayStartHour: Number(document.getElementById("st-start").value) || 8,
         dayEndHour: Number(document.getElementById("st-end").value) || 17,
         workDays: [...document.querySelectorAll(".st-day:checked")].map((c) => Number(c.value)),
+      };
+      /* The dictation settings render only while dictation is on, so they are
+         read only if they are on the page — saving opening hours with the mic
+         paused must not reset a language or an audio choice nobody could see. */
+      const langSel = document.getElementById("st-lang");
+      if (langSel) {
         // guarded rather than trusted: only the two codes Chirp 2 is offered
         // are storable, so a stale or hand-edited value cannot become the
         // thing every new device in the clinic starts on.
-        dictationLang: document.getElementById("st-lang").value === "ceb-PH" ? "ceb-PH" : "fil-PH",
-        audioReview: document.getElementById("st-audio").checked,
-        audioReviewDays: Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7)),
-      };
+        patch.dictationLang = langSel.value === "ceb-PH" ? "ceb-PH" : "fil-PH";
+        patch.audioReview = document.getElementById("st-audio").checked;
+        patch.audioReviewDays = Math.min(90, Math.max(1, Number(document.getElementById("st-audio-days").value) || 7));
+      }
       /* The plan controls render for the operator only, so read them only if
          they are on the page — a clinic admin saving their opening hours must
          not blank out the allowance they can't see. */
@@ -10482,8 +11732,10 @@ ${pricesCard(user)}
       if (plan) {
         patch.planName = plan.value;
         patch.visitAllowance = Math.max(1, Number(document.getElementById("st-allowance").value) || 130);
-        patch.fairUseMinutesPerVisit = Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10));
-        patch.maxDictationMinutesPerVisit = Math.min(180, Math.max(5, Number(document.getElementById("st-maxdict").value) || 30));
+        if (document.getElementById("st-fairuse")) {
+          patch.fairUseMinutesPerVisit = Math.min(60, Math.max(1, Number(document.getElementById("st-fairuse").value) || 10));
+          patch.maxDictationMinutesPerVisit = Math.min(180, Math.max(5, Number(document.getElementById("st-maxdict").value) || 30));
+        }
       }
       S.updateSettings(patch, user);
       render();
@@ -10896,7 +12148,8 @@ ${accessRequestsCard()}
   /* ================= boot ================= */
 
   window.TheraRender = render; // the sync layer re-renders after remote pulls
-  window.addEventListener("hashchange", () => {
+  window.addEventListener("hashchange", (e) => {
+    noteNavigation(e.oldURL ? (new URL(e.oldURL).hash || "") : "", location.hash || "");
     /* Logged out, the hash is the visitor's explicit choice, so it outranks the
        remembered showLogin. Without this, Back from #/signin to #/ left
        showLogin === true and render() drew the login card over the landing —

@@ -1,33 +1,30 @@
 # Deploying TheraChart
 
-> ## Cost hold LIFTED — Cloud SQL is running
+> ## Parked — Cloud SQL is DELETED (since 2026-09-04)
 >
-> **As of 2026-08-17 the `therachart-db` Cloud SQL instance is back on**
-> (`activation-policy ALWAYS`, state `RUNNABLE`) and the deployed Cloud Run
-> service (https://therachart-cmcoe52aaa-uc.a.run.app) serves normally. A 503
-> from that URL is now a real outage worth debugging, not the expected state.
+> The `therachart-db` Cloud SQL instance was **deleted**, not stopped, to park
+> the project at ~US$0/mo. Cloud Run is still deployed (it scales to zero), but
+> with no database it cannot boot, so the URL answers 5xx — that is the expected
+> state, not an outage.
 >
-> It bills ~US$8–10/mo of always-on compute again — it is the only resource in
-> the project that charges around the clock, since Cloud Run scales to zero and
-> Gemini/STT/GCS are per-use. To park it during a quiet stretch:
+> The restorable export is `gs://therachart-prod-files/backups/therachart-20260904.sql`
+> (an off-GCP copy sits in `~/TheraChart-backups/`). Bringing production back is
+> `./deploy-gcp.sh` (it recreates the instance, ~US$8–10/mo always-on) followed by
+> `gcloud sql import sql therachart-db gs://therachart-prod-files/backups/therachart-20260904.sql --database=therachart --project therachart-prod`.
 >
-> ```bash
-> gcloud sql instances patch therachart-db --project therachart-prod --activation-policy NEVER
-> ```
+> **Day-to-day development runs on local Postgres 15** — see
+> [Local Postgres for development](#local-postgres-for-development) below. To
+> work without any cloud AI charges: `THERACHART_NO_AI=1 ./start.sh`.
+
+> ## Dictation is paused (since 2026-10-28)
 >
-> and to bring it back (allow a few minutes before the service answers):
->
-> ```bash
-> gcloud sql instances patch therachart-db --project therachart-prod --activation-policy ALWAYS
-> ```
->
-> **Day-to-day development still runs on local Postgres 15** — see
-> [Local Postgres for development](#local-postgres-for-development) below. Every
-> feature works locally, including Vertex Gemini and Cloud Speech-to-Text, so
-> there is no need to keep the cloud database up just to write code.
->
-> The pre-hold safety export is still at
-> `gs://therachart-prod-files/backups/therachart-20260726.sql`
+> Speech-to-text, the visit recorder and every microphone control are **off and
+> hidden** unless the server is started with `THERACHART_DICTATION=1`. Findings
+> are typed instead, and the local parser still files them and pins the body
+> map. With the flag off `/api/stt` refuses, so nothing can bill Speech-to-Text.
+> The AI writing helpers (polish, insights, assistant) are unaffected and still
+> follow the Gemini configuration. To bring dictation back, set
+> `THERACHART_DICTATION=1` on the server (locally: `THERACHART_DICTATION=1 ./start.sh`).
 
 TheraChart runs three ways. Pick the one that matches how you want to use it.
 
