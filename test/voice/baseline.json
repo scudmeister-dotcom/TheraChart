@@ -7,14 +7,14 @@
     }
   },
   "project": "therachart-prod",
-  "audioSeconds": 668.6475,
-  "billedSeconds": 696,
-  "sttUsd": 0.1856,
-  "refineCalls": 32,
-  "meanWer": 0.05114263034446951,
-  "earned": 341,
-  "possible": 346,
-  "overall": 0.9855491329479769,
+  "audioSeconds": 12.7849375,
+  "billedSeconds": 14,
+  "sttUsd": 0.0037,
+  "refineCalls": 1,
+  "meanWer": 0.045721794067248314,
+  "earned": 740,
+  "possible": 748,
+  "overall": 0.9893048128342246,
   "notRun": 0,
   "cases": [
     {
@@ -1637,6 +1637,1726 @@
       ],
       "earned": 11,
       "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "assist/help-not-hep",
+      "why": "a patient asking for help must not be rewritten into a home exercise programme",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.027777777777777776,
+      "refWords": 72,
+      "edits": 2,
+      "heard": "let us look at the right knee today we reviewed your home exercise program last visit and your compliance has been very good opo doc salamat pero i still need help going down the stairs at home my daughter has to help me put on my shoes every morning right knee flexion is 110° and pain is 4 out of 10 she needs the help of one person for transfers today",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the RIGHT knee is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no left knee invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the physical assistance she needs reached the note",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 4/10 score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "knee flexion ROM survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "referral/credential-not-a-grade",
+      "why": "a referring therapist's MPT credential must not be rewritten into MMT",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.06,
+      "refWords": 50,
+      "edits": 3,
+      "heard": "new evaluation today referred to us by maria santos mpt at the district hospital she said my left shoulder is frozen and sent me here left shoulder abduction is 90 degrees rotator cuff strength is four out of five i will write back to santos with the findings",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT shoulder is pinned",
+          "weight": 3,
+          "ok": false,
+          "thrown": null,
+          "detail": "pinned: (none)"
+        },
+        {
+          "name": "no right shoulder invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the referrer reached the note",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the strength grade reached the note",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 7,
+      "possible": 10,
+      "failed": [
+        {
+          "name": "the LEFT shoulder is pinned",
+          "detail": "pinned: (none)"
+        }
+      ]
+    },
+    {
+      "id": "laterality/wala-both-ways",
+      "why": "Cebuano wala (left) and walay (none) in one visit — one must pin a side, the other must not pin a symptom",
+      "lang": "ceb-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 37,
+      "edits": 0,
+      "heard": "asa man ang sakit nimo karon ang wala nga tuhod doc ang wala nga tuhod ang sakit walay pamanhid ang akong tiil sakit lang gyud ang tuhod sige ang wala nga tuhod lima sa napulo ang sakit",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT knee is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no right knee invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the numbness denial did not become a numbness finding",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 5/10 score survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 10,
+      "possible": 10,
+      "failed": []
+    },
+    {
+      "id": "numbers/score-versus-degree",
+      "why": "an angle, a date and a rep count must not be filed as pain scores",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.07692307692307693,
+      "refWords": 65,
+      "edits": 5,
+      "heard": "left elbow today at your last visit on the 15th your pain was 8 out of 10 now it is 3 out of 10 doc much better elbow flexion is 130° extension lacking 10° grip strength is 4 out of 5 we will do three sets of 15 reps sa umaga mga 2 out of 10 lang pero pagkagabi umaabot ng 8",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the LEFT elbow is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the current 3/10 reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the ten degrees of extension lag is not charted as a pain score",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the fifteenth, and the fifteen reps, are not charted as pain scores",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "elbow flexion ROM survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 13,
+      "possible": 13,
+      "failed": []
+    },
+    {
+      "id": "history/resolved-not-current",
+      "why": "a resolved problem and a conditional instruction both name a region, and neither is a finding today",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 67,
+      "edits": 0,
+      "heard": "what brings you in today my right ankle doc i twisted it last week going down a step last year naman my left shoulder was frozen pero okay na yun wala na akong problema doon right ankle then there is swelling over the lateral malleolus and pain is six out of 10 if the swelling comes back after the exercises put ice on it for 10 minutes",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the RIGHT ankle is pinned",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the resolved left shoulder is not pinned as a problem today",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no left ankle invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 6/10 score reached the chart",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the icing instruction reached a prose section",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "section/reason-credential",
+      "why": "a referrer's MPT credential beside a muscle grade — the repair layer's worst pairing, in one burst",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.10256410256410256,
+      "refWords": 39,
+      "edits": 4,
+      "heard": "referred by dr ramon cruz for evaluation and treatment of low back pain the referring therapist at the district hospital was maria santos mpt strength testing was specifically requested the hip abductors at four out of five",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the credential is not written as a muscle test",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the low back reached the section",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no side invented — nobody said one",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "section/precautions-negated-restriction",
+      "why": "'no weight bearing restrictions' must not be shortened into 'no weight bearing'",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 27,
+      "edits": 0,
+      "heard": "there are no weight-bearing restrictions for this patient she may bear weight as tolerated on the left leg watch for dizziness when she stands up quickly",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the patient is NOT recorded as non-weight-bearing",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "weight bearing as tolerated survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the dizziness precaution survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "section/precautions-conditional",
+      "why": "a surgeon's ceiling, a red flag and a restriction — none of them may be softened or invented past",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.02564102564102564,
+      "refWords": 39,
+      "edits": 1,
+      "heard": "the surgeon's protocol allows range of motion to 90° of knee flexion only if she reports calf pain or shortness of breath stop and send her to the emergency room no resisted hamstring work at this stage",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the ninety degree ceiling survived digit for digit",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the red flag instruction survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the hamstring restriction is still a restriction",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no range ceiling invented that was never spoken",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/pmh-family-not-patient",
+      "why": "the family's conditions must not become the patient's own history",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 32,
+      "edits": 0,
+      "heard": "past medical history is hypertension controlled on medication since 2019 her mother has diabetes and her brother had a stroke but the patient herself has neither no previous surgery on the knee",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the patient's own hypertension survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the family's diabetes is not recorded as the patient's",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the surgical denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "section/pmh-allergy-denial",
+      "why": "an allergy denial that flips is a prescribing error — and two drug doses have to survive digit for digit",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.125,
+      "refWords": 24,
+      "edits": 3,
+      "heard": "no known drug allergies she takes metformin 500 mg twice a day and losartan 50 mg cesarean section in 2015 otherwise no surgical history",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the allergy denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no allergy invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both medications survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the metformin dose survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 13,
+      "possible": 13,
+      "failed": []
+    },
+    {
+      "id": "section/subjective-help-not-hep",
+      "why": "the help/HEP collision inside one section burst, where there is no visit context to recover from it",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.023255813953488372,
+      "refWords": 43,
+      "edits": 1,
+      "heard": "patient reports her right hip gives way on the stairs we reviewed her home exercise program and adherence has been good she still needs help from her husband to get out of the bath pain is 5 out of 10 on the stairs",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the assistance she needs is written as assistance",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 5/10 score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "section/subjective-outside-number",
+      "why": "a measurement the patient was quoted somewhere else must not read as this clinic's own",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.07317073170731707,
+      "refWords": 41,
+      "edits": 3,
+      "heard": "patient reports left knee pain for 1 month she says the doctor at the other clinic told her the flexion was only 90° she has not had any imaging done here pain is 4 out of 10 going upstairs",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the outside 90 degrees is attributed, not stated as measured",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the imaging denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 4/10 score survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/subjective-hedged-score",
+      "why": "an uncertain score must stay uncertain — resolving it silently invents precision the patient did not give",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 35,
+      "edits": 0,
+      "heard": "patient reports neck pain maybe six out of 10 sometimes eight she is not sure it has been going on for i think she said three weeks maybe a month no radiation down the arm",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the neck survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the uncertainty is preserved or flagged",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the radiation denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no side invented — nobody said one",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/objective-self-corrected-number",
+      "why": "a measurement corrected mid-sentence — the withdrawn figure must not survive alongside the real one",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.15384615384615385,
+      "refWords": 26,
+      "edits": 4,
+      "heard": "right shoulder flexion is 140° sorry 150° abduction 120 internal rotation to the level of l5 strength is 5 out of 5 throughout",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the corrected 150 is what got written",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the withdrawn 140 is not left standing as a measurement",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "abduction 120 survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/objective-not-tested",
+      "why": "a side the therapist explicitly did not examine must not acquire measurements",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.05405405405405406,
+      "refWords": 37,
+      "edits": 2,
+      "heard": "left ankle dorsiflexion is 10° plantarflexion 40° i did not test the right ankle today she was in too much pain to stand left ankle strength is 4 out of 5 with mild swelling laterally",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT measurements survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the untested right side has no number attached to it",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the fact that the right was not tested survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "section/assessment-uncommitted",
+      "why": "a differential the therapist refused to close must not be written as a settled diagnosis",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 39,
+      "edits": 0,
+      "heard": "findings could fit a subacromial impingement but a small rotator cuff tear is also possible i am not committing to either until we see how she responds to four weeks of therapy functionally she is limited in overhead reaching",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both possibilities survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the uncertainty survived as uncertainty",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "it is not written as a settled diagnosis",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the functional limitation survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 13,
+      "possible": 13,
+      "failed": []
+    },
+    {
+      "id": "section/assessment-plan-bleed",
+      "why": "a frequency dictated into Assessment is Plan content and has to be flagged rather than absorbed",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.03225806451612903,
+      "refWords": 31,
+      "edits": 1,
+      "heard": "impression is left lateral epicondylitis moderate with good rehabilitation potential i will see her twice a week for four weeks and reassess she is motivated and her home setup is suitable",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the impression survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the treatment frequency is flagged as belonging elsewhere",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the prognosis survived",
+          "weight": 1,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "section/plan-corrected-frequency",
+      "why": "a frequency corrected mid-sentence is a prescription — the withdrawn one must not be what gets written",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.023809523809523808,
+      "refWords": 42,
+      "edits": 1,
+      "heard": "plan is to see her twice a week no make that three times a week for two weeks then twice a week progress to close chain strengthening as tolerated discharge when she can climb a full flight of stairs without the rail",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the corrected three times a week is what got written",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the discharge criterion survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no duration invented that was never spoken",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 10,
+      "possible": 10,
+      "failed": []
+    },
+    {
+      "id": "section/plan-help-not-hep",
+      "why": "'reviewed' and 'help' in the same burst, aimed at the section a next clinician follows",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.02702702702702703,
+      "refWords": 37,
+      "edits": 1,
+      "heard": "we reviewed her program today and compliance is good continue therapy twice a week and give her more help with the transfer technique refer back to the surgeon if the swelling has not settled in two weeks",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the transfer coaching survived as coaching",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the referral back to the surgeon survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the two-week trigger survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 11,
+      "possible": 11,
+      "failed": []
+    },
+    {
+      "id": "section/summary-therex-collision",
+      "why": "'did the exercises' is rewritten to 'therex' by the repair layer — the sentence still has to read",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.030303030303030304,
+      "refWords": 33,
+      "edits": 1,
+      "heard": "today she did the exercises from her program three sets of 10 we performed manual therapy to the left shoulder for 10 minutes she tolerated the session well with no increase in pain",
+      "repaired": "today she did therex from her program three sets of 10 we performed manual therapy to the left shoulder for 10 minutes she tolerated the session well with no increase in pain",
+      "fixes": [
+        {
+          "from": "the exercises",
+          "to": "therex"
+        }
+      ],
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the exercise content survived readably",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the sets and reps survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT shoulder survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the 'no increase in pain' stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/summary-modality-parameters",
+      "why": "two durations in one burst — the ultrasound's must not become the ice pack's",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.10714285714285714,
+      "refWords": 28,
+      "edits": 3,
+      "heard": "ultrasound to the right lateral epicon dial 1 mhz 8 minutes followed by eccentric wrist extensor loading three sets of 15 ice applied for 10 minutes at the end",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the ultrasound's eight minutes survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the ice duration was not attached to the ultrasound",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no parameter invented that was never spoken",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/currentstatus-two-numbers",
+      "why": "a before and an after in every sentence — swapping either one reverses the patient's progress",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.023809523809523808,
+      "refWords": 42,
+      "edits": 1,
+      "heard": "at the start of care her right shoulder pain was 8 out of 10 it is now 3 out of 10 flexion has improved from 90° to 140 she is sleeping through the night for the first time in 2 months",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both pain figures survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the direction of change is improvement, not decline",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both range figures survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/currentstatus-mixed-progress",
+      "why": "one region improving and another newly painful must not be averaged into one story",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 38,
+      "edits": 0,
+      "heard": "her left knee is much better pain down to two out of 10 from six but she has developed new right shoulder pain this week about five out of 10 she has not fallen since the last visit",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the knee improvement survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the shoulder problem is recorded as NEW",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "each side stayed with its own region",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the fall denial stayed a denial",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 15,
+      "possible": 15,
+      "failed": []
+    },
+    {
+      "id": "section/updatedfindings-resolved",
+      "why": "a finding that has RESOLVED must not be written as a finding that is present",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 23,
+      "edits": 0,
+      "heard": "the swelling over the left knee has completely resolved there is no longer any warmth or effusion crepitus on flexion is still present",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the swelling is recorded as resolved, not as present",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "warmth and effusion are not written as present findings",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the still-present crepitus survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 15,
+      "possible": 15,
+      "failed": []
+    },
+    {
+      "id": "section/updatedfindings-opposite-side",
+      "why": "a positive test on one side and a negative on the other, in one sentence",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.030303030303030304,
+      "refWords": 33,
+      "edits": 1,
+      "heard": "the right wrist findings are unchanged from the last visit new finding today is tenderness over the left first extensor compartment pinkelstein test is positive on the left and negative on the right",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the new LEFT finding survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the right is recorded as unchanged, not newly abnormal",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the positive and the negative both survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 12,
+      "possible": 12,
+      "failed": []
+    },
+    {
+      "id": "section/goals-not-met",
+      "why": "met, not met and discontinued in one burst — collapsing them rewrites the patient's outcome",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.1282051282051282,
+      "refWords": 39,
+      "edits": 5,
+      "heard": "gold one was 120° of knee flexion in four weeks she is at 110 so it is not met gold two walking 500 m without rest is met gold three was discontinued because she declined the stair training",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the unmet goal is recorded as unmet",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the met goal is recorded as met",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the discontinued goal is not recorded as met",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the target and the actual both survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/goals-all-partial",
+      "why": "nothing is finished — a section that rounds partial progress up to 'met' is the failure",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 42,
+      "edits": 0,
+      "heard": "none of the three goals are fully met at this point she is roughly halfway on the range of motion goal and about a quarter of the way on the strength goal we will extend the plan of care by four weeks",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the goals are not written as achieved",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the partial progress survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no goal invented that was never described",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 10,
+      "possible": 10,
+      "failed": []
+    },
+    {
+      "id": "section/outcome-goals-not-met",
+      "why": "a discharge where the patient stopped attending must not be written as a success",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.08108108108108109,
+      "refWords": 37,
+      "edits": 3,
+      "heard": "patient self-discharged after six visits she stopped attending at last contact her shoulder flexion was 100° short of the 140° goal pain was still 6 out of 10 and she was not back at work",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the discharge is recorded as the patient's own",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the goal is recorded as not achieved",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no successful outcome invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the residual pain survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/outcome-partial-success",
+      "why": "a good outcome with a real limitation left in it — the limitation is the part that gets rounded away",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.02631578947368421,
+      "refWords": 38,
+      "edits": 1,
+      "heard": "at discharge the left ankle pain is 1 out of 10 from an initial 7 out of 10 she has returned to full duty at work but still cannot run dorsiflexion is 15° symmetrical with the right",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the LEFT ankle survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both pain figures survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the remaining limitation survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the outcome is not overstated into a full recovery",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/recommendations-conditional-return",
+      "why": "return-to-care criteria are the last safety net a discharged patient has",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0.05714285714285714,
+      "refWords": 35,
+      "edits": 2,
+      "heard": "continue the home program three times a week indefinitely return to therapy if the pain goes above four out of 10 or if the knee locks follow up with the orthopedic surgeon in three months",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both return criteria survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the surgeon follow-up survived with its interval",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the frequency survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no new treatment invented",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/recommendations-help-not-hep",
+      "why": "the help/HEP collision at discharge, where nobody is left to catch it",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 34,
+      "edits": 0,
+      "heard": "we reviewed the discharge instructions with her and her daughter today she will need help with the compression stocking for another month recommend a raised toilet seat and a grab rail in the bathroom",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the assistance she needs is written as assistance",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "no home exercise programme invented out of the word help",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "both pieces of equipment survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the one-month duration survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 14,
+      "possible": 14,
+      "failed": []
+    },
+    {
+      "id": "section/reason-plan-content",
+      "why": "a treatment frequency dictated into the referral box is flagged, not filed",
+      "lang": "fil-PH",
+      "chunks": 1,
+      "advisory": false,
+      "wer": 0,
+      "refWords": 33,
+      "edits": 0,
+      "heard": "patient referred for right hip pain of 3 months duration i plan to see her twice a week for 6 weeks and progress to strengthening the referral itself is for evaluation and treatment",
+      "heardFailed": [],
+      "refineError": null,
+      "fellBack": false,
+      "infra": false,
+      "model": "chirp_2",
+      "graded": [
+        {
+          "name": "the section was written at all",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the RIGHT side survived",
+          "weight": 3,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the three-month duration survived",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        },
+        {
+          "name": "the treatment frequency is flagged as belonging elsewhere",
+          "weight": 2,
+          "ok": true,
+          "thrown": null,
+          "detail": ""
+        }
+      ],
+      "earned": 10,
+      "possible": 10,
       "failed": []
     }
   ]

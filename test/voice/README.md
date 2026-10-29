@@ -1,17 +1,16 @@
 # Voice eval — the dictation chain, out loud
 
-Three things test dictation, and until now they stopped short of each other:
-
-| | what it proves | what it never sees |
-|---|---|---|
-| `test/dictation.test.js` | the recorder's backstops release the mic, don't double-start, don't gate out speech | any audio, any transcript |
-| `test/eval/run.js` | the note the model writes from a **clean typed** transcript | anything Chirp 2 got wrong |
-| **`test/voice/run.js`** | the note the model writes from **audio Google actually transcribed** | — |
-
-The gap between rows two and three is the reason this exists. A refine prompt
-that scores 100% on typed text can still produce a wrong chart in a clinic,
-because the text it gets there has been through Chirp 2 first. A run here scores
-both halves separately, so a failure says which one broke.
+> ## The baseline for the adversarial family — taken 2026-09-10
+>
+> A clean full run: all 32 scripts scored, **no** NOT RUN, no retries, no
+> fallbacks. Mean word error **4.0%**, note/section **99.3%** (399/402),
+> `$0.143` of Speech-to-Text and 32 Vertex calls. Merged with the original 32,
+> `baseline.json` now holds **64** cases at 4.6% / 98.9%.
+>
+> **Read the two flaky rows before trusting a diff against it.** See
+> [The note is not deterministic](#the-note-is-not-deterministic) — two
+> whole-visit scripts swing 25-30 points run to run on identical transcripts,
+> so a move on either of them is not evidence of anything on its own.
 
 ## Setup
 
@@ -168,9 +167,14 @@ at Google at all.
 
 ## The scripts
 
-Twenty, in `scripts.js`. Fifteen aimed at something the codebase already
-worries about, and five more — the `lang/` matrix, described further down — that
-hold the visit fixed and vary only the language:
+Sixty-six, in `scripts.js`. Fifteen aimed at something the codebase already
+worries about; five more — the `lang/` matrix, described further down — that
+hold the visit fixed and vary only the language; two `probe/` instruments;
+twelve early `section/` cases; and thirty-two **adversarial** scripts added
+2026-09-09, described in [What the adversarial family
+found](#what-the-adversarial-family-found).
+
+The first fifteen:
 
 - **`shoulder/clinical-vocab`** — the `STT_PHRASES` boost list, spoken. MMT,
   AROM, Neer, Hawkins, scaption, subacromial, therex, HEP. That list was
@@ -208,6 +212,289 @@ hold the visit fixed and vary only the language:
 - **`lang/english-only`**, **`lang/tagalog-only`**, **`lang/cebuano-only`**,
   **`lang/taglish`**, **`lang/bisaya-english`** — one visit, five languages,
   nothing else changed. See [The language matrix](#the-language-matrix--lang).
+
+## The adversarial family — added 2026-09-09
+
+Thirty-two scripts written the other way round from everything above them.
+Instead of "does a normal visit survive?", each one was built by reading the
+code for the assumption a stage makes and then saying the sentence that
+violates it. Five record a whole visit; twenty-seven record a single section.
+
+They also close a coverage hole. `app.js` `DICTATABLE` offers the microphone on
+**thirteen** fields across the four note types, and every section script before
+this covered seven of them — all on the evaluation. `summary`,
+`currentStatus`, `updatedFindings`, `goalsProgress`, `outcome` and
+`recommendations` had never had a recording sent to them at all.
+
+### The runner was not testing the product
+
+`app.js` runs `PR.correctDictation` over the stitched transcript before either
+endpoint sees it — on the visit path (`app.js:6718`) and on the section path
+(`app.js:7344`). **`run.js` did not.** Every number this harness has ever
+produced was measured on Chirp 2's raw output, against a chain the clinic does
+not have.
+
+Nothing caught it because nothing ever fired: replaying all 32 baseline
+transcripts through `correctDictation` changes **zero** of them. The whole
+`DICTATION_FIXES` layer was unmeasured, and adding it to `run.js` therefore
+moves no existing baseline number.
+
+`run.js` now applies it between transcription and the endpoints. Word error is
+still scored on the RAW transcript, so the STT measurement is unchanged; what
+moved is what `/api/refine` and `/api/check-section` are handed. A repair that
+fires is printed on the row (`· repaired "help"→HEP`) and kept in `--json`,
+because a rule firing is a result. Scripts can assert on it with
+`heard.notAfterRepair`.
+
+### What the adversarial family found
+
+Mean word error **3.9%** across the 32, note/section score **97.3%**
+(391/402), no fallbacks, `$0.143` of Speech-to-Text. (That is the run BEFORE
+the fix; see [After the fix](#after-the-fix).) Almost everything held —
+the corrected-frequency plan, the withdrawn ROM figure, the untested side, the
+resolved finding, the uncommitted differential, `wala` (left) beside `walay`
+(none) in one Cebuano visit, and "no weight bearing **restrictions**" all
+survived intact.
+
+One thing did not, and it is the repair layer. **It has since been fixed** —
+what follows is what the run found, and [The fix](#the-fix) is what was done
+about it.
+
+**`help` becomes `HEP` in the patient's own words.** `parser.js` guards
+`help -> HEP` on `reviewed|issued|updated|progressed|compliance|adherence`. The
+guard is tested against the **whole utterance**, and `app.js` hands
+`correctDictation` the entire stitched visit — so one clinician saying
+"reviewed" arms the rule over every "help" anyone says for the rest of the
+recording. `section/recommendations-help-not-hep` is the clean case, at 0.0%
+word error:
+
+```
+spoken      she will need help with the compression stocking for another month
+Chirp 2     she will need help with the compression stocking for another month
+repaired    she will need HEP  with the compression stocking for another month
+written     "patient will need hep with compression stocking for another month."
+```
+
+Perfect transcription, corrupted record. A caregiver instruction — she cannot
+manage the stocking alone — became a home exercise programme in a signed
+discharge note. `assist/help-not-hep` rewrites three of the patient's sentences
+from one clinician "reviewed", including "she needs the help of one person for
+transfers", which is an assistance level.
+
+Two invariants `parser.js` states about itself are violated by this:
+
+- *"The patient's words are not touched — every entry below rewrites an
+  abbreviation the CLINICIAN dictates, never a symptom or a complaint."*
+- *"never where somebody needs help, which is the far commoner sentence in a
+  clinic."*
+
+The same defect is structural, not specific to `help`. `MPT -> MMT` is
+documented as firing "never next to a therapist's name", but the guard is not
+proximity-based either: a visit that names a referring MPT *and* records a
+strength grade anywhere rewrites the person's qualification.
+`referral/credential-not-a-grade` escaped only because Chirp 2 wrote `mpt` in
+lower case and that rule alone carries no `i` flag — a capitalisation away from
+firing. `the exercises -> therex` fired on `section/summary-therex-collision`
+and the note survived it; `their exercise -> therex` produces "they brought
+therex sheet".
+
+### The fix
+
+One shape for all four rules: the guard is tested against a **window around the
+match** rather than the whole transcript (`GUARD_WINDOW`, parser.js), and each
+hit is judged on its own surroundings instead of the rule being armed once for
+the whole string.
+
+**16 characters, and the gap it sits in is wide.** A guard that genuinely
+belongs to its match is adjacent to it, because the guard words *are* the verbs
+and nouns that govern the abbreviation — "HEP reviewed" (0), "issued a HEP" (3),
+"updated her HEP" (5), "progressed her HEP" (5), "adherence to the HEP" (8),
+"compliance with the HEP" (10). Ten is the worst of them. The closest false
+pairing is 23 — "Patient progressed to standing but needs help of one person",
+where the guard belongs to the walking and the "help" is an assist level — then
+31, 54, 57 and 74 for the recordings here. Nothing observed lands between 10
+and 23.
+
+A window cannot reach one case: "…was Maria Santos, M P T. **Strength** testing
+was requested" puts the grade word one character from the credential. That
+needed a second mechanism — an optional **veto**, checked in a wider window,
+which refuses the rewrite when the letters sit next to an attribution
+(`referred`, `referring`, `therapist`, `doctor`…). A veto only ever *prevents* a
+rewrite, so the asymmetry that makes a broad guard dangerous makes a broad veto
+safe.
+
+Every existing assertion in `test/parser.test.js` still passes — all six HEP
+constructions, both MMT directions, AROM, PROM, therex, the prom night and the
+promise — and the false pairings are now covered by regression tests there, the
+whole-visit one included.
+
+`app.js` `fieldLabel()` gained the three missing entries, and
+`test/dictation.test.js` now fails if any field `DICTATABLE` offers the
+microphone on lacks a human label.
+
+### Two transcription observations
+
+- **"Goal one" comes back as "gold one"**, all three times, at 12.8% word error
+  on `section/goals-not-met`. The section still scored 14/14 — the model reads
+  through it — but it is the highest word error in the family.
+- **`goalsProgress`, `outcome` and `recommendations` have no `fieldLabel()`
+  entry** (`app.js:7830`), so the app sends the raw camelCase field name as
+  `SECTION: <label>` (`server.js:2084`) and shows it to the therapist —
+  "Nothing was recorded into goalsProgress." The four scripts on those fields
+  carry the wrong labels deliberately, and all scored 100%: this is a
+  user-visible string bug, not a measurable AI-quality one.
+
+### After the fix
+
+28 of the 32 scored on the re-run (the other four were lost to the outage
+below, not to a result). **27 of the 28 at 100%.**
+
+All five scripts aimed at the repair layer now pass with the repair not firing
+at all — `assist/help-not-hep`, `section/subjective-help-not-hep`,
+`section/plan-help-not-hep`, `referral/credential-not-a-grade` and
+`section/reason-credential`. The one repair still reported is
+`"the exercises" -> therex` on `section/summary-therex-collision`, which is the
+behaviour `test/parser.test.js` has always asserted and the section scored 100%
+with it.
+
+**One new finding, and it is intermittent** — since characterised properly in
+[The note is not deterministic](#the-note-is-not-deterministic).
+`history/resolved-not-current` scored 75% on this run against 100% on the two
+before it, at **0.0% word error** every time — so the transcript is not the
+variable. The patient says
+
+> "Last year naman my left shoulder was frozen, pero okay na yun, wala na akong
+> problema doon."
+
+and the note pinned `Shoulder|left` alongside the correct `Ankle|right`. A pin
+says *this is a problem now*, and a shoulder that resolved a year ago is not.
+One observation in three is not a measurement — refine does not run at
+temperature zero, and this file's own rule is not to conclude from a single
+run — so this is logged, not diagnosed. The script to characterise it now
+exists; run it with `--takes` under `--sweep` before changing the prompt.
+
+### The note is not deterministic
+
+The clean baseline run turned up something the earlier runs had been hinting
+at, and it is now well enough evidenced to state: **the same audio produces a
+different note.** Not a different transcript — the transcript is byte-stable.
+
+| script | word error | note, run 1 | run 2 | run 3 |
+|---|---|---|---|---|
+| `referral/credential-not-a-grade` | 6.0%, 6.0%, 6.0% | 80% | 100% | 70% |
+| `history/resolved-not-current` | 0.0%, 0.0%, 0.0% | 100% | 75% | 100% |
+
+Word error is IDENTICAL across all three runs of both — same audio, same
+transcript, three different answers. And the variation lands on the **body-map
+pins**, which is the safety-critical output:
+
+- `history/resolved-not-current` once pinned `Shoulder|left` for a shoulder the
+  patient said was frozen *last year* and is fine now. A pin means *this is a
+  problem now*.
+- `referral/credential-not-a-grade` once pinned **nothing at all** —
+  `pinned: (none)` — for a visit whose clinician says "Left shoulder abduction
+  is ninety degrees". The shoulder being examined got no pin.
+
+**Where it is, and where it is not.** All five whole-visit scripts go through
+`/api/refine`, which runs at the `ai.js` default **temperature 0.2**. All
+twenty-seven section scripts go through `/api/check-section` at **temperature
+0.1** — and every one of them scored 100% in every run. The instability is on
+the refine path only. That is a correlation across three runs, not a controlled
+experiment, and the honest next step is `--sweep --takes` on those two scripts
+before anyone touches a temperature.
+
+**What it means for this baseline.** A row that swings 30 points on its own
+makes `--save-baseline` a moving target: a later run scoring 70% on
+`referral/credential-not-a-grade` has not regressed, and one scoring 100% has
+not improved. Treat a move on those two as noise until it has been run several
+times.
+
+### A false alarm in the pairing detector — found 2026-09-10, fixed
+
+`history/resolved-not-current` is a Taglish visit recorded under `fil-PH`, and
+`PR.pairingMismatch` read it as **Cebuano** — the one failure
+`test/pairing.test.js` calls out as mattering most, because a false alarm tells
+a therapist whose pairing was CORRECT to change it, and every visit afterwards
+pays.
+
+    heard   …last year naman my left shoulder was frozen pero okay na yun
+            wala na akong problema doon…
+
+    ceb-PH markers  ["wala na", "akong"]      fil-PH markers  ["naman"]
+
+"Wala na akong problema doon" is ordinary Tagalog — *I don't have a problem
+with that any more*. Both markers spell real Cebuano words and both are also
+everyday Tagalog, which is exactly the Rule 2 the marker list documents for
+itself ("the OTHER language has a different everyday word for the same thing").
+
+The corpus settled it. Across all 64 transcripts, only two Cebuano markers ever
+fired inside a Tagalog visit, and they were these two:
+
+| marker | Tagalog visits | Cebuano visits |
+|---|---|---|
+| `wala na` | 1 | **0** |
+| `akong` | 1 | 1 |
+
+`wala na` had never once identified a Cebuano visit. `akong`'s single Cebuano
+visit carries seven other markers. So `nay?` lost its optional `y` — `wala nay`
+is Cebuano, bare `wala na` is both — and `akong` came off the list, while
+`akoang` stayed because Tagalog has no such form. After the change: **0** false
+positives, all **5** Cebuano visits still caught on a Tagalog device, and the
+reverse direction unmoved at 8.
+
+This is what a corpus is for, and it is why the baseline has to keep every
+script's transcript — see below.
+
+### `--save-baseline` used to delete the scripts it did not run
+
+A `--case`-scoped save wrote its own results out whole, silently dropping every
+row the run did not cover. Saving the 32 adversarial scripts took the file from
+the original 32 to those 32 — and broke `test/pairing.test.js`, which reads
+`cases[].heard` as the only corpus of REAL Chirp 2 output this repo has.
+
+A baseline is a corpus as well as a bar. The save now merges: rows this run did
+not produce are carried across untouched, score aggregates are recomputed over
+the whole set, and the line it prints says so — `1 script(s) from this run,
+63 carried over, 64 in the file`.
+
+### A degraded hour at Google, and what it cost
+
+Worth recording because it nearly wrote itself into the bar. Re-running the
+family after the fix, Speech-to-Text 500'd the **tail** of two consecutive
+paid runs — eleven scripts, then four. Every one of them transcribed perfectly
+in a fresh process seconds later, so the audio, the language codes and the
+scripts were all fine; Google was simply having a bad hour.
+
+Two things were wrong with how the runner took that:
+
+1. **A 5xx was not retried.** Only a *thrown* fetch was. But `/api/stt` answers
+   500 when Google fails behind it, and that is a response, not a throw — so it
+   fell straight through as a scored zero. Retrying costs money (a segment that
+   reached Google is billed even when it fails, so a retried chunk is paid
+   twice) and it is worth it: half a cent against a whole script's audio and
+   refine call.
+2. **A 5xx counted as a result.** It dropped a run from 97.3% to 60.6% and
+   `--save-baseline` wrote that happily. A baseline is the bar every later run
+   is measured against; recording somebody else's outage in it is worse than
+   having no baseline at all.
+
+Both are fixed. A 5xx that survives the retries is now classed the same as a
+request that never landed — the script is **NOT RUN**, kept out of the totals,
+and it **bars the baseline save**. A 4xx still scores, because that is the
+audio being rejected, which is something a change of ours can cause.
+
+`--fail-fetch` grew an optional status so neither path has to wait for another
+bad hour to be exercised, and neither costs anything at Google:
+
+```
+# a blip the retry should absorb — the row still scores
+node test/voice/run.js --case section/reason-plan-content \
+  --fail-fetch stt:section/reason-plan-content:2:500
+
+# a degraded hour — the row is NOT RUN and the baseline save is refused
+node test/voice/run.js --case section/reason-plan-content,section/reason-credential \
+  --fail-fetch stt:section/reason-plan-content:all:500 --save-baseline
+```
 
 ## Can ElevenLabs actually speak Tagalog and Cebuano?
 

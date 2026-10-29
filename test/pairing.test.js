@@ -65,7 +65,10 @@ const OTHER = { "fil-PH": "ceb-PH", "ceb-PH": "fil-PH" };
      runs all day, and every one of them must be caught on a device left on
      Tagalog. */
   const ceb = cases.filter((c) => c.lang === "ceb-PH");
-  r.check("the baseline still contains Cebuano visits", ceb.length === 4, `found ${ceb.length}`);
+  /* A floor, not an equality. The point is that Cebuano visits are still in
+     the corpus to measure against; pinning the exact count made adding one
+     more Cebuano script fail a test about the detector. */
+  r.check("the baseline still contains Cebuano visits", ceb.length >= 4, `found ${ceb.length}`);
   const missed = ceb.filter((c) => !PR.pairingMismatch(c.heard, "fil-PH"));
   r.check("every Cebuano visit is caught on a device left on English & Tagalog",
     missed.length === 0,
@@ -119,6 +122,35 @@ const OTHER = { "fil-PH": "ceb-PH", "ceb-PH": "fil-PH" };
   r.check("an unknown code is not second-guessed",
     PR.pairingMismatch("unsa may imong gibati sa imong tuhod", "en-US") === null,
     "there is no third pairing to recommend");
+
+  /* Two more exclusions, found 2026-09-10 by an adversarial voice script and
+     kept here as literal sentences because the general rule did not catch them.
+
+     "wala na akong problema doon" is ordinary Tagalog — "I don't have a
+     problem with that any more" — and the detector read it as Cebuano, on the
+     strength of `wala na` and `akong` together outvoting the `naman` beside
+     them. Both spell real Cebuano words; both are also everyday Tagalog, which
+     is Rule 2. In the corpus `wala na` had never once identified a Cebuano
+     visit, and `akong`'s single Cebuano visit carries seven other markers.
+
+     This is the failure the detector can least afford: a false alarm tells a
+     therapist whose pairing was CORRECT to change it, and then every visit
+     afterwards pays. */
+  const taglish = "last year naman my left shoulder was frozen pero okay na yun wala na akong problema doon";
+  r.check("ordinary Tagalog 'wala na akong' is not read as Cebuano",
+    PR.pairingMismatch(taglish, "fil-PH") === null,
+    `flagged as ${JSON.stringify(PR.pairingMismatch(taglish, "fil-PH"))}`);
+  for (const shared of ["wala na", "akong"]) {
+    r.check(`"${shared}" is shared vocabulary and counts for neither language`,
+      !PR.markersFound(shared, "fil-PH").length && !PR.markersFound(shared, "ceb-PH").length,
+      `it is a marker, and both languages say it`);
+  }
+  /* …while the forms Tagalog does NOT spell still carry their visits. */
+  for (const cebOnly of ["wala nay", "wala may", "wala gyuy", "akoang"]) {
+    r.check(`"${cebOnly}" is still Cebuano evidence`,
+      PR.markersFound(cebOnly, "ceb-PH").length === 1,
+      `tightening the shared forms took this one with it`);
+  }
 
   /* The exclusions are the hard part of this list and the easy thing to undo.
      Each of these is in BOTH corpora in test/voice/baseline.json; adding any

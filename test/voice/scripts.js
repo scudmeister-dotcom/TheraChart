@@ -1424,6 +1424,995 @@ const SCRIPTS = [
         test: (r) => /5\s*\/\s*10|five out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
     ],
   },
+  /* ================================================================== *
+   * ADVERSARIAL — written to break the chain, not to exercise it
+   * ==================================================================
+   *
+   * Everything above asks "does a normal visit survive?". These ask "what is
+   * the sentence that makes this app write the wrong thing?", and they were
+   * built by reading the code for the assumption each stage makes and then
+   * saying the sentence that violates it.
+   *
+   * Three of them aim at PR.correctDictation (parser.js), which until now no
+   * voice script had ever triggered: replaying all 32 baseline transcripts
+   * through it fired zero rules. That layer rewrites the transcript before
+   * either endpoint sees it, and it was completely unmeasured. */
+
+  /* A1. "help" is not "HEP".
+     parser.js guards `help -> HEP` on `reviewed|issued|updated|progressed|
+     compliance|adherence`. The guard is tested against the WHOLE utterance,
+     and app.js hands correctDictation the whole stitched visit — so one
+     clinician saying "reviewed" arms the rule over every "help" anyone says
+     for the rest of the recording, including the patient's. This visit says
+     "reviewed" once and "help" three times, none of them about a programme. */
+  {
+    id: "assist/help-not-hep",
+    lang: "fil-PH",
+    why: "a patient asking for help must not be rewritten into a home exercise programme",
+    turns: [
+      { who: "clinician", text: "Let us look at the right knee today. We reviewed your home exercise programme last visit and your compliance has been very good." },
+      { who: "patient", text: "Opo doc, salamat. Pero I still need help going down the stairs at home." },
+      { who: "patient", text: "My daughter has to help me put on my shoes every morning." },
+      { who: "clinician", text: "Right knee flexion is one hundred ten degrees, and pain is four out of ten." },
+      { who: "clinician", text: "She needs the help of one person for transfers today." },
+    ],
+    heard: {
+      wer: 0.2,
+      must: ["help", "stairs"],
+      /* The clinician never says the abbreviation, only "home exercise
+         programme" in full — so a "HEP" in the repaired text can only have
+         come from somebody's "help". */
+      notAfterRepair: ["\\bHEP\\b"],
+    },
+    expect: [
+      { name: "the RIGHT knee is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Knee", "right"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no left knee invented", weight: 3,
+        test: (r) => !hasFinding(r, "Knee", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the physical assistance she needs reached the note", weight: 3,
+        test: (r) => /assist|help|one person|stairs|shoes|daughter/.test(prose(r)),
+        detail: (r) => `prose: ${prose(r).slice(0, 200)}` },
+      { name: "the 4/10 score survived", weight: 2,
+        test: (r) => painScores(r).includes(4), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "knee flexion ROM survived", weight: 1,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  /* A2. A credential is not a muscle test.
+     `MPT -> MMT` is guarded on `strength|grade|lakas|kusog` or a /5 grade —
+     and parser.js says in its own comment that it fires "never next to a
+     therapist's name". The guard is not proximity-based, so a visit that names
+     a referring MPT *and* records a strength grade anywhere rewrites the
+     person's qualification. */
+  {
+    id: "referral/credential-not-a-grade",
+    lang: "fil-PH",
+    why: "a referring therapist's MPT credential must not be rewritten into MMT",
+    turns: [
+      { who: "clinician", text: "New evaluation today, referred to us by Maria Santos, M P T, at the district hospital." },
+      { who: "patient", text: "She said my left shoulder is frozen and sent me here." },
+      { who: "clinician", text: "Left shoulder abduction is ninety degrees. Rotator cuff strength is four out of five." },
+      { who: "clinician", text: "I will write back to Santos with the findings." },
+    ],
+    heard: {
+      wer: 0.25,
+      must: ["Santos", "shoulder"],
+      /* Nobody says MMT out loud in this script. */
+      notAfterRepair: ["\\bMMT\\b"],
+    },
+    expect: [
+      { name: "the LEFT shoulder is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Shoulder", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right shoulder invented", weight: 3,
+        test: (r) => !hasFinding(r, "Shoulder", "right"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the referrer reached the note", weight: 2,
+        test: (r) => /santos/.test(prose(r)), detail: (r) => `prose: ${prose(r).slice(0, 200)}` },
+      /* The refine prompt tells the model NOT to repeat a strength grade in
+          prose because it is captured as a measurement (ai.js:137) — so this
+          asks the measurement table, and accepts prose only as a fallback. */
+      { name: "the strength grade reached the note", weight: 2,
+        test: (r) => (((r.measurements || {}).mmt || []).length > 0)
+          || /4\s*\/\s*5|four out of five/.test(prose(r)),
+        detail: (r) => `mmt: ${JSON.stringify((r.measurements || {}).mmt || [])} · prose: ${prose(r).slice(0, 160)}` },
+    ],
+  },
+
+  /* A3. In Cebuano `wala` is LEFT and `walay` is NONE.
+     parser.js excludes bare `wala` from its language markers for exactly this
+     collision, which means nothing downstream disambiguates it either. This
+     visit says both, four words apart: the laterality that must be pinned and
+     the denial that must not become a finding. Read by Pedro throughout —
+     knee/cebuano-heavy already carries this override, for the reason recorded
+     in test/voice/README.md. */
+  {
+    id: "laterality/wala-both-ways",
+    lang: "ceb-PH",
+    voices: { clinician: "iyZZ2rpPw5XY3ZQltAWV", patient: "iyZZ2rpPw5XY3ZQltAWV" },
+    why: "Cebuano wala (left) and walay (none) in one visit — one must pin a side, the other must not pin a symptom",
+    turns: [
+      { who: "clinician", text: "Asa man ang sakit nimo karon?" },
+      { who: "patient", text: "Ang wala nga tuhod, doc. Ang wala nga tuhod ang sakit." },
+      { who: "patient", text: "Walay pamanhid ang akong tiil. Sakit lang gyud ang tuhod." },
+      { who: "clinician", text: "Sige, ang wala nga tuhod. Lima sa napulo ang sakit." },
+    ],
+    heard: { wer: 0.3, must: ["wala", "tuhod"] },
+    expect: [
+      { name: "the LEFT knee is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Knee", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no right knee invented", weight: 3,
+        test: (r) => !hasFinding(r, "Knee", "right"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the numbness denial did not become a numbness finding", weight: 3,
+        test: (r) => !/numbness|tingl|pamanhid/.test(prose(r))
+          || /den(?:y|ies|ied)|no numbness|walay|without numbness/.test(prose(r)),
+        detail: (r) => `prose: ${prose(r).slice(0, 200)}` },
+      { name: "the 5/10 score survived", weight: 1,
+        test: (r) => painScores(r).includes(5), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+    ],
+  },
+
+  /* A4. Every number in one visit, competing.
+     A pain score, an angle, a strength grade, a rep count and a calendar date
+     are all "N out of M" or bare integers in speech. numbers/dense and
+     numbers/confusables already push on this; this one adds the two that
+     actually collide with the pain scale — "ten degrees" of extension lag and
+     "the fifteenth" of the month — and asks that neither is charted as pain. */
+  {
+    id: "numbers/score-versus-degree",
+    lang: "fil-PH",
+    why: "an angle, a date and a rep count must not be filed as pain scores",
+    turns: [
+      { who: "clinician", text: "Left elbow today. At your last visit on the fifteenth your pain was eight out of ten." },
+      { who: "patient", text: "Now it is three out of ten, doc. Much better." },
+      { who: "clinician", text: "Elbow flexion is one hundred thirty degrees, extension lacking ten degrees." },
+      { who: "clinician", text: "Grip strength is four out of five. We will do three sets of fifteen reps." },
+      { who: "patient", text: "Sa umaga mga two out of ten lang, pero pagka-gabi umaabot ng eight." },
+    ],
+    /* "degrees" is not asserted: Chirp 2 is free to write "130°", which is
+       correct, and the ROM assertion below proves the angle survived anyway. */
+    heard: { wer: 0.2, must: ["elbow"] },
+    expect: [
+      { name: "the LEFT elbow is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Elbow", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the current 3/10 reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(3), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "the ten degrees of extension lag is not charted as a pain score", weight: 3,
+        test: (r) => !painScores(r).includes(10), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "the fifteenth, and the fifteen reps, are not charted as pain scores", weight: 3,
+        test: (r) => !painScores(r).includes(15), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "elbow flexion ROM survived", weight: 2,
+        test: (r) => !!rom(r, "flexion"),
+        detail: (r) => `rom: ${JSON.stringify((r.measurements || {}).rom || [])}` },
+    ],
+  },
+
+  /* A5. Over and conditional.
+     hip/not-the-patient and relay/third-person cover somebody ELSE's body.
+     This covers the patient's own body at the wrong TIME: a shoulder that was
+     a problem last year and is not one now, and a swelling that has not
+     happened yet and may not. Both are stated in the past and the conditional
+     and both name a region, which is all a pin needs. */
+  {
+    id: "history/resolved-not-current",
+    lang: "fil-PH",
+    why: "a resolved problem and a conditional instruction both name a region, and neither is a finding today",
+    turns: [
+      { who: "clinician", text: "What brings you in today?" },
+      { who: "patient", text: "My right ankle, doc. I twisted it last week going down a step." },
+      { who: "patient", text: "Last year naman my left shoulder was frozen, pero okay na yun, wala na akong problema doon." },
+      { who: "clinician", text: "Right ankle then. There is swelling over the lateral malleolus and pain is six out of ten." },
+      { who: "clinician", text: "If the swelling comes back after the exercises, put ice on it for ten minutes." },
+    ],
+    heard: { wer: 0.2, must: ["ankle"] },
+    expect: [
+      { name: "the RIGHT ankle is pinned", weight: 3,
+        test: (r) => hasFinding(r, "Ankle", "right"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the resolved left shoulder is not pinned as a problem today", weight: 3,
+        test: (r) => !hasFinding(r, "Shoulder", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "no left ankle invented", weight: 3,
+        test: (r) => !hasFinding(r, "Ankle", "left"), detail: (r) => `pinned: ${findingParts(r)}` },
+      { name: "the 6/10 score reached the chart", weight: 2,
+        test: (r) => painScores(r).includes(6), detail: (r) => `pain: ${JSON.stringify(painScores(r))}` },
+      { name: "the icing instruction reached a prose section", weight: 1,
+        test: (r) => /ice|icing|cold/.test(prose(r)), detail: (r) => `prose: ${prose(r).slice(0, 200)}` },
+    ],
+  },
+
+  /* ================================================================== *
+   * ADVERSARIAL SECTION DICTATION
+   * ==================================================================
+   *
+   * The section writer is the easier target of the two chains. It gets ONE
+   * burst, no whole-visit context, and its output goes straight into a box the
+   * therapist signs. The existing section scripts cover seven of the app's
+   * THIRTEEN dictatable fields (app.js DICTATABLE); the six below that carry a
+   * `label` equal to their field name are the ones the app itself cannot name,
+   * and that is deliberate — see the note above section/goals-not-met.
+   *
+   * Every script here states a fact and its opposite, or a fact and its
+   * qualifier, close enough together that dropping one word inverts the
+   * clinical meaning. */
+
+  /* --- Reason for referral ------------------------------------------ */
+
+  {
+    id: "section/reason-credential",
+    lang: "fil-PH",
+    section: { field: "reason", label: "Reason for referral" },
+    why: "a referrer's MPT credential beside a muscle grade — the repair layer's worst pairing, in one burst",
+    turns: [
+      { who: "clinician", text: "Referred by Doctor Ramon Cruz for evaluation and treatment of low back pain." },
+      { who: "clinician", text: "The referring therapist at the district hospital was Maria Santos, M P T." },
+      { who: "clinician", text: "Strength testing was specifically requested, the hip abductors at four out of five." },
+    ],
+    heard: { wer: 0.3, must: ["referred"], notAfterRepair: ["\\bMMT\\b"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the credential is not written as a muscle test", weight: 3,
+        test: (r) => !/\bmmt\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the low back reached the section", weight: 2,
+        test: (r) => /back|lumbar/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no side invented — nobody said one", weight: 3,
+        test: (r) => !/\b(left|right)\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/reason-plan-content",
+    lang: "fil-PH",
+    section: { field: "reason", label: "Reason for referral" },
+    why: "a treatment frequency dictated into the referral box is flagged, not filed",
+    turns: [
+      { who: "clinician", text: "Patient referred for right hip pain of three months duration." },
+      { who: "clinician", text: "I plan to see her twice a week for six weeks and progress to strengthening." },
+      { who: "clinician", text: "The referral itself is for evaluation and treatment." },
+    ],
+    heard: { wer: 0.2, must: ["hip"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the three-month duration survived", weight: 2,
+        test: (r) => /three months|3 months/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the treatment frequency is flagged as belonging elsewhere", weight: 2,
+        test: (r) => (r.issues || []).some((i) => i.kind === "misplaced"),
+        detail: (r) => `issues: ${JSON.stringify(r.issues || [])}` },
+    ],
+  },
+
+  /* --- Precautions --------------------------------------------------- */
+
+  /* The single most dangerous sentence in this file. "No weight bearing
+     restrictions" and "no weight bearing" are one word apart and mean opposite
+     orders; a section writer that trims "restrictions" as filler puts a
+     non-weight-bearing order into a chart for a patient who may walk. */
+  {
+    id: "section/precautions-negated-restriction",
+    lang: "fil-PH",
+    section: { field: "precautions", label: "Precautions" },
+    why: "'no weight bearing restrictions' must not be shortened into 'no weight bearing'",
+    turns: [
+      { who: "clinician", text: "There are no weight bearing restrictions for this patient." },
+      { who: "clinician", text: "She may bear weight as tolerated on the left leg." },
+      { who: "clinician", text: "Watch for dizziness when she stands up quickly." },
+    ],
+    heard: { wer: 0.2, must: ["weight"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the patient is NOT recorded as non-weight-bearing", weight: 3,
+        test: (r) => !/non[- ]?weight[- ]?bearing|\bnwb\b|not to bear weight|avoid weight[- ]?bearing|no weight[- ]?bearing(?!\s+restrict)/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "weight bearing as tolerated survived", weight: 3,
+        test: (r) => /as tolerated|\bwbat\b|full weight|no .*restrict/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the dizziness precaution survived", weight: 2,
+        test: (r) => /dizz|light[- ]?head|orthostatic/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/precautions-conditional",
+    lang: "fil-PH",
+    section: { field: "precautions", label: "Precautions" },
+    why: "a surgeon's ceiling, a red flag and a restriction — none of them may be softened or invented past",
+    turns: [
+      { who: "clinician", text: "The surgeon's protocol allows range of motion to ninety degrees of knee flexion only." },
+      { who: "clinician", text: "If she reports calf pain or shortness of breath, stop and send her to the emergency room." },
+      { who: "clinician", text: "No resisted hamstring work at this stage." },
+    ],
+    heard: { wer: 0.25, must: ["flexion"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the ninety degree ceiling survived digit for digit", weight: 3,
+        test: (r) => /\b90\b|ninety/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the red flag instruction survived", weight: 3,
+        test: (r) => /calf|shortness of breath|emergency|\bdvt\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the hamstring restriction is still a restriction", weight: 3,
+        test: (r) => /no resisted|avoid|not permitted|contraindicat|no .{0,20}hamstring/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no range ceiling invented that was never spoken", weight: 2,
+        test: (r) => !/\b(120|110|100|60|45)\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Past medical history ------------------------------------------ */
+
+  {
+    id: "section/pmh-family-not-patient",
+    lang: "fil-PH",
+    section: { field: "pmh", label: "Past medical history" },
+    why: "the family's conditions must not become the patient's own history",
+    turns: [
+      { who: "clinician", text: "Past medical history is hypertension, controlled on medication since two thousand nineteen." },
+      { who: "clinician", text: "Her mother has diabetes and her brother had a stroke, but the patient herself has neither." },
+      { who: "clinician", text: "No previous surgery on the knee." },
+    ],
+    heard: { wer: 0.3, must: ["hypertension"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the patient's own hypertension survived", weight: 3,
+        test: (r) => /hypertens|high blood/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the family's diabetes is not recorded as the patient's", weight: 3,
+        /* Two right answers, and the run found the second: attribute it to the
+           family, or state it as a personal denial. Only an unqualified
+           "diabetes" in the patient's own history is the failure. */
+        test: (r) => !/diabet/.test(secText(r))
+          || /mother|family|maternal|sibling|brother|denies|personal history|not the patient/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the surgical denial stayed a denial", weight: 3,
+        test: (r) => !/\bsurger|surgical/.test(secText(r))
+          || /no (?:previous |prior )?surg|denies|without|nil|none/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/pmh-allergy-denial",
+    lang: "fil-PH",
+    section: { field: "pmh", label: "Past medical history" },
+    why: "an allergy denial that flips is a prescribing error — and two drug doses have to survive digit for digit",
+    turns: [
+      { who: "clinician", text: "No known drug allergies." },
+      { who: "clinician", text: "She takes metformin five hundred milligrams twice a day, and losartan fifty milligrams." },
+      { who: "clinician", text: "Caesarean section in two thousand fifteen, otherwise no surgical history." },
+    ],
+    heard: { wer: 0.35, must: ["allerg"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the allergy denial stayed a denial", weight: 3,
+        test: (r) => /no known|\bnkda\b|no drug allerg|denies .{0,20}allerg|no allerg/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no allergy invented", weight: 3,
+        test: (r) => !/allergic to|allergy to/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both medications survived", weight: 2,
+        test: (r) => /metformin/.test(secText(r)) && /losartan/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the metformin dose survived", weight: 2,
+        test: (r) => /500|five hundred/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Subjective ----------------------------------------------------- */
+
+  {
+    id: "section/subjective-help-not-hep",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "the help/HEP collision inside one section burst, where there is no visit context to recover from it",
+    turns: [
+      { who: "clinician", text: "Patient reports her right hip gives way on the stairs." },
+      { who: "clinician", text: "We reviewed her home exercise programme and adherence has been good." },
+      { who: "clinician", text: "She still needs help from her husband to get out of the bath." },
+      { who: "clinician", text: "Pain is five out of ten on the stairs." },
+    ],
+    heard: { wer: 0.2, must: ["help", "hip"], notAfterRepair: ["\\bHEP\\b"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the assistance she needs is written as assistance", weight: 3,
+        test: (r) => /help|assist|husband|support/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the 5/10 score survived", weight: 2,
+        test: (r) => /5\s*\/\s*10|five out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/subjective-outside-number",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "a measurement the patient was quoted somewhere else must not read as this clinic's own",
+    turns: [
+      { who: "clinician", text: "Patient reports left knee pain for one month." },
+      { who: "clinician", text: "She says the doctor at the other clinic told her the flexion was only ninety degrees." },
+      { who: "clinician", text: "She has not had any imaging done here." },
+      { who: "clinician", text: "Pain is four out of ten going up stairs." },
+    ],
+    heard: { wer: 0.25, must: ["knee"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT side survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the outside 90 degrees is attributed, not stated as measured", weight: 3,
+        test: (r) => !/\b90\b|ninety/.test(secText(r))
+          || /report|told|other clinic|per patient|states|said|elsewhere|previously/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the imaging denial stayed a denial", weight: 3,
+        test: (r) => !/imaging|x-?ray|\bmri\b/.test(secText(r))
+          || /no imaging|has not|denies|without|none/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the 4/10 score survived", weight: 2,
+        test: (r) => /4\s*\/\s*10|four out of ten/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/subjective-hedged-score",
+    lang: "fil-PH",
+    section: { field: "subjective", label: "Subjective" },
+    why: "an uncertain score must stay uncertain — resolving it silently invents precision the patient did not give",
+    turns: [
+      { who: "clinician", text: "Patient reports neck pain, maybe six out of ten, sometimes eight, she is not sure." },
+      { who: "clinician", text: "It has been going on for, I think she said three weeks, maybe a month." },
+      { who: "clinician", text: "No radiation down the arm." },
+    ],
+    heard: { wer: 0.3, must: ["neck"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the neck survived", weight: 3,
+        test: (r) => /neck|cervical/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the uncertainty is preserved or flagged", weight: 2,
+        test: (r) => (r.issues || []).some((i) => i.kind === "ambiguous")
+          || /maybe|not sure|uncertain|approx|around|varies|fluctuat|6\s*(?:to|-|–)\s*8|six to eight/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}" · issues: ${JSON.stringify(r.issues || [])}` },
+      { name: "the radiation denial stayed a denial", weight: 3,
+        test: (r) => !/radiat/.test(secText(r)) || /no radiat|denies|without|non-?radiat/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no side invented — nobody said one", weight: 3,
+        test: (r) => !/\b(left|right)\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Objective ------------------------------------------------------ */
+
+  {
+    id: "section/objective-self-corrected-number",
+    lang: "fil-PH",
+    section: { field: "objectiveText", label: "Objective" },
+    why: "a measurement corrected mid-sentence — the withdrawn figure must not survive alongside the real one",
+    turns: [
+      { who: "clinician", text: "Right shoulder flexion is one hundred forty degrees. Sorry, one hundred fifty degrees." },
+      { who: "clinician", text: "Abduction one hundred twenty. Internal rotation to the level of L five." },
+      { who: "clinician", text: "Strength is five out of five throughout." },
+    ],
+    heard: { wer: 0.25, must: ["shoulder"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the corrected 150 is what got written", weight: 3,
+        test: (r) => /150|one hundred fifty/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the withdrawn 140 is not left standing as a measurement", weight: 3,
+        test: (r) => !/140|one hundred forty/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "abduction 120 survived", weight: 2,
+        test: (r) => /120|one hundred twenty/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/objective-not-tested",
+    lang: "fil-PH",
+    section: { field: "objectiveText", label: "Objective" },
+    why: "a side the therapist explicitly did not examine must not acquire measurements",
+    turns: [
+      { who: "clinician", text: "Left ankle dorsiflexion is ten degrees, plantarflexion forty degrees." },
+      { who: "clinician", text: "I did not test the right ankle today, she was in too much pain to stand." },
+      { who: "clinician", text: "Left ankle strength is four out of five, with mild swelling laterally." },
+    ],
+    heard: { wer: 0.25, must: ["ankle"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT measurements survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && /\b10\b|\bten\b|dorsiflex/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the untested right side has no number attached to it", weight: 3,
+        test: (r) => !/right ankle[^.]{0,40}\b\d+\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the fact that the right was not tested survived", weight: 2,
+        test: (r) => /not test|deferred|unable|did not|not assessed|not examined/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Assessment ------------------------------------------------------ */
+
+  {
+    id: "section/assessment-uncommitted",
+    lang: "fil-PH",
+    section: { field: "assessment", label: "Assessment" },
+    why: "a differential the therapist refused to close must not be written as a settled diagnosis",
+    turns: [
+      { who: "clinician", text: "Findings could fit a subacromial impingement, but a small rotator cuff tear is also possible." },
+      { who: "clinician", text: "I am not committing to either until we see how she responds to four weeks of therapy." },
+      { who: "clinician", text: "Functionally she is limited in overhead reaching." },
+    ],
+    heard: { wer: 0.25, must: ["impingement"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both possibilities survived", weight: 3,
+        test: (r) => /impingement/.test(secText(r)) && /tear/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the uncertainty survived as uncertainty", weight: 3,
+        test: (r) => /possible|may |might|cannot|not commit|differential|versus|\bvs\b|rule out|suspect|unclear|either/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "it is not written as a settled diagnosis", weight: 3,
+        test: (r) => !/diagnosis is|confirmed|definite|diagnosed with|consistent with subacromial impingement\.?$/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the functional limitation survived", weight: 1,
+        test: (r) => /overhead|reach/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/assessment-plan-bleed",
+    lang: "fil-PH",
+    section: { field: "assessment", label: "Assessment" },
+    why: "a frequency dictated into Assessment is Plan content and has to be flagged rather than absorbed",
+    turns: [
+      { who: "clinician", text: "Impression is left lateral epicondylalgia, moderate, with good rehabilitation potential." },
+      { who: "clinician", text: "I will see her twice a week for four weeks and reassess." },
+      { who: "clinician", text: "She is motivated and her home setup is suitable." },
+    ],
+    heard: { wer: 0.3, must: ["left"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT side survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the impression survived", weight: 3,
+        test: (r) => /epicondyl|tennis elbow|elbow/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the treatment frequency is flagged as belonging elsewhere", weight: 2,
+        test: (r) => (r.issues || []).some((i) => i.kind === "misplaced"),
+        detail: (r) => `issues: ${JSON.stringify(r.issues || [])}` },
+      { name: "the prognosis survived", weight: 1,
+        test: (r) => /potential|prognos|motivated/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Plan ------------------------------------------------------------ */
+
+  {
+    id: "section/plan-corrected-frequency",
+    lang: "fil-PH",
+    section: { field: "plan", label: "Plan" },
+    why: "a frequency corrected mid-sentence is a prescription — the withdrawn one must not be what gets written",
+    turns: [
+      { who: "clinician", text: "Plan is to see her twice a week. No, make that three times a week for two weeks, then twice a week." },
+      { who: "clinician", text: "Progress to closed chain strengthening as tolerated." },
+      { who: "clinician", text: "Discharge when she can climb a full flight of stairs without the rail." },
+    ],
+    heard: { wer: 0.3, must: ["week"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the corrected three times a week is what got written", weight: 3,
+        test: (r) => /three times|3\s*(?:x|times)/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the discharge criterion survived", weight: 2,
+        test: (r) => /flight|stairs|rail|discharge/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no duration invented that was never spoken", weight: 2,
+        test: (r) => !/\b(six|6|four|4|eight|8)\s+weeks\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/plan-help-not-hep",
+    lang: "fil-PH",
+    section: { field: "plan", label: "Plan" },
+    why: "'reviewed' and 'help' in the same burst, aimed at the section a next clinician follows",
+    turns: [
+      { who: "clinician", text: "We reviewed her programme today and compliance is good." },
+      { who: "clinician", text: "Continue therapy twice a week and give her more help with the transfer technique." },
+      { who: "clinician", text: "Refer back to the surgeon if the swelling has not settled in two weeks." },
+    ],
+    heard: { wer: 0.25, must: ["help"], notAfterRepair: ["\\bHEP\\b"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the transfer coaching survived as coaching", weight: 3,
+        test: (r) => /transfer/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the referral back to the surgeon survived", weight: 3,
+        test: (r) => /refer|surgeon|orthop/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the two-week trigger survived", weight: 2,
+        test: (r) => /two weeks|2 weeks/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* ================================================================== *
+   * THE SIX SECTIONS NOTHING HAS EVER SPOKEN INTO
+   * ==================================================================
+   *
+   * app.js DICTATABLE offers the microphone on thirteen fields across the four
+   * note types. Every script above this point aims at one of the seven that
+   * belong to an evaluation. The daily, progress and discharge notes have six
+   * more — summary, currentStatus, updatedFindings, goalsProgress, outcome and
+   * recommendations — and until now not one recording had ever been sent to
+   * any of them.
+   *
+   * THE LABEL IS NOT COSMETIC. `label` is what app.js fieldLabel() produces,
+   * and it is interpolated into the section prompt as "SECTION: <label>"
+   * (server.js) — it is the ONLY thing telling the model which section it is
+   * writing. fieldLabel() has no entry for goalsProgress, outcome or
+   * recommendations, so for those three the app sends the raw camelCase field
+   * name. The scripts below use the same strings the app sends, wrong ones
+   * included, because a test that quietly passed "Goals progress" would be
+   * measuring a prompt the product never issues. */
+
+  /* --- Treatment summary (daily) --------------------------------------- */
+
+  {
+    id: "section/summary-therex-collision",
+    lang: "fil-PH",
+    section: { field: "summary", label: "Treatment summary" },
+    why: "'did the exercises' is rewritten to 'therex' by the repair layer — the sentence still has to read",
+    turns: [
+      { who: "clinician", text: "Today she did the exercises from her programme, three sets of ten." },
+      { who: "clinician", text: "We performed manual therapy to the left shoulder for ten minutes." },
+      { who: "clinician", text: "She tolerated the session well with no increase in pain." },
+    ],
+    heard: { wer: 0.25, must: ["exercise"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the exercise content survived readably", weight: 3,
+        test: (r) => /exercise|therex|therapeutic ex/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the sets and reps survived", weight: 2,
+        test: (r) => /three sets|3 sets|3\s*x\s*10/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT shoulder survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the 'no increase in pain' stayed a denial", weight: 3,
+        test: (r) => !/increase[d]? .{0,15}pain/.test(secText(r))
+          || /no increase|without increase|tolerated|no change/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/summary-modality-parameters",
+    lang: "fil-PH",
+    section: { field: "summary", label: "Treatment summary" },
+    why: "two durations in one burst — the ultrasound's must not become the ice pack's",
+    turns: [
+      { who: "clinician", text: "Ultrasound to the right lateral epicondyle, one megahertz, eight minutes." },
+      { who: "clinician", text: "Followed by eccentric wrist extensor loading, three sets of fifteen." },
+      { who: "clinician", text: "Ice applied for ten minutes at the end." },
+    ],
+    heard: { wer: 0.35, must: ["ultrasound"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the ultrasound's eight minutes survived", weight: 3,
+        test: (r) => /eight min|8 min/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the ice duration was not attached to the ultrasound", weight: 3,
+        test: (r) => !/ultrasound[^.]{0,60}(ten min|10 min)/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no parameter invented that was never spoken", weight: 2,
+        test: (r) => !/3\s*mhz|three megahertz|\b2\s*w\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Current status (progress) ---------------------------------------- */
+
+  {
+    id: "section/currentstatus-two-numbers",
+    lang: "fil-PH",
+    section: { field: "currentStatus", label: "Current status" },
+    why: "a before and an after in every sentence — swapping either one reverses the patient's progress",
+    turns: [
+      { who: "clinician", text: "At the start of care her right shoulder pain was eight out of ten. It is now three out of ten." },
+      { who: "clinician", text: "Flexion has improved from ninety degrees to one hundred forty." },
+      { who: "clinician", text: "She is sleeping through the night for the first time in two months." },
+    ],
+    heard: { wer: 0.25, must: ["shoulder"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the RIGHT side survived", weight: 3,
+        test: (r) => /\bright\b/.test(secText(r)) && !/\bleft\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both pain figures survived", weight: 3,
+        test: (r) => /\b8\b|eight/.test(secText(r)) && /\b3\b|three/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the direction of change is improvement, not decline", weight: 3,
+        test: (r) => !/worse|declin|deteriorat|regress|increased pain/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both range figures survived", weight: 2,
+        test: (r) => /\b90\b|ninety/.test(secText(r)) && /140|one hundred forty/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/currentstatus-mixed-progress",
+    lang: "fil-PH",
+    section: { field: "currentStatus", label: "Current status" },
+    why: "one region improving and another newly painful must not be averaged into one story",
+    turns: [
+      { who: "clinician", text: "Her left knee is much better, pain down to two out of ten from six." },
+      { who: "clinician", text: "But she has developed new right shoulder pain this week, about five out of ten." },
+      { who: "clinician", text: "She has not fallen since the last visit." },
+    ],
+    heard: { wer: 0.25, must: ["knee", "shoulder"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the knee improvement survived", weight: 3,
+        test: (r) => /knee/.test(secText(r)) && /better|improv|down to|reduced|decreas/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the shoulder problem is recorded as NEW", weight: 3,
+        test: (r) => /new|develop|onset|this week|recent/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "each side stayed with its own region", weight: 3,
+        test: (r) => /left knee/.test(secText(r)) && /right shoulder/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the fall denial stayed a denial", weight: 3,
+        test: (r) => !/\bfall|\bfell\b/.test(secText(r))
+          || /no fall|has not fallen|denies|without|nil/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Updated findings (progress) --------------------------------------- */
+
+  {
+    id: "section/updatedfindings-resolved",
+    lang: "fil-PH",
+    section: { field: "updatedFindings", label: "Updated findings" },
+    why: "a finding that has RESOLVED must not be written as a finding that is present",
+    turns: [
+      { who: "clinician", text: "The swelling over the left knee has completely resolved." },
+      { who: "clinician", text: "There is no longer any warmth or effusion." },
+      { who: "clinician", text: "Crepitus on flexion is still present." },
+    ],
+    heard: { wer: 0.25, must: ["swelling"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 15, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the swelling is recorded as resolved, not as present", weight: 3,
+        test: (r) => /resolv|no longer|gone|absent|no swelling|settled|subsided/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "warmth and effusion are not written as present findings", weight: 3,
+        test: (r) => !/\bwarmth\b|effusion/.test(secText(r))
+          || /no longer|resolv|absent|without|no warmth|no effusion/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the still-present crepitus survived", weight: 3,
+        test: (r) => /crepitus/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT side survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && !/\bright\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/updatedfindings-opposite-side",
+    lang: "fil-PH",
+    section: { field: "updatedFindings", label: "Updated findings" },
+    why: "a positive test on one side and a negative on the other, in one sentence",
+    turns: [
+      { who: "clinician", text: "The right wrist findings are unchanged from the last visit." },
+      { who: "clinician", text: "New finding today is tenderness over the left first extensor compartment." },
+      { who: "clinician", text: "Finkelstein test is positive on the left and negative on the right." },
+    ],
+    heard: { wer: 0.35, must: ["wrist"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the new LEFT finding survived", weight: 3,
+        test: (r) => /\bleft\b/.test(secText(r)) && /tender/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the right is recorded as unchanged, not newly abnormal", weight: 3,
+        test: (r) => /unchanged|no change|stable|same as/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the positive and the negative both survived", weight: 3,
+        test: (r) => /positive/.test(secText(r)) && /negative/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Goals progress (progress) ----------------------------------------- *
+     `label` is "goalsProgress" — the raw field name — because app.js
+     fieldLabel() has no entry for this field and that camelCase token is what
+     server.js interpolates into "SECTION: <label>". If these two score worse
+     than the sections with real English labels, the missing entry is why. */
+
+  {
+    id: "section/goals-not-met",
+    lang: "fil-PH",
+    section: { field: "goalsProgress", label: "goalsProgress" },
+    why: "met, not met and discontinued in one burst — collapsing them rewrites the patient's outcome",
+    turns: [
+      { who: "clinician", text: "Goal one was one hundred twenty degrees of knee flexion in four weeks. She is at one hundred ten, so it is not met." },
+      { who: "clinician", text: "Goal two, walking five hundred metres without rest, is met." },
+      { who: "clinician", text: "Goal three was discontinued because she declined the stair training." },
+    ],
+    heard: { wer: 0.3, must: ["knee"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the unmet goal is recorded as unmet", weight: 3,
+        test: (r) => /not met|unmet|not yet|short of|partially/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the met goal is recorded as met", weight: 3,
+        test: (r) => /\bmet\b|achieved/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the discontinued goal is not recorded as met", weight: 3,
+        test: (r) => /discontinu|declin|deferred|dropped|withdrawn|not pursued/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the target and the actual both survived", weight: 2,
+        test: (r) => /120|one hundred twenty/.test(secText(r)) && /110|one hundred ten/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/goals-all-partial",
+    lang: "fil-PH",
+    section: { field: "goalsProgress", label: "goalsProgress" },
+    why: "nothing is finished — a section that rounds partial progress up to 'met' is the failure",
+    turns: [
+      { who: "clinician", text: "None of the three goals are fully met at this point." },
+      { who: "clinician", text: "She is roughly halfway on the range of motion goal and about a quarter of the way on the strength goal." },
+      { who: "clinician", text: "We will extend the plan of care by four weeks." },
+    ],
+    heard: { wer: 0.3, must: ["goals"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the goals are not written as achieved", weight: 3,
+        test: (r) => /not (?:fully |yet )?met|none .{0,20}met|unmet|partial|halfway|in progress|ongoing/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the partial progress survived", weight: 2,
+        test: (r) => /halfway|half|quarter|partial|50|25/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no goal invented that was never described", weight: 2,
+        test: (r) => !/\b(gait|balance|pain) goal\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Outcome (discharge) ------------------------------------------------ *
+     `label` is the raw field name here too, for the same reason. */
+
+  {
+    id: "section/outcome-goals-not-met",
+    lang: "fil-PH",
+    section: { field: "outcome", label: "outcome" },
+    why: "a discharge where the patient stopped attending must not be written as a success",
+    turns: [
+      { who: "clinician", text: "Patient self discharged after six visits. She stopped attending." },
+      { who: "clinician", text: "At last contact her shoulder flexion was one hundred degrees, short of the one hundred forty degree goal." },
+      { who: "clinician", text: "Pain was still six out of ten and she was not back at work." },
+    ],
+    heard: { wer: 0.25, must: ["discharg"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the discharge is recorded as the patient's own", weight: 3,
+        test: (r) => /self|stopped attending|did not return|discontinu|non-?attend|lost to follow/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the goal is recorded as not achieved", weight: 3,
+        test: (r) => /short of|not (?:fully )?met|below|not achiev|unmet/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no successful outcome invented", weight: 3,
+        /* The negation has to be respected here or the assertion fails the
+           model for being right: "she had not returned to work" is exactly
+           what should be written. */
+        test: (r) => !/goals (?:were |are )?met|successful|full recovery|resolved completely|(?<!not )returned to work/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the residual pain survived", weight: 2,
+        test: (r) => /6\s*\/\s*10|six out of ten|\bsix\b|\b6\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/outcome-partial-success",
+    lang: "fil-PH",
+    section: { field: "outcome", label: "outcome" },
+    why: "a good outcome with a real limitation left in it — the limitation is the part that gets rounded away",
+    turns: [
+      { who: "clinician", text: "At discharge the left ankle pain is one out of ten, from an initial seven out of ten." },
+      { who: "clinician", text: "She has returned to full duty at work but still cannot run." },
+      { who: "clinician", text: "Dorsiflexion is fifteen degrees, symmetrical with the right." },
+    ],
+    heard: { wer: 0.25, must: ["ankle"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the LEFT ankle survived", weight: 3,
+        test: (r) => /left/.test(secText(r)) && /ankle/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both pain figures survived", weight: 2,
+        test: (r) => /1\s*\/\s*10|one out of ten/.test(secText(r))
+          && /7\s*\/\s*10|seven out of ten|initial seven/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the remaining limitation survived", weight: 3,
+        test: (r) => /cannot run|unable to run|not .{0,12}run|no running/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the outcome is not overstated into a full recovery", weight: 3,
+        test: (r) => !/full recovery|fully recovered|no limitation|complete resolution/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  /* --- Recommendations (discharge) ---------------------------------------- *
+     `label` is the raw field name here too, for the same reason. */
+
+  {
+    id: "section/recommendations-conditional-return",
+    lang: "fil-PH",
+    section: { field: "recommendations", label: "recommendations" },
+    why: "return-to-care criteria are the last safety net a discharged patient has",
+    turns: [
+      { who: "clinician", text: "Continue the home programme three times a week indefinitely." },
+      { who: "clinician", text: "Return to therapy if the pain goes above four out of ten, or if the knee locks." },
+      { who: "clinician", text: "Follow up with the orthopaedic surgeon in three months." },
+    ],
+    heard: { wer: 0.25, must: ["return"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both return criteria survived", weight: 3,
+        test: (r) => /lock/.test(secText(r)) && /above|4\s*\/\s*10|four out of ten|worsen/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the surgeon follow-up survived with its interval", weight: 3,
+        test: (r) => /orthop|surgeon/.test(secText(r)) && /three months|3 months/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the frequency survived", weight: 2,
+        test: (r) => /three times|3\s*(?:x|times)/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no new treatment invented", weight: 3,
+        test: (r) => !/ultrasound|injection|surgery is recommend|\bmri\b/.test(secText(r)),
+        detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
+  {
+    id: "section/recommendations-help-not-hep",
+    lang: "fil-PH",
+    section: { field: "recommendations", label: "recommendations" },
+    why: "the help/HEP collision at discharge, where nobody is left to catch it",
+    turns: [
+      { who: "clinician", text: "We reviewed the discharge instructions with her and her daughter today." },
+      { who: "clinician", text: "She will need help with the compression stocking for another month." },
+      { who: "clinician", text: "Recommend a raised toilet seat and a grab rail in the bathroom." },
+    ],
+    heard: { wer: 0.25, must: ["help"], notAfterRepair: ["\\bHEP\\b"] },
+    expect: [
+      { name: "the section was written at all", weight: 3,
+        test: (r) => secText(r).length > 20, detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the assistance she needs is written as assistance", weight: 3,
+        test: (r) => /help|assist|daughter|support/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "no home exercise programme invented out of the word help", weight: 3,
+        test: (r) => !/home exercise|\bhep\b/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "both pieces of equipment survived", weight: 3,
+        test: (r) => /rail/.test(secText(r)) && /toilet|seat/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+      { name: "the one-month duration survived", weight: 2,
+        test: (r) => /month/.test(secText(r)), detail: (r) => `tidied: "${secText(r)}"` },
+    ],
+  },
+
 ];
 
 /** The section endpoint's answer, normalised for the assertions above. */
