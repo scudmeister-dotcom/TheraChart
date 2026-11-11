@@ -113,14 +113,61 @@
     requestAnimationFrame(() => window.scrollTo(0, scrollMem[hash || "#/dashboard"] || 0));
   }
 
+  /* Every app modal is a real dialog: announced as one and named by its
+     heading, focus moves in on open (first field, else the dialog itself),
+     Tab cycles inside it, Escape dismisses it the same as a backdrop click,
+     and focus goes back to whatever opened it. Callers that want a different
+     starting point (a Confirm button) still just .focus() it after this. */
+  let modalOpener = null;
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
   function showModal(html) {
-    modalRoot.innerHTML = `<div class="modal-backdrop"><div class="modal">${html}</div></div>`;
+    if (!modalRoot.querySelector(".modal")) modalOpener = document.activeElement;
+    modalRoot.innerHTML = `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div></div>`;
     modalRoot.querySelector(".modal-backdrop").addEventListener("click", (e) => {
       if (e.target.classList.contains("modal-backdrop")) closeModal();
     });
-    return modalRoot.querySelector(".modal");
+    const m = modalRoot.querySelector(".modal");
+    const head = m.querySelector("h1, h2, h3");
+    if (head) { head.id = head.id || "modalTitle"; m.setAttribute("aria-labelledby", head.id); }
+    (m.querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])") || m).focus();
+    return m;
   }
-  function closeModal() { modalRoot.innerHTML = ""; }
+  function closeModal() {
+    modalRoot.innerHTML = "";
+    if (modalOpener && modalOpener.isConnected) modalOpener.focus();
+    modalOpener = null;
+  }
+  // capture phase, so Escape closes the modal and not the drawer behind it too
+  document.addEventListener("keydown", (e) => {
+    const m = modalRoot.querySelector(".modal");
+    if (!m) return;
+    if (e.key === "Escape") { e.stopImmediatePropagation(); closeModal(); return; }
+    if (e.key !== "Tab") return;
+    const items = [...m.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+    if (!items.length) { e.preventDefault(); m.focus(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === m)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }, true);
+
+  /* Most forms are written `<div class="field"><label>Name</label><input …>`:
+     the label sits beside its control but was never tied to it, so a screen
+     reader announced each field as a bare "edit text". Rather than hand-wire
+     every template, each such pair is tied as it reaches the page — the
+     control gets an id if it has none and the label points at it. A label
+     that already has `for`, wraps its control, or isn't followed by one is
+     left alone, as is a control that names itself with aria-label. */
+  let fieldSeq = 0;
+  function tieFieldLabels() {
+    document.querySelectorAll(".field > label:not([for])").forEach((l) => {
+      const c = l.nextElementSibling;
+      if (!c || !c.matches("input, select, textarea") || l.querySelector("input, select, textarea")) return;
+      if (c.hasAttribute("aria-label") || c.hasAttribute("aria-labelledby")) return;
+      if (!c.id) c.id = `fld-${++fieldSeq}`;
+      l.htmlFor = c.id;
+    });
+  }
+  new MutationObserver(tieFieldLabels).observe(document.body, { childList: true, subtree: true });
 
   /* ================= FORM VALIDATION (shared) =================
 
@@ -2764,9 +2811,9 @@ ${team}`;
         <div class="fgroup"><span class="fglabel">Type</span>
           <div class="fchips">${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div></div>
         <div class="fgroup"><span class="fglabel">Started by</span>
-          <select class="fsel" id="dTherapist"><option value="all">All therapists</option>${therapistOpts.map(([id, name]) => `<option value="${esc(id)}"${f.therapist === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
+          <select class="fsel" id="dTherapist" aria-label="Started by"><option value="all">All therapists</option>${therapistOpts.map(([id, name]) => `<option value="${esc(id)}"${f.therapist === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
         <div class="fgroup"><span class="fglabel">Patient</span>
-          <select class="fsel" id="dPatient"><option value="all">All patients</option>${patientOpts.map(([id, name]) => `<option value="${esc(id)}"${f.patient === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
+          <select class="fsel" id="dPatient" aria-label="Patient"><option value="all">All patients</option>${patientOpts.map(([id, name]) => `<option value="${esc(id)}"${f.patient === id ? " selected" : ""}>${esc(name)}</option>`).join("")}</select></div>
         <div class="fgroup fgroup-date"><span class="fglabel">Date</span>
           <input type="date" class="fdate" id="dFrom" value="${f.from}" aria-label="From date" />
           <span class="fgsep">–</span>
@@ -2788,7 +2835,7 @@ ${team}`;
     <thead><tr><th>Document</th><th>Patient</th><th>Started by</th><th>Started</th><th></th></tr></thead>
     <tbody>${drafts.map((d) => `
       <tr class="rowlink" data-href="#/doc/${d.id}">
-        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
+        <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><a class="row-link" href="#/doc/${d.id}"><b>${esc(d.title)}</b></a></td>
         <td>${esc(S.patientName(S.getPatient(d.patientId)))}</td>
         <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
         <td class="num">${fmtDate(d.createdAt)}</td>
@@ -2811,6 +2858,10 @@ ${team}`;
     on("dClear", "click", () => { draftFilter.type = "all"; draftFilter.therapist = "all"; draftFilter.patient = "all"; draftFilter.from = ""; draftFilter.to = ""; rerender(); });
   }
 
+  /* The whole row is a click target for the mouse, but a <tr> cannot take
+     focus — so each row also carries a real `a.row-link` on its name. That
+     link is what Tab and a screen reader reach; without it a keyboard user had
+     no way to open a chart from the Patients list at all. */
   function bindRowLinks() {
     document.querySelectorAll("tr.rowlink").forEach((tr) =>
       tr.addEventListener("click", () => { location.hash = tr.dataset.href; })
@@ -2826,7 +2877,7 @@ ${team}`;
   <div class="page-actions"><a class="btn primary" href="#/intake">+ New patient intake</a></div>
 </div>
 <div class="card">
-  <div class="field"><input id="patSearch" type="search" placeholder="Search by name, phone, or physician…" /></div>
+  <div class="field"><input id="patSearch" type="search" aria-label="Search patients" placeholder="Search by name, phone, or physician…" /></div>
   <div class="table-scroll"><table class="list" id="patTable">
     <thead><tr><th>Name</th><th>DOB</th><th>Phone</th><th>Referring physician</th><th>Visits</th><th></th></tr></thead>
     <tbody></tbody>
@@ -2844,7 +2895,7 @@ ${team}`;
         // data-label names each cell for the phone layout, where the table
         // becomes one card per patient (styles.css, #patTable)
         .map((p) => `<tr class="rowlink" data-href="#/patient/${p.id}">
-          <td class="pt-name"><b>${esc(S.patientName(p))}</b></td>
+          <td class="pt-name"><a class="row-link" href="#/patient/${p.id}"><b>${esc(S.patientName(p))}</b></a></td>
           <td class="num pt-dob" data-label="Born">${esc(p.dob)} (${age(p.dob)})</td>
           <td class="num pt-phone" data-label="Phone">${esc(p.phone)}</td>
           <td class="pt-doc" data-label="Referred by">${esc(p.referringPhysician || "—")}</td>
@@ -3232,7 +3283,7 @@ ${team}`;
 
   const docRow = (d) => `
     <tr class="rowlink" data-href="#/doc/${d.id}">
-      <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><b>${esc(d.title)}</b></td>
+      <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><a class="row-link" href="#/doc/${d.id}"><b>${esc(d.title)}</b></a></td>
       <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.imported ? ' <span class="chip muted">imported</span>' : ""}${d.amendments.length ? ` <span class="chip info">${d.amendments.length} amendment${d.amendments.length > 1 ? "s" : ""}</span>` : ""}</td>
       <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
       <td class="num">${fmtDate(d.createdAt)}</td>
@@ -5033,7 +5084,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       return `
       <div class="field field-src-${src}" data-fieldwrap="${field}"><label>${label}
         <span class="src-badge src-${src}" title="${esc(meta.blurb)}">${meta.mark} ${esc(meta.label)}</span>${mic}</label>
-      <textarea data-field="${field}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea>
+      <textarea data-field="${field}" aria-label="${esc(label)}" rows="${rows || 3}" placeholder="${placeholder || ""}" ${editable ? "" : "disabled"}>${esc(doc.data[field] || "")}</textarea>
       ${editable && isDictatable(doc.type, field) ? `<div class="dict-check" data-fieldcheck="${field}" hidden></div>` : ""}</div>`;
     };
 
@@ -5581,7 +5632,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <tbody>${rows.join("") || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">None yet — ${dictationOn() ? "dictate" : "type"} e.g. “shoulder flexion 120 degrees”, “quad strength 4 out of 5”, “pain 6 out of 10”, “positive Neer test”.</div></td></tr>`}</tbody>
   </table></div>
   ${editable ? `<div class="measure-add">
-    <input id="measInput" placeholder='Type a measurement, e.g. "left knee flexion 95 degrees" and press Enter' />
+    <input id="measInput" aria-label="Add a measurement" placeholder='Type a measurement, e.g. "left knee flexion 95 degrees" and press Enter' />
   </div>` : ""}
 </div>`;
   }
@@ -5766,8 +5817,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <tbody>${rows || `<tr><td colspan="3"><div class="empty-state" style="padding:10px">None recorded${editable ? ` — add one below, or ${dictationOn() ? "dictate" : "type"} e.g. “LEFS 52 out of 80”.` : "."}</div></td></tr>`}</tbody>
   </table></div>
   ${editable ? `<div class="outcome-add">
-    <select id="outcomeTool">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
-    <input type="number" step="0.5" id="outcomeScore" placeholder="Score" class="charge-num" />
+    <select id="outcomeTool" aria-label="Outcome measure">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
+    <input type="number" step="0.5" id="outcomeScore" aria-label="Score" placeholder="Score" class="charge-num" />
     <button class="btn small" id="addOutcomeBtn" type="button">＋ Record</button>
     <button class="btn small" id="addOutcomeItemsBtn" type="button" title="Add the measure and open its answer sheet — the score is worked out from the items">＋ Score item by item</button>
     <span class="outcome-err" id="outcomeErr"></span>
@@ -5902,7 +5953,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <div class="goal-edit-controls">
           <span class="goal-state ${status.state}">${esc(status.label)}</span>
           ${canEdit
-            ? `<select data-goal="${goal.id}" class="goal-status-sel">${CL.GOAL_STATUS.map((s) => `<option value="${s.id}" ${(goal.status || "active") === s.id ? "selected" : ""}>${s.label}</option>`).join("")}</select>
+            ? `<select data-goal="${goal.id}" class="goal-status-sel" aria-label="Status of goal: ${esc(goal.text)}">${CL.GOAL_STATUS.map((s) => `<option value="${s.id}" ${(goal.status || "active") === s.id ? "selected" : ""}>${s.label}</option>`).join("")}</select>
                <button class="btn small" data-delgoal="${goal.id}" title="Remove goal">✕</button>`
             : `<span class="goal-state closed">${esc((CL.GOAL_STATUS.find((s) => s.id === (goal.status || "active")) || {}).label || "")}</span>`}
         </div>
@@ -5942,12 +5993,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   <div class="goal-edit-list">${rows || `<div class="empty-state" style="padding:10px">No goals set${canEdit ? " — add the first one below." : "."}</div>`}</div>
   ${suggestHtml}
   ${canEdit ? `<div class="goal-add">
-    <input id="goalText" placeholder="Goal — e.g. “Climb a flight of stairs without the rail”" />
+    <input id="goalText" aria-label="Goal" placeholder="Goal — e.g. “Climb a flight of stairs without the rail”" />
     <div class="goal-add-row">
-      <input id="goalBaseline" placeholder="Baseline now" />
-      <input id="goalTarget" placeholder="Target" />
-      <input id="goalDate" type="date" title="Target date" />
-      <select id="goalTerm"><option value="short">Short-term</option><option value="long">Long-term</option></select>
+      <input id="goalBaseline" aria-label="Baseline now" placeholder="Baseline now" />
+      <input id="goalTarget" aria-label="Target" placeholder="Target" />
+      <input id="goalDate" type="date" title="Target date" aria-label="Target date" />
+      <select id="goalTerm" aria-label="Goal term"><option value="short">Short-term</option><option value="long">Long-term</option></select>
       <button class="btn small" id="addGoalBtn" type="button">＋ Add goal</button>
     </div>
     <span class="outcome-err" id="goalErr"></span>
@@ -10671,7 +10722,7 @@ ${scheduleRequestsCard(user)}
 <div class="card">
   <div class="cal-toolbar">
     <button class="btn small" id="calPrev">←</button>
-    <input type="date" id="calDate" value="${calDate}" />
+    <input type="date" id="calDate" aria-label="Go to date" value="${calDate}" />
     <button class="btn small" id="calNext">→</button>
     <button class="btn small" id="calToday">Today</button>
     <span class="dict-status">${slots.length ? `${slots.length} slots · ${appts.length} booked` : "closed"}</span>
@@ -11258,7 +11309,7 @@ ${privacyInfoAccordion(geminiOn)}
   <div class="activity-head">
     <div><h2 style="margin:0">Activity log</h2><div class="activity-sub">Newest first · showing <b>${esc(win.label)}</b></div></div>
     <div class="activity-tools">
-      <input id="logSearch" type="search" placeholder="Filter within this range…" autocomplete="off" />
+      <input id="logSearch" type="search" aria-label="Filter the activity log" placeholder="Filter within this range…" autocomplete="off" />
       <span class="chip muted" id="logCount">${log.length} events</span>
     </div>
   </div>
@@ -11617,7 +11668,7 @@ ${pricesCard(user)}
           <div class="field"><label>License expires</label><input id="nu-lic-exp" type="date" /></div>
         </div>
         <div class="field"><label>Temporary password (min 8 — they'll change it at first login)</label>
-          <div style="display:flex; gap:8px"><input id="nu-pw" type="text" autocomplete="off" style="flex:1" /><button class="btn small" id="nu-gen" type="button">Generate</button></div></div>
+          <div style="display:flex; gap:8px"><input id="nu-pw" type="text" autocomplete="off" aria-label="Temporary password" style="flex:1" /><button class="btn small" id="nu-gen" type="button">Generate</button></div></div>
         <button class="btn primary small" id="nu-add">${isOwner ? "Create employee" : "Send request"}</button>
         <div id="nu-msg" style="font-size:12.5px; min-height:18px; margin-top:6px"></div>
       </div>
@@ -11668,7 +11719,7 @@ ${pricesCard(user)}
             return `<tr>
               <td><b>${esc(c.code)}</b> ${esc(c.desc)}</td>
               <td class="num">${editable
-                ? `<input type="number" min="0" step="0.01" class="charge-num" data-price="${c.code}" value="${v == null ? "" : v}" placeholder="—" />`
+                ? `<input type="number" min="0" step="0.01" class="charge-num" data-price="${c.code}" value="${v == null ? "" : v}" placeholder="—" aria-label="Price for ${esc(c.code)} ${esc(c.desc)}" />`
                 : v == null ? `<span class="charge-na">no price</span>` : peso(v)}</td>
             </tr>`;
           }).join("")}

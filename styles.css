@@ -6,8 +6,8 @@
   --bg: #f4f7f9;
   --panel: #ffffff;
   --ink: #1f2d3a;
-  --muted: #64748b;
-  --accent: #0F8A80;
+  --muted: #5b6b7f;
+  --accent: #0b7a71;
   --accent-ink: #ffffff;
   --accent-soft: #E6F5F2;
   --point: #e03e52;
@@ -18,10 +18,10 @@
   --flash: #fff3d6;
   --hl: #ffe9a8;
   --hl-strong: #ffd166;
-  --review: #b9820a;
+  --review: #8a5d00;
   --review-soft: #fdf3dd;
   --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
-  --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #d98a1e; --dt-discharge: #2f9e6f;
+  --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #a8620c; --dt-discharge: #1f7a52;
   --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
   --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
   --good: #1a7f4b;
@@ -73,13 +73,13 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #64748b;
-  --accent: #0F8A80; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
+  --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #5b6b7f;
+  --accent: #0b7a71; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
   --hover: #f6f9fb; --flash: #fff3d6; --hl: #ffe9a8; --hl-strong: #ffd166;
-  --review: #b9820a; --review-soft: #fdf3dd;
+  --review: #8a5d00; --review-soft: #fdf3dd;
   --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
-  --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #d98a1e; --dt-discharge: #2f9e6f;
+  --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #a8620c; --dt-discharge: #1f7a52;
   --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
   --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
   --good: #1a7f4b; --good-soft: #e2f4e9;
@@ -693,6 +693,11 @@ table.list td { padding: 9px 10px; border-bottom: 1px solid var(--border); verti
 table.list tr:last-child td { border-bottom: none; }
 table.list tbody tr.rowlink { cursor: pointer; }
 table.list tbody tr.rowlink:hover { background: var(--hover); }
+/* the focusable name inside a clickable row (see bindRowLinks) — reads as
+   plain row text, and the row lights up while it holds keyboard focus */
+.row-link { color: inherit; text-decoration: none; }
+.row-link:hover { text-decoration: underline; }
+table.list tbody tr.rowlink:focus-within { background: var(--hover); }
 table.list .num { font-variant-numeric: tabular-nums; }
 /* Zebra striping on the patients list so long lists stay easy to scan.
    Hover still wins over the stripe for the row you're pointing at. */
@@ -809,10 +814,10 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .login-wrap, .splash {
   color-scheme: light;
   color: var(--ink); /* re-anchor inherited text to the scoped (light) ink */
-  --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #64748b;
-  --accent: #0F8A80; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
+  --bg: #f4f7f9; --panel: #ffffff; --ink: #1f2d3a; --muted: #5b6b7f;
+  --accent: #0b7a71; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
-  --hover: #f6f9fb; --review: #b9820a; --review-soft: #fdf3dd;
+  --hover: #f6f9fb; --review: #8a5d00; --review-soft: #fdf3dd;
   --good: #1a7f4b; --good-soft: #e2f4e9;
   --danger: #c22f43; --danger-soft: #fde8ea; --danger-border: #f2b8c0;
   --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
@@ -1798,6 +1803,8 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   background: var(--panel); border-radius: 14px; box-shadow: var(--shadow);
   padding: 20px; max-height: 90vh; overflow-y: auto;
 }
+/* showModal focuses the dialog itself when it has no field; no ring for that */
+.modal:focus { outline: none; }
 .modal h2 { font-size: 16px; margin-bottom: 12px; }
 .modal .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal .error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 16px; }
