@@ -5547,8 +5547,10 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         typed.value = "";
         typed.focus();
       };
-      // Enter files it; Shift+Enter inserts a newline so longer notes stay visible
-      typed.addEventListener("keydown", (e) => {
+      // Enter files it; Shift+Enter inserts a newline so longer notes stay visible.
+      // typed is null when the findings rows own the box (bindFindingRows above);
+      // calling into it threw, which skipped restoreScroll on every note opened.
+      if (typed) typed.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTyped(); }
       });
       const typedAdd = document.getElementById("typedDictationAdd");
