@@ -36,6 +36,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { startServer } = require("../helpers/server.js");
 const { SCRIPTS, spokenText } = require("./scripts.js");
+const PR = require("../../parser.js");
 const say = require("./say.js");
 
 /* ---------- args ---------- */
@@ -203,15 +204,34 @@ const FAIL_FETCH = val("--fail-fetch", "");
 const injected = new Map();   // "leg|scriptId" -> attempts already failed
 let injector = null;
 if (FAIL_FETCH) {
-  const m = /^(stt|note):(.+):(\d+|all)$/.exec(FAIL_FETCH);
-  if (!m) {
-    console.error(`--fail-fetch must look like <stt|note>:<script-id-prefix>:<n|all>, got: ${FAIL_FETCH}`);
+  /* Split rather than one regex: a greedy `(.+)` for the script id happily
+     eats the count and leaves the STATUS looking like the count, which is
+     exactly what it did the first time this was written. Script ids carry no
+     colons, so the fields are unambiguous once separated. */
+  const f = FAIL_FETCH.split(":");
+  const okLeg = f[0] === "stt" || f[0] === "note";
+  const okTimes = f.length >= 3 && (f[2] === "all" || /^\d+$/.test(f[2]));
+  const okStatus = f.length === 3 || (f.length === 4 && /^\d{3}$/.test(f[3]));
+  if (!okLeg || !f[1] || !okTimes || !okStatus) {
+    console.error(`--fail-fetch must look like <stt|note>:<script-id-prefix>:<n|all>[:<status>], got: ${FAIL_FETCH}`);
     process.exit(2);
   }
-  injector = { leg: m[1], prefix: m[2], times: m[3] === "all" ? Infinity : Number(m[3]) };
+  injector = { leg: f[0], prefix: f[1], times: f[2] === "all" ? Infinity : Number(f[2]),
+    status: f[3] ? Number(f[3]) : 0 };
   console.log(`  ⚠ FAULT INJECTION: failing the ${injector.leg} request for "${injector.prefix}"`
-    + ` ${injector.times === Infinity ? "every time" : `${injector.times} time(s)`} — this run is a test of the harness, not of the product.`);
+    + ` ${injector.times === Infinity ? "every time" : `${injector.times} time(s)`}`
+    + `${injector.status ? ` as HTTP ${injector.status}` : ""} — this run is a test of the harness, not of the product.`);
 }
+
+/* An optional STATUS turns the injection from a thrown fetch into a bad
+   ANSWER, which is the other way a leg fails and the one that reached a
+   baseline on 2026-09-09. `stt:x:all:500` reproduces a degraded hour at Google
+   — the row must end up NOT RUN and bar the save; `stt:x:2:500` reproduces a
+   blip the retry should absorb. Still costs nothing at Google: the response is
+   fabricated here and the request is never sent. */
+const injectedResponse = (status) =>
+  new Response(JSON.stringify({ error: "Transcription failed.", ref: "injected" }),
+    { status, headers: { "content-type": "application/json" } });
 
 /** Should this attempt be made to fail? Counts per leg+script, not per call. */
 function shouldInjectFailure(what, id) {
@@ -244,14 +264,47 @@ const causeOf = (e) => {
   return code ? `${e.message} (${code}${c.message && c.message !== e.message ? `: ${c.message}` : ""})` : (e && e.message) || "fetch failed";
 };
 
+/* A 5xx from our own server is worth another go, and used not to get one.
+
+   Only TRANSPORT failures were retried — a thrown fetch. But /api/stt answers
+   500 "Transcription failed." when GOOGLE fails behind it, and that is an HTTP
+   response, not a throw, so it fell straight through as a scored zero. On
+   2026-09-09 a burst of those took ELEVEN consecutive scripts to 0 and dropped
+   a paid run from 97.3% to 60.6%; every one of them transcribed correctly on
+   the next attempt. A run costs real money, so losing a row to somebody else's
+   bad minute is worth 1.5 seconds of waiting — and worth the money, which is
+   the part to be honest about: /api/stt reports `billedSeconds` even when it
+   answers 500, because the audio reached Google before it failed there. A
+   retried segment is PAID TWICE. Two extra attempts on a 15-second chunk is
+   half a cent, against a whole script's audio and refine call wasted.
+
+   4xx is NOT retried: that is our request being wrong, and repeating it just
+   buys the same answer twice. */
+const RETRYABLE_STATUS = (r) => r && r.status >= 500;
+
 async function tryFetch(what, run, id) {
   let last = null;
   for (let attempt = 1; attempt <= TRANSPORT_TRIES; attempt++) {
     try {
       /* Thrown BEFORE the request, so an injected failure costs nothing at
          Google — the point is to test our handling, not to buy a real one. */
-      if (shouldInjectFailure(what, id)) throw new TypeError("fetch failed");
-      return { res: await run() };
+      let res;
+      if (shouldInjectFailure(what, id)) {
+        /* A fabricated bad ANSWER goes down the same path a real one does,
+           retry and all — returning it early would skip the very code the
+           injection exists to exercise. */
+        if (!injector.status) throw new TypeError("fetch failed");
+        res = injectedResponse(injector.status);
+      } else {
+        res = await run();
+      }
+      if (RETRYABLE_STATUS(res) && attempt < TRANSPORT_TRIES) {
+        const wait = attempt * 1500;
+        console.log(`    (${what}: HTTP ${res.status} from the server, retrying in ${wait / 1000}s)`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      return { res };
     } catch (e) {
       last = e;
       if (attempt < TRANSPORT_TRIES) {
@@ -647,7 +700,12 @@ async function sweep(scripts, key) {
         const d = await r.json().catch(() => ({}));
         // billed outside the ok branch: a chunk that failed AT Google is still billed
         if (typeof d.billedSeconds === "number") billedSeconds += d.billedSeconds;
-        return r.ok ? { text: d.text || "", model: d.model } : { error: d.error || `HTTP ${r.status}` };
+        /* A 5xx that survived the retries is OUR server saying Google failed
+           behind it, which is the same class of event as the request never
+           landing: it says nothing about the note this harness is measuring.
+           A 4xx is a result — that is Google, or us, rejecting the audio. */
+        return r.ok ? { text: d.text || "", model: d.model }
+          : { error: d.error || `HTTP ${r.status}`, transport: r.status >= 500 };
       }));
 
       const lost = parts.filter((p) => p.error);
@@ -655,12 +713,23 @@ async function sweep(scripts, key) {
         /* Two different things wear this shape, and conflating them is what
            made a network outage read as a catastrophic regression.
 
-           `transport` means the request never reached the server: the script
-           did not RUN, so it has no score, and scoring it zero would drag the
-           run's average down for a reason that has nothing to do with the
-           product. It is excluded from the totals and reported on its own
-           line. Anything else is Google answering — that is a result, and it
-           keeps the zero it has always had. */
+           `transport` means the run never got an answer about the PRODUCT:
+           the request never reached the server, or the server answered 5xx
+           because Speech-to-Text failed behind it. Either way the script did
+           not RUN, so it has no score, and scoring it zero would drag the run
+           down for a reason that has nothing to do with the note. It is
+           excluded from the totals, reported on its own line, and — the part
+           that matters — it BARS the baseline save.
+
+           That last clause was learned the expensive way on 2026-09-09. A
+           degraded hour at Google 500'd the tail of two paid runs; the
+           failures were scored as real zeros, and `--save-baseline` happily
+           wrote a baseline at 85.3% that every later run would have been
+           measured against. Each of those scripts transcribed perfectly on
+           the next attempt.
+
+           A 4xx stays a result: that is the audio being rejected, which is
+           something a change of ours can cause and should be scored. */
         const infra = lost.every((p) => p.transport);
         console.log(infra ? `NOT RUN — ${lost[0].error}` : `STT FAILED — ${lost[0].error}`);
         results.push({ id: rid, why: sc.why, sttError: lost[0].error, infra, chunks: t.wavs.length,
@@ -674,10 +743,41 @@ async function sweep(scripts, key) {
         .filter((x, i) => x !== AUDIO_GAP_MARK || i === 0 || !parts[i - 1].error)
         .join(" ").replace(/\s+/g, " ").trim();
       const w = wer(spokenText(sc), heard);
+
+      /* THE REPAIR LAYER, which the product applies and this runner used not to.
+
+         app.js runs PR.correctDictation over the stitched transcript before
+         either endpoint sees it — on the visit path (app.js:6718) and on the
+         section path (app.js:7344). Sending Chirp 2's raw output here measured
+         a chain the clinic does not have: every one of DICTATION_FIXES could
+         regress, or fire on the wrong word, without a single script noticing.
+
+         Word error stays scored on the RAW transcript above, so the STT
+         measurement remains what it always was and every baseline number is
+         untouched. What changes is what /api/refine and /api/check-section are
+         given — the repaired text, exactly as production hands it over.
+
+         `fixes` is carried into the row because a repair FIRING is a result.
+         A rule that rewrites a patient's "help" into "HEP" is a defect the
+         note score may not even show, and it should be readable without
+         diffing transcripts by hand. */
+      const repair = PR.correctDictation(heard);
+      const sent = repair.text;
       const heardFailed = [];
       if (sc.heard.wer != null && w.wer > sc.heard.wer) heardFailed.push(`word error ${pct(w.wer)} over the ${pct(sc.heard.wer)} ceiling`);
       for (const m of sc.heard.must || []) {
         if (!new RegExp(`\\b${m}`, "i").test(heard)) heardFailed.push(`"${m}" never made it into the transcript`);
+      }
+      /* What the REPAIR must not have done. `must` asks whether Google heard a
+         word; this asks whether DICTATION_FIXES then took it away again. The
+         two failures are opposite and a script needs to be able to say which
+         one it is testing: a patient's "help" surviving Chirp 2 and then being
+         rewritten to "HEP" scores a clean transcript and a wrong note, and
+         without this the run blames the model for the parser's work. */
+      for (const m of sc.heard.notAfterRepair || []) {
+        if (new RegExp(m, "i").test(sent)) {
+          heardFailed.push(`the repair layer put /${m}/ into the transcript: "${sent.slice(0, 160)}"`);
+        }
       }
 
       let result = null, refineError = null, noteInfra = false;
@@ -693,8 +793,8 @@ async function sweep(scripts, key) {
           ? `${s.base}/api/check-section`
           : `${s.base}/api/refine`;
         const body = sc.section
-          ? { spoken: heard, label: sc.section.label, field: sc.section.field }
-          : { transcript: [heard] };
+          ? { spoken: sent, label: sc.section.label, field: sc.section.field }
+          : { transcript: [sent] };
         /* This call had no protection at all, and it is where three runs
            actually died: two scripts scored, the third threw, and everything
            after it was lost. Same treatment as the STT leg now — retried,
@@ -733,13 +833,19 @@ async function sweep(scripts, key) {
       const earned = scored.reduce((n, g) => n + (g.ok ? g.weight : 0), 0);
       const possible = scored.reduce((n, g) => n + g.weight, 0);
 
+      const repairNote = repair.fixes.length
+        ? `  · repaired ${repair.fixes.map((f) => `"${f.from}"→${f.to}`).join(", ")}` : "";
       console.log(`WER ${pct(w.wer)}${NO_REFINE ? "" : (noteInfra ? "  · note NOT RUN"
-        : ` · ${sc.section ? "section" : "note"} ${possible ? pct(earned / possible) : "n/a"}`)}${fellBack ? "  ⚠ FELL BACK" : ""}`);
+        : ` · ${sc.section ? "section" : "note"} ${possible ? pct(earned / possible) : "n/a"}`)}${repairNote}${fellBack ? "  ⚠ FELL BACK" : ""}`);
 
       results.push({
         id: rid, why: sc.why, lang: sc.lang, chunks: t.wavs.length, advisory: !!sc.advisory,
         wer: w.wer, refWords: w.ref, edits: w.edits,
         spoken: spokenText(sc), heard,
+        /* Only recorded when the repair layer actually did something, so a
+           baseline diff does not grow 32 empty arrays. */
+        repaired: repair.fixes.length ? sent : undefined,
+        fixes: repair.fixes.length ? repair.fixes : undefined,
         heardFailed, refineError, fellBack, infra: noteInfra,
         model: (parts.find((x) => x.model) || {}).model,
         graded, earned, possible,
@@ -774,7 +880,7 @@ async function sweep(scripts, key) {
     } else {
       console.log(`\nTheraChart voice eval — ${MODEL_ID} → Chirp 2 (${project})${NO_REFINE ? " · transcription only" : ""}\n`);
       for (const r of results) {
-        if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ${r.infra ? "! NOT RUN — never reached the server" : "! STT failed"}: ${r.sttError}`); continue; }
+        if (r.sttError) { console.log(`  ${"░".repeat(20)}         ${r.id}\n  ${" ".repeat(20)}         ${r.infra ? "! NOT RUN — no answer about the product" : "! STT failed"}: ${r.sttError}`); continue; }
         const p = r.possible ? r.earned / r.possible : 0;
         /* A script whose note call never landed has no score, and printing it
            as "0.0%" said the opposite of the NOT RUN line three rows below —
@@ -798,7 +904,7 @@ async function sweep(scripts, key) {
           : `  NOTE           ${"░".repeat(20)} nothing scored — no note call completed`);
       }
       if (notRun.length) {
-        console.log(`  NOT RUN        ${notRun.length} script(s) never reached the server and are NOT in the numbers above:`);
+        console.log(`  NOT RUN        ${notRun.length} script(s) got no answer about the product (network, or a 5xx from Speech-to-Text)\n                 and are NOT in the numbers above:`);
         for (const r of notRun) console.log(`                   ${r.id} — ${r.sttError || r.refineError}`);
       }
 
@@ -854,12 +960,50 @@ async function sweep(scripts, key) {
          re-run; accepting costs the meaning of the file. */
       console.log(`  BASELINE NOT SAVED — ${short
         ? `the run stopped after ${results.length} of ${scripts.length * TAKES} script(s)`
-        : `${notRun.length} script(s) never reached the server`}.`);
+        : `${notRun.length} script(s) got no answer about the product`}.`);
       console.log(`  A baseline from a partial run would record an outage as the bar. Re-run when the network is healthy.\n`);
     } else if (SAVE) {
-      const slim = { ...out, cases: out.cases.map(({ note, spoken, ...c }) => c) };
-      fs.writeFileSync(path.join(__dirname, "baseline.json"), JSON.stringify(slim, null, 2));
-      console.log(`  baseline saved to test/voice/baseline.json\n`);
+      /* MERGE, never replace. A --case run measures a SUBSET, and writing its
+         results out whole silently deletes every script it did not cover.
+
+         That is not hypothetical twice over. The guard above exists because a
+         partial run once took the file from 15 cases to 32 at 28.9%; and on
+         2026-09-10 a `--case`-scoped save of the 32 adversarial scripts
+         dropped the original 32 — which broke test/pairing.test.js, because
+         `cases[].heard` is the only corpus of REAL Chirp 2 output this repo
+         has and that test reads it to check its language markers against
+         actual transcripts. A baseline is a corpus as well as a bar.
+
+         So rows this run did not produce are carried across untouched, and the
+         score aggregates are recomputed over the whole merged set. The cost
+         fields describe the run that just happened and are left as they are —
+         they are bookkeeping for a run, not a property of the corpus. */
+      /* Re-read rather than reusing the copy the report block loaded: that
+         one is scoped to the human-readable report, which --json skips
+         entirely, and reaching for it here threw a ReferenceError that only
+         appeared on a --save-baseline run. */
+      const priorPath = path.join(__dirname, "baseline.json");
+      const prior = fs.existsSync(priorPath)
+        ? JSON.parse(fs.readFileSync(priorPath, "utf8")) : null;
+      const slim = out.cases.map(({ note, spoken, ...c }) => c);
+      const ran = new Set(slim.map((c) => c.id));
+      const kept = ((prior && prior.cases) || []).filter((c) => !ran.has(c.id));
+      const cases = [...kept, ...slim];
+      const scored = cases.filter((c) => !c.infra);
+      const wers = scored.filter((c) => typeof c.wer === "number");
+      const earnedAll = scored.reduce((n, c) => n + (c.earned || 0), 0);
+      const possibleAll = scored.reduce((n, c) => n + (c.possible || 0), 0);
+      const merged = {
+        ...out,
+        cases,
+        meanWer: wers.length ? wers.reduce((n, c) => n + c.wer, 0) / wers.length : 0,
+        earned: earnedAll,
+        possible: possibleAll,
+        overall: possibleAll ? earnedAll / possibleAll : 0,
+      };
+      fs.writeFileSync(priorPath, JSON.stringify(merged, null, 2));
+      console.log(`  baseline saved to test/voice/baseline.json — ${slim.length} script(s) from this run`
+        + `${kept.length ? `, ${kept.length} carried over` : ""}, ${cases.length} in the file\n`);
     }
   } catch (e) {
     /* "fetch failed" on a localhost call means the server went away, and the
