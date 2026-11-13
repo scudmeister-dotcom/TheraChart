@@ -630,6 +630,51 @@
     return trail;
   }
 
+  /* ---- page title + focus on navigation ----
+     A single-page app never reloads, so a screen reader hears nothing when the
+     route changes and the browser tab says "TheraChart EMR" on every screen.
+     Each route names itself in document.title, and a navigation moves focus to
+     the new page's heading so it is announced and Tab starts from there.
+     Patient names are deliberately kept OUT of the title: it is written into
+     browser history and shown on the tab strip and the OS window switcher. */
+  const APP_NAME = "TheraChart EMR";
+  const setTitle = (label) => { document.title = label ? `${label} — ${APP_NAME}` : APP_NAME; };
+  function routeTitle(hash, crumbs) {
+    const route = routeOf(hash);
+    if (route === "dashboard") return "Dashboard";
+    if (route === "patient") return "Patient chart";
+    if (route === "doc") {
+      const d = S.getDoc((hash.split("/")[2] || "").split("?")[0]);
+      return d ? `${docMeta(d.type).label} — Patient chart` : "Document";
+    }
+    if (route === "intake") return hash.includes("?edit=") ? "Edit patient information" : "New patient intake";
+    if (route === "clinics") return "Clinics";
+    const last = crumbs[crumbs.length - 1];
+    return last ? last.label : "";
+  }
+  /* Called after a hash navigation has drawn the new screen. A screen that put
+     focus somewhere on purpose (a search box, a dialog) keeps it; otherwise the
+     clicked link was destroyed with the old DOM and focus fell to <body>. */
+  function focusRouteHeading() {
+    const a = document.activeElement;
+    if (a && a !== document.body && a.isConnected) return;
+    const target = document.querySelector("#viewBody h1, #viewBody h2, .landing h1, .login-box h1") || document.getElementById("view");
+    if (!target) return;
+    if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }
+  // The skip link targets a hash, which would be read as a route; jump by focus instead.
+  document.addEventListener("click", (e) => {
+    const skip = e.target.closest && e.target.closest("[data-skip]");
+    if (!skip) return;
+    e.preventDefault();
+    const main = document.querySelector("#view, main");
+    if (!main) return;
+    const h = main.querySelector("h1") || main;
+    if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+    h.focus();
+  });
+
   function renderShell(hash, content, user, bind) {
     const emrAllowed = S.canAccessEmr(user);
     // the patient assistant drawer is available whenever a patient chart is open
@@ -644,7 +689,10 @@
       if (n.ownerOnly && !isOwner()) return "";
       const disabled = n.emr && !emrAllowed;
       const active = navActive(n.hash, hash);
-      return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
+      /* A locked entry has no href: without one an <a> is not in the Tab order
+         and Enter does nothing, which pointer-events: none never stopped. The
+         role and aria-disabled keep it announced as an unavailable link. */
+      return `<a class="nav-link ${active ? "active" : ""} ${disabled ? "disabled" : ""}" ${disabled ? `role="link" aria-disabled="true"` : `href="${n.hash}"`}${active && !disabled ? ` aria-current="page"` : ""}>
         <span class="nav-ico">${n.icon}</span><span class="nav-label">${n.label}</span><span class="nav-label-short">${n.short || n.label}</span></a>`;
     };
     const nav = groups.map((g) => {
@@ -658,11 +706,11 @@
     const isTabActive = (n) => navActive(n.hash, hash);
     const activeTabIdx = primaryNav.findIndex(isTabActive);
     const tabbar = `
-      <nav class="tabbar" style="--tab-count:${primaryNav.length}; --tab-index:${activeTabIdx < 0 ? 0 : activeTabIdx}">
+      <nav class="tabbar" aria-label="Main tabs" style="--tab-count:${primaryNav.length}; --tab-index:${activeTabIdx < 0 ? 0 : activeTabIdx}">
         <span class="tab-pill ${activeTabIdx < 0 ? "hidden" : ""}" aria-hidden="true"></span>
         ${primaryNav.map((n) => {
           const disabled = n.emr && !emrAllowed;
-          return `<a class="tab ${isTabActive(n) ? "active" : ""} ${disabled ? "disabled" : ""}" href="${n.hash}">
+          return `<a class="tab ${isTabActive(n) ? "active" : ""} ${disabled ? "disabled" : ""}" ${disabled ? `role="link" aria-disabled="true"` : `href="${n.hash}"`}>
             <span class="tab-ico">${n.icon}</span><span class="tab-label">${n.short}</span></a>`;
         }).join("")}
       </nav>`;
@@ -689,15 +737,17 @@
     const canBack = crumbs.length > 1;
     const crumbBar = crumbs.length ? `
       <div class="crumbbar">
-        <nav class="crumbs">${crumbs.map((c, i) =>
+        <nav class="crumbs" aria-label="Breadcrumb">${crumbs.map((c, i) =>
           i === crumbs.length - 1
-            ? `<span class="crumb current">${esc(c.label)}</span>`
+            ? `<span class="crumb current" aria-current="page">${esc(c.label)}</span>`
             : `<a class="crumb" href="${c.hash}">${esc(c.label)}</a><span class="crumb-sep">›</span>`
         ).join("")}</nav>
       </div>` : "";
 
+    setTitle(routeTitle(hash, crumbs));
     app.innerHTML = `
 <div class="shell">
+  <a class="skip-link" href="#view" data-skip>Skip to main content</a>
   <aside class="sidebar">
     <div class="sidebar-inner">
       <div class="brand">
@@ -707,10 +757,10 @@
       </div>
       <button class="note-pin" id="notePin" type="button" hidden></button>
       <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
-      <div class="nav">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
+      <nav class="nav" aria-label="Main">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
         <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
-      </div>` : ""}</div>
+      </div>` : ""}</nav>
       <div class="spacer"></div>
       <div class="nav nav-utility"><div class="nav-group">
         <div class="nav-group-label">Help</div>${bugTriggerMarkup()}${demoTriggerMarkup()}
@@ -723,7 +773,7 @@
       ${acctMenuHtml}
     </div>
   </aside>
-  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view">${demoBannerMarkup(user)}${crumbBar}<div id="viewBody">${content}</div></main>
+  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view" tabindex="-1">${demoBannerMarkup(user)}${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
   ${drawerPid ? `
   <div class="assistant-backdrop" id="asstBackdrop"></div>
@@ -852,8 +902,9 @@
 
 
   function renderForcePassword(user) {
+    setTitle("Set your password");
     app.innerHTML = `
-<div class="login-wrap">
+<main class="login-wrap">
   <div class="login-box">
     <div class="brandline">
       <div class="logo">${LOGO_MARK}</div>
@@ -870,7 +921,7 @@
       <button class="btn small" id="fpLogout" style="margin-top:10px">Sign out</button>
     </div>
   </div>
-</div>`;
+</main>`;
     const err = document.getElementById("fpErr");
     document.getElementById("fpLogout").addEventListener("click", async () => { await signOutFully(); render(); });
     document.getElementById("fpSave").addEventListener("click", async () => {
@@ -937,8 +988,10 @@
         <div class="lp-tier-rate">${peso(Number((price / visits).toFixed(2)))} a visit</div>
         <div class="lp-tier-who">${who}</div>
       </div>`;
+    setTitle("");
     app.innerHTML = `
 <div class="landing">
+  <a class="skip-link" href="#lpMain" data-skip>Skip to main content</a>
   <header class="lp-nav">
     <div class="brandline">
       <div class="logo">${LOGO_MARK}</div>
@@ -950,6 +1003,7 @@
     </div>
   </header>
 
+  <main id="lpMain">
   <section class="lp-hero">
     <div class="lp-hero-copy">
       <div class="lp-eyebrow">Physical therapy EMR · built for the clinic floor</div>
@@ -1107,6 +1161,7 @@
       <span class="lp-foot-sep">·</span><a href="/terms">Terms of Service</a>
     </div>
   </section>
+  </main>
 </div>
 ${walkthroughMarkup()}`;
     const go = () => { showLogin = true; goSignIn(); };
@@ -1776,8 +1831,9 @@ ${walkthroughMarkup()}`;
     const googleClientId = (window.TheraSync && window.TheraSync.googleClientId) || "";
     // Requesting an account needs the approval queue, which only the server has.
     const serverMode = !!(window.TheraSync && window.TheraSync.mode === "server");
+    setTitle("Sign in");
     app.innerHTML = `
-<div class="login-wrap">
+<main class="login-wrap">
   <div class="login-box">
     <div class="brandline">
       <div class="logo">${LOGO_MARK}</div>
@@ -1845,7 +1901,7 @@ ${walkthroughMarkup()}`;
         : `<div class="demo-note">Use the email and password your administrator gave you. First time in? You'll set your own password.</div>`}
     </div>
   </div>
-</div>`;
+</main>`;
     // one-shot: the "you've left the demo" note belongs to this render only
     pendingLoginNote = "";
     pendingLoginEmail = "";
@@ -2403,7 +2459,8 @@ ${walkthroughMarkup()}`;
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
           Filter${nOn ? ` <span class="q-filter-n">${nOn}</span>` : ""}</button>${panel}</span>` : "";
       const chips = active.length ? `<span class="q-active">${active.map(esc).join(" · ")}<button class="q-active-x" type="button" data-qclear="${sec.id}" aria-label="Clear the filter on ${esc(sec.title)}">✕</button></span>` : "";
-      const head = `<h3>${sec.n ? `${sec.n} · ` : ""}${sec.title}</h3>${count(shown.length, filtering ? sec.items.length : null)}${chips}<span class="q-hint">${sec.hint}</span>${filterBtn}`;
+      // h2: these sit directly under the page's h1 (WCAG 1.3.1 — no skipped level)
+      const head = `<h2>${sec.n ? `${sec.n} · ` : ""}${sec.title}</h2>${count(shown.length, filtering ? sec.items.length : null)}${chips}<span class="q-hint">${sec.hint}</span>${filterBtn}`;
       if (sec.id === "house") {
         return `<section class="q-section" id="q-house" data-qsec="house" ${full}><details class="q-house">
           <summary class="q-head">${head}</summary>${list}</details></section>`;
@@ -6168,7 +6225,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     });
     const dot = mkSvg("circle", { class: "loc-dot", cx: pt.x, cy: pt.y, r: 3.6 });
     const ring = mkSvg("circle", { class: "loc-ring", cx: pt.x, cy: pt.y, r: 3.6 });
-    const marker = mkSvg("circle", { class: "marker", cx: lx, cy: ly, r: 11 });
+    const marker = markerShape(pt._sev.cls, lx, ly);
     const num = mkSvg("text", { class: "marker-num", x: lx, y: ly });
     num.textContent = pt._num;
     const title = document.createElementNS(svgNS, "title");
@@ -6182,20 +6239,46 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     layer.appendChild(g);
   }
 
+  /* The numbered marker's SHAPE carries severity as well as its colour, so the
+     map reads on a monochrome print and for a therapist who cannot separate
+     red from orange: severe is a diamond, moderate a square, mild a circle,
+     resolved/denied a hexagon. The legend above the map uses the same shapes.
+     Sized to roughly the same area as the r=11 circle so none looks louder. */
+  function markerShape(cls, x, y) {
+    if (cls === "sev-high") {
+      const d = 13.5;
+      return mkSvg("polygon", { class: "marker", points: `${x},${y - d} ${x + d},${y} ${x},${y + d} ${x - d},${y}` });
+    }
+    if (cls === "sev-mid") return mkSvg("rect", { class: "marker", x: x - 9.75, y: y - 9.75, width: 19.5, height: 19.5, rx: 3 });
+    if (cls === "sev-none") {
+      const r = 11.5;
+      const pts = [0, 60, 120, 180, 240, 300].map((a) => {
+        const t = (a * Math.PI) / 180;
+        return `${(x + r * Math.cos(t)).toFixed(2)},${(y + r * Math.sin(t)).toFixed(2)}`;
+      });
+      return mkSvg("polygon", { class: "marker", points: pts.join(" ") });
+    }
+    return mkSvg("circle", { class: "marker", cx: x, cy: y, r: 11 });
+  }
+
   function drawMapNotes(doc, dstate) {
     const box = document.getElementById("mapNotes");
     if (!box) return;
     const editable = dstate && dstate.editable;
     const pts = doc.data.mapPoints || [];
-    box.innerHTML = pts.length ? pts.map((pt, i) => `
-      <div class="map-note ${pt.provisional ? "provisional " : ""}${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
+    box.innerHTML = pts.length ? pts.map((pt, i) => {
+      const sev = severityOf(pt);
+      const where = `${pt.side ? cap(pt.side) + " " : ""}${pt.part}`;
+      return `
+      <div class="map-note ${sev.cls} ${pt.provisional ? "provisional " : ""}${dstate && dstate.selectedKey === pt.key ? "selected" : ""}" data-key="${esc(pt.key)}">
         <div class="map-note-head">
-          <b><span class="badge ${severityOf(pt).cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(pt.side ? cap(pt.side) + " " : "")}${esc(pt.part)}</span></b>
+          <b><span class="badge ${sev.cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(where)}</span><span class="sev-word">${esc(sev.label)}</span></b>
           ${pt.provisional ? `<span class="chip muted prov-chip" title="Heard while the visit was recording. The AI re-reads the whole conversation when you stop, and this may move or go.">not checked yet</span>` : ""}
-          ${editable ? `<button class="icon-btn" data-delpoint="${esc(pt.key)}" title="Remove this finding">✕</button>` : ""}
+          ${editable ? `<button class="icon-btn" type="button" data-delpoint="${esc(pt.key)}" title="Remove this finding" aria-label="Remove finding ${i + 1}, ${esc(where)}">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
-      </div>`).join("")
+      </div>`;
+    }).join("")
       : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Body areas the patient mentions will be pinned here automatically." : "Body areas in your findings are pinned here automatically."}</div>`;
     /* Said once, above the list, rather than repeated on every row. The chips
        mark WHICH pins are unconfirmed; this says what unconfirmed means. */
@@ -12208,7 +12291,9 @@ ${accessRequestsCard()}
     const h = location.hash || "";
     if (h === SIGNIN_ROUTE) showLogin = true;
     else if (h === "" || h === "#/") showLogin = false;
-    render();
+    // finally: a screen whose binding throws part-way has still been drawn,
+    // and its heading should still be announced
+    try { render(); } finally { focusRouteHeading(); }
   });
   // remember scroll position per screen so Back returns you where you were
   window.addEventListener("scroll", () => { scrollMem[location.hash || "#/dashboard"] = window.scrollY; }, { passive: true });

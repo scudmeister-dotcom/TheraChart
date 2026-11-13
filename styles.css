@@ -20,7 +20,7 @@
   --hl-strong: #ffd166;
   --review: #8a5d00;
   --review-soft: #fdf3dd;
-  --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
+  --sev-high: #c9302c; --sev-mid: #b25e00; --sev-low: #1a7f4b; --sev-none: #64748b;
   --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #a8620c; --dt-discharge: #1f7a52;
   --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
   --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
@@ -78,11 +78,11 @@
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
   --hover: #f6f9fb; --flash: #fff3d6; --hl: #ffe9a8; --hl-strong: #ffd166;
   --review: #8a5d00; --review-soft: #fdf3dd;
-  --sev-high: #e0453f; --sev-mid: #e0891e; --sev-low: #1f9d57; --sev-none: #8494a3;
+  --sev-high: #c9302c; --sev-mid: #b25e00; --sev-low: #1a7f4b; --sev-none: #64748b;
   --dt-eval: #6d5ae0; --dt-daily: #0e7c86; --dt-progress: #a8620c; --dt-discharge: #1f7a52;
   --sec-subjective: #2563eb; --sec-objective: #0e7c86; --sec-assessment: #6d5ae0;
   --sec-treatment: #1a7f4b; --sec-reason: #b45309; --sec-precautions: #c22f43; --sec-pmh: #64748b;
-  --good: #1a7f4b; --good-soft: #e2f4e9;
+  --good: #1a7f4b; --good-soft: #e2f4e9; --good-ink: #146c3d;
   --danger: #c22f43; --danger-soft: #fde8ea; --danger-border: #f2b8c0;
   --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
   --sidebar: #10333b; --sidebar-ink: #d7e6e9; --sidebar-active: #17505c; --brand-1: #3ec6d0; --brand-2: #0e7c86; --brand-3: #6d5ae0; --brand-ink: #10333b; --brand-grad: linear-gradient(145deg,#3ec6d0,#0e7c86 62%,#0a5b63); --brand-grad-tv: linear-gradient(135deg,#3ec6d0 0%,#2f8f9c 45%,#6d5ae0);
@@ -107,6 +107,19 @@
 
 * { box-sizing: border-box; }
 
+/* Skip link: first thing Tab reaches on every screen, invisible until it is
+   focused. Jumps past the sidebar (or the landing header) to the page heading. */
+.skip-link {
+  position: absolute; left: 12px; top: -60px; z-index: 1000;
+  padding: 10px 14px; border-radius: 10px;
+  background: #ffffff; color: #0b7a71; font-weight: 700; font-size: 14px; text-decoration: none;
+  box-shadow: 0 4px 16px rgba(15, 30, 45, 0.18); outline: 2px solid #0b7a71; outline-offset: 2px;
+}
+.skip-link:focus { top: 12px; }
+/* Headings and <main> take focus on navigation (focusRouteHeading) so the new
+   page is announced; they are not controls, so no focus ring on them. */
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus, main[tabindex="-1"]:focus { outline: none; }
+
 /* The `hidden` attribute only sets `display: none` at user-agent priority, so
    any component rule that sets `display` silently beats it — `.btn` is
    inline-flex, which is why the recorder's Process/Discard buttons showed with
@@ -128,7 +141,7 @@
   --side-fg: #B4CBC7; --side-fg-strong: #F0FDFA;
   --side-border: rgba(255, 255, 255, 0.08); --side-hover: rgba(255, 255, 255, 0.06);
   --side-active-bg: rgba(94, 234, 212, 0.12); --side-active-fg: #7EF0DC;
-  --side-rail: #5EEAD4; --side-label: rgba(255, 255, 255, 0.42);
+  --side-rail: #5EEAD4; --side-label: rgba(255, 255, 255, 0.65);
   --side-wordmark: #F0FDFA; --side-sub: rgba(255, 255, 255, 0.5); --side-accent: #5EEAD4;
   --side-shadow: none;
 
@@ -305,7 +318,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 99px; padding: 2px 8px;
 }
 .nav-link.active .nav-count { background: rgba(94, 234, 212, 0.22); }
-.nav-link.disabled { opacity: 0.4; pointer-events: none; }
+/* Rendered without an href and with aria-disabled (see renderShell), so it is
+   out of the Tab order and Enter does nothing; pointer-events only stops the
+   hover state on what is now plain text. */
+.nav-link.disabled { opacity: 0.4; pointer-events: none; cursor: default; }
 
 .sidebar .spacer { flex: 1; }
 .userchip {
@@ -351,7 +367,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .demo-badge {
   flex: none; padding: 3px 9px; border-radius: 999px;
-  background: var(--warn, #b06d0b); color: #fff;
+  /* A fixed shade rather than var(--warn): white text needs the darker brown
+     (5.3:1) in either theme; the old #b06d0b measured 4.17:1. */
+  background: #9a5d05; color: #fff;
   font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
 }
 .demo-banner-text { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--ink); }
@@ -665,7 +683,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Labels read as sentence case — "Sent (logged)", "No note yet", "Overdue ·
    3 days old" — wherever they come from, including statuses the server writes. */
 .chip::first-letter { text-transform: uppercase; }
-.chip.good { background: var(--good-soft); color: var(--good); }
+.chip.good { background: var(--good-soft); color: var(--good-ink, var(--good)); } /* --good on --good-soft is 4.39:1 */
 .chip.warn { background: var(--review-soft); color: var(--review); }
 .chip.bad { background: var(--danger-soft); color: var(--danger); }
 .chip.info { background: var(--accent-soft); color: var(--accent); }
@@ -818,7 +836,7 @@ textarea:disabled, textarea[readonly] { resize: none; }
   --accent: #0b7a71; --accent-ink: #ffffff; --accent-soft: #E6F5F2;
   --point: #e03e52; --border: #e2e8f0; --sil: #cfdce6; --sil-line: #b6c8d6;
   --hover: #f6f9fb; --review: #8a5d00; --review-soft: #fdf3dd;
-  --good: #1a7f4b; --good-soft: #e2f4e9;
+  --good: #1a7f4b; --good-soft: #e2f4e9; --good-ink: #146c3d;
   --danger: #c22f43; --danger-soft: #fde8ea; --danger-border: #f2b8c0;
   --shadow: 0 1px 3px rgba(15, 30, 45, 0.08), 0 4px 16px rgba(15, 30, 45, 0.06);
 }
@@ -1003,10 +1021,14 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .leader { fill: none; stroke: var(--sil-line); stroke-width: 1; opacity: 0.7; }
 .loc-dot { stroke: #fff; stroke-width: 1; }
 .loc-ring { fill: none; stroke-width: 2; opacity: 0; }
-.marker { stroke: #fff; stroke-width: 1.5; transition: r 0.12s; }
+/* The marker is a circle, square, diamond or hexagon by severity (see
+   drawCallout), so it grows by transform rather than by `r`, which only a
+   circle has. */
+.marker { stroke: #fff; stroke-width: 1.5; transition: transform 0.12s; transform-box: fill-box; transform-origin: center; }
 .marker-num { fill: #fff; font-size: 11px; font-weight: 800; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-.point-group:hover .marker { r: 13; }
-.point-group.flash .marker { r: 14; }
+.point-group:hover .marker { transform: scale(1.18); }
+.point-group.flash .marker { transform: scale(1.27); }
+@media (prefers-reduced-motion: reduce) { .marker { transition: none; } }
 .point-group.flash .loc-ring { opacity: 0.6; animation: ring 1.1s ease-out; }
 @keyframes ring { 0% { r: 4; opacity: 0.6; } 100% { r: 16; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .point-group.flash .loc-ring { animation: none; } .mic-btn.listening { animation: none; } }
@@ -1040,7 +1062,7 @@ textarea:disabled, textarea[readonly] { resize: none; }
 .point-group.provisional .leader { stroke-dasharray: 3 3; opacity: 0.5; }
 
 /* The same distinction in the list beside the map. */
-.map-note.provisional { border-left: 2px dashed var(--sil-line); padding-left: 7px; }
+.map-note.provisional { border-left-width: 2px; border-left-style: dashed; padding-left: 12px; }
 .map-note.provisional .note-summary { color: var(--muted); }
 .prov-chip { margin-left: 6px; font-weight: 500; }
 .map-prov-note {
@@ -1060,7 +1082,12 @@ textarea:disabled, textarea[readonly] { resize: none; }
 
 .sev-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
 .sev-legend span { display: inline-flex; align-items: center; gap: 4px; }
-.sev-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+/* Each legend swatch is the same shape as its marker on the map, so the key
+   can be read without telling the colours apart. */
+.sev-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.sev-dot.sev-high { border-radius: 1px; transform: rotate(45deg) scale(0.85); }
+.sev-dot.sev-mid { border-radius: 2px; }
+.sev-dot.sev-none { border-radius: 0; clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
 .sev-dot.sev-high { background: var(--sev-high); } .sev-dot.sev-mid { background: var(--sev-mid); }
 .sev-dot.sev-low { background: var(--sev-low); } .sev-dot.sev-none { background: var(--sev-none); }
 .badge.sev-high { background: var(--sev-high); } .badge.sev-mid { background: var(--sev-mid); }
@@ -1121,10 +1148,20 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 
 .map-notes { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
 .map-note {
-  border: 1px solid var(--border); border-left: 4px solid var(--point);
+  border: 1px solid var(--border); border-left: 4px solid var(--sev-none);
   border-radius: 9px; padding: 7px 10px; font-size: 12.5px; cursor: pointer;
 }
 .map-note:hover { background: var(--hover); }
+/* The card's edge is the finding's severity, the same as its pin — it used to
+   be one red for every finding, which said "severe" about a mild one. */
+.map-note.sev-high { border-left-color: var(--sev-high); }
+.map-note.sev-mid { border-left-color: var(--sev-mid); }
+.map-note.sev-low { border-left-color: var(--sev-low); }
+.map-note.sev-none { border-left-color: var(--sev-none); }
+/* …and in words, so severity never rests on colour alone. */
+.map-note .sev-word {
+  font-size: 11px; font-weight: 600; color: var(--muted); margin-left: 6px; white-space: nowrap;
+}
 .map-note.selected { outline: 2px solid var(--hl-strong); outline-offset: -1px; }
 .map-note b { font-size: 12.5px; }
 .map-note .badge {
@@ -1582,7 +1619,7 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .cal-grid .cal-time, .cal-grid .cal-corner { position: sticky; left: 0; z-index: 1; box-shadow: 1px 0 0 var(--border); }
 .cal-grid .cal-time { background: var(--panel); }
 .cal-grid .cal-head.cal-corner { background: var(--hover); }
-.slot-free { color: color-mix(in srgb, var(--muted) 70%, transparent); cursor: pointer; border-radius: 7px; padding: 3px 6px; }
+.slot-free { color: var(--muted); cursor: pointer; border-radius: 7px; padding: 3px 6px; }
 .slot-free:hover { background: var(--accent-soft); color: var(--accent); }
 .slot-free.ask { font-size: 12px; }
 /* reminders: dates on one line; one card per reminder on a phone */
@@ -1840,7 +1877,10 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 }
 .note-summary[contenteditable]:focus { outline: 2px solid var(--accent-soft); border-radius: 4px; }
 .map-note-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.icon-btn { border: none; background: none; color: var(--muted); font-size: 13px; padding: 0 4px; border-radius: 5px; }
+.icon-btn {
+  border: none; background: none; color: var(--muted); font-size: 13px; padding: 0 4px; border-radius: 5px;
+  min-width: 24px; min-height: 24px; display: inline-grid; place-items: center; flex: none; cursor: pointer;
+}
 .icon-btn:hover { background: var(--danger-soft); color: var(--danger); }
 
 /* ---------------- AI cleanup card ---------------- */
@@ -2676,7 +2716,7 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
    key and the badge it explained looked like two unrelated systems. */
 .src-mark { font-size: 10px; line-height: 1; flex: none; }
 .src-mark.src-filled { color: var(--accent, #6c5ce7); }
-.src-mark.src-drafted { color: var(--warn, #d98324); }
+.src-mark.src-drafted { color: var(--review); }
 .src-mark.src-yours { color: var(--muted, #8a8a99); }
 
 /* How far the note has got. Answers "am I nearly done" without reading, which
@@ -2714,8 +2754,8 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   vertical-align: middle;
   white-space: nowrap;
 }
-.src-badge.src-filled { background: rgba(108, 92, 231, 0.13); color: var(--accent, #6c5ce7); }
-.src-badge.src-drafted { background: rgba(217, 131, 36, 0.15); color: var(--warn, #d98324); }
+.src-badge.src-filled { background: var(--accent-soft); color: var(--accent, #6c5ce7); }
+.src-badge.src-drafted { background: rgba(217, 131, 36, 0.15); color: var(--review); }
 .src-badge.src-yours { background: rgba(138, 138, 153, 0.15); color: var(--muted, #8a8a99); }
 
 /* ---- the microphone on a section ----
@@ -3239,7 +3279,7 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
   margin: 0; padding: 11px 14px; align-items: center; border-radius: 10px 10px 0 0;
   background: color-mix(in srgb, var(--qc) 9%, var(--panel));
 }
-.q-section .q-head h3 { font-size: 14.5px; }
+.q-section .q-head h2 { font-size: 14.5px; }
 .q-section > .q-body, .q-section > .q-empty, .q-house > .q-body, .q-house > .q-empty { padding: 10px 12px 12px; }
 .q-house[open] > .q-head { border-bottom: 1px solid var(--border); }
 .q-section > .q-head + .q-body, .q-section > .q-head + .q-empty { border-top: 1px solid var(--border); }
@@ -3305,9 +3345,9 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
 .q-item { display: flex; align-items: center; gap: 2px; position: relative; }
 .q-menu-btn {
   flex: none; border: none; background: none; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1;
-  padding: 6px 6px; margin-right: -6px; border-radius: 6px; opacity: .55;
+  padding: 6px 6px; margin-right: -6px; border-radius: 6px;
+  min-width: 28px; min-height: 28px; display: inline-grid; place-items: center;
 }
-.q-item:hover .q-menu-btn, .q-menu-btn:focus-visible, .q-menu-btn[aria-expanded="true"] { opacity: 1; }
 .q-menu-btn:hover, .q-menu-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .q-menu {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 25; min-width: 180px; padding: 5px;
@@ -3319,10 +3359,10 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
 .q-item > .q-row { flex: 1; min-width: 0; }
 .q-grip {
   flex: none; align-self: center; border: none; background: none; cursor: grab;
-  color: var(--muted); font-size: 16px; line-height: 1; padding: 6px 4px; margin-left: -6px;
-  border-radius: 6px; touch-action: none; user-select: none; opacity: .55;
+  color: var(--muted); font-size: 16px; line-height: 1; padding: 4px; margin-left: -6px;
+  min-width: 24px; min-height: 28px; display: inline-grid; place-items: center;
+  border-radius: 6px; touch-action: none; user-select: none;
 }
-.q-item:hover .q-grip, .q-grip:focus-visible { opacity: 1; }
 .q-grip:hover, .q-grip:focus-visible { color: var(--ink); background: var(--hover); }
 .q-sorting, .q-sorting * { cursor: grabbing !important; user-select: none; }
 .q-dragging { position: relative; z-index: 2; }
@@ -3335,12 +3375,12 @@ body.recording-docked #syncBadge { bottom: 84px !important; }
 .q-more:hover { background: var(--hover); }
 .q-more-n { color: var(--muted); font-weight: 500; margin-left: 4px; }
 .q-head, .q-house > summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
-.q-head h3, .q-house > summary h3 { margin: 0; font-size: 14px; }
+.q-head h2, .q-house > summary h2 { margin: 0; font-size: 14px; }
 .q-hint { font-size: 12px; color: var(--muted); }
 .q-house > summary { cursor: pointer; list-style: none; }
 .q-house > summary::-webkit-details-marker { display: none; }
-.q-house > summary h3::before { content: "▸ "; color: var(--muted); }
-.q-house[open] > summary h3::before { content: "▾ "; }
+.q-house > summary h2::before { content: "▸ "; color: var(--muted); }
+.q-house[open] > summary h2::before { content: "▾ "; }
 .q-list { display: flex; flex-direction: column; gap: 6px; }
 .q-row {
   display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 10px;
