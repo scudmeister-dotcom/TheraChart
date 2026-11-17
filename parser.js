@@ -89,7 +89,11 @@
     /* Pelvic-health work is physical therapy too, and a patient describing it
        uses lay words. A region the system refuses to hear is a region that
        cannot be treated or billed for. */
-    P("Pelvic floor", "pelvic\\s+floors?|perine(?:um|al)|pubic(?:\\s+(?:bone|symphysis|area))?|pubis", { y: 230 }),
+    /* "Waist" had no entry at all, so "waist tightness" pinned nothing and
+       the tightness was handed to whatever pin came last (a head pin, once).
+       The side of the trunk between the ribs and the iliac crest. */
+    P("Waist", "waist(?:\\s?lines?)?s?", { dx: 25, y: 184, sided: true }),
+    P("Pelvic floor","pelvic\\s+floors?|perine(?:um|al)|pubic(?:\\s+(?:bone|symphysis|area))?|pubis", { y: 230 }),
     P("Genitals", "genitals?|genital\\s+area|privates?|penis|scrotum|testicles?|vagina|vaginal|vulva|labia|puki|titi|bayag", { y: 226 }),
     P("Pelvis", "pelvis|pelvic|iliac crests?|asis", { y: 205 }),
     P("Groin", "groin|adductors?|inner\\s+thighs?|singit", { y: 224 }),

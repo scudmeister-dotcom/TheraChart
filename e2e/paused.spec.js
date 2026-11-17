@@ -69,7 +69,8 @@ test.describe("dictation paused", () => {
     await expect(page.locator(".utt")).toHaveCount(3);
     // each point says where it went: the knee and shoulder pins, the reading
     await expect(page.locator('.utt[data-utt="0"] .utt-pin')).toContainText("Left Knee");
-    await expect(page.locator('.utt[data-utt="1"] .utt-receipt')).toContainText("reading");
+    // the receipt names the reading itself, not just that there was one
+    await expect(page.locator('.utt[data-utt="1"] .utt-receipt')).toContainText("left knee flexion 110° → Measurements");
     await expect(page.locator('.utt[data-utt="2"] .utt-pin')).toContainText("Right Shoulder");
     await expect(page.locator("#findingsCount")).toHaveText("(3)");
     // every entry is the therapist's — no patient/clinician relabelling
