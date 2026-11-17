@@ -44,8 +44,12 @@
      language picker and dictation-only setting asks this before it draws, so
      with it off the app is a typed-findings EMR with no trace of the mic. */
   const dictationOn = () => !!(window.TheraSync && window.TheraSync.dictation);
+  /* A bare "YYYY-MM-DD" is a calendar day, not an instant: new Date() reads it
+     as midnight UTC, which west of Greenwich shows as the day before. Read it
+     as local midnight instead. Timestamps are unchanged. */
+  const asLocalDay = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(String(iso)) ? `${iso}T00:00:00` : iso);
   const fmtDate = (iso) =>
-    iso ? new Date(iso).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "—";
+    iso ? new Date(asLocalDay(iso)).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "—";
   const fmtTime = (iso) =>
     iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
   const fmtDT = (iso) => (iso ? `${fmtDate(iso)} · ${fmtTime(iso)}` : "—");
@@ -91,6 +95,7 @@
 
   const ICON = {
     // Nav icon set from the brand handoff (24×24, currentColor stroke).
+    clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     dash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18"/><path d="M7 14l2.5 2.5L12 13l2 2 3-4"/></svg>',
     people: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     cal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
@@ -441,6 +446,7 @@
     { hash: "#/patients", label: "Patients", short: "Patients", icon: ICON.people, emr: true },
     { hash: "#/calendar", label: "Calendar", short: "Calendar", icon: ICON.cal, emr: true },
     { hash: "#/privacy", label: "Privacy & Security", short: "Privacy", icon: ICON.shield, emr: false },
+    { hash: "#/visit-time", label: "Visit time", short: "Time", icon: ICON.clock, emr: true, adminOnly: true },
     { hash: "#/facility", label: "Facility Admin", short: "Admin", icon: ICON.gear, emr: true, adminOnly: true },
     /* Operator-only: onboarding clinics is not something a clinic's own admin
        does. `emr: false` because it isn't clinical — an expired licence locks
@@ -477,6 +483,7 @@
        over a document the router has already replaced. */
     if (sectionRec) { try { sectionRec.engine.stop(); } catch (_) { } sectionRec = null; }
     currentDocState = null; // never carry one document's edit state into another
+    if (pinMoveCleanup) pinMoveCleanup();
     closeModal();
     const user = S.currentUser();
     // Logged-out visitors land on the marketing page first; the Sign-in CTA
@@ -513,7 +520,7 @@
     const emrAllowed = S.canAccessEmr(user);
     const route = (hash.split("/")[1] || "dashboard").split("?")[0];
 
-    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "facility"];
+    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "facility", "visit-time"];
     if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
 
     if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
@@ -524,6 +531,10 @@
     if (route === "doc") return renderShell(hash, "", user, bindDoc); // doc builds its own DOM
     if (route === "calendar") return renderShell(hash, calendarView(user), user, bindCalendar);
     if (route === "privacy") return renderShell(hash, privacyView(user), user, bindPrivacy);
+    if (route === "visit-time") {
+      if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Visit time is for the clinic's administrators.</div></div>`, user);
+      return renderShell(hash, visitTimeView(user), user, bindVisitTime);
+    }
     if (route === "facility") {
       if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Facility administration is limited to admin accounts.</div></div>`, user);
       return renderShell(hash, facilityView(user), user, bindFacility);
@@ -626,6 +637,7 @@
     else if (route === "calendar") trail.push({ label: "Calendar", hash: "#/calendar" });
     else if (route === "privacy") trail.push({ label: "Privacy & Security", hash: "#/privacy" });
     else if (route === "facility") trail.push({ label: "Facility Admin", hash: "#/facility" });
+    else if (route === "visit-time") trail.push({ label: "Visit time", hash: "#/visit-time" });
     else if (route === "profile") trail.push({ label: "My Profile", hash: "#/profile" });
     return trail;
   }
@@ -681,7 +693,7 @@
     const drawerPid = /^#\/patient\//.test(hash) ? (hash.split("/")[2] || "").split("?")[0] : null;
     if (assistantFor !== drawerPid) { assistantOpen = false; assistantFor = drawerPid; }
     const groups = [
-      { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash)) },
+      { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar", "#/visit-time"].includes(n.hash)) },
       { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash)) },
     ];
     const linkHtml = (n) => {
@@ -717,7 +729,7 @@
 
     // --- account menu: the pages that aren't part of the moment-to-moment
     //     workflow (Privacy, Admin, Profile) live here, opened from the avatar.
-    const acctNav = NAV.filter((n) => ["#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash))
+    const acctNav = NAV.filter((n) => ["#/visit-time", "#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash))
       .filter((n) => !(n.adminOnly && user.role !== "admin"))
       .filter((n) => !(n.ownerOnly && !isOwner()))
       .filter((n) => !(n.emr && !emrAllowed));
@@ -1630,10 +1642,10 @@ ${walkthroughMarkup()}`;
     },
     {
       shot: "08-billing",
-      title: "The units are counted for you.",
-      now: "Someone works out timed units by hand against the 8-minute rule, and a miscount is either lost revenue or a claim problem.",
-      here: "Enter the interventions and minutes. TheraChart computes what the units <i>should</i> be and flags a mismatch instead of silently billing whatever was typed. The signature, licence number and timestamp lock to the note.",
-      where: "Inside any note · the last step, <b>Billing</b>",
+      title: "Therapists log time. The manager does billing.",
+      now: "Therapists work out codes and units between patients, and a miscount is either lost revenue or a claim problem.",
+      here: "The therapist records one thing for the books: how long the visit took — tap 30, 45 or 60, or enter start and finish. The clinic manager sees every visit's time on one page and does the billing from there. The signature, licence number and timestamp lock to the note.",
+      where: "Inside any note · the last step, <b>Time with the patient</b> · managers: <b>Visit time</b>",
     },
     {
       shot: "04-patient-info",
@@ -2172,7 +2184,7 @@ ${walkthroughMarkup()}`;
   const QUEUE_KINDS = {
     drafts: [["eval", "Evals"], ["daily", "Daily notes"], ["progress", "Progress reports"], ["discharge", "Discharges"]],
     today: [["nonote", "No note yet"], ["draft", "Draft started"], ["signed", "Signed"]],
-    follow: [["request", "Schedule requests"], ["progress", "Progress reports"], ["auth", "Authorisations"], ["order", "Doctor's orders"], ["goal", "Goals"], ["billing", "Billing"], ["licence", "Licences"], ["other", "Other"]],
+    follow: [["request", "Schedule requests"], ["progress", "Progress reports"], ["auth", "Authorisations"], ["order", "Doctor's orders"], ["goal", "Goals"], ["time", "Visit time"], ["licence", "Licences"], ["other", "Other"]],
   };
   QUEUE_KINDS.house = QUEUE_KINDS.follow;
   /* Sort, hand order and pins are saved on the person's account (store
@@ -2208,7 +2220,7 @@ ${walkthroughMarkup()}`;
   let queuePopCleanup = null; // removes the open panel's document listeners
   const secFilter = (id) => queueFilter.by[id] || (queueFilter.by[id] = { kind: "all", patient: "all" });
   const followKind = (text) => (/Progress report/.test(text) ? "progress" : /uthoris|authorised/.test(text) ? "auth"
-    : /order/.test(text) ? "order" : /goal/.test(text) ? "goal" : /billing/.test(text) ? "billing" : "other");
+    : /order/.test(text) ? "order" : /goal/.test(text) ? "goal" : /visit time/.test(text) ? "time" : "other");
 
   /** Which group an item falls in for a long list: by name range or kind when
       sorted that way, otherwise each list's natural chunks — notes by age,
@@ -2328,7 +2340,7 @@ ${walkthroughMarkup()}`;
         key, kind: followKind(r.text), pid: r.patient.id, name: S.patientName(r.patient),
         html: qrow({
           key,
-          tag: `<span class="q-ico">${/Progress report/.test(r.text) ? "📈" : /uthoris|authorised/.test(r.text) ? "🪪" : /order/.test(r.text) ? "🩺" : /goal/.test(r.text) ? "🎯" : /billing/.test(r.text) ? "₱" : "•"}</span>`,
+          tag: `<span class="q-ico">${/Progress report/.test(r.text) ? "📈" : /uthoris|authorised/.test(r.text) ? "🪪" : /order/.test(r.text) ? "🩺" : /goal/.test(r.text) ? "🎯" : /visit time/.test(r.text) ? "⏱" : "•"}</span>`,
           title: esc(S.patientName(r.patient)),
           sub: `${esc(r.text)}${(scope === "clinic" || !isMe) && r.owner ? ` · ${nameOf(r.owner)}` : ""}`,
           href: `#/patient/${r.patient.id}`, ptab: r.tab, pid: r.patient.id, action: r.action, level: r.level,
@@ -2360,7 +2372,7 @@ ${walkthroughMarkup()}`;
     const SECTIONS = [
       { id: "drafts", n: 1, title: "Finish and sign", hint: `Drafts older than ${DRAFT_OVERDUE_DAYS} days are overdue.`, items: draftItems, empty: "Every note is signed." },
       { id: "today", n: 2, title: "Today's visits", hint: "Each visit and whether its note exists.", items: visitItems, empty: `No visits booked today. <a href="#/calendar">Open the calendar</a>` },
-      { id: "follow", n: 3, title: "Follow up", hint: `${w.requests.length ? "Schedule requests, p" : "P"}rogress reports, authorisations, doctor's orders, goals and billing.`, items: [...requestItems, ...w.followUps.map(followItem), ...licenceItems], empty: "No follow-ups waiting." },
+      { id: "follow", n: 3, title: "Follow up", hint: `${w.requests.length ? "Schedule requests, p" : "P"}rogress reports, authorisations, doctor's orders, goals and visit time.`, items: [...requestItems, ...w.followUps.map(followItem), ...licenceItems], empty: "No follow-ups waiting." },
       { id: "house", n: null, title: "Housekeeping", hint: "Smaller gaps — files, future bookings, goals not set", items: w.housekeeping.map(followItem), empty: "" },
     ];
 
@@ -2421,6 +2433,13 @@ ${walkthroughMarkup()}`;
         restHtml = `${pinned.length ? `<div class="q-ghead static q-rest">Everything else<span class="q-gcount">${rest.length}</span></div>` : ""}${listOf(visible)}
           ${rest.length > QUEUE_PAGE ? `<button class="q-more" type="button" data-qmore="${sec.id}">${open ? "Show fewer" : `Show all ${rest.length} <span class="q-more-n">+${more} more</span>`}</button>` : ""}`;
       }
+      /* Every section folds, the way Housekeeping always did. Housekeeping
+         starts folded (it is a summary of small gaps); the other three start
+         open. A fold is remembered per user with the rest of the queue prefs,
+         and a tile that jumps to a section always unfolds it. */
+      const folded = queueFilter.openAll === sec.id ? false
+        : Object.prototype.hasOwnProperty.call(prefs.collapsed || {}, sec.id) ? !!prefs.collapsed[sec.id]
+        : sec.id === "house";
       if (queueFilter.openAll === sec.id) queueFilter.openAll = null;
       const list = shown.length ? `<div class="q-body">${pinnedHtml}${restHtml}</div>`
         : filtering ? `<div class="q-empty">Nothing here matches this filter. <button class="btn-link" type="button" data-qclear="${sec.id}">Clear filter</button></div>`
@@ -2453,19 +2472,17 @@ ${walkthroughMarkup()}`;
               ${pts.map(([id, n]) => `<option value="${esc(id)}" ${f.patient === id ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>` : ""}
           <div class="q-pop-foot">${nOn ? `<button class="btn small" type="button" data-qclear="${sec.id}">Clear all</button>` : ""}<button class="btn small primary" type="button" data-qclose>Done</button></div>
         </div>` : "";
-      // Housekeeping is a collapsed <summary>; a panel inside it would toggle it
-      const filterBtn = sec.items.length && sec.id !== "house" ? `<span class="q-filter-wrap">
+      const filterBtn = sec.items.length && sec.id !== "house" && !folded ? `<span class="q-filter-wrap">
         <button class="q-filter ${nOn ? "on" : ""}" type="button" data-qfilter="${sec.id}" aria-expanded="${queueFilter.open === sec.id}" aria-haspopup="dialog">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
           Filter${nOn ? ` <span class="q-filter-n">${nOn}</span>` : ""}</button>${panel}</span>` : "";
       const chips = active.length ? `<span class="q-active">${active.map(esc).join(" · ")}<button class="q-active-x" type="button" data-qclear="${sec.id}" aria-label="Clear the filter on ${esc(sec.title)}">✕</button></span>` : "";
-      // h2: these sit directly under the page's h1 (WCAG 1.3.1 — no skipped level)
-      const head = `<h2>${sec.n ? `${sec.n} · ` : ""}${sec.title}</h2>${count(shown.length, filtering ? sec.items.length : null)}${chips}<span class="q-hint">${sec.hint}</span>${filterBtn}`;
-      if (sec.id === "house") {
-        return `<section class="q-section" id="q-house" data-qsec="house" ${full}><details class="q-house">
-          <summary class="q-head">${head}</summary>${list}</details></section>`;
-      }
-      return `<section class="q-section" id="q-${sec.id}" data-qsec="${sec.id}" ${full}><div class="q-head">${head}</div>${list}</section>`;
+      // h2: these sit directly under the page's h1 (WCAG 1.3.1 — no skipped level).
+      // The disclosure button lives INSIDE the heading, so a screen reader's
+      // heading list still finds every section and announces whether it's open.
+      const head = `<h2><button class="q-fold" type="button" data-qfold="${sec.id}" aria-expanded="${!folded}" aria-controls="qb-${sec.id}">
+          <span class="q-chev" aria-hidden="true"></span>${sec.n ? `${sec.n} · ` : ""}${sec.title}</button></h2>${count(shown.length, filtering ? sec.items.length : null)}${chips}${folded ? "" : `<span class="q-hint">${sec.hint}</span>`}${filterBtn}`;
+      return `<section class="q-section${folded ? " folded" : ""}" id="q-${sec.id}" data-qsec="${sec.id}" ${full}><div class="q-head" data-qfold-head="${sec.id}">${head}</div><div class="q-fold-body" id="qb-${sec.id}"${folded ? " hidden" : ""}>${list}</div></section>`;
     };
     const queueHtml = SECTIONS.map(renderSection).join("");
 
@@ -2546,6 +2563,22 @@ ${team}`;
       if (pop) pop.focus();
     });
     on("[data-qpop]", "click", (el, e) => e.stopPropagation());
+    // fold / unfold a section: its heading button, or a tap anywhere on the
+    // header band that isn't another control (a big target for a thumb)
+    const fold = (sec) => {
+      const prefs = prefsOf();
+      const el = document.querySelector(`[data-qsec="${sec}"]`);
+      const nowFolded = !(el && el.classList.contains("folded"));
+      if (nowFolded && queueFilter.open === sec) queueFilter.open = null;
+      setQueuePrefs(user, { collapsed: { ...(prefs.collapsed || {}), [sec]: nowFolded } });
+      rerender();
+      const b = document.querySelector(`[data-qfold="${sec}"]`); if (b) b.focus();
+    };
+    on("[data-qfold]", "click", (el, e) => { e.preventDefault(); e.stopPropagation(); fold(el.dataset.qfold); });
+    on("[data-qfold-head]", "click", (el, e) => {
+      if (e.target.closest("button, a, input, select, [data-qpop]")) return;
+      fold(el.dataset.qfoldHead);
+    });
     on("[data-qclose]", "click", (el, e) => { e.preventDefault(); queueFilter.open = null; rerender(); });
     // a hand arrangement can't be picked again once left, so leaving it drops it
     const withoutOrder = (sec) => { const order = { ...(prefsOf().order || {}) }; delete order[sec]; return order; };
@@ -2777,6 +2810,8 @@ ${team}`;
       const sec = a.dataset.qjump;
       queueFilter.expanded.add(sec);
       queueFilter.openAll = sec;
+      const qp = queuePrefs(user);
+      if ((qp.collapsed || {})[sec] || sec === "house") setQueuePrefs(user, { collapsed: { ...(qp.collapsed || {}), [sec]: false } });
       if (a.dataset.qkindjump) secFilter(sec).kind = a.dataset.qkindjump;
       else if (sec === "follow") secFilter(sec).kind = "all";
       rerender();
@@ -3441,9 +3476,11 @@ ${tabStrip}
     if (goals.overdue) items.push({ level: "warn", text: `${goals.overdue} goal${goals.overdue > 1 ? "s" : ""} past the target date`, tab: "documents", action: "Open documents" });
     if (!goals.total && hasEval) items.push({ level: "info", text: "No plan-of-care goals set", tab: "documents", action: "Open documents" });
 
-    // A signed visit with no charges never becomes a claim
-    const unbilled = docs.filter((d) => d.status === "signed" && d.type === "daily" && !((d.data.charges || []).length));
-    if (unbilled.length) items.push({ level: "warn", text: `${unbilled.length} signed note${unbilled.length > 1 ? "s have" : " has"} no billing codes`, tab: "documents", status: "signed", action: "Open documents" });
+    /* A signed visit with no time logged leaves the manager nothing to bill
+       from. Notes from before time logging that already carry codes were
+       billed the old way and are left alone. */
+    const untimed = docs.filter((d) => d.status === "signed" && !(Number((d.data.timeLog || {}).minutes) > 0) && !S.visitCharges(d).length);
+    if (untimed.length) items.push({ level: "warn", text: `${untimed.length} signed note${untimed.length > 1 ? "s have" : " has"} no visit time logged`, tab: "documents", status: "signed", action: "Open documents" });
 
     if (!(p.attachments || []).length) items.push({ level: "info", text: "No referral or imaging files uploaded", tab: "files", action: "Add files" });
 
@@ -4258,7 +4295,7 @@ ${tabStrip}
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
       .map((d) => {
         const sig = d.signatures[0];
-        const charges = (d.data.charges || []).filter((c) => c && c.code);
+        const charges = S.visitCharges(d); // billed on Visit time, or an older note's own codes
         return {
           date: (d.date || d.createdAt).slice(0, 10),
           type: docMeta(d.type).label || d.type,
@@ -4956,13 +4993,14 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
           return tool ? `<tr><td>${esc(tool.name)} — ${esc(tool.full)}</td><td>${o.score}${esc(tool.unit)}</td></tr>` : "";
         }).join("")}</table>`);
     }
-    if ((d.charges || []).length) {
-      const sum = CL.serviceSummary(d.charges, S.settings().servicePrices || {});
-      secs.push(`<h3>Billing</h3><table><tr><th>Code</th><th>Service</th><th>Units</th><th>Price</th><th>Amount</th></tr>
-        ${sum.rows.map((r) => `<tr><td>${esc(r.code)}</td><td>${esc(r.desc)}</td><td>${r.units}</td>
-            <td>${r.price == null ? "—" : peso(r.price)}</td><td>${r.amount == null ? "—" : peso(r.amount)}</td></tr>`).join("")}
-        <tr><th colspan="4">Subtotal</th><th>${peso(sum.subtotal)}</th></tr></table>
-        ${sum.unpriced ? `<div class="print-muted">${sum.unpriced} line(s) have no price on the clinic's schedule and are not in the subtotal.</div>` : ""}`);
+    /* Time with the patient prints; codes and prices do not — billing is
+       the manager's, done from the Visit time page, not part of the note. */
+    {
+      const t = d.timeLog || {};
+      const m = Math.round(Number(t.minutes) || 0);
+      if (m || t.start || t.end) {
+        secs.push(`<h3>Time with the patient</h3><div>${m ? fmtMinutes(m) : "—"}${t.start && t.end ? ` <span class="print-muted">(${esc(t.start)}–${esc(t.end)})</span>` : ""}</div>`);
+      }
     }
 
     /* The plan of care. Goals live on the patient, not the note, so a
@@ -5206,15 +5244,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2)) +
         group("Plan", "Next visit and home programme",
           ["plan"],
-          ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2)) +
-        /* Only the daily note carries charges. An evaluation, a progress
-           report and a discharge summary describe an episode of care; a
-           treatment session is the thing a clinic actually bills for, and
-           putting a charge sheet on the other three invited the same visit
-           to be billed twice. */
-        group("Billing", "Service codes and units",
-          ["@charges"],
-          billingEditor(doc, editable));
+          ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2));
     } else if (doc.type === "progress") {
       sections =
         group("Since the evaluation", "Where they started, and where they are now",
@@ -5250,6 +5280,14 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ["recommendations"],
           ta("recommendations", "Recommendations", ""));
     }
+    /* Every visit records how long it took. No codes, units or prices on a
+       note: the therapist says how long they spent with the patient, and the
+       clinic manager turns that into billing from the Visit time page. */
+    {
+      sections += group("Time with the patient", "How long this visit took",
+        ["@time"],
+        timeEditor(doc, editable));
+    }
 
     const sigBlock = `
       <div class="sig-block">
@@ -5261,12 +5299,35 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
        is how findings reach the note, not a fallback for a missed sentence —
        and it keeps the same id and the same routeUtterance path, so one line
        in still files the measurements, the section text and the body-map pin. */
-    const typedBox = (primary) => primary ? `<div class="typed-dictation typed-primary">
+    /* One box, one gesture: type a finding, press Enter, and it is filed —
+       the line becomes a point on the list right underneath, its reading goes
+       to the table and its body area is pinned on the map. No "another row"
+       button and no "add" step between findings: the next one is typed into
+       the same box, which is cleared and keeps focus. A pasted block of lines
+       files one finding per line. The ↵ button does the same as Enter for
+       anyone whose on-screen keyboard hides it. */
+    const entriesHead = (editable) => `<div class="transcript-head findings-head">
+      <h3>Findings on this note <span class="findings-n" id="findingsCount"></span></h3>
+      ${editable ? (() => {
+        const aiOn = ((window.TheraSync || {}).refine || "unavailable") === "gemini";
+        return `<button class="btn small" id="refineBtn"${aiOn ? "" : " disabled"} title="${aiOn
+          ? "Optional — AI rewrites your entries into clear, professional note sections. You see every change and choose what to keep."
+          : "AI polish isn't configured on this server — the note works the same without it"}">✦ Polish wording with AI <span class="opt-tag">optional</span></button>`;
+      })() : ""}
+    </div>`;
+    const typedBox = (primary) => primary ? `<div class="typed-dictation typed-primary findings-box">
       <label for="typedDictation">Add findings</label>
-      <p class="typed-why">One finding per line — what the patient reports, or what you measured. Measurements go to the table, the text to the right section, and body areas are pinned on the map.</p>
-      <div class="finding-rows" id="findingRows" role="list"></div>
-      <button class="finding-more" id="findingMore" type="button">＋ Another finding</button>
-      <div class="typed-dictation-actions"><span class="hint">Enter starts the next line · ${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl"}+Enter adds them all</span><button class="btn small primary" id="typedDictationAdd" type="button">＋ Add to note</button></div>
+      <p class="typed-why">Type a finding and press <kbd>Enter</kbd> — it's added straight away. Readings go to the table, the text to the right section, and body areas are pinned on the map.</p>
+      <div class="finding-input">
+        <textarea id="typedDictation" rows="1" enterkeyhint="enter" autocomplete="off"
+          placeholder="e.g. Left knee pain 6/10, worse on stairs"></textarea>
+        <button class="finding-go" id="typedDictationAdd" type="button" title="Add this finding (or press Enter)" aria-label="Add this finding">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 5v7a3 3 0 0 1-3 3H5"/><path d="m9 19-4-4 4-4"/></svg>
+        </button>
+      </div>
+      <div class="route-log" id="routeLog" aria-live="polite"></div>
+      ${entriesHead(true)}
+      <div class="transcript-log findings-list" id="docTranscript"></div>
     </div>` : `<div class="typed-dictation">
       <label for="typedDictation">Type it out — anything the mic missed</label>
       <textarea id="typedDictation" rows="3" placeholder="No mic, or dictation missed something? Type here and press Enter to file it into the note (Shift+Enter for a new line)…"></textarea>
@@ -5363,7 +5424,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     <div class="map-notes" id="mapNotes"></div>
     <div id="cleanupSummary"></div>
     <div class="lang-mismatch" id="langMismatch" hidden></div>
-    <div class="transcript-head" style="margin-top:12px">
+    ${!dictationOn() && editable ? "" : `<div class="transcript-head" style="margin-top:12px">
       <h3>${dictationOn() ? "Transcript" : "Entries"} <span style="font-weight:400; color:var(--muted); font-size:11px">${editable ? (dictationOn() ? "click a line to edit · click the speaker tag to relabel" : "click a line to edit · ✕ deletes it and what it added") : "click a finding to see its source"}</span></h3>
       ${editable ? (() => {
         /* Disabled rather than hidden when there is no AI. A button that
@@ -5388,7 +5449,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           : "AI review isn't configured on this server — write and sign the note as usual"}">✦ Review &amp; clean up with AI</button>`;
       })() : ""}
     </div>
-    <div class="transcript-log" id="docTranscript"></div>
+    <div class="transcript-log" id="docTranscript"></div>`}
     ${dictationOn() ? `<div class="interim-bar"><b>Hearing:</b><span id="interim">…</span></div>` : ""}
     ${editable && dictationOn() ? typedBox(false) : ""}
     ${editable && dictationOn() ? `
@@ -5467,7 +5528,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>
     </div>` : ""}
     ${dictationOn() && S.settings().audioReview ? `<div class="audio-review" id="audioReview"></div>` : ""}
-    <div class="route-log" id="routeLog"></div>
+    ${!dictationOn() && editable ? "" : `<div class="route-log" id="routeLog"></div>`}
   </div>
   <div class="doc-fields ${meta.cls}">
     <div class="card doc-guide-card" id="fieldGuide"></div>
@@ -5518,7 +5579,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         });
       });
       bindMeasurementEditor(doc, user);
-      bindBillingEditor(doc, user);
+      bindTimeEditor(doc, user);
       bindOutcomeEditor(doc, user);
     }
     // goal status is part of the plan of care, not the note body: a locked
@@ -5536,133 +5597,43 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     // ------- speech -------
     if (editable) {
       if (dictationOn()) startDictation(doc, user, dstate);
-      if (document.getElementById("findingRows")) bindFindingRows(doc, user, dstate);
-      const typed = document.getElementById("findingRows") ? null : document.getElementById("typedDictation");
+      const typed = document.getElementById("typedDictation");
+      const fit = () => { if (typed && typed.closest(".finding-input")) { typed.style.height = "auto"; typed.style.height = typed.scrollHeight + "px"; } };
       const submitTyped = () => {
         const text = typed.value.trim();
-        if (!text) return;
+        if (!text) { typed.focus(); return; }
         // route each non-empty line as its own utterance so multi-line entries
         // file cleanly, the same way separate dictated sentences would
-        text.split("\n").map((l) => l.trim()).filter(Boolean).forEach((line) => routeUtterance(doc, user, line, dstate));
+        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+        lines.forEach((line) => routeUtterance(doc, user, line, dstate));
+        if (lines.length > 1) {
+          const log = document.getElementById("routeLog");
+          if (log) log.textContent = `Added ${lines.length} findings — one per line.`;
+        }
         typed.value = "";
+        fit();
         typed.focus();
       };
-      // Enter files it; Shift+Enter inserts a newline so longer notes stay visible.
-      // typed is null when the findings rows own the box (bindFindingRows above);
-      // calling into it threw, which skipped restoreScroll on every note opened.
-      if (typed) typed.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTyped(); }
-      });
+      /* Enter files it (Shift+Enter keeps a line break for a long finding).
+         An IME confirming a word with Enter is not a submit. Some Android
+         keyboards send no usable keydown for Enter, so the line break they
+         try to insert is caught as well. */
+      if (typed) {
+        let shiftBreak = false;
+        typed.addEventListener("keydown", (e) => {
+          shiftBreak = e.key === "Enter" && e.shiftKey;
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submitTyped(); }
+        });
+        typed.addEventListener("beforeinput", (e) => {
+          if (e.inputType !== "insertLineBreak" && e.inputType !== "insertParagraph") return;
+          if (shiftBreak || e.isComposing) { shiftBreak = false; return; }
+          e.preventDefault(); submitTyped();
+        });
+        typed.addEventListener("input", fit);
+      }
       const typedAdd = document.getElementById("typedDictationAdd");
       if (typed && typedAdd) typedAdd.addEventListener("click", submitTyped);
     }
-  }
-
-  /* The findings box: one row per finding, so "one finding per line" is
-     something the therapist can see rather than a rule they have to know.
-     Enter starts the next row (the way a list does in any editor), so nobody
-     has to discover Shift+Enter; Add to note files every row at once, each as
-     its own entry. A pasted or dictated-in block of lines is split into rows.
-
-     The first row keeps the box's old id, #typedDictation, so filling it and
-     pressing #typedDictationAdd still files one finding exactly as before. */
-  function bindFindingRows(doc, user, dstate) {
-    const wrap = document.getElementById("findingRows");
-    const addBtn = document.getElementById("typedDictationAdd");
-    const more = document.getElementById("findingMore");
-    const EXAMPLES = ["e.g. Sharp pain in the left knee, 6/10, worse on stairs", "e.g. Left knee flexion 110 degrees, quad strength 4/5"];
-    const rows = () => [...wrap.querySelectorAll(".frow-input")];
-    const fit = (ta) => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
-
-    const renumber = () => {
-      const list = rows();
-      list.forEach((ta, i) => {
-        if (i === 0) ta.id = "typedDictation"; else ta.removeAttribute("id");
-        ta.placeholder = EXAMPLES[i] || "Next finding…";
-        ta.setAttribute("aria-label", `Finding ${i + 1}`);
-        ta.closest(".frow").querySelector(".frow-n").textContent = i + 1;
-      });
-      // the remove button means nothing on the only row
-      wrap.classList.toggle("single", list.length === 1);
-      const n = list.filter((ta) => ta.value.trim()).length;
-      addBtn.textContent = n > 1 ? `＋ Add ${n} findings to note` : "＋ Add to note";
-    };
-
-    const makeRow = (value, after) => {
-      const row = document.createElement("div");
-      row.className = "frow";
-      row.setAttribute("role", "listitem");
-      row.innerHTML = `<span class="frow-n" aria-hidden="true"></span>
-        <textarea class="frow-input" rows="1"></textarea>
-        <button class="frow-x" type="button" title="Remove this line" aria-label="Remove this line">✕</button>`;
-      const ta = row.querySelector("textarea");
-      ta.value = value || "";
-      if (after) after.after(row); else wrap.appendChild(row);
-      wire(ta);
-      renumber();
-      fit(ta);
-      return ta;
-    };
-
-    // "a, b\nc" arriving in one row — a paste, or a test filling the box —
-    // becomes one row per line
-    const splitInto = (ta) => {
-      if (!ta.value.includes("\n")) return;
-      const [first, ...rest] = ta.value.split("\n").map((l) => l.trim());
-      ta.value = first;
-      fit(ta);
-      let at = ta.closest(".frow");
-      rest.filter(Boolean).forEach((line) => { at = makeRow(line, at).closest(".frow"); });
-      renumber();
-    };
-
-    const removeRow = (ta, focusPrev) => {
-      const list = rows();
-      if (list.length === 1) { ta.value = ""; fit(ta); renumber(); ta.focus(); return; }
-      const i = list.indexOf(ta);
-      ta.closest(".frow").remove();
-      renumber();
-      const next = rows()[focusPrev ? Math.max(0, i - 1) : Math.min(i, rows().length - 1)];
-      next.focus();
-      if (focusPrev) next.setSelectionRange(next.value.length, next.value.length);
-    };
-
-    const submit = () => {
-      const lines = rows().map((ta) => ta.value.trim()).filter(Boolean);
-      if (!lines.length) { rows()[0].focus(); return; }
-      lines.forEach((line) => routeUtterance(doc, user, line, dstate));
-      if (lines.length > 1) {
-        const log = document.getElementById("routeLog");
-        if (log) log.textContent = `Filed ${lines.length} findings — each one is listed under Entries below.`;
-      }
-      wrap.innerHTML = "";
-      makeRow(); makeRow();
-      rows()[0].focus();
-    };
-
-    function wire(ta) {
-      ta.addEventListener("input", () => { splitInto(ta); fit(ta); renumber(); });
-      ta.addEventListener("keydown", (e) => {
-        const list = rows(), i = list.indexOf(ta);
-        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
-        else if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          // Enter on a row that already has an empty one below just moves there
-          const below = list[i + 1];
-          (below && !below.value.trim() ? below : makeRow("", ta.closest(".frow"))).focus();
-        } else if (e.key === "Backspace" && !ta.value && list.length > 1) { e.preventDefault(); removeRow(ta, true); }
-        else if (e.key === "ArrowUp" && i > 0 && ta.selectionStart === 0) { e.preventDefault(); list[i - 1].focus(); }
-        else if (e.key === "ArrowDown" && i < list.length - 1 && ta.selectionEnd === ta.value.length) { e.preventDefault(); list[i + 1].focus(); }
-      });
-      ta.closest(".frow").querySelector(".frow-x").addEventListener("click", () => removeRow(ta, false));
-    }
-
-    makeRow(); makeRow();
-    more.addEventListener("click", () => {
-      const empty = rows().find((ta) => !ta.value.trim());
-      (empty || makeRow()).focus();
-    });
-    addBtn.addEventListener("click", submit);
   }
 
   /* ---- measurement tables ---- */
@@ -5696,100 +5667,85 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 </div>`;
   }
 
-  /* ---------- Billing: service codes, units, subtotal ---------- */
+  /* ---------- Time with the patient ----------
 
-  /* A visit only becomes a claim once it carries codes. The charge sheet is
-     the clinic's own service catalogue — a code and how many of it — and the
-     only sum that matters is what the visit comes to in pesos.
+     What the therapist records about the visit for the clinic's books is how
+     long it took — nothing else. Codes, units and prices are the manager's
+     job and live on the Visit time page, so a therapist finishing a note is
+     never doing billing arithmetic between patients.
 
-     Prices are read from clinic settings, never typed here: a therapist
-     records what was delivered, an administrator decides what it costs. The
-     price is copied onto each line as it is entered, so a note signed at
-     last quarter's rates keeps them. */
-  function billingEditor(doc, editable) {
-    const charges = doc.data.charges || [];
-    const prices = S.settings().servicePrices || {};
-    const sum = CL.serviceSummary(charges, prices);
-    const codeOptions = (sel) => CL.serviceGroups().map((g) =>
-      `<optgroup label="${esc(g.group)}">${g.codes.map((c) =>
-        `<option value="${c.code}" ${c.code === sel ? "selected" : ""}>${c.code} — ${esc(c.desc)}</option>`).join("")}</optgroup>`).join("");
-
-    const rows = sum.rows.map((r, i) => `<tr>
-        <td>${editable
-          ? `<select data-charge="${i}" data-k="code" class="charge-code">${codeOptions(r.code)}</select>`
-          : `<b>${esc(r.code)}</b> ${esc(r.desc)}`}</td>
-        <td class="num">${editable
-          ? `<input type="number" min="0" max="99" step="1" data-charge="${i}" data-k="units" value="${r.units}" class="charge-num" />`
-          : `${r.units}`}</td>
-        <td class="num charge-price">${r.price == null
-          ? `<span class="charge-na" title="No price set for this code">no price</span>`
-          : peso(r.price)}</td>
-        <td class="num charge-amount">${r.amount == null ? "—" : `<b>${peso(r.amount)}</b>`}</td>
-        <td>${editable ? `<button class="btn small" data-delcharge="${i}" title="Remove">✕</button>` : ""}</td>
-      </tr>`).join("");
-
-    const issues = sum.issues.map((i) =>
-      `<div class="bill-issue ${i.level}">${i.level === "bad" ? "✕" : i.level === "warn" ? "△" : "ⓘ"} ${esc(i.text)}</div>`).join("");
-
+     Stored as doc.data.timeLog = { minutes, start, end }. Start and finish
+     are optional; when both are filled they set the total, which can still be
+     typed or tapped (15/30/45/60/90) directly. */
+  const TIME_PICKS = [15, 30, 45, 60, 90];
+  const visitMinutes = (doc) => Math.max(0, Math.round(Number(((doc.data || {}).timeLog || {}).minutes) || 0));
+  const fmtMinutes = (m) => {
+    if (!m) return "—";
+    const h = Math.floor(m / 60), mm = m % 60;
+    return h ? `${h} h${mm ? ` ${mm} min` : ""}` : `${mm} min`;
+  };
+  function timeEditor(doc, editable) {
+    const t = doc.data.timeLog || {};
+    const mins = visitMinutes(doc);
+    const dis = editable ? "" : "disabled";
     return `
-<div class="field billing-field">
-  <label>Billing — service codes and units</label>
-  <div class="table-scroll"><table class="list bill-table">
-    <colgroup><col /><col class="c-unit" /><col class="c-price" /><col class="c-amount" /><col class="c-del" /></colgroup>
-    <thead><tr><th>Code</th><th class="num">Units</th><th class="num">Price</th><th class="num">Amount</th><th></th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="5"><div class="empty-state" style="padding:10px">No charges yet.${editable ? " Add the services delivered this visit." : ""}</div></td></tr>`}</tbody>
-  </table></div>
-  ${editable ? `<div class="bill-actions">
-    <button class="btn small" id="addChargeBtn" type="button">＋ Add charge</button>
-  </div>` : ""}
-  <div class="bill-totals">
-    <span><b>${sum.lines}</b> line${sum.lines === 1 ? "" : "s"}</span>
-    <span><b>${sum.units}</b> unit${sum.units === 1 ? "" : "s"}</span>
-    <span class="bill-subtotal ${sum.complete ? "ok" : "off"}">Subtotal <b>${peso(sum.subtotal)}</b>${
-      /* A subtotal that quietly leaves out an unpriced line is a wrong
-         number wearing a right one's clothes. Say what is missing. */
-      sum.unpriced ? ` <span class="hint">· ${sum.unpriced} line${sum.unpriced > 1 ? "s" : ""} unpriced</span>` : ""}</span>
+<div class="field time-field" id="timeField">
+  <label for="timeMinutes">Total time with the patient</label>
+  <div class="time-main">
+    <div class="time-mins"><input id="timeMinutes" type="number" inputmode="numeric" min="0" max="720" step="1"
+      value="${mins || ""}" placeholder="0" aria-describedby="timeHint" ${dis}/><span>min</span></div>
+    ${editable ? `<div class="time-chips" role="group" aria-label="Quick pick">${TIME_PICKS.map((m) =>
+      `<button type="button" class="time-chip${mins === m ? " on" : ""}" data-timeset="${m}" aria-pressed="${mins === m}">${m}</button>`).join("")}</div>` : ""}
   </div>
-  ${issues ? `<div class="bill-issues">${issues}</div>` : ""}
+  <div class="time-span">
+    <label>Started<input type="time" id="timeStart" value="${esc(t.start || "")}" ${dis}/></label>
+    <label>Finished<input type="time" id="timeEnd" value="${esc(t.end || "")}" ${dis}/></label>
+    ${editable ? `<button class="btn small" type="button" id="timeNow">Finished now</button>` : ""}
+  </div>
+  <p class="hint" id="timeHint">Start and finish are optional — fill both and the total works itself out. No codes or prices here: the clinic manager does billing from this time.</p>
 </div>`;
   }
 
-  function bindBillingEditor(doc, user) {
-    const persist = () => { S.updateDocData(doc.id, doc.data, user); render(); };
-    const prices = S.settings().servicePrices || {};
-
-    document.querySelectorAll("[data-delcharge]").forEach((b) =>
-      b.addEventListener("click", () => {
-        doc.data.charges.splice(Number(b.dataset.delcharge), 1);
-        persist();
-      }));
-
-    document.querySelectorAll("[data-charge]").forEach((el) =>
-      el.addEventListener("change", () => {
-        const c = doc.data.charges[Number(el.dataset.charge)];
-        if (!c) return;
-        if (el.dataset.k === "code") {
-          const known = CL.findService(el.value);
-          c.code = el.value;
-          c.desc = known ? known.desc : "";
-          // a different service is a different price — re-stamp it
-          c.price = CL.priceFor(el.value, prices);
-        } else {
-          c.units = Math.max(0, Math.round(Number(el.value) || 0));
-        }
-        persist();
-      }));
-
-    const add = document.getElementById("addChargeBtn");
-    if (add) add.addEventListener("click", () => {
-      if (!doc.data.charges) doc.data.charges = [];
-      /* Default to basic PT therapy: it is the line on nearly every daily
-         note, and the codes are grouped so anything else is one pick away. */
-      const first = CL.findService("PT02") || CL.SERVICE_CODES[0];
-      doc.data.charges.push({
-        code: first.code, desc: first.desc, units: 1, price: CL.priceFor(first.code, prices),
+  function bindTimeEditor(doc, user) {
+    const box = document.getElementById("timeField");
+    if (!box) return;
+    const minsEl = document.getElementById("timeMinutes");
+    const startEl = document.getElementById("timeStart");
+    const endEl = document.getElementById("timeEnd");
+    const toMin = (v) => { const m = /^(\d{1,2}):(\d{2})/.exec(v || ""); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+    const save = (patch) => {
+      doc.data.timeLog = { ...(doc.data.timeLog || {}), ...patch };
+      S.updateDocData(doc.id, { timeLog: doc.data.timeLog }, user);
+      const m = visitMinutes(doc);
+      if (document.activeElement !== minsEl) minsEl.value = m || "";
+      box.querySelectorAll("[data-timeset]").forEach((b) => {
+        const on = Number(b.dataset.timeset) === m;
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on);
       });
-      persist();
+      // the group's n/1 chip in its header
+      const grp = box.closest(".doc-group");
+      const chip = grp && grp.querySelector(".doc-group-count");
+      if (chip) { chip.textContent = `${m ? 1 : 0}/1`; chip.className = `chip ${groupTone(m ? 1 : 0, 1)} doc-group-count`; }
+      renderFieldGuide(doc);
+    };
+    const fromSpan = () => {
+      const a = toMin(startEl.value), b = toMin(endEl.value);
+      const patch = { start: startEl.value || "", end: endEl.value || "" };
+      if (a != null && b != null) patch.minutes = (b - a + 1440) % 1440; // past midnight wraps
+      save(patch);
+    };
+    minsEl.addEventListener("change", () => save({ minutes: Math.max(0, Math.min(720, Math.round(Number(minsEl.value) || 0))) }));
+    startEl.addEventListener("change", fromSpan);
+    endEl.addEventListener("change", fromSpan);
+    box.querySelectorAll("[data-timeset]").forEach((b) => b.addEventListener("click", () => {
+      save({ minutes: Number(b.dataset.timeset) });
+      minsEl.value = b.dataset.timeset;
+    }));
+    const now = document.getElementById("timeNow");
+    if (now) now.addEventListener("click", () => {
+      const d = new Date();
+      endEl.value = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      fromSpan();
     });
   }
 
@@ -6187,7 +6143,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const pts = doc.data.mapPoints || [];
     // re-pin every point to the current lexicon coordinates + tag its number
     pts.forEach((pt, i) => {
-      if (pt.part) { const c = PR.coordForName(pt.part, pt.side); pt.x = c.x; pt.y = c.y; pt.view = c.view; }
+      // a pin the therapist placed by hand stays exactly where they put it
+      if (pt.part && !pt.manual) { const c = PR.coordForName(pt.part, pt.side); pt.x = c.x; pt.y = c.y; pt.view = c.view; }
       // display-only annotations: non-enumerable so they never get saved/synced
       Object.defineProperty(pt, "_num", { value: i + 1, configurable: true });
       Object.defineProperty(pt, "_sev", { value: severityOf(pt), configurable: true });
@@ -6238,6 +6195,17 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     g.append(line, ring, dot, marker, num);
     g.addEventListener("click", () => selectMapPoint(doc, pt.key));
+    /* On an editable note the dot itself can be dragged to the exact spot.
+       The hit area is far bigger than the 3.6px dot so a finger can take it. */
+    if (currentDocState && currentDocState.editable) {
+      const hit = mkSvg("circle", { class: "loc-hit", cx: pt.x, cy: pt.y, r: 13 });
+      const t2 = document.createElementNS(svgNS, "title");
+      t2.textContent = `Drag to move pin ${pt._num}`;
+      hit.appendChild(t2);
+      g.appendChild(hit);
+      bindPinDrag(doc, pt, hit, [dot, ring], line, side, ly);
+    }
+    if (pt.manual) g.classList.add("manual");
     layer.appendChild(g);
   }
 
@@ -6276,7 +6244,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         <div class="map-note-head">
           <b><span class="badge ${sev.cls}">${i + 1}</span><span class="note-part" ${editable ? `contenteditable="true" data-editpart="${esc(pt.key)}" title="Click to correct the body area — the marker re-pins to wherever you name (e.g. “back of leg”, “left knee”)"` : ""}>${esc(where)}</span><span class="sev-word">${esc(sev.label)}</span></b>
           ${pt.provisional ? `<span class="chip muted prov-chip" title="Heard while the visit was recording. The AI re-reads the whole conversation when you stop, and this may move or go.">not checked yet</span>` : ""}
-          ${editable ? `<button class="icon-btn" type="button" data-delpoint="${esc(pt.key)}" title="Remove this finding" aria-label="Remove finding ${i + 1}, ${esc(where)}">✕</button>` : ""}
+          ${editable ? `<button class="btn small pin-move${dstate.movingKey === pt.key ? " on" : ""}" type="button" data-movepin="${esc(pt.key)}" aria-pressed="${dstate.movingKey === pt.key}" title="Put this pin somewhere else on the body">${dstate.movingKey === pt.key ? "Tap the body…" : "Move pin"}</button>
+          <button class="icon-btn" type="button" data-delpoint="${esc(pt.key)}" title="Remove this finding" aria-label="Remove finding ${i + 1}, ${esc(where)}">✕</button>` : ""}
         </div>
         ${pt.notes.map((n, ni) => `<div>· <span class="note-summary" ${editable ? `contenteditable="true" data-editnote="${esc(pt.key)}::${ni}"` : ""}>${esc(n.summary)}</span> ${n.quote ? `<span class="quote">“${esc(n.quote)}”</span>` : ""}</div>`).join("")}
       </div>`;
@@ -6293,7 +6262,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
     box.querySelectorAll(".map-note").forEach((el) =>
       el.addEventListener("click", (e) => {
-        if (e.target.closest("[contenteditable], [data-delpoint]")) return;
+        if (e.target.closest("[contenteditable], [data-delpoint], [data-movepin]")) return;
         selectMapPoint(doc, el.dataset.key);
       })
     );
@@ -6314,6 +6283,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
             return;
           }
           pt.part = c.part; pt.side = c.side || null; pt.view = c.view; pt.x = c.x; pt.y = c.y;
+          delete pt.manual;
           pt.key = `${c.part}|${c.side || ""}`;
           if (dstate.selectedKey === el.dataset.editpart) dstate.selectedKey = pt.key;
           S.updateDocData(doc.id, doc.data, user);
@@ -6331,6 +6301,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
           if (v && v !== pt.notes[ni].summary) { pt.notes[ni].summary = v; S.updateDocData(doc.id, doc.data, user); }
         });
       });
+      box.querySelectorAll("[data-movepin]").forEach((b) =>
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          startPinMove(doc, dstate, dstate.movingKey === b.dataset.movepin ? null : b.dataset.movepin);
+        })
+      );
       box.querySelectorAll("[data-delpoint]").forEach((b) =>
         b.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -6341,6 +6317,163 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         })
       );
     }
+  }
+
+  /* ---- moving a pin by hand ----
+
+     The parser puts a pin on the region a finding names. When that is wrong,
+     or the therapist wants it more exact (the medial joint line rather than
+     "knee"), there are two ways to put it right: drag the dot on the map, or
+     press Move pin on its card and tap the body where it belongs (the easier
+     one on a phone). Either way the pin is marked `manual` and keeps that
+     spot. If the new spot sits nearer a different body area than the pin's
+     label, the therapist is offered the rename — never done for them. */
+  function svgPointFor(svg, clientX, clientY) {
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const p = svg.createSVGPoint();
+    p.x = clientX; p.y = clientY;
+    const r = p.matrixTransform(m.inverse());
+    return { x: Math.max(4, Math.min(196, r.x)), y: Math.max(4, Math.min(456, r.y)) };
+  }
+  const viewOfSvg = (svg) => (svg.closest("#mapBack") ? "back" : "front");
+  const pinLabel = (part, side) => `${side ? cap(side) + " " : ""}${part}`;
+
+  function placePin(doc, key, view, x, y) {
+    const user = S.currentUser();
+    const dstate = currentDocState || {};
+    const pts = doc.data.mapPoints || [];
+    const n = pts.findIndex((p) => p.key === key);
+    const pt = pts[n];
+    if (!pt) return;
+    pt.x = Math.round(x * 10) / 10; pt.y = Math.round(y * 10) / 10; pt.view = view; pt.manual = true;
+    dstate.movingKey = null;
+    dstate.selectedKey = pt.key;
+    S.updateDocData(doc.id, doc.data, user);
+    endPinMoveUi();
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    drawTranscript(doc, null, dstate);
+    /* Said in the same sticky bar the instruction was in, so on a phone the
+       answer is where the eye already is — not under the back figure. */
+    const figs = document.querySelector(".figures");
+    if (!figs) return;
+    figs.insertAdjacentHTML("beforebegin", `<div class="pin-move-bar done" id="pinMoveBar" role="status">
+      <span id="pinLog"></span><button class="btn small" type="button" id="pinDone">OK</button></div>`);
+    const log = document.getElementById("pinLog");
+    const bar = document.getElementById("pinMoveBar");
+    document.getElementById("pinDone").addEventListener("click", () => bar.remove());
+    /* Offer the rename only when the move clearly changed what the pin is
+       on: the other side, the other view, or well away from its own region
+       and much nearer another. A nudge to the exact spot on the same knee
+       must not start suggesting "Leg". */
+    const near = PR.nearestPart(view, pt.x, pt.y);
+    const own = PR.coordForName(pt.part, pt.side);
+    const ownDist = own.view === view ? Math.hypot(own.x - pt.x, own.y - pt.y) : Infinity;
+    const differs = near && (near.part !== pt.part || (near.side || null) !== (pt.side || null))
+      && ((near.side || null) !== (pt.side || null) || ownDist === Infinity || (ownDist > 20 && near.dist < ownDist * 0.5));
+    log.innerHTML = `Pin ${n + 1} moved.${differs
+      ? ` This spot is nearer <b>${esc(pinLabel(near.part, near.side))}</b> than ${esc(pinLabel(pt.part, pt.side))}. <button class="btn-link" id="pinRename" type="button">Rename to ${esc(pinLabel(near.part, near.side))}</button>`
+      : ""}`;
+    const rn = document.getElementById("pinRename");
+    if (rn) rn.addEventListener("click", () => {
+      const newKey = `${near.part}|${near.side || ""}`;
+      const other = pts.find((p) => p !== pt && p.key === newKey);
+      if (other) {
+        // that area already has a pin: this finding joins it, at the spot just chosen
+        other.notes.push(...pt.notes);
+        Object.assign(other, { x: pt.x, y: pt.y, view: pt.view, manual: true });
+        doc.data.mapPoints = pts.filter((p) => p !== pt);
+      } else {
+        Object.assign(pt, { part: near.part, side: near.side || null, key: newKey });
+      }
+      dstate.selectedKey = newKey;
+      S.updateDocData(doc.id, doc.data, user);
+      drawAllPoints(doc);
+      drawMapNotes(doc, dstate);
+      drawTranscript(doc, null, dstate);
+      log.textContent = `Renamed to ${pinLabel(near.part, near.side)}.`;
+      setTimeout(() => bar.remove(), 2500);
+    });
+    if (!differs) setTimeout(() => bar.remove(), 2500);
+  }
+
+  let pinMoveCleanup = null;
+  function endPinMoveUi() {
+    if (pinMoveCleanup) pinMoveCleanup();
+    document.querySelectorAll(".figures").forEach((f) => f.classList.remove("placing"));
+    const bar = document.getElementById("pinMoveBar");
+    if (bar) bar.remove();
+  }
+  function startPinMove(doc, dstate, key) {
+    endPinMoveUi();
+    dstate.movingKey = key;
+    drawMapNotes(doc, dstate);
+    if (!key) return;
+    const pts = doc.data.mapPoints || [];
+    const n = pts.findIndex((p) => p.key === key);
+    const pt = pts[n];
+    const figs = document.querySelector(".figures");
+    if (!pt || !figs) return;
+    figs.classList.add("placing");
+    figs.insertAdjacentHTML("beforebegin", `<div class="pin-move-bar" id="pinMoveBar" role="status">
+      <span><b>Tap the body</b> where pin ${n + 1} (${esc(pinLabel(pt.part, pt.side))}) belongs — front or back.</span>
+      <button class="btn small" type="button" id="pinMoveCancel">Cancel</button></div>`);
+    // bring the bar and the figures to the tap — below the fixed top bar on a phone
+    const barTop = document.getElementById("pinMoveBar").getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({ top: Math.max(0, barTop - 76), behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    document.getElementById("pinMoveCancel").addEventListener("click", () => startPinMove(doc, dstate, null));
+    const onTap = (e) => {
+      const svg = e.target.closest(".bodymap svg");
+      if (!svg) return;
+      e.preventDefault(); e.stopPropagation();
+      const at = svgPointFor(svg, e.clientX, e.clientY);
+      if (at) placePin(doc, key, viewOfSvg(svg), at.x, at.y);
+    };
+    const onKey = (e) => { if (e.key === "Escape") startPinMove(doc, dstate, null); };
+    figs.addEventListener("click", onTap, true);
+    document.addEventListener("keydown", onKey);
+    pinMoveCleanup = () => {
+      figs.removeEventListener("click", onTap, true);
+      document.removeEventListener("keydown", onKey);
+      pinMoveCleanup = null;
+    };
+  }
+
+  /* Drag the dot. Pointer events, so it is the same code for a mouse and a
+     finger; the leader line follows so the callout stays attached. A press
+     that barely moves is left as a click (it selects the pin). */
+  function bindPinDrag(doc, pt, hit, dots, line, side, ly) {
+    hit.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const svg = hit.ownerSVGElement;
+      const from = { x: e.clientX, y: e.clientY };
+      let moved = false, at = null;
+      hit.setPointerCapture(e.pointerId);
+      const elbow = side === "left" ? -30 : 230, lx = side === "left" ? -46 : 246;
+      const move = (ev) => {
+        if (!moved && Math.hypot(ev.clientX - from.x, ev.clientY - from.y) < 5) return;
+        moved = true;
+        at = svgPointFor(svg, ev.clientX, ev.clientY);
+        if (!at) return;
+        [hit, ...dots].forEach((c) => { c.setAttribute("cx", at.x); c.setAttribute("cy", at.y); });
+        line.setAttribute("points", `${at.x},${at.y} ${elbow},${ly} ${lx + (side === "left" ? 12 : -12)},${ly}`);
+        hit.closest(".point-group").classList.add("dragging");
+      };
+      const up = () => {
+        hit.removeEventListener("pointermove", move);
+        hit.removeEventListener("pointerup", up);
+        hit.removeEventListener("pointercancel", up);
+        if (moved && at) {
+          // swallow the click that follows a drag, so it doesn't also select
+          hit.closest(".point-group").addEventListener("click", (c) => c.stopPropagation(), { capture: true, once: true });
+          placePin(doc, pt.key, viewOfSvg(svg), at.x, at.y);
+        }
+      };
+      hit.addEventListener("pointermove", move);
+      hit.addEventListener("pointerup", up);
+      hit.addEventListener("pointercancel", up);
+    });
   }
 
   let currentDocState = null;
@@ -6404,18 +6537,44 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
        dictation paused every entry is the therapist's own writing, so the
        patient/clinician toggle goes and each row shows when it was added. */
     const voice = dictationOn();
+    /* With typed findings each entry is a point, and it says what it did: the
+       pin(s) it put on the body map (tap one to find it there), how many
+       readings went to the table, and which sections took its text. That is
+       how a therapist checks, line by line, that the mannequin got it right. */
+    const pts = doc.data.mapPoints || [];
+    const receipt = (u, i) => {
+      if (voice) return "";
+      const pins = pts.map((pt, n) => ({ pt, n })).filter(({ pt }) => pt.notes.some((x) => x.uttId === i));
+      const nMeas = MEASUREMENT_KEYS.reduce((a, k) => a + (doc.data[k] || []).filter((m) => m.uttId === i).length, 0);
+      const fields = [...new Set(((u.filed || {}).text || []).map((x) => x.field))];
+      const bits = [
+        ...pins.map(({ pt, n }) => { const sev = severityOf(pt); return `<button class="utt-pin ${sev.cls}" type="button" data-pinjump="${esc(pt.key)}" title="Show pin ${n + 1} on the body map"><span class="badge ${sev.cls}">${n + 1}</span>${esc(`${pt.side ? cap(pt.side) + " " : ""}${pt.part}`)}</button>`; }),
+        nMeas ? `<span class="utt-tag">${nMeas} reading${nMeas > 1 ? "s" : ""} → table</span>` : "",
+        ...fields.map((f) => `<span class="utt-tag">→ ${esc(fieldLabel(doc.type, f))}</span>`),
+      ].filter(Boolean);
+      return `<div class="utt-receipt">${bits.length ? bits.join("") : `<span class="utt-tag muted">kept as a note only</span>`}</div>`;
+    };
+    const countEl = document.getElementById("findingsCount");
+    if (countEl) countEl.textContent = t.length ? `(${t.length})` : "";
     box.innerHTML = t.length ? t.map((u, i) => `
-      <div class="utt ${u.speaker ? "utt-" + u.speaker : ""}" data-utt="${i}">
+      <div class="utt ${voice ? "" : "utt-point "}${u.speaker ? "utt-" + u.speaker : ""}" data-utt="${i}">
         <span class="utt-meta">
           ${voice && editable
         ? `<span class="spk-toggle" data-spk="${i}" role="button" tabindex="0" title="Click to relabel speaker">${speakerTag(u.speaker || "")}</span>`
         : (voice && u.speaker ? speakerTag(u.speaker) : `<span class="utt-time">${esc(u.time || "")}</span>`)}
         </span>
-        <span class="utt-text" ${editable ? `contenteditable="true" data-edittext="${i}"` : ""}>${uttHtml(u.text, marksByUtt ? marksByUtt.get(i) : null)}</span>
+        ${voice ? "" : `<span class="utt-num" aria-hidden="true">${i + 1}</span>`}
+        <span class="utt-body"><span class="utt-text" ${editable ? `contenteditable="true" data-edittext="${i}"` : ""}>${uttHtml(u.text, marksByUtt ? marksByUtt.get(i) : null)}</span>${receipt(u, i)}</span>
         ${editable ? `<button class="utt-del" type="button" data-delutt="${i}" title="Delete this entry and what it added to the note" aria-label="Delete entry">✕</button>` : ""}
       </div>`).join("")
-      : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Everything said while listening is saved here, word for word." : "Each finding you add is listed here, word for word."}</div>`;
+      : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Everything said while listening is saved here, word for word." : "Nothing added yet — each finding you enter shows up here as its own point."}</div>`;
     if (!marksByUtt) box.scrollTop = box.scrollHeight;
+    box.querySelectorAll("[data-pinjump]").forEach((b) => b.addEventListener("click", () => {
+      selectMapPoint(doc, b.dataset.pinjump);
+      const g = document.querySelector(`.point-group[data-key="${CSS.escape(b.dataset.pinjump)}"]`);
+      const fig = g && g.closest("figure");
+      if (fig) fig.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
 
     if (editable) {
       const user = S.currentUser();
@@ -9078,7 +9237,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     outcomes: { label: "Outcome measures", source: "filled", types: ["eval", "progress", "discharge"] },
     bodymap: { label: "Body chart findings", source: "filled", types: ["eval", "daily", "progress"] },
     goals: { label: "Goals", source: "yours", types: ["eval", "progress", "discharge"] },
-    charges: { label: "Billing / charges", source: "yours", types: ["daily"] },
+    time: { label: "Time with the patient", source: "yours", types: ["eval", "daily", "progress", "discharge"] },
   };
 
   /* One row per source, and every surface naming a source reads from here: the
@@ -9143,6 +9302,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const data = doc.data || {};
     if (id === "goals") return S.goalsFor(doc.patientId).length;
     if (id === "measurements") return MEASUREMENT_KEYS.reduce((n, k) => n + ((data[k] || []).length), 0);
+    if (id === "time") return Number((data.timeLog || {}).minutes) > 0 ? 1 : 0;
     return (data[id] || []).length;
   };
   const docItemDone = (doc, it) => (it.charAt(0) === "@"
@@ -10460,46 +10620,90 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     bindInsightActions(doc, user, editable);
   }
 
+  /* The review reads as three separate things, so it is laid out as three:
+     red flags (never behind a tab — a safety concern must be seen without a
+     click), then two windows the therapist switches between: what to DO
+     (recommendations) and what the chart SUGGESTS (possible connections).
+     Each window is a card of its own with a count on its tab, so a long
+     review is never one undifferentiated wall of text. The open tab is
+     remembered per place (chart review vs note insights) across re-renders. */
+  const insTabFor = { chart: "recs", note: "recs" };
   function insightsHtml(ins, opts) {
     opts = opts || {};
-    const confChip = (c) => c ? `<span class="chip ${c === "high" ? "good" : c === "medium" ? "warn" : "muted"}">${esc(c)}</span>` : "";
-    const prioChip = (p) => `<span class="chip ${p === "urgent" ? "bad" : p === "high" ? "warn" : "muted"}">${esc(p || "routine")}</span>`;
+    const scope = opts.recMode === "chart" ? "chart" : "note";
+    const CONF = { high: ["good", "High confidence"], medium: ["warn", "Medium confidence"], low: ["muted", "Low confidence"] };
+    const PRIO = { urgent: ["bad", "Urgent"], high: ["warn", "High priority"], routine: ["muted", "Routine"] };
+    const confChip = (c) => c ? `<span class="chip ${(CONF[c] || ["muted"])[0]}">${esc((CONF[c] || [, c])[1])}</span>` : "";
+    const prioChip = (p) => { const [cls, label] = PRIO[p] || PRIO.routine; return `<span class="chip ${cls}">${label}</span>`; };
     const conns = (ins.connections || []).map((c) => `
-      <div class="ins-item">
-        <div class="ins-item-head"><b>${esc(c.title)}</b>${confChip(c.confidence)}</div>
-        <div class="ins-detail">${esc(c.detail || "")}</div>
-        ${c.basis ? `<div class="ins-basis">Based on: ${esc(c.basis)}</div>` : ""}
-      </div>`).join("");
-    const flags = (ins.redFlags || []).map((f) => `
-      <div class="ins-flag"><b>⚠ ${esc(f.flag)}</b>${f.action ? `<div class="ins-detail">${esc(f.action)}</div>` : ""}</div>`).join("");
+      <article class="ins-item conn-item">
+        <div class="ins-item-head"><h4 class="ins-title">${esc(c.title)}</h4>${confChip(c.confidence)}</div>
+        ${c.detail ? `<p class="ins-detail">${esc(c.detail)}</p>` : ""}
+        ${c.basis ? `<p class="ins-basis"><span>Based on</span>${esc(c.basis)}</p>` : ""}
+      </article>`).join("");
+    const flagList = ins.redFlags || [];
+    const flags = flagList.map((f) => `
+      <div class="ins-flag"><b>⚠ ${esc(f.flag)}</b>${f.action ? `<p class="ins-detail">${esc(f.action)}</p>` : ""}</div>`).join("");
     // "chart" mode (the patient's AI chart review) lets the therapist accept a
     // recommendation onto Needs attention or dismiss it; already-actioned recs
     // are filtered out via opts.filterKeys so they don't reappear.
     const chart = opts.recMode === "chart";
     const resolved = new Set(opts.filterKeys || []);
     const hadRecs = (ins.recommendations || []).length;
-    const recs = (ins.recommendations || []).map((r, i) => ({ r, i }))
-      .filter(({ r }) => !(chart && resolved.has((r.action || "").trim().toLowerCase())))
-      .map(({ r, i }) => {
+    const recList = (ins.recommendations || []).map((r, i) => ({ r, i }))
+      .filter(({ r }) => !(chart && resolved.has((r.action || "").trim().toLowerCase())));
+    const recs = recList.map(({ r, i }) => {
         const actions = chart
-          ? `<span class="rec-actions">
+          ? `<div class="rec-actions">
               <button class="btn small good rec-accept" data-recidx="${i}" title="Add to Needs attention">✓ Accept</button>
-              <button class="btn small ghost rec-dismiss" data-recidx="${i}" title="Dismiss this suggestion">✕</button></span>`
-          : (opts.withAdd === false ? "" : `<button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button>`);
+              <button class="btn small ghost rec-dismiss" data-recidx="${i}" title="Dismiss this suggestion" aria-label="Dismiss">✕ Dismiss</button></div>`
+          : (opts.withAdd === false ? "" : `<div class="rec-actions"><button class="btn small ins-add" data-rec="${i}" title="Append to the note's plan/assessment">＋ Add to note</button></div>`);
         return `
-      <div class="ins-item rec-item">
-        <div class="ins-item-head"><b>${esc(r.action)}</b>${prioChip(r.priority)}${actions}</div>
-        ${r.rationale ? `<div class="ins-detail">${esc(r.rationale)}</div>` : ""}
-      </div>`;
+      <article class="ins-item rec-item">
+        <div class="ins-item-head"><h4 class="ins-title">${esc(r.action)}</h4>${prioChip(r.priority)}</div>
+        ${r.rationale ? `<p class="ins-detail"><span class="ins-why">Why</span>${esc(r.rationale)}</p>` : ""}
+        ${actions}
+      </article>`;
       }).join("");
     const recsEmpty = (chart && hadRecs)
       ? `<div class="empty-state" style="padding:8px">✓ Every recommendation has been accepted or dismissed — accepted items move to <b>Needs attention</b> above.</div>`
       : `<div class="empty-state" style="padding:8px">No specific recommendations.</div>`;
+    const nConn = (ins.connections || []).length;
+    const tab = insTabFor[scope] === "conns" ? "conns" : "recs";
+    const tabBtn = (id, label, n, hint) => `<button class="ins-tab${tab === id ? " on" : ""}" type="button" role="tab"
+        id="instab-${scope}-${id}" aria-controls="inspanel-${scope}-${id}" aria-selected="${tab === id}" tabindex="${tab === id ? 0 : -1}"
+        data-instab="${id}" data-insscope="${scope}"><span class="ins-tab-label">${label}<span class="ins-tab-n">${n}</span></span><small>${hint}</small></button>`;
     return `
-      ${flags ? `<div class="ins-section"><h3 class="ins-h">Red flags</h3>${flags}</div>` : ""}
-      <div class="ins-section"><h3 class="ins-h">Possible connections</h3>${conns || `<div class="empty-state" style="padding:8px">No cross-visit connections detected.</div>`}</div>
-      <div class="ins-section"><h3 class="ins-h">Recommendations — what to do now</h3>${recs || recsEmpty}</div>`;
+      ${flags ? `<div class="ins-flags" role="alert"><h3 class="ins-h">Red flags · ${flagList.length}</h3>${flags}</div>` : ""}
+      <div class="ins-tabs" role="tablist" aria-label="AI review">
+        ${tabBtn("recs", "Recommendations", recList.length, "What to do now")}
+        ${tabBtn("conns", "Possible connections", nConn, "Patterns across visits")}
+      </div>
+      <div class="ins-panel rec-panel" role="tabpanel" id="inspanel-${scope}-recs" aria-labelledby="instab-${scope}-recs"${tab === "recs" ? "" : " hidden"}>${recs || recsEmpty}</div>
+      <div class="ins-panel conn-panel" role="tabpanel" id="inspanel-${scope}-conns" aria-labelledby="instab-${scope}-conns"${tab === "conns" ? "" : " hidden"}>${conns || `<div class="empty-state" style="padding:8px">No cross-visit connections detected.</div>`}</div>`;
   }
+  /* One delegated listener for every review's tabs: the cards re-render
+     often, and the panels are already in the DOM, so a switch is a toggle. */
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest("[data-instab]");
+    if (!b) return;
+    const scope = b.dataset.insscope, id = b.dataset.instab;
+    insTabFor[scope] = id;
+    const list = b.closest(".ins-tabs");
+    list.querySelectorAll("[data-instab]").forEach((t) => {
+      const on = t === b;
+      t.classList.toggle("on", on); t.setAttribute("aria-selected", on); t.tabIndex = on ? 0 : -1;
+      const panel = document.getElementById(t.getAttribute("aria-controls"));
+      if (panel) panel.hidden = !on;
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    const b = e.target.closest && e.target.closest("[data-instab]");
+    if (!b || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    const tabs = [...b.closest(".ins-tabs").querySelectorAll("[data-instab]")];
+    const next = tabs[(tabs.indexOf(b) + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    e.preventDefault(); next.focus(); next.click();
+  });
 
   function bindInsightActions(doc, user, editable) {
     document.querySelectorAll(".ins-add").forEach((b) =>
@@ -11675,6 +11879,242 @@ ${privacyInfoAccordion(geminiOn)}
   </tbody></table>
   <div class="hint" style="margin-top:10px">Allowances run on the calendar month and reset on the 1st, whatever date you signed on. To move up or down a plan, contact TheraChart.</div>
 </div>`;
+  }
+
+  /* ---------- Visit time (manager) ----------
+
+     Therapists log how long each visit took; this is where the manager reads
+     it back and bills it. One row per documented visit in the period: who saw
+     the patient, how long, whether the note is signed, and what it was billed.
+     An administrator with billing access opens a row and enters the service
+     codes there (store.setVisitCharges — kept beside the note, so a signed
+     note is billed without being reopened). Prices come from the clinic's
+     price list in Facility Admin and are stamped on each line as it is
+     entered, so a later price change never rewrites a billed visit. */
+  const visitTimeState = { range: "week", anchor: null, therapist: "all", show: "all", open: null };
+  function visitTimeRange() {
+    const st = visitTimeState;
+    const a = new Date((st.anchor || todayIso()) + "T00:00:00");
+    if (st.range === "day") return { from: localIso(a), to: localIso(a), label: a.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }) };
+    if (st.range === "month") {
+      const s0 = new Date(a.getFullYear(), a.getMonth(), 1), e0 = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+      return { from: localIso(s0), to: localIso(e0), label: a.toLocaleDateString([], { month: "long", year: "numeric" }) };
+    }
+    const s0 = new Date(a); s0.setDate(a.getDate() - ((a.getDay() + 6) % 7));
+    const e0 = new Date(s0); e0.setDate(s0.getDate() + 6);
+    return { from: localIso(s0), to: localIso(e0), label: `${fmtDate(localIso(s0))} – ${fmtDate(localIso(e0))}` };
+  }
+  const codesText = (charges) => charges.map((c) => `${c.code}${Number(c.units) > 1 ? ` ×${Number(c.units)}` : ""}`).join(", ");
+  function visitTimeRows() {
+    const { from, to } = visitTimeRange();
+    const st = visitTimeState;
+    const prices = S.settings().servicePrices || {};
+    return S.documents()
+      .map((d) => {
+        // the clinic's own calendar day, not UTC's — an 8 a.m. Manila visit is
+        // still "yesterday" in UTC
+        const day = d.date ? String(d.date).slice(0, 10) : d.createdAt ? localIso(new Date(d.createdAt)) : "";
+        const sig = d.signatures && d.signatures[0];
+        const byId = (sig && sig.userId) || d.createdBy;
+        const t = (d.data || {}).timeLog || {};
+        const charges = S.visitCharges(d);
+        const sum = CL.serviceSummary(charges, prices);
+        return {
+          doc: d, day, byId,
+          therapist: (sig && sig.name) || (S.getUser(d.createdBy) || {}).name || "—",
+          patient: S.getPatient(d.patientId) ? S.patientName(S.getPatient(d.patientId)) : "—",
+          type: docMeta(d.type).label || d.type,
+          minutes: Math.round(Number(t.minutes) || 0), start: t.start || "", end: t.end || "",
+          signed: d.status === "signed", charges, sum, billed: charges.length > 0,
+          billedBy: d.billing ? (S.getUser(d.billing.by) || {}).name || "" : "", billedAt: d.billing ? d.billing.at : "",
+          codes: codesText(charges),
+        };
+      })
+      .filter((r) => r.day >= from && r.day <= to)
+      .filter((r) => st.therapist === "all" || r.byId === st.therapist)
+      .sort((x, y) => (x.day === y.day ? x.therapist.localeCompare(y.therapist) : x.day < y.day ? 1 : -1));
+  }
+  const VT_SHOW = [["all", "All visits"], ["unbilled", "Not billed yet"], ["untimed", "No time logged"]];
+  function visitChargeEditor(r, canBill) {
+    const lines = r.sum.rows;
+    // a code from an older catalogue stays visible as itself, never silently
+    // shown as the first code on today's list
+    const codeOptions = (sel) => (CL.findService(sel) ? "" : `<option value="${esc(sel)}" selected>${esc(sel)} — not on the price list</option>`)
+      + CL.serviceGroups().map((g) =>
+      `<optgroup label="${esc(g.group)}">${g.codes.map((c) =>
+        `<option value="${c.code}" ${c.code === sel ? "selected" : ""}>${c.code} — ${esc(c.desc)}</option>`).join("")}</optgroup>`).join("");
+    const rows = lines.map((l, i) => canBill ? `
+      <div class="vb-line">
+        <select class="vb-code" data-vbcode="${i}" aria-label="Service code, line ${i + 1}">${codeOptions(l.code)}</select>
+        <label class="vb-units"><span>Units</span><input type="number" inputmode="numeric" min="0" max="99" value="${l.units}" data-vbunits="${i}" aria-label="Units, line ${i + 1}"/></label>
+        <span class="vb-amount">${l.price == null ? `<span class="charge-na" title="No price set for this code in Facility Admin">no price</span>` : `${peso(l.price)} → <b>${peso(l.amount)}</b>`}</span>
+        <button class="icon-btn vb-del" type="button" data-vbdel="${i}" aria-label="Remove line ${i + 1}">✕</button>
+      </div>` : `
+      <div class="vb-line ro"><b>${esc(l.code)}</b> <span>${esc(l.desc)}</span><span>×${l.units}</span><span class="vb-amount">${l.amount == null ? "—" : `<b>${peso(l.amount)}</b>`}</span></div>`).join("");
+    return `<div class="vb-editor" id="vb-${esc(r.doc.id)}">
+      <div class="vb-time">⏱ <b>${r.minutes ? fmtMinutes(r.minutes) : "No time logged"}</b>${r.start && r.end ? ` · ${esc(r.start)}–${esc(r.end)}` : ""} <span class="hint">as logged by ${esc(r.therapist)}</span></div>
+      ${rows || `<div class="empty-state" style="padding:8px">No codes yet.${canBill ? " Add the services this visit is billed for." : ""}</div>`}
+      <div class="vb-foot">
+        ${canBill ? `<button class="btn small" type="button" data-vbadd>＋ Add code</button>` : ""}
+        <span class="vb-sub">Subtotal <b>${peso(r.sum.subtotal)}</b>${r.sum.unpriced ? ` <span class="hint">· ${r.sum.unpriced} with no price — <a href="#/facility">set prices</a></span>` : ""}</span>
+        <button class="btn small primary" type="button" data-vbclose>Done</button>
+      </div>
+      ${r.billedBy ? `<div class="hint">Billed by ${esc(r.billedBy)} · ${fmtDT(r.billedAt)}</div>` : r.billed ? `<div class="hint">Codes entered on the note before time logging.</div>` : ""}
+      ${canBill ? "" : `<div class="hint">Only an administrator with billing access can change codes.</div>`}
+    </div>`;
+  }
+  function visitTimeView(user) {
+    const st = visitTimeState;
+    const canBill = S.canSetPrices(user);
+    const all = visitTimeRows();
+    const rows = all.filter((r) => st.show === "unbilled" ? !r.billed : st.show === "untimed" ? !r.minutes : true);
+    const range = visitTimeRange();
+    const total = all.reduce((n, r) => n + r.minutes, 0);
+    const missing = all.filter((r) => !r.minutes).length;
+    const unbilled = all.filter((r) => !r.billed).length;
+    const billedTotal = all.reduce((n, r) => n + (r.sum.subtotal || 0), 0);
+    const byT = new Map();
+    for (const r of all) {
+      const t = byT.get(r.therapist) || { name: r.therapist, visits: 0, minutes: 0, missing: 0, amount: 0 };
+      t.visits += 1; t.minutes += r.minutes; t.amount += r.sum.subtotal || 0; if (!r.minutes) t.missing += 1;
+      byT.set(r.therapist, t);
+    }
+    const hours = (m) => (m / 60).toFixed(m % 60 ? 1 : 0);
+    const clinicians = S.staff().filter((u) => u.active && u.role !== "frontdesk");
+    const rangeBtn = (k, l) => `<button class="fchip ${st.range === k ? "on" : ""}" type="button" data-vtrange="${k}">${l}</button>`;
+    const tile = (n, label, cls) => `<div class="stat-tile ${cls || ""}"><div class="stat-num">${n}</div><div class="stat-label">${label}</div></div>`;
+    return `
+<div class="page-head"><div><h1>Visit time</h1>
+  <div class="sub">How long each visit took, as logged by the therapist — and what it is billed.</div></div>
+  <div class="page-actions"><button class="btn" type="button" id="vtCsv"${rows.length ? "" : " disabled"}>Download CSV</button></div>
+</div>
+<div class="card vt-bar">
+  <div class="vt-period">
+    <div class="fchips">${rangeBtn("day", "Day")}${rangeBtn("week", "Week")}${rangeBtn("month", "Month")}</div>
+    <div class="vt-nav">
+      <button class="btn small" type="button" data-vtstep="-1" aria-label="Previous period">‹</button>
+      <b class="vt-label">${esc(range.label)}</b>
+      <button class="btn small" type="button" data-vtstep="1" aria-label="Next period">›</button>
+      <button class="btn small ghost" type="button" data-vtstep="0">Today</button>
+    </div>
+  </div>
+  <div class="vt-filters">
+    <label class="vt-who">Therapist
+      <select id="vtTherapist"><option value="all">Everyone</option>
+        ${clinicians.map((u) => `<option value="${esc(u.id)}" ${st.therapist === u.id ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></label>
+    <div class="fchips vt-show" role="group" aria-label="Show">${VT_SHOW.map(([k, l]) =>
+      `<button class="fchip ${st.show === k ? "on" : ""}" type="button" data-vtshow="${k}" aria-pressed="${st.show === k}">${l}</button>`).join("")}</div>
+  </div>
+</div>
+<div class="stat-tiles">
+  ${tile(all.length, "Visits")}
+  ${tile(hours(total), `Hours logged${all.length - missing ? ` · avg ${Math.round(total / (all.length - missing))} min` : ""}`, "accent")}
+  ${tile(missing, "No time logged", missing ? "danger" : "")}
+  ${tile(unbilled, `Not billed yet${billedTotal ? ` · ${peso(billedTotal)} billed` : ""}`, unbilled ? "danger" : "")}
+</div>
+${byT.size > 1 ? `<div class="card"><h2>By therapist</h2><div class="table-scroll"><table class="list vt-team">
+  <thead><tr><th>Therapist</th><th class="num">Visits</th><th class="num">Hours</th><th class="num">No time logged</th><th class="num">Billed</th></tr></thead>
+  <tbody>${[...byT.values()].sort((a, b) => b.minutes - a.minutes).map((t) => `<tr><td><b>${esc(t.name)}</b></td><td class="num">${t.visits}</td><td class="num">${hours(t.minutes)}</td><td class="num">${t.missing ? `<span class="chip warn">${t.missing}</span>` : "0"}</td><td class="num">${peso(t.amount)}</td></tr>`).join("")}</tbody>
+</table></div></div>` : ""}
+<div class="card">
+  <h2>Visits <span class="hint">${rows.length}</span></h2>
+  ${rows.length ? `<div class="vt-list">${rows.map((r) => {
+    const open = st.open === r.doc.id;
+    return `<div class="vt-item${open ? " open" : ""}">
+    <div class="vt-row">
+      <span class="vt-date">${esc(fmtDate(r.day))}</span>
+      <span class="vt-main"><a href="#/doc/${esc(r.doc.id)}"><b>${esc(r.patient)}</b></a><small>${esc(r.type)} · ${esc(r.therapist)}${r.signed ? "" : ` · <span class="chip warn">draft</span>`}</small></span>
+      <span class="vt-mins ${r.minutes ? "" : "none"}">${r.minutes ? `<b>${fmtMinutes(r.minutes)}</b>${r.start && r.end ? `<small>${esc(r.start)}–${esc(r.end)}</small>` : ""}` : "Not logged"}</span>
+      <button class="vt-bill ${r.billed ? "done" : ""}" type="button" data-vtopen="${esc(r.doc.id)}" aria-expanded="${open}" aria-controls="vb-${esc(r.doc.id)}">
+        ${r.billed ? `<span class="vt-codes">${esc(r.codes)}</span>${r.sum.unpriced && !r.sum.subtotal ? `<b class="vt-noprice">no price set</b>` : `<b>${peso(r.sum.subtotal)}</b>`}` : `<b>${canBill ? "＋ Bill" : "Not billed"}</b>`}</button>
+    </div>
+    ${open ? visitChargeEditor(r, canBill) : ""}
+    </div>`;
+  }).join("")}</div>`
+    : `<div class="empty-state">${st.show !== "all" && all.length ? "Nothing in this period matches — every visit is covered." : "No visits documented in this period."}</div>`}
+</div>`;
+  }
+  function bindVisitTime(user) {
+    const st = visitTimeState;
+    const rerender = () => renderShell(location.hash, visitTimeView(user), user, bindVisitTime);
+    document.querySelectorAll("[data-vtrange]").forEach((b) => b.addEventListener("click", () => { st.range = b.dataset.vtrange; rerender(); }));
+    document.querySelectorAll("[data-vtshow]").forEach((b) => b.addEventListener("click", () => { st.show = b.dataset.vtshow; rerender(); }));
+    document.querySelectorAll("[data-vtstep]").forEach((b) => b.addEventListener("click", () => {
+      const step = Number(b.dataset.vtstep);
+      if (!step) { st.anchor = null; return rerender(); }
+      const a = new Date((st.anchor || todayIso()) + "T00:00:00");
+      if (st.range === "day") a.setDate(a.getDate() + step);
+      else if (st.range === "month") a.setMonth(a.getMonth() + step, 1);
+      else a.setDate(a.getDate() + 7 * step);
+      st.anchor = localIso(a);
+      rerender();
+    }));
+    const who = document.getElementById("vtTherapist");
+    if (who) who.addEventListener("change", () => { st.therapist = who.value; rerender(); });
+
+    // open / close a visit's codes; one at a time keeps a phone screen readable
+    const focusRow = (id) => { const b = document.querySelector(`[data-vtopen="${CSS.escape(id)}"]`); if (b) b.focus(); };
+    document.querySelectorAll("[data-vtopen]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.vtopen;
+      st.open = st.open === id ? null : id;
+      rerender(); focusRow(id);
+    }));
+    const ed = st.open && document.getElementById(`vb-${st.open}`);
+    if (ed) {
+      const id = st.open;
+      const doc = S.getDoc(id);
+      const prices = S.settings().servicePrices || {};
+      const lines = () => S.visitCharges(doc).map((c) => ({ ...c }));
+      const save = (next, focusSel) => {
+        const r = S.setVisitCharges(id, next, user);
+        if (r && r.error) return alertBanner(r.error);
+        rerender();
+        const f = focusSel && document.querySelector(focusSel);
+        if (f) f.focus();
+      };
+      const add = ed.querySelector("[data-vbadd]");
+      if (add) add.addEventListener("click", () => {
+        /* basic PT therapy is the line on nearly every visit; the select
+           holds the rest of the catalogue one pick away */
+        const first = CL.findService("PT02") || CL.SERVICE_CODES[0];
+        const next = lines();
+        next.push({ code: first.code, desc: first.desc, units: 1, price: CL.priceFor(first.code, prices) });
+        save(next, `[data-vbcode="${next.length - 1}"]`);
+      });
+      ed.querySelectorAll("[data-vbcode]").forEach((sel) => sel.addEventListener("change", () => {
+        const next = lines(), i = Number(sel.dataset.vbcode);
+        const known = CL.findService(sel.value);
+        // a different service is a different price — re-stamp it
+        next[i] = { ...next[i], code: sel.value, desc: known ? known.desc : "", price: CL.priceFor(sel.value, prices) };
+        save(next, `[data-vbcode="${i}"]`);
+      }));
+      ed.querySelectorAll("[data-vbunits]").forEach((inp) => inp.addEventListener("change", () => {
+        const next = lines(), i = Number(inp.dataset.vbunits);
+        next[i] = { ...next[i], units: Math.max(0, Math.min(99, Math.round(Number(inp.value) || 0))) };
+        save(next, `[data-vbunits="${i}"]`);
+      }));
+      ed.querySelectorAll("[data-vbdel]").forEach((b) => b.addEventListener("click", () => {
+        const next = lines(); next.splice(Number(b.dataset.vbdel), 1);
+        save(next, "[data-vbadd]");
+      }));
+      const close = ed.querySelector("[data-vbclose]");
+      if (close) close.addEventListener("click", () => { st.open = null; rerender(); focusRow(id); });
+    }
+
+    const csv = document.getElementById("vtCsv");
+    if (csv) csv.addEventListener("click", () => {
+      const rows = visitTimeRows().filter((r) => st.show === "unbilled" ? !r.billed : st.show === "untimed" ? !r.minutes : true);
+      const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+      const lines = [["Date", "Patient", "Note", "Therapist", "Minutes", "Started", "Finished", "Signed", "Codes", "Subtotal (PHP)"].map(q).join(",")]
+        .concat(rows.map((r) => [r.day, r.patient, r.type, r.therapist, r.minutes || "", r.start, r.end, r.signed ? "yes" : "no", r.codes, r.billed ? r.sum.subtotal : ""].map(q).join(",")));
+      const url = URL.createObjectURL(new Blob([lines.join("\r\n")], { type: "text/csv" }));
+      const a = document.createElement("a");
+      const { from, to } = visitTimeRange();
+      a.href = url; a.download = `visit-time-${from}-to-${to}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      S.audit(user.id, "visit-time-export", `${rows.length} visits, ${from} to ${to}`);
+    });
   }
 
   function facilityView(user) {

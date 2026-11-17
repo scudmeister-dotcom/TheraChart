@@ -12,6 +12,47 @@ Requests Amador has made and parked for later, newest first. Pick the next one
 from here when asked "what's still open". Strike an item through (or delete it)
 once it ships.
 
+**Done 2026-11-13** (branch `claude/phone-preview-d9df9f`) — phone pass
+- ~~Fold Finish and sign / Today's visits / Follow up like Housekeeping~~ — every
+  section header is a disclosure button (whole band is tappable); fold state is
+  saved per user in `prefs.queue.collapsed`; a tile always unfolds its section.
+- ~~Bigger Back button~~ — 44px, labelled, takes the logo's place on a phone.
+  Breadcrumb links are 40px pills (44px on touch); the current page drops off
+  the trail on a phone since the h1 says it.
+- ~~AI chart review easier to read~~ — red flags stay on top; Recommendations
+  and Possible connections are two tabbed windows with counts, each item a card.
+- ~~Bigger touch targets~~ on crumbs, Move pin, time chips, the finding ✕.
+- ~~Add findings in one box~~ — one field, Enter files the finding at once and
+  it appears as a numbered point below with its receipt (pins it made, readings,
+  sections). A pasted block files one per line. No "another finding"/"add" step.
+- ~~Pin testing + manual adjust~~ — `test/pinplacement.test.js` (271 checks:
+  region/side for everyday findings, left/right halves of each view, head-to-toe
+  order, nearestPart round trip). Fixed: a side now carries across "and"
+  ("right thumb and index finger"). Pins can be dragged, or Move pin → tap the
+  body; a hand-placed pin is `manual` and keeps its spot; the rename is offered
+  only when the move clearly changed the area.
+- ~~No billing on notes~~ — every note type has "Time with the patient"
+  (`data.timeLog = {minutes, start, end}`); admins get **Visit time**
+  (`#/visit-time`): per-visit minutes, per-therapist hours, CSV export.
+
+**Left over from the 2026-11-13 phone pass**
+1. ~~**The manager can't enter codes in the app.**~~ **Done 2026-11-13** — Amador
+   chose "on Visit time". Each visit row opens a code editor for an admin with
+   billing access (`store.setVisitCharges`); codes live in `doc.billing`, beside
+   the note, so a signed note is billed without reopening it. The server keeps
+   the saved billing on anyone else's push (`test/visitbilling.test.js`). The
+   attendance record and CSV read the same codes; a "Not billed yet" filter
+   lists what is left. *Possible follow-up:* nothing tells the manager on the
+   dashboard that visits are waiting to be billed.
+2. **Pin gaps found by the new test** (left for Move pin, not guessed at):
+   "right groin with hip flexion" → sideless Groin + an extra Hip; "between the
+   shoulder blades" → an extra one-sided Shoulder blade pin.
+3. **Walkthrough shot 08-billing** still shows the charge sheet
+   (`tools/capture-screenshots.js`); the tour text already says time logging.
+4. `refine/companion-speaks` fails "no section names a body region nobody
+   mentioned" on the local eval — **already failing before this work** (checked
+   against the old parser).
+
 **Done 2026-10-29** (branch `claude/app-restart-data-management-582a9b`)
 - ~~Clearer break between the work-queue sections~~ — each section is its own
   card (coloured top edge, header band, count) with page background between.

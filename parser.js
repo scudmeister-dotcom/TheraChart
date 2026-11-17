@@ -1814,6 +1814,23 @@
       }
     }
 
+    /* "numbness in the right thumb AND index finger" — the side is said once
+       and covers both. A sided region with no side of its own takes the side
+       of the region named just before it, but only when nothing but a plain
+       "and"/"or"/comma (and a word or two of description) sits between them:
+       "right knee pain, hip feels fine" is a new clause and keeps its own. */
+    const COORD_RE = /^\s*(?:,\s*)?(?:and|&|or|plus)\s+(?:(?:the|my|his|her|their|your)\s+)?(?:[a-z-]+\s+){0,2}$/i;
+    for (let i = 1; i < mentions.length; i++) {
+      const mn = mentions[i];
+      const part = partByName[mn.partName.toLowerCase()];
+      if (mn.side || !part || !part.sided || part.fixedSide) continue;
+      const prev = mentions.slice(0, i).reverse().find((o) => o.end <= mn.start);
+      if (!prev || !prev.side) continue;
+      if (!COORD_RE.test(text.slice(prev.end, mn.start))) continue;
+      const { x, y } = coordFor(part, prev.side);
+      Object.assign(mn, { side: prev.side, x, y });
+    }
+
     // A body part inside a special-test NAME ("drop arm test", "straight leg
     // raise test") is test vocabulary, not a patient complaint — unpin it.
     const testRanges = specialTests(text).map((s) => [s.start, s.end]);
@@ -1879,6 +1896,33 @@
     }
     const { x, y } = coordFor(part, side || null);
     return { x, y, view: part.view, part: part.name, side: side || null };
+  }
+
+  /* The body area closest to a spot on one view of the mannequin — what a
+     therapist who drags a pin by hand has pointed at. Every region is tried
+     on both sides it can have; the side comes back in the patient's terms
+     (front view is mirrored, so the viewer's right is the patient's left).
+     Returns null for a spot further than `maxDist` from every region. */
+  function nearestPart(view, x, y, maxDist) {
+    const limit = maxDist == null ? 60 : maxDist;
+    let best = null;
+    for (const part of BODY_PARTS) {
+      if (part.view !== view) continue;
+      const sides = part.fixedSide ? [part.fixedSide] : part.sided && part.dx ? ["left", "right"] : [null];
+      for (const side of sides) {
+        const c = coordFor(part, side);
+        const d = Math.hypot(c.x - x, c.y - y);
+        if (!best || d < best.dist - 0.01) best = { part: part.name, side, x: c.x, y: c.y, dist: d };
+      }
+    }
+    if (!best || best.dist > limit) return null;
+    // a midline region (neck, low back) still has a side once the spot is off-centre
+    const part = partByName[best.part.toLowerCase()];
+    if (!best.side && part && part.sided && Math.abs(x - 100) > 4) {
+      const viewerRight = x > 100;
+      best.side = (view === "front") === viewerRight ? "left" : "right";
+    }
+    return best;
   }
 
   /* ---------------------------------------------------------------- *
@@ -3061,6 +3105,7 @@
     summarize,
     coordFor,
     coordForName,
+    nearestPart,
     extractMeasurements,
     aggregateMeasurements,
     unfiledMeasurements,
