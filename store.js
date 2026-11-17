@@ -2051,6 +2051,39 @@
     return user.role === "admin" && user.billingAccess !== false;
   }
 
+  /* Billing for one visit — the manager's, not the note's.
+
+     A therapist logs time on the note; an administrator with billing access
+     turns that into service codes on the Visit time page. The codes live in
+     `doc.billing`, beside the clinical record rather than inside it, so a
+     signed (locked) note can still be billed without reopening it, and
+     nothing in the signed record changes when it is.
+
+     Notes from before time logging may carry codes in `data.charges`;
+     visitCharges() reads those until the visit is billed here. */
+  function visitCharges(doc) {
+    if (!doc) return [];
+    if (doc.billing && Array.isArray(doc.billing.charges)) return doc.billing.charges;
+    return ((doc.data || {}).charges || []).filter((c) => c && c.code);
+  }
+  function setVisitCharges(docId, charges, byUser) {
+    load();
+    const doc = getDoc(docId);
+    if (!doc || isTrashed(doc)) return { error: "Visit not found." };
+    if (!canSetPrices(byUser)) return { error: "Only an administrator with billing access can bill a visit." };
+    const clean = (Array.isArray(charges) ? charges : []).map((c) => {
+      const code = String((c && c.code) || "").trim().toUpperCase().slice(0, 20);
+      const units = Math.max(0, Math.min(99, Math.round(Number(c && c.units) || 0)));
+      const price = c && c.price != null && Number.isFinite(Number(c.price)) && Number(c.price) >= 0 ? Number(c.price) : null;
+      return { code, desc: String((c && c.desc) || "").slice(0, 120), units, price };
+    }).filter((c) => c.code);
+    doc.billing = { charges: clean, by: byUser.id, at: new Date().toISOString() };
+    touch(doc);
+    save();
+    audit(byUser.id, "visit-billed", `${doc.title} for ${patientName(getPatient(doc.patientId))}: ${clean.map((c) => `${c.code}×${c.units}`).join(", ") || "no codes"}`);
+    return { doc };
+  }
+
   function createDoc(patientId, type, byUser) {
     if (!canDocument(byUser)) return { error: "Your account can’t create clinical documents." };
     load();
@@ -2743,7 +2776,7 @@
     // the referring physician's orders and messages
     doctorComms, addDoctorComm, acknowledgeDoctorComm, deleteDoctorComm, outstandingOrders,
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
-    documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
+    documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, visitCharges, setVisitCharges, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     // trashed drafts: recoverable, hidden from the chart, still on the bill
     deletedDocsFor, deletedDocs: () => load().documents.filter((d) => mine(d) && isTrashed(d)), trashDoc, restoreDoc, docConsumption, recordDocAiCall,
     visitCount, progressDue, progressToward,

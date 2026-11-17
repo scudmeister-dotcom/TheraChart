@@ -171,7 +171,10 @@ const check = (name, cond, detail) => {
   }
 
   check("goals are never machine-written", MAPS.SECTION_SOURCES.goals.source === "yours");
-  check("billing is never machine-written", MAPS.SECTION_SOURCES.charges.source === "yours");
+  check("visit time is never machine-written", MAPS.SECTION_SOURCES.time.source === "yours");
+  check("visit time is asked for on every note type",
+    ["eval", "daily", "progress", "discharge"].every((t) => MAPS.SECTION_SOURCES.time.types.includes(t)));
+  check("no note carries a charge sheet — billing is the manager's", !("charges" in MAPS.SECTION_SOURCES));
   check("measurements are machine-written", MAPS.SECTION_SOURCES.measurements.source === "filled");
 }
 

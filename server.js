@@ -654,8 +654,16 @@ function graftPushedState(pushed, user) {
      rules here, where they are actually enforceable: a corrected note goes
      through the amendment flow, not through a state push. */
   const serverDocs = new Map((server.documents || []).map((d) => [d.id, d]));
+  /* A visit's billing (doc.billing) is set only by an administrator with
+     billing access (store.canSetPrices) — the Visit time page. Anyone else's
+     push gets the saved billing back, signed note or not. */
+  const mayBill = isAdmin && user.billingAccess !== false && user.active !== false;
   out.documents = (out.documents || []).map((doc) => {
     const prior = serverDocs.get(doc.id);
+    if (!mayBill && JSON.stringify((prior && prior.billing) || null) !== JSON.stringify(doc.billing || null)) {
+      doc = { ...doc };
+      if (prior && prior.billing) doc.billing = prior.billing; else delete doc.billing;
+    }
     if (!prior || prior.status !== "signed") return doc;
     const union = (a, b, keyFn) => {
       const seen = new Map();

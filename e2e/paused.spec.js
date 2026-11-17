@@ -44,7 +44,7 @@ test.describe("dictation paused", () => {
     await expect(page.locator("#mapNotes")).toContainText(/knee/i);
   });
 
-  test("findings go in one per row, and Enter starts the next row", async ({ page }) => {
+  test("each finding is added the moment Enter is pressed, in one box", async ({ page }) => {
     await signIn(page, "maria@therachart.demo");
     const docId = await page.evaluate(() => {
       const S = window.TheraStore;
@@ -53,23 +53,99 @@ test.describe("dictation paused", () => {
     });
     await page.goto(`/#/doc/${docId}`);
 
-    const rows = page.locator(".frow-input");
-    await rows.first().click();
+    // no row-adding or batch button any more: one field, Enter files it
+    await expect(page.locator("#findingMore, .frow-input")).toHaveCount(0);
+    const box = page.locator("#typedDictation");
+    await box.click();
     await page.keyboard.type("sharp pain in the left knee, 6/10");
-    await page.keyboard.press("Enter");          // next row, nothing filed yet
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".utt")).toHaveCount(1);       // filed at once
+    await expect(box).toHaveValue("");                        // cleared…
+    await expect(box).toBeFocused();                          // …and ready for the next
     await page.keyboard.type("left knee flexion 110 degrees");
     await page.keyboard.press("Enter");
     await page.keyboard.type("right shoulder stiff in the morning");
-    await expect(rows).toHaveCount(3);
-    await expect(page.locator(".utt")).toHaveCount(0);
-    await expect(page.locator("#typedDictationAdd")).toContainText("Add 3 findings");
-
-    await page.locator("#typedDictationAdd").click();
-    // each row became its own entry, and the box is ready for the next batch
+    await page.keyboard.press("Enter");
     await expect(page.locator(".utt")).toHaveCount(3);
-    await expect(page.locator(".frow-input").first()).toHaveValue("");
+    // each point says where it went: the knee and shoulder pins, the reading
+    await expect(page.locator('.utt[data-utt="0"] .utt-pin')).toContainText("Left Knee");
+    await expect(page.locator('.utt[data-utt="1"] .utt-receipt')).toContainText("reading");
+    await expect(page.locator('.utt[data-utt="2"] .utt-pin')).toContainText("Right Shoulder");
+    await expect(page.locator("#findingsCount")).toHaveText("(3)");
     // every entry is the therapist's — no patient/clinician relabelling
     await expect(page.locator(".spk-toggle")).toHaveCount(0);
+
+    // a pasted block of lines files one finding per line
+    await box.fill("tight right calf after running\nswelling around the left ankle");
+    await box.press("Enter");
+    await expect(page.locator(".utt")).toHaveCount(5);
+    await expect(page.locator("#mapNotes")).toContainText(/Right Calf/);
+    await expect(page.locator("#mapNotes")).toContainText(/Left Ankle/);
+  });
+
+  test("a pin can be moved by hand, and offers the rename that fits", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" }); // no smooth scroll under the tap
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "daily", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.goto(`/#/doc/${docId}`);
+    await page.locator("#typedDictation").fill("sharp pain in the left knee, 6/10");
+    await page.locator("#typedDictation").press("Enter");
+    await expect(page.locator("#mapNotes")).toContainText("Left Knee");
+
+    // Move pin → tap the RIGHT knee on the front figure (viewer's left)
+    await page.locator("[data-movepin]").first().click();
+    await expect(page.locator("#pinMoveBar")).toBeVisible();
+    const svg = page.locator("#mapFront svg");
+    const at = await svg.evaluate((el) => {
+      const m = el.getScreenCTM();
+      const p = el.createSVGPoint(); p.x = 84; p.y = 310;      // right knee anchor
+      const r = p.matrixTransform(m);
+      return { x: r.x, y: r.y };
+    });
+    await page.mouse.click(at.x, at.y);
+    // the same sticky bar now reports the move, where the eye already is
+    await expect(page.locator("#pinMoveBar")).toContainText("Pin 1 moved");
+    const pt = await page.evaluate((id) => window.TheraStore.getDoc(id).data.mapPoints[0], docId);
+    expect(pt.manual).toBe(true);
+    expect(Math.abs(pt.x - 84)).toBeLessThan(2);
+    expect(pt.view).toBe("front");
+    // the spot is the right knee, the label says left — the fix is offered, not made
+    await expect(page.locator("#pinLog")).toContainText("nearer Right Knee");
+    await page.locator("#pinRename").click();
+    await expect(page.locator("#mapNotes")).toContainText("Right Knee");
+
+    // a hand-placed pin stays put through a reload
+    await waitForSync(page);
+    await page.reload();
+    const after = await page.evaluate((id) => window.TheraStore.getDoc(id).data.mapPoints[0], docId);
+    expect(Math.abs(after.x - 84)).toBeLessThan(2);
+    expect(after.part).toMatch(/^Knee/);   // knee and kneecap sit 2 units apart; either is right
+    expect(after.side).toBe("right");
+  });
+
+  test("a note logs time with the patient, and carries no billing", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "daily", S.currentUser());
+      return (r && r.id) || (r && r.doc && r.doc.id);
+    });
+    await page.goto(`/#/doc/${docId}`);
+    await expect(page.locator("#addChargeBtn, .bill-table, .billing-field")).toHaveCount(0);
+    await expect(page.locator(".doc-fields")).not.toContainText(/subtotal|service code/i);
+
+    await page.locator('[data-timeset="45"]').click();
+    await expect(page.locator("#timeMinutes")).toHaveValue("45");
+    await page.locator("#timeStart").fill("09:10");
+    await page.locator("#timeEnd").fill("10:05");
+    await page.locator("#timeEnd").dispatchEvent("change");
+    await expect(page.locator("#timeMinutes")).toHaveValue("55");
+    const t = await page.evaluate((id) => window.TheraStore.getDoc(id).data.timeLog, docId);
+    expect(t).toMatchObject({ minutes: 55, start: "09:10", end: "10:05" });
   });
 
   test("deleting an entry takes back the pin, reading and text it added", async ({ page }) => {
@@ -360,5 +436,59 @@ test.describe("dictation paused", () => {
     await expect(page.getByRole("heading", { name: /Chart it once/i })).toBeVisible();
     const text = await page.locator("body").innerText();
     expect(text).not.toMatch(/Chart by voice|Listen & dictate|dictation minute/i);
+  });
+  test("the manager sees each visit's logged time on Visit time", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    const docId = await page.evaluate(() => {
+      const S = window.TheraStore;
+      const r = S.createDoc(S.patients()[0].id, "daily", S.currentUser());
+      const id = (r && r.id) || (r && r.doc && r.doc.id);
+      S.updateDocData(id, { timeLog: { minutes: 50, start: "08:00", end: "08:50" } }, S.currentUser());
+      return id;
+    });
+    await waitForSync(page);
+    // a therapist has no Visit time page
+    await page.goto("/#/visit-time");
+    await expect(page.locator("main")).toContainText("for the clinic's administrators");
+
+    await signIn(page, "grace@therachart.demo");
+    await page.goto("/#/visit-time");
+    await expect(page.getByRole("heading", { name: "Visit time" })).toBeVisible();
+    const row = page.locator(".vt-item", { has: page.locator(`a[href="#/doc/${docId}"]`) });
+    await expect(row).toContainText("50 min");
+    await expect(row).toContainText("08:00–08:50");
+    // the manager bills it right here: open the row, add a code, set units
+    await page.locator(`[data-vtopen="${docId}"]`).click();
+    await expect(page.locator(`#vb-${docId}`)).toContainText("50 min");
+    await page.locator("[data-vbadd]").click();
+    await page.locator('[data-vbunits="0"]').fill("2");
+    await page.locator('[data-vbunits="0"]').dispatchEvent("change");
+    const bill = await page.evaluate((id) => window.TheraStore.getDoc(id).billing, docId);
+    expect(bill.charges).toHaveLength(1);
+    expect(bill.charges[0].units).toBe(2);
+    expect(bill.by).toBe("u-grace");
+    await page.locator("[data-vbclose]").click();
+    await expect(page.locator(`[data-vtopen="${docId}"]`)).toContainText(bill.charges[0].code);
+
+    // "Not billed yet" leaves it out now; "No time logged" never had it
+    await page.locator('[data-vtshow="unbilled"]').click();
+    await expect(page.locator(`[data-vtopen="${docId}"]`)).toHaveCount(0);
+    await page.locator('[data-vtshow="untimed"]').click();
+    await expect(page.locator(`[data-vtopen="${docId}"]`)).toHaveCount(0);
+  });
+
+  test("every dashboard section folds, and stays folded", async ({ page }) => {
+    await signIn(page, "maria@therachart.demo");
+    const fold = page.locator('[data-qfold="drafts"]');
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    await fold.click();
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("#qb-drafts")).toBeHidden();
+    await waitForSync(page);
+    await page.reload();
+    await expect(page.locator('[data-qfold="drafts"]')).toHaveAttribute("aria-expanded", "false");
+    // the tile still opens it
+    await page.locator('[data-qjump="drafts"]').click();
+    await expect(page.locator('[data-qfold="drafts"]')).toHaveAttribute("aria-expanded", "true");
   });
 });
