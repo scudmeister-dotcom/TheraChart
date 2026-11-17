@@ -1632,6 +1632,59 @@ a.stat-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--bo
 .measure-add { display: flex; gap: 8px; margin-top: 8px; }
 .measure-add input { flex: 1; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
 
+/* ---- objective measurements: one table per kind, a structured add form ---- */
+.meas-groups { display: flex; flex-direction: column; gap: 10px; }
+.meas-group { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.meas-group-head {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--hover);
+  font-size: 12px; font-weight: 800; letter-spacing: 0.3px; text-transform: uppercase; color: var(--muted);
+}
+.meas-n { font-size: 11px; font-weight: 700; background: var(--panel); border-radius: 999px; padding: 0 7px; color: var(--ink); }
+.meas-table { width: 100%; margin: 0; }
+.meas-table th { font-size: 11px; }
+.meas-table td { vertical-align: middle; }
+.meas-table td:last-child, .meas-table th:last-child { width: 36px; text-align: right; }
+.meas-side { white-space: nowrap; width: 1%; }
+.meas-side .muted { color: var(--muted); }
+/* stored lowercase ("left knee flexion") so it reads the same as dictation;
+   shown sentence-case */
+.meas-what::first-letter { text-transform: uppercase; }
+.meas-kind { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.meas-norm { display: block; font-size: 11px; color: var(--muted); font-weight: 500; }
+.meas-result { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--hover); text-transform: capitalize; }
+.meas-result.pos { background: var(--danger-soft); color: var(--danger); }
+.meas-result.neg { background: var(--good-soft); color: var(--good-ink, var(--good)); }
+.meas-pain { display: inline-flex; align-items: center; gap: 8px; }
+.meas-pain-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--hover); position: relative; overflow: hidden; }
+.meas-pain-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--v); background: var(--sev-mid); border-radius: 3px; }
+
+.meas-form { margin-top: 10px; border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; }
+.meas-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.meas-tab {
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink); min-height: 32px;
+}
+.meas-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.meas-panel { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.meas-panel[hidden] { display: none; }
+.mf { display: flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 700; color: var(--muted); flex: 0 1 auto; min-width: 0; }
+.mf-wide { flex: 1 1 180px; }
+.mf select, .mf input {
+  font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink); min-height: 36px;
+  padding: 5px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0;
+}
+.mf-unit { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink); }
+.mf-num input { width: 84px; }
+.meas-panel .btn { min-height: 36px; }
+.meas-quick { margin-top: 10px; font-size: 12.5px; }
+.meas-quick summary { cursor: pointer; color: var(--muted); }
+.meas-quick input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font: inherit; }
+@media (max-width: 560px) {
+  .meas-panel .mf { flex: 1 1 calc(50% - 8px); }
+  .meas-panel .mf-wide { flex-basis: 100%; }
+  .meas-panel .btn { flex-basis: 100%; }
+}
+
 /* ---------------- calendar ---------------- */
 
 .cal-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -1799,6 +1852,40 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
 .outcome-add { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .outcome-add select { max-width: 300px; }
 .outcome-err { font-size: 12px; color: var(--danger); }
+
+/* one card per measure: score on its scale, change since last time */
+.om-cards { display: flex; flex-direction: column; gap: 10px; }
+.om-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 10px 12px; }
+.om-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.om-name { display: flex; flex-direction: column; min-width: 0; }
+.om-name b { font-size: 14px; }
+.om-name span { font-size: 12px; color: var(--muted); }
+.om-card-body { display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+.om-score-big { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.om-card .score-unit { font-size: 13px; }
+.om-score-input {
+  width: 74px; font: inherit; font-size: 18px; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums;
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink);
+}
+.om-scale { flex: 1 1 180px; min-width: 150px; }
+.om-track { position: relative; height: 8px; border-radius: 4px; }
+/* the bar shades toward the better end, whichever way the scale runs */
+.om-track.up { background: linear-gradient(90deg, color-mix(in srgb, var(--sev-high) 30%, var(--hover)), color-mix(in srgb, var(--sev-low) 40%, var(--hover))); }
+.om-track.down { background: linear-gradient(90deg, color-mix(in srgb, var(--sev-low) 40%, var(--hover)), color-mix(in srgb, var(--sev-high) 30%, var(--hover))); }
+.om-mark {
+  position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; transform: translate(-50%, -50%);
+  background: var(--ink); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--ink);
+}
+.om-scale-ends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+.om-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.om-trend { font-size: 12px; font-weight: 600; color: var(--muted); }
+.om-trend.better { color: var(--good-ink, var(--good)); }
+.om-trend.worse { color: var(--danger); }
+.om-card .om-toggle { margin-left: auto; }
+.om-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 10px; border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; }
+.om-add .mf-wide select { width: 100%; }
+.om-add .btn { min-height: 36px; }
+@media (max-width: 560px) { .om-add .btn { flex: 1 1 auto; } }
 
 /* ---- plan-of-care goals ---- */
 /* stacked rows rather than a table — this lives in the note's narrow column */
@@ -2109,7 +2196,23 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 .utt-pin:hover { border-color: var(--accent); }
-.utt-pin .badge { width: 22px; height: 22px; font-size: 11px; }
+/* The number sits inside the chip's rounded end, so it is round itself — a
+   square badge poked its corners out through the pill's curve. Severity is
+   still in the colour; the shape language lives on the map and its legend. */
+.utt-pin .badge {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 50%; color: #fff; font-size: 11px; font-weight: 800; line-height: 1;
+}
+.utt-pin.add { border-style: dashed; color: var(--accent); padding: 2px 10px; }
+.utt-pin.add:hover { background: var(--accent-soft); }
+.utt-move { font-size: 11.5px; padding: 2px 8px; min-height: 30px; border-radius: 999px; border: 1px solid transparent;
+  background: none; color: var(--accent); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.utt-move:hover { border-color: var(--accent); }
+.utt-edit-check {
+  margin-top: 4px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+  background: color-mix(in srgb, var(--sev-mid) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--sev-mid) 45%, var(--border));
+}
+.utt-edit-check .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .utt-point .utt-del { width: 40px; height: 40px; opacity: 1; flex: none; }
 
 .btn .opt-tag {

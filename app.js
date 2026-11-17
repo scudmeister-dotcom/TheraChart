@@ -5643,27 +5643,115 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      about which kind of range a number is. */
   const romLabel = (r) => (r && r.quality === "active" ? "AROM" : r && r.quality === "passive" ? "PROM" : "ROM");
 
+  /* The structured form's vocabulary. Motions per joint are the standard
+     goniometry set; `norm` is the usual adult reference (AAOS), shown beside
+     a reading as context — never used to judge it. Joint and motion strings
+     are the ones the parser writes, so a typed row and a filed one are the
+     same record and trend together. */
+  const ROM_SPEC = {
+    shoulder: { flexion: 180, extension: 60, abduction: 180, "internal rotation": 70, "external rotation": 90 },
+    elbow: { flexion: 150, extension: 0, supination: 80, pronation: 80 },
+    wrist: { flexion: 80, extension: 70, "radial deviation": 20, "ulnar deviation": 30 },
+    hip: { flexion: 120, extension: 30, abduction: 45, adduction: 30, "internal rotation": 45, "external rotation": 45 },
+    knee: { flexion: 135, extension: 0 },
+    ankle: { dorsiflexion: 20, plantarflexion: 50, inversion: 35, eversion: 15 },
+    neck: { flexion: 45, extension: 45, "lateral flexion": 45, rotation: 60 },
+    lumbar: { flexion: 60, extension: 25, "lateral flexion": 25, rotation: 30 },
+  };
+  const romNorm = (r) => { const j = ROM_SPEC[String(r.joint || "").toLowerCase()]; const n = j && j[String(r.motion || "").toLowerCase().replace(/plantar\s+flexion/, "plantarflexion")]; return n == null ? null : n; };
+  const MMT_GRADES = ["5", "4+", "4", "4-", "3+", "3", "3-", "2+", "2", "2-", "1", "0"];
+  const SPECIAL_TESTS = ["Neer test", "Hawkins-Kennedy test", "Empty can test", "Drop arm test", "Speed's test", "Yergason's test",
+    "Apprehension test", "Lachman test", "Anterior drawer test", "Posterior drawer test", "McMurray test", "Thessaly test",
+    "Valgus stress test", "Varus stress test", "Thomas test", "FABER test", "FADIR test", "Ober test", "Straight leg raise",
+    "Slump test", "Spurling's test", "Phalen's test", "Tinel's sign", "Finkelstein's test", "Trendelenburg sign", "Talar tilt test", "Thompson test"];
+  const MMT_MOVES = ["shoulder flexion", "shoulder abduction", "shoulder external rotation", "shoulder internal rotation", "elbow flexion",
+    "elbow extension", "wrist extension", "grip", "hip flexion", "hip extension", "hip abduction", "hip adduction", "knee extension",
+    "knee flexion", "ankle dorsiflexion", "ankle plantarflexion", "quadriceps", "hamstrings", "gluteus medius", "deltoid"];
+  // which add-form tab is showing — a view preference, kept out of the doc
+  let measFormType = "rom";
+
+  /* One line naming a reading — the finding's receipt chip uses it. */
+  function readingLabel(kind, m) {
+    const side = m.side ? `${m.side} ` : "";
+    if (kind === "rom") return `${romLabel(m)} ${side}${m.joint} ${m.motion} ${m.degrees}°`;
+    if (kind === "mmt") return `Strength ${side}${m.context || ""} ${m.grade}`.replace(/\s+/g, " ");
+    if (kind === "special") return `${m.name} ${m.result}`;
+    return `Pain ${m.score}/10`;
+  }
+
+  /* Four small tables instead of one mixed one: a range of motion, a muscle
+     grade, a special test and a pain score are different kinds of reading,
+     with different columns, and a single Type/Detail/Value grid made every
+     one of them read the same. The form below enters a reading as its parts
+     — side, joint, motion, value — so nothing depends on phrasing it right. */
   function measurementEditor(doc, editable) {
     const d = doc.data;
-    const del = (kind, i) => editable ? `<button class="btn small" data-delmeas="${kind}:${i}" title="Remove">✕</button>` : "";
-    const rows = [];
-    /* AROM and PROM are different findings about the same joint, so the
-       qualifier is part of the row's TYPE — "shoulder flexion 120" under one
-       and "155" under the other are not a contradiction once you can see
-       which is which. An unqualified reading still reads as plain ROM. */
-    (d.rom || []).forEach((r, i) => rows.push(`<tr><td>${romLabel(r)}</td><td>${esc(r.side || "—")} ${esc(r.joint)} ${esc(r.motion)}</td><td class="num">${r.degrees}°</td><td>${del("rom", i)}</td></tr>`));
-    (d.mmt || []).forEach((r, i) => rows.push(`<tr><td>MMT</td><td>${esc(r.side ? r.side + " " : "")}${esc(r.context || "—")}</td><td class="num">${esc(r.grade)}</td><td>${del("mmt", i)}</td></tr>`));
-    (d.special || []).forEach((r, i) => rows.push(`<tr><td>Special test</td><td>${esc(r.name)}</td><td>${esc(r.result)}</td><td>${del("special", i)}</td></tr>`));
-    (d.pain || []).forEach((r, i) => rows.push(`<tr><td>Pain</td><td>${esc(r.location || "—")}</td><td class="num">${r.score}/10</td><td>${del("pain", i)}</td></tr>`));
+    const del = (kind, i) => editable ? `<button class="icon-btn" data-delmeas="${kind}:${i}" title="Remove" aria-label="Remove reading">✕</button>` : "";
+    const sideCell = (s) => `<td class="meas-side">${s ? esc(cap(s)) : `<span class="muted">—</span>`}</td>`;
+    const group = (title, head, rows) => rows.length ? `
+      <div class="meas-group">
+        <div class="meas-group-head">${title}<span class="meas-n">${rows.length}</span></div>
+        <table class="list meas-table"><thead><tr>${head.map((h) => `<th${/Value|Grade|Score|Result/.test(h) ? ' class="num"' : ""}>${h}</th>`).join("")}<th></th></tr></thead>
+        <tbody>${rows.join("")}</tbody></table>
+      </div>` : "";
+    const rom = (d.rom || []).map((r, i) => {
+      const norm = romNorm(r);
+      return `<tr><td class="meas-what">${esc(r.side ? r.side + " " : "")}${esc(r.joint)} ${esc(r.motion)}</td><td><span class="meas-kind">${romLabel(r)}</span></td>
+        <td class="num"><b>${r.degrees}°</b>${norm != null ? `<span class="meas-norm">of ${norm}°</span>` : ""}</td><td>${del("rom", i)}</td></tr>`;
+    });
+    const mmt = (d.mmt || []).map((r, i) => `<tr><td class="meas-what">${esc(r.side ? r.side + " " : "")}${esc(r.context || "—")}</td><td class="num"><b>${esc(r.grade)}</b></td><td>${del("mmt", i)}</td></tr>`);
+    const special = (d.special || []).map((r, i) => {
+      const pos = /^pos/i.test(r.result || "");
+      return `<tr><td>${esc(r.name)}</td>${sideCell(r.side)}<td class="num"><span class="meas-result ${pos ? "pos" : /^neg/i.test(r.result || "") ? "neg" : ""}">${esc(r.result)}</span></td><td>${del("special", i)}</td></tr>`;
+    });
+    const pain = (d.pain || []).map((r, i) => `<tr><td class="meas-what">${esc(r.location || "—")}</td>
+      <td class="num"><span class="meas-pain"><span class="meas-pain-bar" style="--v:${Math.max(0, Math.min(10, Number(r.score) || 0)) * 10}%"></span><b>${r.score}/10</b></span></td><td>${del("pain", i)}</td></tr>`);
+    const body = [
+      group("Range of motion", ["Joint · motion", "Type", "Value"], rom),
+      group("Strength (MMT)", ["Muscle / movement", "Grade"], mmt),
+      group("Special tests", ["Test", "Side", "Result"], special),
+      group("Pain", ["Location", "Score"], pain),
+    ].join("");
+
+    const sideSel = (id) => `<select id="${id}" aria-label="Side"><option value="">Side —</option><option value="left">Left</option><option value="right">Right</option><option value="bilateral">Both</option></select>`;
+    const joints = Object.keys(ROM_SPEC);
+    const pinAreas = [...new Set((d.mapPoints || []).map((p) => pinLabel(p.part, p.side).toLowerCase()))];
+    const tab = (id, label) => `<button type="button" role="tab" class="meas-tab${measFormType === id ? " on" : ""}" data-mtab="${id}" aria-selected="${measFormType === id}">${label}</button>`;
+    const panel = (id, inner) => `<div class="meas-panel" data-mpanel="${id}" role="tabpanel" ${measFormType === id ? "" : "hidden"}>${inner}<button class="btn small primary" type="button" data-madd="${id}">＋ Add</button></div>`;
+    const form = !editable ? "" : `
+  <div class="meas-form">
+    <div class="meas-tabs" role="tablist" aria-label="Kind of measurement">
+      ${tab("rom", "Range of motion")}${tab("mmt", "Strength")}${tab("special", "Special test")}${tab("pain", "Pain")}
+    </div>
+    ${panel("rom", `
+      <label class="mf">Side${sideSel("mRomSide")}</label>
+      <label class="mf">Joint<select id="mRomJoint">${joints.map((j) => `<option value="${j}">${cap(j)}</option>`).join("")}</select></label>
+      <label class="mf">Motion<select id="mRomMotion">${Object.keys(ROM_SPEC[joints[0]]).map((m) => `<option value="${m}">${cap(m)}</option>`).join("")}</select></label>
+      <label class="mf">Type<select id="mRomQual"><option value="">ROM</option><option value="active">AROM</option><option value="passive">PROM</option></select></label>
+      <label class="mf mf-num">Degrees<span class="mf-unit"><input id="mRomDeg" type="number" inputmode="numeric" min="-30" max="200" placeholder="120" />°</span></label>`)}
+    ${panel("mmt", `
+      <label class="mf">Side${sideSel("mMmtSide")}</label>
+      <label class="mf mf-wide">Muscle / movement<input id="mMmtCtx" list="mMmtList" placeholder="e.g. knee extension" /></label>
+      <datalist id="mMmtList">${MMT_MOVES.map((m) => `<option value="${m}">`).join("")}</datalist>
+      <label class="mf">Grade<select id="mMmtGrade">${MMT_GRADES.map((g) => `<option value="${g}/5" ${g === "4" ? "selected" : ""}>${g} / 5</option>`).join("")}</select></label>`)}
+    ${panel("special", `
+      <label class="mf mf-wide">Test<input id="mSpName" list="mSpList" placeholder="e.g. Lachman test" /></label>
+      <datalist id="mSpList">${SPECIAL_TESTS.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+      <label class="mf">Side${sideSel("mSpSide")}</label>
+      <label class="mf">Result<select id="mSpResult"><option value="positive">Positive</option><option value="negative">Negative</option><option value="equivocal">Equivocal</option></select></label>`)}
+    ${panel("pain", `
+      <label class="mf mf-wide">Location<input id="mPainLoc" list="mPainList" placeholder="e.g. left knee" /></label>
+      <datalist id="mPainList">${pinAreas.map((a) => `<option value="${esc(a)}">`).join("")}</datalist>
+      <label class="mf">Score<select id="mPainScore">${Array.from({ length: 11 }, (_, n) => `<option value="${n}" ${n === 5 ? "selected" : ""}>${n} / 10</option>`).join("")}</select></label>`)}
+    <span class="outcome-err" id="measErr"></span>
+    <details class="meas-quick"><summary>Or type it in one line</summary>
+      <input id="measInput" aria-label="Add a measurement" placeholder='e.g. "left knee flexion 95 degrees" — press Enter' />
+    </details>
+  </div>`;
     return `
-<div class="field"><label>Objective measurements — filled automatically from ${dictationOn() ? "dictation" : "your findings"}</label>
-  <div class="table-scroll"><table class="list" id="measTable">
-    <thead><tr><th>Type</th><th>Detail</th><th>Value</th><th></th></tr></thead>
-    <tbody>${rows.join("") || `<tr><td colspan="4"><div class="empty-state" style="padding:10px">None yet — ${dictationOn() ? "dictate" : "type"} e.g. “shoulder flexion 120 degrees”, “quad strength 4 out of 5”, “pain 6 out of 10”, “positive Neer test”.</div></td></tr>`}</tbody>
-  </table></div>
-  ${editable ? `<div class="measure-add">
-    <input id="measInput" aria-label="Add a measurement" placeholder='Type a measurement, e.g. "left knee flexion 95 degrees" and press Enter' />
-  </div>` : ""}
+<div class="field"><label>Objective measurements</label>
+  <div class="meas-groups" id="measTable">${body || `<div class="empty-state" style="padding:10px">None yet — add one below, or ${dictationOn() ? "dictate" : "type"} it as a finding, e.g. “shoulder flexion 120 degrees”, “quad strength 4 out of 5”, “positive Neer test”.</div>`}</div>
+  ${form}
 </div>`;
   }
 
@@ -5759,10 +5847,23 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      to the record. */
   let openOutcomeItems = {};
 
+  /* The score this patient had on the same measure at their last note before
+     this one — what a payer, a referrer and the therapist all compare it to. */
+  function priorOutcome(doc, toolId) {
+    const mine = (doc.createdAt || "").slice(0, 10);
+    const prior = S.outcomeSeries(doc.patientId)
+      .filter((s) => s.toolId === toolId && s.docId !== doc.id && (!mine || s.date <= mine));
+    return prior.length ? prior[prior.length - 1] : null;
+  }
+
+  /* One card per measure rather than a row in a bare table: the score is read
+     against its scale (where 52 sits on 0–80, and which way is better), and
+     against last time — the change and whether it reaches the measure's
+     minimal clinically important difference. */
   function outcomeEditor(doc, editable) {
     const list = doc.data.outcomes || [];
 
-    const rows = list.map((o, i) => {
+    const cards = list.map((o, i) => {
       const tool = CL.findTool(o.toolId);
       if (!tool) return "";
       const spec = CL.itemsFor(o.toolId);
@@ -5777,13 +5878,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
          plain input. */
       const fromItems = !!(scored && scored.ok && answers.length);
       const scoreCell = fromItems
-        ? `<b>${scored.score}</b>`
+        ? `<b class="om-score-big">${scored.score}</b>`
         : editable
-          ? `<input type="number" step="0.5" min="${tool.min}" max="${tool.max}" data-outcome="${i}" value="${o.score}" class="charge-num" />`
-          : `${o.score}`;
+          ? `<input type="number" step="0.5" min="${tool.min}" max="${tool.max}" data-outcome="${i}" value="${o.score}" class="om-score-input" aria-label="${esc(tool.name)} score" />`
+          : `<b class="om-score-big">${o.score}</b>`;
+
+      const v = Number(fromItems ? scored.score : o.score);
+      const pct = Math.max(0, Math.min(100, ((v - tool.min) / ((tool.max - tool.min) || 1)) * 100));
+      const prior = priorOutcome(doc, o.toolId);
+      let trend = `<span class="om-trend first">First time recorded</span>`;
+      if (prior && isFinite(Number(prior.score))) {
+        const raw = v - Number(prior.score);
+        const better = tool.better === "up" ? raw : -raw;
+        const meaningful = Math.abs(better) >= tool.mcid;
+        const cls = !raw ? "flat" : better > 0 ? (meaningful ? "better" : "slight") : (meaningful ? "worse" : "slight");
+        trend = `<span class="om-trend ${cls}">${raw > 0 ? "▲" : raw < 0 ? "▼" : "■"} ${raw > 0 ? "+" : ""}${Math.round(raw * 10) / 10}
+          since ${esc(fmtDate(prior.date))} (${esc(String(prior.score))}) · ${!raw ? "no change" : meaningful ? (better > 0 ? "meaningful improvement" : "meaningful decline") : `under the ${tool.mcid}-point MCID`}</span>`;
+      }
 
       const itemGrid = !open || !spec ? "" : `
-        <tr class="om-items-row"><td colspan="3">
           <div class="om-items">
             <div class="om-items-head">
               <b>${esc(tool.name)} answer sheet</b>
@@ -5812,30 +5925,38 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
                 scored && scored.error && scored.answered
                   ? `<span class="om-partial"> ${esc(scored.error)}</span>` : ""}
             </div>
-          </div>
-        </td></tr>`;
+          </div>`;
 
-      return `<tr>
-        <td><b>${esc(tool.name)}</b> <span style="color:var(--muted)">${esc(tool.full)}</span>
-          ${spec ? `<button class="btn small om-toggle" data-omopen="${esc(o.toolId)}" type="button">${open ? "Hide items" : `Items (${(scored && scored.answered) || 0}/${spec.count})`}</button>` : ""}
-        </td>
-        <td class="num"><span class="score-cell">${scoreCell}<span class="score-unit">${esc(tool.unit)}</span></span></td>
-        <td>${editable ? `<button class="btn small" data-deloutcome="${i}" title="Remove">✕</button>` : ""}</td>
-      </tr>${itemGrid}`;
+      return `<div class="om-card">
+        <div class="om-card-head">
+          <div class="om-name"><b>${esc(tool.name)}</b><span>${esc(tool.full)}</span></div>
+          ${editable ? `<button class="icon-btn" data-deloutcome="${i}" title="Remove" aria-label="Remove ${esc(tool.name)}">✕</button>` : ""}
+        </div>
+        <div class="om-card-body">
+          <span class="score-cell">${scoreCell}<span class="score-unit">${esc(tool.unit)}</span></span>
+          <div class="om-scale" title="${tool.min}–${tool.max}, ${tool.better === "up" ? "higher" : "lower"} is better">
+            <div class="om-track ${tool.better === "up" ? "up" : "down"}"><span class="om-mark" style="left:${pct}%"></span></div>
+            <div class="om-scale-ends"><span>${tool.min}</span><span>${tool.better === "up" ? "higher is better →" : "← lower is better"}</span><span>${tool.max}</span></div>
+          </div>
+        </div>
+        <div class="om-card-foot">
+          ${trend}
+          ${spec ? `<button class="btn small om-toggle" data-omopen="${esc(o.toolId)}" type="button">${open ? "Hide items" : `Answer sheet (${(scored && scored.answered) || 0}/${spec.count})`}</button>` : ""}
+        </div>
+        ${itemGrid}
+      </div>`;
     }).join("");
 
+    const first = CL.OUTCOME_TOOLS[0];
     return `
-<div class="field">
+<div class="field" id="outcomeField">
   <label>Outcome measures</label>
-  <div class="table-scroll"><table class="list">
-    <thead><tr><th>Measure</th><th class="num">Score</th><th></th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="3"><div class="empty-state" style="padding:10px">None recorded${editable ? ` — add one below, or ${dictationOn() ? "dictate" : "type"} e.g. “LEFS 52 out of 80”.` : "."}</div></td></tr>`}</tbody>
-  </table></div>
-  ${editable ? `<div class="outcome-add">
-    <select id="outcomeTool" aria-label="Outcome measure">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select>
-    <input type="number" step="0.5" id="outcomeScore" aria-label="Score" placeholder="Score" class="charge-num" />
-    <button class="btn small" id="addOutcomeBtn" type="button">＋ Record</button>
-    <button class="btn small" id="addOutcomeItemsBtn" type="button" title="Add the measure and open its answer sheet — the score is worked out from the items">＋ Score item by item</button>
+  <div class="om-cards">${cards || `<div class="empty-state" style="padding:10px">None recorded${editable ? ` — add one below, or ${dictationOn() ? "dictate" : "type"} it as a finding, e.g. “LEFS 52 out of 80”.` : "."}</div>`}</div>
+  ${editable ? `<div class="om-add">
+    <label class="mf mf-wide">Measure<select id="outcomeTool">${CL.OUTCOME_TOOLS.map((t) => `<option value="${t.id}">${t.name} — ${esc(t.full)}</option>`).join("")}</select></label>
+    <label class="mf mf-num">Score<span class="mf-unit"><input type="number" step="0.5" id="outcomeScore" placeholder="${first.min}–${first.max}" /><span id="outcomeUnit">${esc(first.unit)}</span></span></label>
+    <button class="btn small primary" id="addOutcomeBtn" type="button">＋ Record score</button>
+    <button class="btn small" id="addOutcomeItemsBtn" type="button" title="Add the measure and open its answer sheet — the score is worked out from the items">Score item by item</button>
     <span class="outcome-err" id="outcomeErr"></span>
   </div>
   <div class="hint" style="margin-top:6px">Item scores are entered from the clinic's own copy of the form — TheraChart holds each instrument's structure and scoring, not its licensed wording.</div>` : ""}
@@ -5900,6 +6021,18 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       }));
 
     const addTool = () => document.getElementById("outcomeTool").value;
+    /* The score box says the chosen measure's range and unit, and "item by
+       item" is only offered for a measure that has items. */
+    const toolSel = document.getElementById("outcomeTool");
+    const syncTool = () => {
+      const t = CL.findTool(toolSel.value);
+      if (!t) return;
+      document.getElementById("outcomeScore").placeholder = `${t.min}–${t.max}`;
+      document.getElementById("outcomeUnit").textContent = t.unit;
+      document.getElementById("addOutcomeItemsBtn").hidden = !CL.itemsFor(t.id);
+      document.getElementById("outcomeErr").textContent = "";
+    };
+    if (toolSel) { toolSel.addEventListener("change", syncTool); syncTool(); }
     const add = document.getElementById("addOutcomeBtn");
     if (add) add.addEventListener("click", () => {
       const toolId = addTool();
@@ -5936,8 +6069,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      the note — a therapist mid-sentence in Assessment would lose their
      cursor to a control that changed nothing about the record. */
   function refreshOutcomes(doc, user) {
-    const table = document.querySelector("[data-omopen], [data-omitem]");
-    const holder = table && table.closest(".field");
+    const holder = document.getElementById("outcomeField");
     if (!holder) return render();
     const temp = document.createElement("div");
     temp.innerHTML = outcomeEditor(doc, doc.status !== "signed" && S.canDocument(S.currentUser()));
@@ -6072,22 +6204,66 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   }
 
   function bindMeasurementEditor(doc, user) {
+    const save = () => { S.updateDocData(doc.id, doc.data, user); refreshMeasTable(doc); };
     document.querySelectorAll("[data-delmeas]").forEach((b) =>
       b.addEventListener("click", () => {
         const [kind, i] = b.dataset.delmeas.split(":");
         doc.data[kind].splice(Number(i), 1);
-        S.save();
-        render();
+        save();
       })
     );
-    const inp = document.getElementById("measInput");
+    const $ = (id) => document.getElementById(id);
+    document.querySelectorAll("[data-mtab]").forEach((b) => b.addEventListener("click", () => {
+      measFormType = b.dataset.mtab;
+      document.querySelectorAll("[data-mtab]").forEach((t) => { const on = t === b; t.classList.toggle("on", on); t.setAttribute("aria-selected", on); });
+      document.querySelectorAll("[data-mpanel]").forEach((p) => { p.hidden = p.dataset.mpanel !== measFormType; });
+      if ($("measErr")) $("measErr").textContent = "";
+    }));
+    const joint = $("mRomJoint");
+    if (joint) joint.addEventListener("change", () => {
+      $("mRomMotion").innerHTML = Object.keys(ROM_SPEC[joint.value] || {}).map((m) => `<option value="${m}">${cap(m)}</option>`).join("");
+    });
+    const push = (kind, item) => {
+      if (!doc.data[kind]) doc.data[kind] = [];
+      doc.data[kind].push(item);
+      save();
+    };
+    const fail = (msg, id) => { $("measErr").textContent = msg; if (id && $(id)) $(id).focus(); };
+    const adders = {
+      rom: () => {
+        const deg = $("mRomDeg").value.trim();
+        if (deg === "" || !isFinite(Number(deg))) return fail("Enter the degrees.", "mRomDeg");
+        const item = { side: $("mRomSide").value || null, joint: joint.value, motion: $("mRomMotion").value, degrees: Math.round(Number(deg)) };
+        if ($("mRomQual").value) item.quality = $("mRomQual").value;
+        push("rom", item);
+      },
+      mmt: () => {
+        const ctx = $("mMmtCtx").value.trim();
+        if (!ctx) return fail("Name the muscle or movement tested.", "mMmtCtx");
+        push("mmt", { side: $("mMmtSide").value || null, context: ctx, grade: $("mMmtGrade").value });
+      },
+      special: () => {
+        const name = $("mSpName").value.trim();
+        if (!name) return fail("Name the test.", "mSpName");
+        const item = { name, result: $("mSpResult").value };
+        if ($("mSpSide").value) item.side = $("mSpSide").value;
+        push("special", item);
+      },
+      pain: () => push("pain", { score: Number($("mPainScore").value), location: $("mPainLoc").value.trim() || null }),
+    };
+    document.querySelectorAll("[data-madd]").forEach((b) => b.addEventListener("click", () => adders[b.dataset.madd]()));
+    // Enter in any field of a panel adds that panel's reading
+    document.querySelectorAll("[data-mpanel] input").forEach((inp) => inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); adders[inp.closest("[data-mpanel]").dataset.mpanel](); }
+    }));
+    const inp = $("measInput");
     if (inp) inp.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || !inp.value.trim()) return;
       const parsed = PR.parseUtterance(inp.value);
       const n = mergeMeasurements(doc, parsed.measurements);
-      if (n) { S.save(); render(); }
+      if (n) save();
       else {
-        document.getElementById("routeLog").textContent = "No measurement recognized in that phrase.";
+        fail("No measurement recognised in that phrase — try the fields above.");
         inp.select();
       }
     });
@@ -6413,24 +6589,84 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const pts = doc.data.mapPoints || [];
     const n = pts.findIndex((p) => p.key === key);
     const pt = pts[n];
+    if (!pt) return;
+    startPlacing(`<b>Tap the body</b> where pin ${n + 1} (${esc(pinLabel(pt.part, pt.side))}) belongs — front or back.`,
+      (view, x, y) => placePin(doc, key, view, x, y),
+      () => startPinMove(doc, dstate, null));
+  }
+
+  /* One finding, its own pin. Pins are shared by region — "Head pain" and
+     "Front head damage" both sit on pin 3 — so moving the PIN moved every
+     finding on it, and a finding filed on the wrong pin could not be pulled
+     off on its own. This takes just entry `i` off whatever pin(s) it is on and
+     gives it a new pin where the therapist taps, named after that spot. */
+  function startEntryPlace(doc, dstate, i) {
+    const u = (doc.data.transcript || [])[i];
+    if (!u) return;
+    endPinMoveUi();
+    startPlacing(`<b>Tap the body</b> where finding ${i + 1} (“${esc(u.text.length > 40 ? u.text.slice(0, 38) + "…" : u.text)}”) belongs — it gets its own pin.`,
+      (view, x, y) => placeEntry(doc, dstate, i, view, x, y),
+      () => endPinMoveUi());
+  }
+
+  function placeEntry(doc, dstate, i, view, x, y) {
+    const user = S.currentUser();
+    const d = doc.data;
+    const u = (d.transcript || [])[i];
+    if (!u) return;
+    const moved = [];
+    d.mapPoints = (d.mapPoints || []).map((pt) => {
+      moved.push(...pt.notes.filter((n) => n.uttId === i));
+      pt.notes = pt.notes.filter((n) => n.uttId !== i);
+      return pt;
+    }).filter((pt) => pt.notes.length);
+    const near = PR.nearestPart(view, x, y, 200) || { part: "Back", side: null };
+    const base = `${near.part}|${near.side || ""}`;
+    let key = base;
+    for (let k = 2; d.mapPoints.some((p) => p.key === key); k++) key = `${base}#${k}`;
+    if (!moved.length) {
+      const loose = PR.parseUtterance(u.text).loose;
+      moved.push({ time: u.time || nowTime(), summary: (loose && loose.summary) || u.text, quote: "", uttId: i, marks: [[0, u.text.length, false]] });
+    }
+    const pt = { key, part: near.part, side: near.side || null, view, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, manual: true, notes: moved };
+    d.mapPoints.push(pt);
+    dstate.selectedKey = key;
+    S.updateDocData(doc.id, d, user);
+    endPinMoveUi();
+    drawAllPoints(doc);
+    drawMapNotes(doc, dstate);
+    drawTranscript(doc, null, dstate);
     const figs = document.querySelector(".figures");
-    if (!pt || !figs) return;
+    if (!figs) return;
+    figs.insertAdjacentHTML("beforebegin", `<div class="pin-move-bar done" id="pinMoveBar" role="status">
+      <span>Finding ${i + 1} now has its own pin — <b>${d.mapPoints.length}</b>, ${esc(pinLabel(pt.part, pt.side))}. Drag the dot to fine-tune it.</span>
+      <button class="btn small" type="button" id="pinDone">OK</button></div>`);
+    const bar = document.getElementById("pinMoveBar");
+    document.getElementById("pinDone").addEventListener("click", () => bar.remove());
+    setTimeout(() => bar.isConnected && bar.remove(), 5000);
+  }
+
+  /* The tap-the-body mode both of the above use: a sticky instruction bar,
+     the figures marked as a target, Escape or Cancel to back out. */
+  function startPlacing(msgHtml, onPlace, onCancel) {
+    const figs = document.querySelector(".figures");
+    if (!figs) return;
     figs.classList.add("placing");
     figs.insertAdjacentHTML("beforebegin", `<div class="pin-move-bar" id="pinMoveBar" role="status">
-      <span><b>Tap the body</b> where pin ${n + 1} (${esc(pinLabel(pt.part, pt.side))}) belongs — front or back.</span>
+      <span>${msgHtml}</span>
       <button class="btn small" type="button" id="pinMoveCancel">Cancel</button></div>`);
     // bring the bar and the figures to the tap — below the fixed top bar on a phone
     const barTop = document.getElementById("pinMoveBar").getBoundingClientRect().top + window.scrollY;
     window.scrollTo({ top: Math.max(0, barTop - 76), behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-    document.getElementById("pinMoveCancel").addEventListener("click", () => startPinMove(doc, dstate, null));
+    document.getElementById("pinMoveCancel").addEventListener("click", onCancel);
     const onTap = (e) => {
       const svg = e.target.closest(".bodymap svg");
       if (!svg) return;
       e.preventDefault(); e.stopPropagation();
       const at = svgPointFor(svg, e.clientX, e.clientY);
-      if (at) placePin(doc, key, viewOfSvg(svg), at.x, at.y);
+      if (at) onPlace(viewOfSvg(svg), at.x, at.y);
     };
-    const onKey = (e) => { if (e.key === "Escape") startPinMove(doc, dstate, null); };
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
     figs.addEventListener("click", onTap, true);
     document.addEventListener("keydown", onKey);
     pinMoveCleanup = () => {
@@ -6545,12 +6781,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const receipt = (u, i) => {
       if (voice) return "";
       const pins = pts.map((pt, n) => ({ pt, n })).filter(({ pt }) => pt.notes.some((x) => x.uttId === i));
-      const nMeas = MEASUREMENT_KEYS.reduce((a, k) => a + (doc.data[k] || []).filter((m) => m.uttId === i).length, 0);
+      /* Name the reading itself. "1 reading → table" told the therapist that
+         SOMETHING went to the measurements and left them to go and find what;
+         "Pain 8/10 → Measurements" is checkable at a glance. */
+      const readings = MEASUREMENT_KEYS.flatMap((k) => (doc.data[k] || []).filter((m) => m.uttId === i).map((m) => readingLabel(k, m)));
       const fields = [...new Set(((u.filed || {}).text || []).map((x) => x.field))];
+      const scores = ((u.filed || {}).outcomes || []).map((o) => { const t = CL.findTool(o.toolId); return t ? `${t.name} ${o.score}${t.unit}` : ""; }).filter(Boolean);
       const bits = [
         ...pins.map(({ pt, n }) => { const sev = severityOf(pt); return `<button class="utt-pin ${sev.cls}" type="button" data-pinjump="${esc(pt.key)}" title="Show pin ${n + 1} on the body map"><span class="badge ${sev.cls}">${n + 1}</span>${esc(`${pt.side ? cap(pt.side) + " " : ""}${pt.part}`)}</button>`; }),
-        nMeas ? `<span class="utt-tag">${nMeas} reading${nMeas > 1 ? "s" : ""} → table</span>` : "",
-        ...fields.map((f) => `<span class="utt-tag">→ ${esc(fieldLabel(doc.type, f))}</span>`),
+        // a reading or a score is data, not a place on the body — no offer to pin it
+        editable && !pins.length && !readings.length && !scores.length ? `<button class="utt-pin add" type="button" data-pinentry="${i}" title="Tap the body map to pin this finding">＋ Pin on body</button>` : "",
+        ...readings.map((r) => `<span class="utt-tag" title="Added to the Objective measurements table">${esc(r)} → Measurements</span>`),
+        ...scores.map((r) => `<span class="utt-tag" title="Recorded under Outcome measures">${esc(r)} → Outcomes</span>`),
+        ...fields.map((f) => `<span class="utt-tag" title="This finding's sentence was added to the end of ${esc(fieldLabel(doc.type, f))}">→ ${esc(fieldLabel(doc.type, f))}</span>`),
+        editable && pins.length ? `<button class="utt-move" type="button" data-pinentry="${i}" title="Take this finding off its pin and give it its own pin where you tap">Re-pin</button>` : "",
       ].filter(Boolean);
       return `<div class="utt-receipt">${bits.length ? bits.join("") : `<span class="utt-tag muted">kept as a note only</span>`}</div>`;
     };
@@ -6569,6 +6813,8 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       </div>`).join("")
       : `<div class="empty-state" style="padding:8px">${dictationOn() ? "Everything said while listening is saved here, word for word." : "Nothing added yet — each finding you enter shows up here as its own point."}</div>`;
     if (!marksByUtt) box.scrollTop = box.scrollHeight;
+    box.querySelectorAll("[data-pinentry]").forEach((b) => b.addEventListener("click", () =>
+      startEntryPlace(doc, dstate, Number(b.dataset.pinentry))));
     box.querySelectorAll("[data-pinjump]").forEach((b) => b.addEventListener("click", () => {
       selectMapPoint(doc, b.dataset.pinjump);
       const g = document.querySelector(`.point-group[data-key="${CSS.escape(b.dataset.pinjump)}"]`);
@@ -6582,12 +6828,19 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
         el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
         el.addEventListener("blur", () => {
           const i = Number(el.dataset.edittext);
+          const u = doc.data.transcript[i];
           const v = el.textContent.trim();
-          if (v && doc.data.transcript[i] && v !== doc.data.transcript[i].text) {
-            doc.data.transcript[i].text = v;
-            doc.data.transcript[i].edited = true;
+          if (!u) return;
+          if (!v) { el.textContent = u.text; return; }
+          if (v === u.text) return;
+          /* Recorded speech is the verbatim record: correcting a misheard word
+             fixes the transcript, it does not re-file the visit. */
+          if (voice) {
+            u.text = v; u.edited = true;
             S.updateDocData(doc.id, doc.data, user);
+            return;
           }
+          checkEntryEdit(doc, user, dstate, i, v, el);
         });
       });
       const relabel = (i) => {
@@ -6632,14 +6885,13 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
 
      Entries are addressed by position (uttId), so every later entry's pins and
      readings move down one. A short Undo puts the whole note back. */
-  function deleteEntry(doc, user, i, dstate) {
-    const d = doc.data;
+  /* Take back everything entry i put in the note, leaving the entry itself.
+     Returns the sections whose text had been edited by hand since (left as
+     the therapist wrote them) and whether an outcome score changed. */
+  function unfileEntry(d, i, keepPins) {
     const entry = (d.transcript || [])[i];
-    if (!entry) return;
-    const before = JSON.parse(JSON.stringify(d));
-    const filed = entry.filed || {};
+    const filed = (entry && entry.filed) || {};
     const keptIn = [];
-
     (filed.text || []).forEach(({ field, sentence }) => {
       const next = removeSentence(d[field], sentence);
       if (next === null) { if (!keptIn.includes(field)) keptIn.push(field); }
@@ -6654,8 +6906,87 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (o.prev == null) d.outcomes = d.outcomes.filter((x) => x !== cur); else cur.score = o.prev;
       outcomesChanged = true;
     });
-    d.mapPoints = (d.mapPoints || []).map((pt) => Object.assign(pt, { notes: pt.notes.filter((n) => n.uttId !== i) }))
-      .filter((pt) => pt.notes.length);
+    if (!keepPins) {
+      d.mapPoints = (d.mapPoints || []).map((pt) => Object.assign(pt, { notes: pt.notes.filter((n) => n.uttId !== i) }))
+        .filter((pt) => pt.notes.length);
+    }
+    return { keptIn, outcomesChanged };
+  }
+
+  /* An edited finding is filed again from its new wording — its sentence in
+     Subjective, its readings, its scores and (unless kept) its pins — so the
+     note never keeps saying what the finding no longer says. */
+  function refileEntry(doc, user, dstate, i, text, keepPins) {
+    const d = doc.data;
+    const before = JSON.parse(JSON.stringify(d));
+    const { keptIn } = unfileEntry(d, i, keepPins);
+    routeUtterance(doc, user, text, dstate, true, { at: i, keepPins, skipFields: keptIn });
+    S.updateDocData(doc.id, d, user);
+    redrawEntryEffects(doc, user, dstate, true);
+    const log = document.getElementById("routeLog");
+    if (!log) return;
+    log.innerHTML = `Finding ${i + 1} updated${keptIn.length
+      ? ` — ${keptIn.map((f) => esc(fieldLabel(doc.type, f))).join(", ")} had been edited by hand, so it was left as you wrote it`
+      : ", and the note with it"}. <button class="btn-link" id="undoEditEntry" type="button">Undo</button>`;
+    document.getElementById("undoEditEntry").addEventListener("click", () => {
+      Object.keys(d).forEach((k) => { if (!(k in before)) delete d[k]; });
+      Object.assign(d, before);
+      S.updateDocData(doc.id, d, user);
+      redrawEntryEffects(doc, user, dstate, true);
+      log.textContent = "Edit undone.";
+    });
+  }
+
+  /* Before an edit is filed: does the new wording name a different body
+     area from the pin this finding is on? "Head pain" rewritten as "Knee
+     pain" would otherwise leave the pin on the head, or — re-filed silently —
+     move it without the therapist noticing. So when the area changes, say
+     what the pin will become and let them choose. */
+  function checkEntryEdit(doc, user, dstate, i, text, el) {
+    const pts = doc.data.mapPoints || [];
+    const mine = pts.map((pt, n) => ({ pt, n })).filter(({ pt }) => pt.notes.some((x) => x.uttId === i));
+    const parsed = PR.parseUtterance(text);
+    const names = [...new Map(parsed.mentions.map((m) => [`${m.partName}|${m.side || ""}`, pinLabel(m.partName, m.side)])).values()];
+    const oldKeys = new Set(mine.map(({ pt }) => `${pt.part}|${pt.side || ""}`));
+    const newKeys = new Set(parsed.mentions.map((m) => `${m.partName}|${m.side || ""}`));
+    const same = oldKeys.size === newKeys.size && [...oldKeys].every((k) => newKeys.has(k));
+    if (same) return refileEntry(doc, user, dstate, i, text, false);
+
+    const list = (a) => a.map((x) => `<b>${esc(x)}</b>`).join(" and ");
+    const was = list(mine.map(({ pt, n }) => `pin ${n + 1}, ${pinLabel(pt.part, pt.side)}`));
+    const now = list(names);
+    const msg = !mine.length
+      ? `Finding ${i + 1} now names ${now}. It isn't pinned yet — pin it there?`
+      : !names.length
+        ? `Finding ${i + 1} no longer names a body area. It is still on ${was}.`
+        : `Finding ${i + 1} now names ${now}, but it is pinned on ${was}.`;
+    const acts = !names.length
+      ? [["keep", `Keep it on ${mine.map(({ pt }) => pinLabel(pt.part, pt.side)).join(" & ")}`], ["move", "Remove the pin"], ["undo", "Undo my edit"]]
+      : !mine.length
+        ? [["move", `Pin to ${names.join(" & ")}`], ["keep", "Save without a pin"], ["undo", "Undo my edit"]]
+        : [["move", `Move it to ${names.join(" & ")}`], ["keep", `Keep it on ${mine.map(({ pt }) => pinLabel(pt.part, pt.side)).join(" & ")}`], ["undo", "Undo my edit"]];
+    const body = el.closest(".utt-body");
+    const old = body.querySelector(".utt-edit-check");
+    if (old) old.remove();
+    body.insertAdjacentHTML("beforeend", `<div class="utt-edit-check" role="alertdialog" aria-label="Body area changed">
+      ${msg}
+      <div class="acts">${acts.map(([a, label], k) => `<button class="btn small${k === 0 ? " primary" : ""}" type="button" data-editact="${a}">${esc(label)}</button>`).join("")}</div>
+    </div>`);
+    const box = body.querySelector(".utt-edit-check");
+    box.querySelectorAll("[data-editact]").forEach((b) => b.addEventListener("click", () => {
+      const a = b.dataset.editact;
+      if (a === "undo") { box.remove(); el.textContent = doc.data.transcript[i].text; return; }
+      refileEntry(doc, user, dstate, i, text, a === "keep");
+    }));
+    box.querySelector("[data-editact]").focus();
+  }
+
+  function deleteEntry(doc, user, i, dstate) {
+    const d = doc.data;
+    const entry = (d.transcript || [])[i];
+    if (!entry) return;
+    const before = JSON.parse(JSON.stringify(d));
+    const { keptIn, outcomesChanged } = unfileEntry(d, i, false);
 
     d.transcript.splice(i, 1);
     const shift = (o) => { if (o && typeof o.uttId === "number" && o.uttId > i) o.uttId -= 1; };
@@ -9040,17 +9371,25 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     return n;
   }
 
-  function routeUtterance(doc, user, raw, dstate, silent) {
+  /* opts (all optional) re-file an entry that is already in the list:
+       at         its index — the entry is rewritten in place, not appended
+       keepPins   leave its pins exactly as they are (the therapist chose to)
+       skipFields sections NOT to append to — ones the therapist has edited by
+                  hand, where the old sentence could not be taken back out */
+  function routeUtterance(doc, user, raw, dstate, silent, opts) {
+    const o = opts || {};
     const parsed = PR.parseUtterance(raw);
     if (!parsed.text) return;
-    const time = nowTime();
     if (!doc.data.transcript) doc.data.transcript = [];
-    const uttId = doc.data.transcript.length;
+    const redo = o.at != null && !!doc.data.transcript[o.at];
+    const time = redo ? doc.data.transcript[o.at].time || nowTime() : nowTime();
+    const uttId = redo ? o.at : doc.data.transcript.length;
     /* `filed` is the entry's receipt: the sentences it appended and the
        outcome scores it set, so deleting the entry can undo exactly that.
        Pins and readings carry the entry's uttId themselves. */
     const filed = { text: [], outcomes: [] };
-    doc.data.transcript.push({ time, text: parsed.text, filed });
+    if (redo) Object.assign(doc.data.transcript[o.at], { text: parsed.text, filed, edited: true });
+    else doc.data.transcript.push({ time, text: parsed.text, filed });
 
     const routed = [];
     const nMeas = mergeMeasurements(doc, parsed.measurements, uttId);
@@ -9089,12 +9428,20 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     const pinnable = parsed.mentions.filter(
       (m) => !((nMeas || clinician || notAComplaint) && m.summary.startsWith("Mentioned this area"))
     );
-    for (const m of pinnable) addDocMapPoint(doc, m, uttId, time);
+    if (!o.keepPins) for (const m of pinnable) addDocMapPoint(doc, m, uttId, time);
     /* A loose signal attaches to whatever was pinned last, which is right for
        a follow-up ("about a seven out of ten") and wrong for a section that
        is not about the complaint at all — "no lifting for SIX WEEKS" is the
        precaution's duration, and it was landing on the shoulder. */
-    if (!parsed.mentions.length && parsed.loose && !notAComplaint && (doc.data.mapPoints || []).length) {
+    /* Only while LISTENING. A typed finding is a point the therapist entered
+       on purpose, not the next breath of the same complaint — "Waist
+       tightness" typed under "Front head damage" was being filed on the head
+       pin. Typed, it is left unpinned and the entry offers "Pin on body". */
+    if (o.keepPins) {
+      // the therapist kept this finding's pins as they were — nothing to do
+    } else if (!parsed.mentions.length && parsed.loose && !notAComplaint && !dictationOn()) {
+      routed.push("no body area recognised — use “Pin on body” to place it");
+    } else if (!parsed.mentions.length && parsed.loose && !notAComplaint && (doc.data.mapPoints || []).length) {
       const pt = doc.data.mapPoints[doc.data.mapPoints.length - 1];
       pt.notes.push({ time, summary: parsed.loose.summary, quote: parsed.loose.quote, uttId, marks: [[0, parsed.text.length, false]] });
       routed.push(`follow-up → ${pt.part}`);
@@ -9116,6 +9463,7 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       if (!clinical) { heldBack += 1; continue; }
       const field = fieldForSentence(doc.type, clinical, voice);
       if (!field) { heldBack += 1; continue; }
+      if ((o.skipFields || []).includes(field)) continue;
       appendField(doc, field, cap(clinical), silent);
       filed.text.push({ field, sentence: cap(clinical) });
       if (!filedTo.includes(field)) filedTo.push(field);
@@ -9211,8 +9559,12 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
      when the two disagree. */
 
   const FIELD_SOURCES = {
+    /* Referral, precautions and history file only when a finding reads like
+       one ("referred by Dr. Santos…", "history of diabetes"). Ordinary
+       findings never do, so in practice the therapist writes these from the
+       referral and intake — "Filled from your findings" over-promised. */
     eval: {
-      reason: "filled", precautions: "filled", pmh: "filled",
+      reason: "drafted", precautions: "drafted", pmh: "drafted",
       subjective: "filled", objectiveText: "filled",
       assessment: "drafted", plan: "yours",
     },
