@@ -2215,13 +2215,34 @@
     return { doc };
   }
 
-  /** Lock + e-sign. typedName must match the signing user's name. */
+  /* The name a person SIGNS with: their name, without the credentials and
+     titles that ride along on the account ("Maria Santos, PT" → "Maria Santos",
+     "Grace Lim, PT (Admin)" → "Grace Lim", "Dr. Ana Cruz" → "Ana Cruz").
+     Generational suffixes are part of a name and stay ("Juan Cruz, Jr., PT" →
+     "Juan Cruz, Jr."). The signature RECORD still carries the full registered
+     name, credentials and all, as a signature line should. */
+  const NAME_SUFFIX = /^(jr|sr|ii|iii|iv|v)\.?$/i;
+  function signatureName(name) {
+    const parts = String(name || "").replace(/\([^)]*\)/g, " ").split(",").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+    if (!parts.length) return "";
+    let out = parts[0].replace(/^(dr|mr|mrs|ms|mx|prof)\.?\s+/i, "");
+    for (const p of parts.slice(1)) { if (NAME_SUFFIX.test(p)) out += ", " + p; else break; }
+    return out;
+  }
+  /* What counts as typing your name: the bare name (what the form asks for),
+     or — so nobody is refused for being thorough — the full registered name.
+     Case and runs of spaces don't matter; the letters do. */
+  const normSig = (x) => String(x || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const typedNameMatches = (typed, user) =>
+    [signatureName(user.name), user.name].some((n) => n && normSig(typed) === normSig(n));
+
+  /** Lock + e-sign. typedName must be the signing user's name (see signatureName). */
   function signDoc(docId, byUser, typedName, reason) {
     const doc = getDoc(docId);
     if (!doc) return { error: "Document not found." };
     if (!canDocument(byUser)) return { error: "Your license does not allow signing documents." };
-    if (typedName.trim().toLowerCase() !== byUser.name.trim().toLowerCase())
-      return { error: "Typed name must exactly match your registered name to e-sign." };
+    if (!typedNameMatches(typedName, byUser))
+      return { error: `Type your name exactly as registered — ${signatureName(byUser.name)} — to e-sign.` };
     doc.signatures.push({
       userId: byUser.id, name: byUser.name,
       license: byUser.license ? byUser.license.number : null,
@@ -2242,8 +2263,8 @@
     if (!doc) return { error: "Document not found." };
     if (!canDocument(byUser)) return { error: "Your license does not allow amending documents." };
     if (doc.status !== "signed") return { error: "Only signed documents can be amended." };
-    if (typedName.trim().toLowerCase() !== byUser.name.trim().toLowerCase())
-      return { error: "Typed name must exactly match your registered name to e-sign." };
+    if (!typedNameMatches(typedName, byUser))
+      return { error: `Type your name exactly as registered — ${signatureName(byUser.name)} — to e-sign.` };
     if (!amendText.trim()) return { error: "Amendment text is required." };
     if (!reason || !reason.trim()) return { error: "An authorization reason is required to amend a locked document." };
     doc.amendments.push({
@@ -2759,7 +2780,7 @@
     // operator-only (server gates these to the platform owner)
     createClinic, clinicSummaries, setClinicActive, deleteClinic,
     // users/auth — users() is global (login/roster lookups); staff() is clinic-scoped
-    users: () => load().users, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
+    users: () => load().users, signatureName, staff: () => load().users.filter(mine), getUser, getUserByEmail, findUserByLogin, login, loginAsDemo, logout, currentUser,
     setAuthenticator, verifyPassword, setPassword, hashLegacyPins, stripDemoCredentials, ensureEmails, ensureDemoAccounts, addUser, upsertGoogleUser, deleteUser,
     licenseExpired, licenseExpiresSoon, canAccessEmr, canDocument, canSetPrices,
     // which accounts are seeded demo logins (never infer this from the email domain)

@@ -111,6 +111,16 @@
     building: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M15 21V10h2a2 2 0 0 1 2 2v9"/><path d="M9 7h2M9 11h2M9 15h2"/></svg>',
   };
 
+  /* How much of the top of the window the app's own bar covers. On a phone the
+     sidebar becomes a FIXED top bar, so anything scrolled to "the top" lands
+     underneath it; on a wide screen it is a side rail and covers nothing. */
+  function topBarCover() {
+    const bar = document.querySelector(".sidebar");
+    if (!bar || getComputedStyle(bar).position !== "fixed") return 0;
+    const r = bar.getBoundingClientRect();
+    return r.top <= 0 && r.width > window.innerWidth / 2 ? Math.max(0, r.bottom) : 0;
+  }
+
   /* scroll memory: return to where you were when navigating back */
   const scrollMem = {};
   function restoreScroll(hash) {
@@ -602,15 +612,17 @@
   let chartOrigin = ORIGINS.patients;
   let prevHash = "";
   const routeOf = (hash) => ((hash || "").replace(/^#\//, "").split("/")[0] || "dashboard").split("?")[0];
+  const PAT_ALL = /^#\/patients\?all=1/; // the full patient list, vs the search screen
   function noteNavigation(from, to) {
     prevHash = from === "" || from === "#/" ? "#/dashboard" : from; // home is reached at #/ too
     if (CHART_ROUTES.includes(routeOf(to)) && !CHART_ROUTES.includes(routeOf(from))) {
       chartOrigin = ORIGINS[routeOf(from)] || ORIGINS.patients;
+      if (routeOf(from) === "patients" && PAT_ALL.test(from)) chartOrigin = { label: "All patients", hash: from };
     }
   }
   // which main nav entry is "where we are": a chart counts under its origin
   const navActive = (navHash, hash) => hash.startsWith(navHash) ||
-    (CHART_ROUTES.includes(routeOf(hash)) && navHash === chartOrigin.hash);
+    (CHART_ROUTES.includes(routeOf(hash)) && routeOf(navHash) === routeOf(chartOrigin.hash));
 
   /* Breadcrumb trail for the current location — powers the back button and
      the "remember where I was" navigation inside a patient. */
@@ -622,7 +634,10 @@
       const p = S.getPatient(pid);
       if (p) trail.push({ label: S.patientName(p), hash: `#/patient/${pid}` });
     };
-    if (route === "patients") trail.push({ label: "Patients", hash: "#/patients" });
+    if (route === "patients") {
+      trail.push({ label: "Patients", hash: "#/patients" });
+      if (PAT_ALL.test(hash)) trail.push({ label: "All patients", hash });
+    }
     else if (route === "patient") { trail.push(chartOrigin); patientCrumb((seg[1] || "").split("?")[0]); }
     else if (route === "doc") {
       const d = S.getDoc(seg[1]);
@@ -687,7 +702,14 @@
     h.focus();
   });
 
+  let lastTabIdx = -1; // where the bottom tab pill sat on the previous screen
+  /* Which screen the shell last drew, and a count of draws. A page transition
+     runs its redraw a frame or more after the hashchange; if the screen was
+     already drawn for that hash in between (sign-in draws the dashboard itself,
+     a tile tap redraws it), the late redraw would wipe what the user just did. */
+  let shellSeq = 0, shellHash = "";
   function renderShell(hash, content, user, bind) {
+    shellSeq += 1; shellHash = hash;
     const emrAllowed = S.canAccessEmr(user);
     // the patient assistant drawer is available whenever a patient chart is open
     const drawerPid = /^#\/patient\//.test(hash) ? (hash.split("/")[2] || "").split("?")[0] : null;
@@ -717,8 +739,11 @@
     const primaryNav = NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash));
     const isTabActive = (n) => navActive(n.hash, hash);
     const activeTabIdx = primaryNav.findIndex(isTabActive);
+    /* The whole shell is redrawn on every route, so a pill drawn straight at
+       its new index never slides. Draw it where it WAS, then move it below. */
+    const pillFrom = activeTabIdx >= 0 && lastTabIdx >= 0 ? lastTabIdx : activeTabIdx;
     const tabbar = `
-      <nav class="tabbar" aria-label="Main tabs" style="--tab-count:${primaryNav.length}; --tab-index:${activeTabIdx < 0 ? 0 : activeTabIdx}">
+      <nav class="tabbar" aria-label="Main tabs" style="--tab-count:${primaryNav.length}; --tab-index:${pillFrom < 0 ? 0 : pillFrom}">
         <span class="tab-pill ${activeTabIdx < 0 ? "hidden" : ""}" aria-hidden="true"></span>
         ${primaryNav.map((n) => {
           const disabled = n.emr && !emrAllowed;
@@ -837,6 +862,12 @@
     if (bind) bind(user);
     if (drawerPid) wireAssistantDrawer(drawerPid, user);
     restoreScroll(hash);
+    const tabNav = app.querySelector(".tabbar");
+    if (tabNav && pillFrom !== activeTabIdx && activeTabIdx >= 0) {
+      void tabNav.offsetWidth; // commit the old position so the change transitions
+      tabNav.style.setProperty("--tab-index", activeTabIdx);
+    }
+    lastTabIdx = activeTabIdx;
   }
 
   /* Mounts the patient assistant into the left drawer and wires its launchers.
@@ -2274,15 +2305,16 @@ ${walkthroughMarkup()}`;
 
     /* Each tile carries an icon in its category's colour — the same colour as
        the queue section it jumps to — so the four read apart before the label
-       is read. The tile's tint still says how urgent it is. */
+       is read. The tiles themselves stay plain white: the count is the signal,
+       and urgency is shown once, on the items in the queue below. */
     const TILE_ICONS = {
       notes: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
       visits: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="M12 13v3l2 1.2"/>',
       progress: '<path d="M4 19h16"/><path d="m5 15 4.5-4.5 3.5 3.5L19 8"/><path d="M15 8h4v4"/>',
       follow: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
     };
-    const tile = (num, label, target, tone, icon, kind) => `
-      <a class="stat-tile ${num && tone ? tone : ""}" href="#q-${target}" data-qjump="${target}"${kind ? ` data-qkindjump="${kind}"` : ""}>
+    const tile = (num, label, target, icon, kind) => `
+      <a class="stat-tile" href="#q-${target}" data-qjump="${target}"${kind ? ` data-qkindjump="${kind}"` : ""}>
         <span class="stat-ico ico-${icon}" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${TILE_ICONS[icon]}</svg></span>
         <div class="stat-num">${num}</div><div class="stat-label">${label}</div></a>`;
 
@@ -2534,10 +2566,10 @@ ${walkthroughMarkup()}`;
 <div class="dash-summary">${who && !isMe ? `${esc(who.name)} — ` : ""}${summary}</div>
 
 <div class="stat-tiles">
-  ${tile(w.drafts.length, "Unsigned notes", "drafts", w.overdueDrafts.length ? "danger" : "accent", "notes")}
-  ${tile(w.visits.length, `Visits today${w.visitsNoNote.length ? ` · ${w.visitsNoNote.length} without a note` : ""}`, "today", w.visitsNoNote.length ? "accent" : "", "visits")}
-  ${tile(w.progressDue.length, "Progress reports due", "follow", "accent", "progress", w.progressDue.length ? "progress" : "")}
-  ${tile(w.followUps.length - w.progressDue.length + w.licences.length + w.requests.length, "Other follow-ups", "follow", "accent", "follow")}
+  ${tile(w.drafts.length, "Unsigned notes", "drafts", "notes")}
+  ${tile(w.visits.length, `Visits today${w.visitsNoNote.length ? ` · ${w.visitsNoNote.length} without a note` : ""}`, "today", "visits")}
+  ${tile(w.progressDue.length, "Progress reports due", "follow", "progress", w.progressDue.length ? "progress" : "")}
+  ${tile(w.followUps.length - w.progressDue.length + w.licences.length + w.requests.length, "Other follow-ups", "follow", "follow")}
 </div>
 
 <div class="work-queue" id="workQueue">
@@ -2819,7 +2851,8 @@ ${team}`;
       if (!el) return;
       // the redraw restores the remembered scroll next frame; make the section
       // the remembered spot so that restore lands here too
-      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - 16);
+      // land the section's header just under the fixed top bar, not behind it
+      const top = Math.max(0, el.getBoundingClientRect().top + window.scrollY - topBarCover() - 16);
       scrollMem[location.hash || "#/dashboard"] = top;
       window.scrollTo({ top, behavior: "smooth" });
       el.classList.add("q-flash");
@@ -2962,42 +2995,111 @@ ${team}`;
 
   /* ================= PATIENTS LIST ================= */
 
+  /* Patients opens on a search box, not a roster: a clinician looking for one
+     person types a few letters and taps them. The whole list is one tap away
+     ("Show all patients", #/patients?all=1) and the same box filters it there.
+     The query survives a trip into a chart and Back, so a near-miss search
+     doesn't have to be retyped. */
+  let patQuery = "";
+  const patHay = (p) => [p.firstName, p.lastName, p.preferredName, S.patientName(p), p.phone, p.referringPhysician].join(" ").toLowerCase();
+  // every typed word must appear somewhere: "mateo villa" finds "Villanueva, Mateo"
+  const patMatches = (q) => {
+    const words = (q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    return S.patients()
+      .filter((p) => words.every((w) => patHay(p).includes(w)))
+      .sort((a, b) => (a.lastName < b.lastName ? -1 : a.lastName > b.lastName ? 1 : 0));
+  };
+
   function patientsView(user) {
-    return `
+    const all = PAT_ALL.test(location.hash || "");
+    const count = S.patients().length;
+    const search = `<div class="pat-search">
+    <svg class="pat-search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="patSearch" type="search" autocomplete="off" spellcheck="false" aria-label="${all ? "Filter patients" : "Search patients"}"
+      placeholder="${all ? "Filter by name, phone, or physician…" : "Search a patient by name, phone, or physician…"}" value="${esc(patQuery)}"${all ? "" : ` aria-controls="patResults"`} />
+  </div>`;
+    if (all) return `
 <div class="page-head">
-  <div><h1>Patients</h1><div class="sub">Select a patient to open their chart</div></div>
+  <div><h1>All patients</h1><div class="sub">${count} patient${count === 1 ? "" : "s"} · type to filter</div></div>
   <div class="page-actions"><a class="btn primary" href="#/intake">+ New patient intake</a></div>
 </div>
 <div class="card">
-  <div class="field"><input id="patSearch" type="search" aria-label="Search patients" placeholder="Search by name, phone, or physician…" /></div>
+  ${search}
   <div class="table-scroll"><table class="list" id="patTable">
     <thead><tr><th>Name</th><th>DOB</th><th>Phone</th><th>Referring physician</th><th>Visits</th><th></th></tr></thead>
     <tbody></tbody>
   </table></div>
 </div>`;
+    return `
+<div class="page-head">
+  <div><h1>Patients</h1><div class="sub">Find a patient to open their chart</div></div>
+  <div class="page-actions"><a class="btn primary" href="#/intake">+ New patient intake</a></div>
+</div>
+<div class="card pat-finder">
+  ${search}
+  <div id="patResults" class="pat-results" role="listbox" aria-label="Matching patients"></div>
+  ${count ? `<div class="pat-foot"><a class="btn" id="patShowAll" href="#/patients?all=1">Show all patients <span class="pat-count">${count}</span></a></div>` : ""}
+</div>`;
   }
 
   function bindPatients() {
-    const tbody = document.querySelector("#patTable tbody");
-    const draw = (q) => {
-      const ql = (q || "").toLowerCase();
-      const rows = S.patients()
-        .filter((p) => !ql || [p.firstName, p.lastName, p.phone, p.referringPhysician].join(" ").toLowerCase().includes(ql))
-        .sort((a, b) => (a.lastName < b.lastName ? -1 : 1))
-        // data-label names each cell for the phone layout, where the table
-        // becomes one card per patient (styles.css, #patTable)
-        .map((p) => `<tr class="rowlink" data-href="#/patient/${p.id}">
+    const input = document.getElementById("patSearch");
+    if (PAT_ALL.test(location.hash || "")) {
+      const tbody = document.querySelector("#patTable tbody");
+      const draw = (q) => {
+        const rows = patMatches(q)
+          // data-label names each cell for the phone layout, where the table
+          // becomes one card per patient (styles.css, #patTable)
+          .map((p) => `<tr class="rowlink" data-href="#/patient/${p.id}">
           <td class="pt-name"><a class="row-link" href="#/patient/${p.id}"><b>${esc(S.patientName(p))}</b></a></td>
           <td class="num pt-dob" data-label="Born">${esc(p.dob)} (${age(p.dob)})</td>
           <td class="num pt-phone" data-label="Phone">${esc(p.phone)}</td>
           <td class="pt-doc" data-label="Referred by">${esc(p.referringPhysician || "—")}</td>
           <td class="num pt-visits" data-label="Visits">${S.visitCount(p.id)}${S.progressDue(p.id) ? ' <span class="chip info">progress due</span>' : ""}</td>
           <td class="pt-open"><span class="chip muted">open →</span></td></tr>`).join("");
-      tbody.innerHTML = rows || `<tr><td colspan="6"><div class="empty-state">No patients found.</div></td></tr>`;
-      bindRowLinks();
+        tbody.innerHTML = rows || `<tr><td colspan="6"><div class="empty-state">No patients match “${esc(q)}”.</div></td></tr>`;
+        bindRowLinks();
+      };
+      draw(patQuery);
+      input.addEventListener("input", (e) => { patQuery = e.target.value; draw(patQuery); });
+      return;
+    }
+    const box = document.getElementById("patResults");
+    const MAX = 8;
+    const draw = (q) => {
+      if (!S.patients().length) {
+        box.innerHTML = `<div class="pat-hint">No patients found in this clinic yet. <a href="#/intake">Start the first intake</a></div>`;
+        return;
+      }
+      if (!q.trim()) {
+        box.innerHTML = `<div class="pat-hint">Start typing — matching patients appear here.</div>`;
+        return;
+      }
+      const hits = patMatches(q);
+      if (!hits.length) {
+        box.innerHTML = `<div class="pat-hint">No patients match “${esc(q.trim())}”. <a href="#/intake">Start a new intake</a></div>`;
+        return;
+      }
+      box.innerHTML = hits.slice(0, MAX).map((p) => {
+        const meta = [p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · ");
+        return `<a class="pat-hit" role="option" href="#/patient/${p.id}">
+          <span class="pat-hit-av" aria-hidden="true">${esc(initials(S.patientName(p)))}</span>
+          <span class="pat-hit-main"><b>${esc(S.patientName(p))}</b><small>${esc(meta)}</small></span>
+          ${S.progressDue(p.id) ? '<span class="chip info">progress due</span>' : ""}
+          <span class="pat-hit-go" aria-hidden="true">›</span></a>`;
+      }).join("") + (hits.length > MAX
+        ? `<a class="pat-more" href="#/patients?all=1">${hits.length - MAX} more match — see them in the full list</a>` : "");
     };
-    draw("");
-    document.getElementById("patSearch").addEventListener("input", (e) => draw(e.target.value));
+    draw(patQuery);
+    input.addEventListener("input", (e) => { patQuery = e.target.value; draw(patQuery); });
+    // Enter opens the top match, so typing a name and pressing Enter is enough
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const first = box.querySelector(".pat-hit");
+      if (first) { e.preventDefault(); location.hash = first.getAttribute("href"); }
+    });
+    // a fresh visit puts the cursor in the box; a return from a chart keeps the page as it was
+    if (!patQuery && window.matchMedia("(hover: hover)").matches) input.focus({ preventScroll: true });
   }
 
   /* ================= INTAKE ================= */
@@ -11178,7 +11280,7 @@ ${spent.billed
 ${pending ? `<div class="banner warn">△ ${pending} dictated segment${pending > 1 ? "s are" : " is"} still being transcribed — wait for them to land before signing, or they will need an amendment.</div>` : ""}
 ${blanks.length ? `<div class="banner warn">△ Still empty: <b>${blanks.map(esc).join(", ")}</b>. You can sign anyway, but filling these in now avoids an amendment later.</div>` : ""}
 <p style="font-size:13px; color:var(--muted)">Signing certifies this documentation is accurate and complete. The document will lock; later changes require a signed amendment with an authorization reason.</p>
-<div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="sigName" autocomplete="off" /></div>
+<div class="field"><label>Type your name to sign (${esc(S.signatureName(user.name))})</label><input id="sigName" autocomplete="off" autocapitalize="words" spellcheck="false" /></div>
 ${isGoogleAccount(user)
   ? `<div class="field"><label>Confirm it's you</label>
        <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
@@ -11208,6 +11310,7 @@ ${isGoogleAccount(user)
     }
     m.querySelector("#sigCancel").addEventListener("click", closeModal);
     m.querySelector("#sigOk").addEventListener("click", async () => {
+      if (window.TheraFeel) window.TheraFeel.prime(); // unlock audio inside the tap, before any await
       const err = m.querySelector("#sigErr");
       err.style.color = "";
       if (isGoogleAccount(user)) {
@@ -11218,6 +11321,7 @@ ${isGoogleAccount(user)
       deleteSessionAudio(doc.id); // signing locks the note — the review audio is no longer needed
       closeModal();
       render();
+      if (window.TheraFeel) window.TheraFeel.signed("Signed &amp; locked");
     });
   }
 
@@ -11227,7 +11331,7 @@ ${isGoogleAccount(user)
 <p style="font-size:13px; color:var(--muted)">The original stays intact. Your amendment is appended with your e-signature and an authorization reason, and is recorded in the audit log.</p>
 <div class="field"><label>Amendment text *</label><textarea id="amText" rows="3"></textarea></div>
 <div class="field"><label>Authorization reason *</label><input id="amReason" placeholder="e.g. Documentation error, late entry…" /></div>
-<div class="field"><label>Type your full registered name (${esc(user.name)})</label><input id="amName" autocomplete="off" /></div>
+<div class="field"><label>Type your name to sign (${esc(S.signatureName(user.name))})</label><input id="amName" autocomplete="off" autocapitalize="words" spellcheck="false" /></div>
 ${isGoogleAccount(user)
   ? `<div class="field"><label>Confirm it's you</label>
        <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px">You sign in with Google, so confirm with Google instead of a password.</div>
@@ -11255,6 +11359,7 @@ ${isGoogleAccount(user)
     }
     m.querySelector("#amCancel").addEventListener("click", closeModal);
     m.querySelector("#amOk").addEventListener("click", async () => {
+      if (window.TheraFeel) window.TheraFeel.prime();
       const err = m.querySelector("#amErr");
       err.style.color = "";
       if (isGoogleAccount(user)) {
@@ -11265,6 +11370,7 @@ ${isGoogleAccount(user)
       if (res.error) { err.textContent = res.error; return; }
       closeModal();
       render();
+      if (window.TheraFeel) window.TheraFeel.signed("Amendment signed");
     });
   }
 
@@ -13043,10 +13149,24 @@ ${accessRequestsCard()}
       ? `<p style="font-size:12.5px; color:var(--muted); margin:12px 0 0">You sign in with your Google account, so there's no separate TheraChart password to manage here.</p>`
       : `<button class="btn" id="openPwBtn" style="margin-top:12px">Change password</button>`}
   </div>
+  <div class="card">
+    <h2>Sound &amp; feel</h2>
+    <label class="feel-toggle"><input type="checkbox" id="feelSounds" ${window.TheraFeel && window.TheraFeel.soundsOn() ? "checked" : ""} />
+      <span><b>Play a sound when a note is signed</b><small>A soft click on Sign &amp; lock. Saved on this device only — turn it off for quiet rooms.</small></span></label>
+    <button class="btn small" id="feelTest" type="button" style="margin-top:10px">Play it</button>
+  </div>
 </div>`;
   }
 
   function bindProfile(user) {
+    const feelBox = document.getElementById("feelSounds");
+    if (feelBox && window.TheraFeel) {
+      feelBox.addEventListener("change", () => {
+        window.TheraFeel.setSounds(feelBox.checked);
+        if (feelBox.checked) window.TheraFeel.playPop();
+      });
+      document.getElementById("feelTest").addEventListener("click", () => window.TheraFeel.signed("Signed &amp; locked"));
+    }
     const openBtn = document.getElementById("openPwBtn");
     if (!openBtn) return; // Google accounts have no local password to change
     openBtn.addEventListener("click", () => {
@@ -13096,9 +13216,25 @@ ${accessRequestsCard()}
     const h = location.hash || "";
     if (h === SIGNIN_ROUTE) showLogin = true;
     else if (h === "" || h === "#/") showLogin = false;
-    // finally: a screen whose binding throws part-way has still been drawn,
-    // and its heading should still be announced
-    try { render(); } finally { focusRouteHeading(); }
+    const from = e.oldURL ? (new URL(e.oldURL).hash || "") : "";
+    const seqAtChange = shellSeq;
+    /* Only a navigation animates. The sync layer's re-renders (TheraRender) and
+       a save's own render() go straight through, so data arriving never makes
+       the page slide. The scroll is put back INSIDE the transition so the new
+       page is captured where it will rest, not jumped afterwards. */
+    const draw = () => {
+      // already drawn for this hash since the event fired — don't draw it twice
+      if (shellSeq !== seqAtChange && shellHash === (location.hash || "#/dashboard")) return;
+      // finally: a screen whose binding throws part-way has still been drawn,
+      // and its heading should still be announced
+      try { render(); } finally { focusRouteHeading(); }
+      window.scrollTo(0, scrollMem[location.hash || "#/dashboard"] || 0);
+    };
+    /* Already on screen (sign-in draws the dashboard itself, then sets the
+       hash): nothing to animate, and a transition here would only snapshot the
+       page while the user may already be tapping it. */
+    const alreadyDrawn = shellHash === (h || "#/dashboard");
+    if (window.TheraFeel && !alreadyDrawn) window.TheraFeel.navigate(from, h, draw); else draw();
   });
   // remember scroll position per screen so Back returns you where you were
   window.addEventListener("scroll", () => { scrollMem[location.hash || "#/dashboard"] = window.scrollY; }, { passive: true });

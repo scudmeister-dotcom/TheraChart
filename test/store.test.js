@@ -291,6 +291,23 @@ check("access request/approve/decline are audited",
 
 store.resetAll(); // leave a clean seed behind
 
+// --- the signing name: the person, not their credentials ----------------
+const sn = store.signatureName;
+check("credentials after a comma are not part of the signing name", sn("Maria Santos, PT") === "Maria Santos", sn("Maria Santos, PT"));
+check("a role in brackets is dropped too", sn("Grace Lim, PT (Admin)") === "Grace Lim", sn("Grace Lim, PT (Admin)"));
+check("several credentials are all dropped", sn("Ana Reyes, PT, DPT, OCS") === "Ana Reyes");
+check("an honorific is dropped", sn("Dr. Ana Cruz") === "Ana Cruz" && sn("Dr Ana Cruz") === "Ana Cruz");
+check("a generational suffix is kept — it is part of the name", sn("Juan Cruz, Jr., PT") === "Juan Cruz, Jr.", sn("Juan Cruz, Jr., PT"));
+check("a plain name is untouched", sn("Ana Dela Cruz") === "Ana Dela Cruz");
+{
+  const { doc: d2 } = store.createDoc("p-juan", "daily", maria);
+  const r = store.signDoc(d2.id, maria, "  maria   santos ", "");
+  check("signing with just your name works (any case, stray spaces)", !r.error, JSON.stringify(r));
+  check("the signature record still carries the full registered name", r.doc && r.doc.signatures[0].name === "Maria Santos, PT");
+  const { doc: d3 } = store.createDoc("p-juan", "daily", maria);
+  check("someone else's name still cannot sign", !!store.signDoc(d3.id, maria, "Jose Ramirez", "").error);
+  check("a part of your name still cannot sign", !!store.signDoc(d3.id, maria, "Maria", "").error);
+}
 const total = passed + failures.length;
 console.log(`\nTheraChart store checker: ${passed}/${total} checks passed`);
 if (failures.length) {
