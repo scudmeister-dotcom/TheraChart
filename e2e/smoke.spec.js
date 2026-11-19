@@ -43,13 +43,28 @@ test.describe("TheraChart", () => {
     await expect(clinicSubtitle(page)).toContainText("Physical Therapy Center");
     await page.getByRole("link", { name: /^patients$/i }).first().click();
 
-    // the three seeded demo patients, by name, in the patient list — scoped to
-    // the table because the dashboard's work queue names them too, and an
-    // assertion that lands before the route changes would match those
+    // Patients opens on a search box, not a roster: nothing is listed until
+    // you type, and a few letters bring up the match to tap
+    await expect(page.locator("#patSearch")).toBeVisible();
+    await expect(page.locator("#patResults .pat-hit")).toHaveCount(0);
+    await expect(page.locator("#patTable")).toHaveCount(0);
+    await page.locator("#patSearch").fill("villa");
+    await expect(page.locator("#patResults .pat-hit")).toHaveCount(1);
+    await expect(page.locator("#patResults")).toContainText("Villanueva, Mateo");
+
+    // "Show all patients" opens the full list — the three seeded demo patients
+    // by name, scoped to the table because the dashboard's work queue names
+    // them too — and the same box filters it
+    await page.locator("#patSearch").fill("");
+    await page.locator("#patShowAll").click();
+    await expect(page).toHaveURL(/#\/patients\?all=1$/);
     const list = page.locator("#patTable");
     await expect(list.getByText("Bautista, Mark Anthony")).toBeVisible();
     await expect(list.getByText("Gonzales, Marilou")).toBeVisible();
     await expect(list.getByText("Villanueva, Mateo")).toBeVisible();
+    await page.locator("#patSearch").fill("gonz");
+    await expect(list.locator("tr.rowlink")).toHaveCount(1);
+    await expect(list.getByText("Gonzales, Marilou")).toBeVisible();
 
     // and the app is talking to the server, not silently in on-device mode
     await expect(page.getByText(/Synced with clinic server/i)).toBeVisible();
@@ -214,10 +229,10 @@ test.describe("TheraChart", () => {
     await expect(page.locator("#signBtn")).toBeVisible();
     await page.locator("#signBtn").click();
 
-    // e-signing re-authenticates: the therapist types their full registered
-    // name and password, exactly as a real signature would be attested
-    const fullName = await store(page, () => window.TheraStore.currentUser().name);
-    await page.locator("#sigName").fill(fullName);
+    // e-signing re-authenticates: the therapist types their name — just the
+    // name, no ", PT" credentials — exactly as a real signature is attested
+    const signName = await store(page, () => window.TheraStore.signatureName(window.TheraStore.currentUser().name));
+    await page.locator("#sigName").fill(signName);
     /* No password field: this account holds no password, so the typed name
        above IS the signature (see hasNoPassword in app.js). */
     await expect(page.locator("#sigPin")).toHaveCount(0);

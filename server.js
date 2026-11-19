@@ -1293,7 +1293,7 @@ const MIME = {
 const CLIENT_FILES = new Set([
   "/index.html", "/styles.css", "/sw.js", "/manifest.webmanifest",
   // the scripts index.html loads, in order
-  "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/app.js", "/sync.js",
+  "/parser.js", "/insights.js", "/clinical.js", "/validate.js", "/store.js", "/feel.js", "/app.js", "/sync.js",
   "/boot.js",   // service-worker registration; a file so the CSP can forbid inline script
   // The public legal pages. Plain HTML with no script and no sign-in, because
   // Google's OAuth consent screen links to them and they have to be readable by

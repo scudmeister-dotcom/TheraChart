@@ -347,13 +347,25 @@ test.describe("dictation paused", () => {
     await page.locator("#crumbBack").click();
     await expect(page).toHaveURL(/#\/dashboard$/);
 
-    // opened from the Patients list, Back still returns to the list
+    // opened from a Patients search, Back returns to the search
     await page.goto("/#/patients");
-    await page.locator("#patTable").getByText("Villanueva, Mateo").click();
+    await page.locator("#patSearch").fill("mateo");
+    await page.locator("#patResults").getByText("Villanueva, Mateo").click();
     await expect(page).toHaveURL(/#\/patient\//);
     await expect(page.locator(".crumbs")).toContainText("Patients");
     await page.locator("#crumbBack").click();
     await expect(page).toHaveURL(/#\/patients$/);
+    // …with the search still typed, so a near-miss doesn't have to be retyped
+    await expect(page.locator("#patSearch")).toHaveValue("mateo");
+
+    // opened from the full list, Back returns to the full list
+    await page.goto("/#/patients?all=1");
+    await page.locator("#patSearch").fill("");
+    await page.locator("#patTable").getByText("Villanueva, Mateo").click();
+    await expect(page).toHaveURL(/#\/patient\//);
+    await expect(page.locator(".crumbs")).toContainText("All patients");
+    await page.locator("#crumbBack").click();
+    await expect(page).toHaveURL(/#\/patients\?all=1$/);
   });
 
   test("a therapist asks for a schedule change, and the front desk books it", async ({ page }) => {
@@ -421,7 +433,7 @@ test.describe("dictation paused", () => {
   test("on a phone the patient list is one card per patient, name on one line", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await signIn(page, "maria@therachart.demo");
-    await page.goto("/#/patients");
+    await page.goto("/#/patients?all=1");
     await expect(page.locator("#patTable thead")).toBeHidden();
     await expect(page.locator("#patTable .pt-name").first()).toBeVisible();
     // every name, including the longest seeded one, renders as a single line box
