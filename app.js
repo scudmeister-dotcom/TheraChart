@@ -3437,9 +3437,14 @@ ${team}`;
             if (p) { seen.add(a.patientId); todayPats.push({ p, time: fmtTime(a.start) }); }
           }
           const recents = getRecentPatients().filter((p) => !seen.has(p.id)).slice(0, 5);
+          recents.forEach((p) => seen.add(p.id));
+          const activeFallback = !todayPats.length
+            ? S.patients().filter((p) => !seen.has(p.id)).slice(0, 6)
+            : [];
           quick.innerHTML =
             (todayPats.length ? `<div class="pat-quick-label">Scheduled today</div><div class="pat-results">${todayPats.map(({ p, time }) => hitCard(p, `<span class="chip muted num">${esc(time)}</span>`, "pat-hit pat-quick-hit")).join("")}</div>` : "") +
-            (recents.length ? `<div class="pat-quick-label">Recently opened</div><div class="pat-results">${recents.map((p) => hitCard(p, "", "pat-hit pat-quick-hit")).join("")}</div>` : "");
+            (recents.length ? `<div class="pat-quick-label">Recently opened</div><div class="pat-results">${recents.map((p) => hitCard(p, "", "pat-hit pat-quick-hit")).join("")}</div>` : "") +
+            (activeFallback.length ? `<div class="pat-quick-label">Active charts</div><div class="pat-results">${activeFallback.map((p) => hitCard(p, "", "pat-hit pat-quick-hit")).join("")}</div>` : "");
         }
         return;
       }

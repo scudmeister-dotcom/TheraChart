@@ -184,7 +184,7 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
-html, body { max-width: 100%; overflow-x: hidden; }
+html, body { max-width: 100%; overflow-x: clip; }
 
 body {
   margin: 0;
@@ -398,6 +398,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (pointer: coarse) { .crumb, .crumb.current { min-height: 44px; } }
 
 .content {
+  position: relative;
   flex: 1; min-width: 0;
   /* named so a full-bleed child (.doc-page's wash) can cancel exactly this
      padding at whatever breakpoint it is currently on, instead of hard-coding
@@ -1019,7 +1020,7 @@ textarea:disabled, textarea[readonly] { resize: none; }
 /* ---------------- body map + transcript (main feature) ---------------- */
 
 .figures { display: flex; justify-content: space-evenly; gap: 8px; flex-wrap: wrap; }
-.figures figure { margin: 0; text-align: center; flex: 1; min-width: 220px; }
+.figures figure { margin: 0; text-align: center; flex: 1; min-width: 175px; }
 .figures figcaption { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
 .figures .hint { font-weight: 400; font-size: 10.5px; color: var(--muted); }
 .bodymap svg { width: 100%; max-width: 320px; height: auto; display: block; margin: 0 auto; }
@@ -1211,13 +1212,15 @@ mark.hl.strong { background: var(--hl-strong); font-weight: 600; }
 
 /* ---------------- document editor ---------------- */
 
-/* dictation & body map is now the primary column on the left */
-.doc-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 1080px) { .doc-layout { grid-template-columns: 1fr; } }
-.map-card { position: sticky; top: 16px; }
+/* Balanced 2-column desktop editor: sticky body map & findings on the left (~44%),
+   spacious structured note, measurements & HEP on the right (~56%). Stacks cleanly
+   on tablets and phones. */
+.doc-layout { display: grid; grid-template-columns: minmax(380px, 0.92fr) minmax(0, 1.18fr); gap: 18px; align-items: start; }
+@media (max-width: 1120px) { .doc-layout { grid-template-columns: 1fr; } }
+.map-card { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
 .map-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .map-card-head h2 { margin: 0; }
-@media (max-width: 1080px) { .map-card { position: static; } }
+@media (max-width: 1120px) { .map-card { position: static; max-height: none; overflow: visible; } }
 
 /* document-type colour coding */
 .doc-tag {
@@ -1246,35 +1249,27 @@ tr.rowlink .doc-tag { margin-right: 6px; }
    you're in. Each type sets --dt once on the page; the wash behind it, both
    columns' top edge, the step numbers, the field labels and the text-box
    borders all read it, so a fifth document type needs a colour and nothing
-   else. It used to be set on the note column alone, which left the body map,
-   the transcript and the page around them all identical across the four —
-   the 10px type tag was the only thing telling an evaluation from a daily
-   note, and it is 10px. */
-.doc-page.doc-eval      { --dt: var(--dt-eval); }
-.doc-page.doc-daily     { --dt: var(--dt-daily); }
-.doc-page.doc-progress  { --dt: var(--dt-progress); }
-.doc-page.doc-discharge { --dt: var(--dt-discharge); }
+   else. */
+.doc-page.doc-eval,      .content:has(.doc-page.doc-eval)      { --dt: var(--dt-eval); }
+.doc-page.doc-daily,     .content:has(.doc-page.doc-daily)     { --dt: var(--dt-daily); }
+.doc-page.doc-progress,  .content:has(.doc-page.doc-progress)  { --dt: var(--dt-progress); }
+.doc-page.doc-discharge, .content:has(.doc-page.doc-discharge) { --dt: var(--dt-discharge); }
 
-/* The wash is a pseudo-element rather than a background on .doc-page itself so
-   it can bleed out to the full width of the content area, past the page's own
-   box, and fade out down the screen instead of tinting the text far below it.
-   Kept weak on purpose: it has to be recognisable in peripheral vision and
-   invisible when reading a paragraph on top of it. */
+/* Anchor the wash at the very top of .content (behind breadcrumbs & banners)
+   so there is never a hard horizontal seam slicing through the breadcrumb pills. */
 .doc-page { position: relative; }
-.doc-page::before {
+.content:has(.doc-page)::before {
   content: "";
   position: absolute;
-  top: calc(-1 * var(--content-pad-top));
-  left: calc(-1 * var(--content-pad-x));
-  right: calc(-1 * var(--content-pad-x));
+  top: 0; left: 0; right: 0;
   height: 460px;
   pointer-events: none;
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--dt) 14%, transparent),
-    color-mix(in srgb, var(--dt) 5%, transparent) 42%,
+    color-mix(in srgb, var(--dt) 13%, transparent),
+    color-mix(in srgb, var(--dt) 5%, transparent) 44%,
     transparent);
 }
-.doc-page > * { position: relative; }
+.content:has(.doc-page) > * { position: relative; }
 
 /* both columns carry the type edge, not just the note column */
 .doc-page .map-card {
@@ -2651,11 +2646,14 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   .sidebar .brand-text span { font-size: 9px; letter-spacing: 2px; }
   .sidebar .spacer { display: none; }
   /* in the top bar the pin is a compact pill: type, bar, count */
-  .note-pin { flex: none; flex-direction: row; align-items: center; gap: 8px; margin: 0; padding: 6px 10px; border-radius: 999px; }
+  .note-pin { flex: none; flex-direction: row; align-items: center; gap: 6px; margin: 0; padding: 6px 9px; border-radius: 999px; }
   .note-pin .np-name { display: none; }
-  .note-pin .np-track { width: 54px; flex: none; }
-  /* the logo alone says whose app this is while the pill needs the room */
+  .note-pin .np-track { width: 40px; flex: none; }
+  /* the logo alone says whose app this is while the pill needs the room;
+     when Back AND the note pill share a narrow phone bar, Back compacts to its 44px arrow */
   .sidebar:has(.note-pin:not([hidden])) .brand-text { display: none; }
+  .sidebar:has(.note-pin:not([hidden])) .nav-back { padding: 0; justify-content: center; width: 44px; }
+  .sidebar:has(.note-pin:not([hidden])) .nav-back span { display: none; }
   .sidebar .userchip { border-top: none; margin: 0; padding: 0; gap: 8px; flex: none; }
   .sidebar .userchip .who { display: none; }          /* name shown in the page header instead */
   .sidebar .userchip .avatar { width: 32px; height: 32px; font-size: 12px; }
