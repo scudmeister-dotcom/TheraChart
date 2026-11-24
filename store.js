@@ -472,16 +472,40 @@
   }
 
   let changeHook = null; // sync layer subscribes to pushes
+  let storageErrorHook = null; // UI subscribes to local-storage quota warnings
+  let storageError = null;
   let importing = false;
 
   function save() {
+    const hadErr = !!storageError;
     try {
       backend.setItem(KEY, JSON.stringify(state));
-    } catch (_) { /* storage full/blocked — keep going in memory */ }
+      storageError = null;
+      if (hadErr && storageErrorHook) storageErrorHook(null);
+    } catch (e) {
+      // Short-term quota relief: if localStorage is full, trim older audit rows
+      // on this device and retry once before alerting the user.
+      let recovered = false;
+      if (state && Array.isArray(state.audit) && state.audit.length > 200) {
+        const trimmed = state.audit.length - 200;
+        state.audit = state.audit.slice(-200);
+        try {
+          backend.setItem(KEY, JSON.stringify(state));
+          storageError = null;
+          recovered = true;
+          if (storageErrorHook) storageErrorHook({ recovered: true, trimmedAudit: trimmed });
+        } catch (_) { /* still over quota — fall through and warn */ }
+      }
+      if (!recovered) {
+        storageError = (e && e.message) ? String(e.message) : "Browser storage is full — changes are only in memory.";
+        if (storageErrorHook) storageErrorHook({ error: storageError });
+      }
+    }
     if (changeHook && !importing) changeHook();
   }
 
   function setChangeHook(fn) { changeHook = fn; }
+  function setStorageErrorHook(fn) { storageErrorHook = fn; }
 
   /** Replace local state with a server copy, keeping this device's session. */
   function importAll(next, { preserveSession = true } = {}) {
@@ -2090,7 +2114,7 @@
     // charges (CPT/minutes/units) and outcome scores belong to every visit
     // type — an evaluation bills too, and a re-assessment is where outcome
     // measures are usually repeated
-    const data = { mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [], charges: [], outcomes: [] };
+    const data = { mapPoints: [], transcript: [], rom: [], mmt: [], special: [], pain: [], charges: [], outcomes: [], hep: [] };
     if (type === "eval") Object.assign(data, { reason: "", precautions: "", pmh: "", subjective: "", objectiveText: "", assessment: "", plan: "" });
     // a daily treatment note is a SOAP note: subjective, objective (the
     // measurement tables + body map), assessment, plan — the last two are what
@@ -2116,6 +2140,65 @@
     save();
     audit(byUser.id, "doc-created", `${doc.title} for ${patientName(getPatient(patientId))}`);
     return { doc };
+  }
+
+  /** Most recent prior clinical note for a patient with carry-forwardable content
+      (treatment summary, plan, HEP exercises, or body-map pins). Used by Daily
+      Notes so clinicians can explicitly choose what to bring forward. */
+  function lastVisitSource(patientId, excludeDocId) {
+    const prior = docsFor(patientId)
+      .filter((d) => d.id !== excludeDocId && (d.type === "daily" || d.type === "eval" || d.type === "progress"))
+      .slice()
+      .reverse();
+    for (const d of prior) {
+      const x = d.data || {};
+      const hasAny = Boolean(
+        (x.summary || "").trim() ||
+        (x.plan || "").trim() ||
+        (x.hep && x.hep.length) ||
+        (x.mapPoints && x.mapPoints.length)
+      );
+      if (hasAny) return d;
+    }
+    return null;
+  }
+
+  /** Full-text search across clinical notes & findings (clinic-scoped, or
+      narrowed to one patientId). Every typed word must appear somewhere in the
+      document's narrative fields, transcript, body map, measurements, or HEP. */
+  function searchDocuments(query, { patientId = null, limit = 12 } = {}) {
+    const words = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const pool = (patientId ? docsFor(patientId) : load().documents.filter((d) => mine(d) && !isTrashed(d)))
+      .slice()
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const TEXT_KEYS = ["subjective", "summary", "assessment", "plan", "reason", "precautions", "pmh", "objectiveText", "currentStatus", "updatedFindings", "goalsProgress", "outcome", "recommendations"];
+    const out = [];
+    for (const d of pool) {
+      const x = d.data || {};
+      const parts = [d.title || ""];
+      for (const k of TEXT_KEYS) if (x[k]) parts.push(String(x[k]));
+      for (const t of x.transcript || []) if (t && t.text) parts.push(String(t.text));
+      for (const pt of x.mapPoints || []) {
+        if (pt && pt.part) parts.push(`${pt.side || ""} ${pt.part}`);
+        for (const n of (pt && pt.notes) || []) if (n && n.summary) parts.push(String(n.summary));
+      }
+      for (const r of x.rom || []) parts.push(`${r.side || ""} ${r.joint || ""} ${r.motion || ""} ${r.degrees ?? ""}`);
+      for (const m of x.mmt || []) parts.push(`${m.side || ""} ${m.context || ""} ${m.grade || ""}`);
+      for (const s of x.special || []) parts.push(`${s.name || ""} ${s.result || ""}`);
+      for (const h of x.hep || []) parts.push(`${h.name || ""} ${h.notes || ""}`);
+      const hay = parts.join(" · ");
+      const low = hay.toLowerCase();
+      if (!words.every((w) => low.includes(w))) continue;
+      // Extract a compact snippet centered around the first matching term.
+      const idx = low.indexOf(words[0]);
+      const start = Math.max(0, idx - 36);
+      const end = Math.min(hay.length, idx + 84);
+      const snippet = (start > 0 ? "…" : "") + hay.slice(start, end).replace(/\s+/g, " ").trim() + (end < hay.length ? "…" : "");
+      out.push({ doc: d, patient: getPatient(d.patientId), snippet });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   /** Create a locked historical document from an imported (scanned) record.
@@ -2471,17 +2554,26 @@
     return [...keys];
   }
 
-  function cancelAppointment(apptId, byUser) {
+  const APPT_STATUSES = ["booked", "arrived", "completed", "no-show", "cancelled"];
+
+  function setAppointmentStatus(apptId, status, byUser) {
     load();
     if (!canEditSchedule(byUser)) return { error: SCHEDULE_LOCKED };
+    if (!APPT_STATUSES.includes(status)) return { error: "Invalid appointment status." };
     const appt = state.appointments.find((a) => a.id === apptId);
     if (!appt) return { error: "Appointment not found." };
-    appt.status = "cancelled";
-    appt.history.push({ action: "cancelled", userId: byUser.id, time: new Date().toISOString() });
+    if (appt.status === status) return { appt };
+    appt.status = status;
+    appt.history = appt.history || [];
+    appt.history.push({ action: status === "cancelled" ? "cancelled" : `marked ${status}`, status, userId: byUser.id, time: new Date().toISOString() });
     touch(appt);
     save();
-    audit(byUser.id, "appointment-cancelled", appt.id);
+    audit(byUser.id, `appointment-${status}`, appt.id);
     return { appt };
+  }
+
+  function cancelAppointment(apptId, byUser) {
+    return setAppointmentStatus(apptId, "cancelled", byUser);
   }
 
   /* ---------------------------------------------------------------- *
@@ -2772,7 +2864,7 @@
   }
 
   return {
-    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
+    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, setStorageErrorHook, storageError: () => storageError, mergeStates, uid,
     audit, auditLog: () => load().audit.filter(mine),
     // clinics (tenancy)
     clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,
@@ -2797,7 +2889,7 @@
     // the referring physician's orders and messages
     doctorComms, addDoctorComm, acknowledgeDoctorComm, deleteDoctorComm, outstandingOrders,
     // documents — documents() is clinic-scoped; docsFor(patientId) is patient-scoped
-    documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, visitCharges, setVisitCharges, createDoc, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
+    documents: () => load().documents.filter((d) => mine(d) && !isTrashed(d)), docsFor, getDoc, DOC_TITLES, visitCharges, setVisitCharges, createDoc, lastVisitSource, searchDocuments, addImportedDoc, updateDocData, deleteDoc, signDoc, amendDoc,
     // trashed drafts: recoverable, hidden from the chart, still on the bill
     deletedDocsFor, deletedDocs: () => load().documents.filter((d) => mine(d) && isTrashed(d)), trashDoc, restoreDoc, docConsumption, recordDocAiCall,
     visitCount, progressDue, progressToward,
@@ -2806,7 +2898,7 @@
     // how long this patient takes to dictate — a scheduling input, not a score
     patientDictation,
     // calendar — appointments() is clinic-scoped; allAppointments() is unscoped (server reminders)
-    appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment,
+    appointments: () => load().appointments.filter(mine), allAppointments: () => load().appointments, slotsForDay, apptsOn, bookAppointment, bookSeries, cancelAppointment, setAppointmentStatus, APPT_STATUSES,
     canEditSchedule, scheduleRequests, requestScheduleChange, withdrawScheduleRequest, resolveScheduleRequest,
     // admin
     // settings are per clinic; settingsFor(id) is for server-side lookups by record

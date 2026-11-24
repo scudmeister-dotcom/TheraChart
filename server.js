@@ -2449,7 +2449,12 @@ const server = http.createServer(async (req, res) => {
         !isClientAsset(file.split(path.sep).join("/"))) {
       res.writeHead(404); return res.end("Not found");
     }
-    res.writeHead(200, { "content-type": MIME[path.extname(full)] || "application/octet-stream" });
+    const ext = path.extname(full).toLowerCase();
+    const headers = { "content-type": MIME[ext] || "application/octet-stream" };
+    if (ext === ".html" || ext === ".js" || ext === ".css" || ext === ".webmanifest") {
+      headers["cache-control"] = "no-cache";
+    }
+    res.writeHead(200, headers);
     const stream = fs.createReadStream(full);
     stream.on("error", () => { try { res.destroy(); } catch { } });
     stream.pipe(res);

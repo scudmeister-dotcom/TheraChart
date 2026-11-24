@@ -146,7 +146,7 @@
 
   /* ---------------- page transitions ---------------- */
   // The app is a stack: tab-level screens, a chart above them, a note above that.
-  const TAB_ORDER = ["dashboard", "patients", "calendar", "drafts", "visit-time", "privacy", "facility", "clinics", "profile"];
+  const TAB_ORDER = ["dashboard", "patients", "scan", "calendar", "drafts", "visit-time", "privacy", "facility", "clinics", "profile"];
   const routeOf = (h) => ((h || "").replace(/^#\//, "").split("/")[0] || "dashboard").split("?")[0];
   const signedOut = (h) => h === "#/signin" || h === "" || h === "#/" || h === "#";
   function depth(h) {
