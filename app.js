@@ -1039,6 +1039,7 @@
         ${canBack ? `<button class="nav-back" id="crumbBack" type="button" title="Back" aria-label="Back">${ICON.back}<span>Back</span></button>` : ""}
       </div>
       <button class="note-pin" id="notePin" type="button" hidden></button>
+      ${S.canAccessEmr(user) ? `<button class="qj-trigger" id="quickJumpBtn" type="button" title="Quick jump (/ or Ctrl+K / ⌘K)" aria-label="Quick jump"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="qj-trigger-label">Quick jump…</span><kbd class="qj-kbd">/</kbd></button>` : ""}
       <button class="topbar-sync" id="topSyncDot" type="button" title="Sync status" aria-label="Sync status">●</button>
       <nav class="nav" aria-label="Main">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
@@ -1101,6 +1102,8 @@
     if (topDot) topDot.addEventListener("click", () => {
       if (window.TheraSync && window.TheraSync.togglePopover) window.TheraSync.togglePopover(topDot);
     });
+    const qjBtn = document.getElementById("quickJumpBtn");
+    if (qjBtn) qjBtn.addEventListener("click", () => openQuickJump(user));
     updateSysBanner();
     const back = document.getElementById("crumbBack");
     /* Back returns to the screen the user actually came from when it is on
@@ -14652,20 +14655,25 @@ ${accessRequestsCard()}
   /* ================= boot ================= */
 
   // Global keyboard shortcuts: ⌘K/Ctrl+K or '/' opens Quick Jump; ⌘S/Ctrl+S reassures autosave.
-  document.addEventListener("keydown", (e) => {
+  // Capture on window so shortcuts work reliably across Chrome layouts before bubbling.
+  window.addEventListener("keydown", (e) => {
     const user = S.currentUser();
     if (!user || idleLocked) return;
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    const key = (e.key || "").toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (key === "k" || e.code === "KeyK")) {
       e.preventDefault();
-      openQuickJump(user);
+      e.stopPropagation();
+      if (modalRoot.querySelector("#qjInput")) closeModal();
+      else openQuickJump(user);
       return;
     }
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (key === "s" || e.code === "KeyS")) {
       e.preventDefault();
+      e.stopPropagation();
       showToast("All changes are already autosaved.", { tone: "good", duration: 2200 });
       return;
     }
-    if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === "/" || e.code === "Slash")) {
       const t = e.target;
       const editing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
       if (!editing && !modalRoot.querySelector(".modal")) {
@@ -14673,7 +14681,7 @@ ${accessRequestsCard()}
         openQuickJump(user);
       }
     }
-  });
+  }, true);
 
   // Guard against closing the tab with unsynced changes or unfiled scanned pages.
   window.addEventListener("beforeunload", (e) => {

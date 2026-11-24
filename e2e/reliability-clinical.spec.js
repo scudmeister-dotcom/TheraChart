@@ -23,6 +23,7 @@ test.describe("Reliability, UX polish, and clinical workflows", () => {
     // Switch to Dark mode and verify <html data-theme="dark"> persists after reload
     await page.locator("[data-theme-pick='dark']").click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await waitForSync(page);
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
@@ -50,7 +51,13 @@ test.describe("Reliability, UX polish, and clinical workflows", () => {
     await page.locator(".sync-popover button", { hasText: /Sync now/i }).click();
     await waitForSync(page);
 
-    // Pressing `/` outside an input opens the Quick Jump palette
+    // Clickable Quick jump button in sidebar opens the palette reliably in any browser
+    await page.locator("#quickJumpBtn").click();
+    await expect(page.locator("#qjInput")).toBeVisible();
+    await page.keyboard.press("Control+k");
+    await expect(page.locator("#qjInput")).toHaveCount(0);
+
+    // Pressing `/` outside an input also opens the Quick Jump palette
     await page.locator("h1").first().click();
     await page.keyboard.press("/");
     await expect(page.locator("#qjInput")).toBeVisible();
