@@ -38,20 +38,120 @@
     dictation: false, // the server's DICTATION_ENABLED; paused unless it says true
     ai: null, // { refine, insights, model } when an AI backend is reachable
     lastError: null,
+    authExpired: false,
+    syncError: null,
+    syncing: false,
   };
   window.TheraSync = sync;
 
-  /* ---- status badge ---- */
-  const badge = document.createElement("div");
+  const statusListeners = new Set();
+  sync.onStatusChange = (fn) => {
+    statusListeners.add(fn);
+    return () => statusListeners.delete(fn);
+  };
+  function notifyStatus(event) {
+    statusListeners.forEach((fn) => { try { fn(sync, event || null); } catch (_) { } });
+  }
+
+  /* ---- status badge + popover ---- */
+  const badge = document.createElement("button");
+  badge.type = "button";
   badge.id = "syncBadge";
-  badge.style.cssText =
-    "position:fixed; right:12px; bottom:10px; z-index:50; font-size:11px; font-weight:600;" +
-    "padding:4px 10px; border-radius:999px; box-shadow:0 1px 4px rgba(0,0,0,.18);" +
-    "background:var(--panel); color:var(--muted); border:1px solid var(--border); pointer-events:none;";
+  badge.className = "sync-badge";
+  badge.setAttribute("aria-haspopup", "dialog");
+  badge.setAttribute("aria-expanded", "false");
   document.body.appendChild(badge);
+
+  let syncPopover = null;
+  function closeSyncPopover() {
+    if (syncPopover) { syncPopover.remove(); syncPopover = null; }
+    badge.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onOutsidePopover, true);
+    document.removeEventListener("keydown", onPopoverKey);
+  }
+  function onOutsidePopover(e) {
+    if (!syncPopover) return;
+    if (syncPopover.contains(e.target) || badge.contains(e.target) || e.target.closest("#topSyncDot")) return;
+    closeSyncPopover();
+  }
+  function onPopoverKey(e) {
+    if (e.key === "Escape") closeSyncPopover();
+  }
+  function relAgo(ts) {
+    if (!ts) return "never";
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 10) return "just now";
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    return `${Math.round(m / 60)}h ago`;
+  }
+  function renderSyncPopover(anchor) {
+    closeSyncPopover();
+    const pop = document.createElement("div");
+    pop.className = "sync-popover";
+    pop.setAttribute("role", "dialog");
+    pop.setAttribute("aria-label", "Sync status");
+    const statusText = sync.authExpired ? "Session expired"
+      : sync.syncError ? "Sync needs attention"
+      : sync.mode === "server" ? (sync.dirty ? `Syncing ${sync.dirty} change${sync.dirty === 1 ? "" : "s"}…` : "Connected to clinic server")
+      : sync.mode === "offline" ? "Offline (working on local copy)"
+      : "On-device mode (no server)";
+    const detail = sync.syncError
+      ? `<p class="sync-pop-err">${String(sync.syncError).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p>`
+      : "";
+    const meta = sync.mode !== "local"
+      ? `<div class="sync-pop-meta"><span>Last synced: <b>${relAgo(sync.lastSync)}</b></span><span>Pending: <b>${sync.dirty}</b></span></div>`
+      : `<div class="sync-pop-meta"><span>Records stay in this browser.</span></div>`;
+    const action = sync.authExpired
+      ? `<button class="btn small primary" type="button" id="syncPopSignIn">Sign in to sync</button>`
+      : sync.mode !== "local"
+        ? `<button class="btn small primary" type="button" id="syncPopNow"${sync.syncing ? " disabled" : ""}>${sync.syncing ? "Syncing…" : "Sync now"}</button>`
+        : "";
+    pop.innerHTML = `<div class="sync-pop-head"><b>${statusText}</b><button class="icon-btn" type="button" id="syncPopClose" aria-label="Close">✕</button></div>${detail}${meta}${action ? `<div class="sync-pop-act">${action}</div>` : ""}`;
+    document.body.appendChild(pop);
+    syncPopover = pop;
+    badge.setAttribute("aria-expanded", "true");
+    // Position near anchor (mobile top dot vs desktop bottom-right badge)
+    if (anchor && anchor.id === "topSyncDot") {
+      pop.classList.add("top");
+    }
+    pop.querySelector("#syncPopClose").addEventListener("click", closeSyncPopover);
+    const nowBtn = pop.querySelector("#syncPopNow");
+    if (nowBtn) nowBtn.addEventListener("click", async () => {
+      nowBtn.disabled = true; nowBtn.textContent = "Syncing…";
+      await sync.syncNow();
+      if (syncPopover === pop) renderSyncPopover(anchor);
+    });
+    const signInBtn = pop.querySelector("#syncPopSignIn");
+    if (signInBtn) signInBtn.addEventListener("click", () => {
+      closeSyncPopover();
+      S.logout();
+      location.hash = "#/signin";
+      if (window.TheraRender) window.TheraRender();
+    });
+    setTimeout(() => {
+      document.addEventListener("click", onOutsidePopover, true);
+      document.addEventListener("keydown", onPopoverKey);
+    }, 0);
+  }
+  sync.togglePopover = (anchor) => {
+    if (syncPopover) closeSyncPopover();
+    else renderSyncPopover(anchor || badge);
+  };
+  badge.addEventListener("click", () => sync.togglePopover(badge));
+
   function setBadge() {
     let text, color;
-    if (sync.mode === "server") {
+    if (sync.authExpired) {
+      text = "● Session expired — sign in to sync";
+      color = "var(--danger)";
+    } else if (sync.syncError) {
+      text = sync.dirty
+        ? `● Sync failed (${sync.dirty} unsaved) — tap to retry`
+        : "● Sync issue — tap for details";
+      color = "var(--danger)";
+    } else if (sync.mode === "server") {
       text = sync.dirty ? `● Syncing ${sync.dirty} change${sync.dirty > 1 ? "s" : ""}…` : "● Synced with clinic server";
       color = "var(--good)";
     } else if (sync.mode === "offline") {
@@ -84,6 +184,16 @@
     sync.dirty = n;
     lsSet(LS_DIRTY, String(n));
     setBadge();
+  }
+
+  function markAuthExpired(msg) {
+    sync.authExpired = true;
+    sync.token = null;
+    lsSet(LS_TOKEN, "");
+    sync.syncError = msg || "Your session expired — sign in again to sync your changes.";
+    sync.lastError = sync.syncError;
+    setBadge();
+    notifyStatus("auth-expired");
   }
 
   async function api(pathname, opts = {}) {
@@ -122,6 +232,8 @@
        setting this only there left the operator signed in with the Clinics page
        missing until some later background sync happened to refresh it. */
     noteOwner(payload);
+    sync.authExpired = false;
+    sync.syncError = null;
     const localState = S.load();
     const was = clinicOfState(localState, localState.sessionUserId);
     const now = clinicOfState(payload.state, uid);
@@ -131,11 +243,13 @@
       mergeAndAdopt(payload);                 // offline work from before this login
       const st = S.load(); st.sessionUserId = uid; S.save();
       await push();
+      notifyStatus("synced");
       return;
     }
     adopt(payload);
     const st = S.load(); st.sessionUserId = uid; S.save();
     setDirty(0);
+    notifyStatus("synced");
   }
 
   /* ---- adopt / merge ---- */
@@ -170,59 +284,131 @@
 
   /* ---- push (merge on conflict — nothing is ever clobbered) ---- */
   let pushTimer = null;
+  let retryTimer = null;
   function schedulePush() {
     setDirty(sync.dirty + 1);
-    if (sync.mode !== "server" || !sync.token) return;
+    if (sync.mode !== "server" || !sync.token || sync.authExpired) return;
     clearTimeout(pushTimer);
     pushTimer = setTimeout(push, 600);
   }
 
+  function scheduleRetry() {
+    if (retryTimer || sync.authExpired || sync.mode !== "server") return;
+    retryTimer = setTimeout(() => { retryTimer = null; if (sync.dirty && !document.hidden) push(); }, 15000);
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   async function push() {
-    if (sync.mode !== "server" || !sync.token) return;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const state = JSON.parse(S.exportAll());
-        state.sessionUserId = null;
-        const res = await api("/api/state", { method: "PUT", body: { baseRev: sync.rev, state } });
-        if (res.ok) {
-          sync.rev = res.data.rev;
-          sync.lastSync = Date.now();
-          lsSet(LS_LASTSYNC, String(sync.lastSync));
-          setDirty(0);
-          return;
+    if (sync.mode !== "server" || !sync.token || sync.authExpired) return false;
+    if (sync.syncing) return false;
+    sync.syncing = true;
+    setBadge();
+    let lastErr = null;
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const state = JSON.parse(S.exportAll());
+          state.sessionUserId = null;
+          const res = await api("/api/state", { method: "PUT", body: { baseRev: sync.rev, state } });
+          if (res.ok) {
+            const hadErr = !!sync.syncError;
+            sync.rev = res.data.rev;
+            sync.lastSync = Date.now();
+            sync.syncError = null;
+            sync.lastError = null;
+            sync.authExpired = false;
+            lsSet(LS_LASTSYNC, String(sync.lastSync));
+            setDirty(0);
+            if (hadErr) notifyStatus("recovered");
+            else notifyStatus("synced");
+            return true;
+          }
+          if (res.status === 409) {
+            mergeAndAdopt(res.data);
+            lastErr = "Multiple devices saved at the same time — retrying sync.";
+            continue;
+          }
+          if (res.status === 401) {
+            markAuthExpired("Your session expired — sign in again to sync your changes.");
+            return false;
+          }
+          if (res.status >= 500 && attempt < 2) {
+            lastErr = (res.data && res.data.error) || `Server error (${res.status})`;
+            await sleep(800 * (attempt + 1));
+            continue;
+          }
+          lastErr = (res.data && res.data.error) || `Couldn't save changes (server responded ${res.status}).`;
+          break;
+        } catch (e) {
+          goOffline(e.message);
+          return false;
         }
-        if (res.status === 409) { mergeAndAdopt(res.data); continue; } // re-push merged
-        if (res.status === 401) { goOffline("session expired"); return; }
-        return;
-      } catch (e) {
-        goOffline(e.message);
-        return;
       }
+      sync.syncError = lastErr || "Couldn't save changes to the clinic server — tap to retry.";
+      sync.lastError = sync.syncError;
+      scheduleRetry();
+      notifyStatus("sync-error");
+      return false;
+    } finally {
+      sync.syncing = false;
+      setBadge();
     }
   }
 
   /* ---- pull other devices' changes ---- */
   let pollBusy = false; // never stack polls on a slow/hung connection
-  async function poll() {
+  async function poll(force) {
     if (pollBusy) return;
+    if (!force && typeof document !== "undefined" && document.hidden) return;
     pollBusy = true;
     try {
       if (sync.mode === "offline") return await reconnectTry();
-      if (sync.mode !== "server" || !sync.token) return;
+      if (sync.mode !== "server" || !sync.token || sync.authExpired) return;
       const r = await api("/api/rev");
-      if (r.status === 401) return; // will re-auth on next login
-      if (r.ok && r.data.rev !== sync.rev) {
+      if (r.status === 401) {
+        markAuthExpired("Your session expired — sign in again to sync.");
+        return;
+      }
+      if (!r.ok) return;
+      if (r.data.rev !== sync.rev) {
         const st = await api("/api/state");
+        if (st.status === 401) { markAuthExpired("Your session expired — sign in again to sync."); return; }
         if (st.ok) {
-          if (sync.dirty) { mergeAndAdopt(st.data); push(); }
-          else adopt(st.data);
+          if (sync.dirty) { mergeAndAdopt(st.data); await push(); }
+          else { adopt(st.data); setBadge(); }
           rerender();
         }
+      } else if (sync.dirty && !sync.syncing) {
+        await push();
       }
     } catch (e) { goOffline(e.message); }
     finally { pollBusy = false; }
   }
-  setInterval(poll, 6000);
+  setInterval(() => poll(false), 6000);
+
+  sync.syncNow = async () => {
+    if (sync.mode === "local") return { ok: true };
+    if (sync.authExpired) return { ok: false, error: sync.syncError };
+    if (sync.mode === "offline") {
+      await reconnectTry();
+      return { ok: sync.mode === "server" && !sync.syncError && !sync.authExpired, error: sync.syncError };
+    }
+    if (sync.dirty) {
+      const ok = await push();
+      return { ok, error: sync.syncError };
+    }
+    await poll(true);
+    return { ok: !sync.syncError && !sync.authExpired, error: sync.syncError };
+  };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(true); });
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", () => { poll(true); });
+    window.addEventListener("offline", () => { if (sync.mode === "server") goOffline("browser offline"); });
+  }
 
   function rerender() {
     const el = document.activeElement;
@@ -235,7 +421,9 @@
     if (lsGet(LS_SEEN) !== "1") return; // never had a server: stay local
     if (sync.mode !== "offline") console.warn("[sync] offline:", why);
     sync.mode = "offline";
+    sync.syncError = null;
     setBadge();
+    notifyStatus("offline");
   }
 
   async function reconnectTry() {
@@ -243,6 +431,7 @@
       const res = await fetch("/api/ping", { signal: AbortSignal.timeout(2500) });
       const data = await res.json();
       if (!data || data.server !== "therachart") return;
+      const hadDirty = sync.dirty > 0;
       sync.mode = "server";
       sync.dictation = data.dictation === true;
       sync.stt = data.stt || { available: false };
@@ -253,10 +442,7 @@
       // token still valid?
       const check = await api("/api/rev");
       if (check.status === 401) {
-        sync.token = null;
-        lsSet(LS_TOKEN, "");
-        badge.textContent = "● Reconnected — sign in again to sync your changes";
-        badge.style.color = "var(--review)";
+        markAuthExpired("Reconnected — sign in again to sync your changes.");
         return;
       }
       const st = await api("/api/state");
@@ -266,6 +452,7 @@
         rerender();
       }
       setBadge();
+      notifyStatus(hadDirty ? "reconnected-synced" : "reconnected");
     } catch { /* still offline */ }
   }
 
@@ -412,7 +599,12 @@
   sync.signOut = async () => {
     const had = sync.token;
     sync.token = null;
+    sync.authExpired = false;
+    sync.syncError = null;
+    closeSyncPopover();
     lsSet(LS_TOKEN, "");
+    setBadge();
+    notifyStatus("signout");
     if (!had || sync.mode !== "server") return;
     try {
       await fetch("/api/logout", { method: "POST", headers: { authorization: `Bearer ${had}` } });

@@ -472,16 +472,40 @@
   }
 
   let changeHook = null; // sync layer subscribes to pushes
+  let storageErrorHook = null; // UI subscribes to local-storage quota warnings
+  let storageError = null;
   let importing = false;
 
   function save() {
+    const hadErr = !!storageError;
     try {
       backend.setItem(KEY, JSON.stringify(state));
-    } catch (_) { /* storage full/blocked — keep going in memory */ }
+      storageError = null;
+      if (hadErr && storageErrorHook) storageErrorHook(null);
+    } catch (e) {
+      // Short-term quota relief: if localStorage is full, trim older audit rows
+      // on this device and retry once before alerting the user.
+      let recovered = false;
+      if (state && Array.isArray(state.audit) && state.audit.length > 200) {
+        const trimmed = state.audit.length - 200;
+        state.audit = state.audit.slice(-200);
+        try {
+          backend.setItem(KEY, JSON.stringify(state));
+          storageError = null;
+          recovered = true;
+          if (storageErrorHook) storageErrorHook({ recovered: true, trimmedAudit: trimmed });
+        } catch (_) { /* still over quota — fall through and warn */ }
+      }
+      if (!recovered) {
+        storageError = (e && e.message) ? String(e.message) : "Browser storage is full — changes are only in memory.";
+        if (storageErrorHook) storageErrorHook({ error: storageError });
+      }
+    }
     if (changeHook && !importing) changeHook();
   }
 
   function setChangeHook(fn) { changeHook = fn; }
+  function setStorageErrorHook(fn) { storageErrorHook = fn; }
 
   /** Replace local state with a server copy, keeping this device's session. */
   function importAll(next, { preserveSession = true } = {}) {
@@ -2772,7 +2796,7 @@
   }
 
   return {
-    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, mergeStates, uid,
+    load, save, resetAll, wipeAll, exportAll, importAll, setChangeHook, setStorageErrorHook, storageError: () => storageError, mergeStates, uid,
     audit, auditLog: () => load().audit.filter(mine),
     // clinics (tenancy)
     clinics: clinicsMap, clinicName, currentClinicName, currentClinicId, renameClinic, ensureClinic,

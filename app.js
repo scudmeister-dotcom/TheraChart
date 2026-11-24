@@ -154,6 +154,199 @@
     if (modalOpener && modalOpener.isConnected) modalOpener.focus();
     modalOpener = null;
   }
+
+  /* Accessible replacement for browser confirm(): clear verbs, styled buttons,
+     keyboard trap + Escape, never breaks PWA fullscreen immersion. */
+  function confirmModal({ title, body, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false }) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (settled) return; settled = true; closeModal(); resolve(v); };
+      const m = showModal(`
+        <h2>${esc(title || "Please confirm")}</h2>
+        <p style="font-size:14px; line-height:1.5; white-space:pre-line">${esc(body || "")}</p>
+        <div class="modal-actions">
+          <button class="btn" id="cmCancel" type="button">${esc(cancelLabel)}</button>
+          <button class="btn ${danger ? "danger" : "primary"}" id="cmOk" type="button">${esc(confirmLabel)}</button>
+        </div>`);
+      m.querySelector("#cmCancel").addEventListener("click", () => done(false));
+      m.querySelector("#cmOk").addEventListener("click", () => done(true));
+      m.querySelector(danger ? "#cmCancel" : "#cmOk").focus();
+      const bd = modalRoot.querySelector(".modal-backdrop");
+      if (bd) bd.addEventListener("click", (e) => { if (e.target === bd) done(false); });
+      const onEsc = (e) => {
+        if (e.key === "Escape") { document.removeEventListener("keydown", onEsc, true); done(false); }
+      };
+      document.addEventListener("keydown", onEsc, true);
+    });
+  }
+
+  /* Lightweight non-blocking toast stack (bottom-center). Optional Undo/action
+     button keeps routine confirmations out of modal alerts. */
+  let toastRoot = null;
+  function showToast(msg, opts = {}) {
+    if (!toastRoot || !toastRoot.isConnected) {
+      toastRoot = document.createElement("div");
+      toastRoot.className = "toast-stack";
+      toastRoot.setAttribute("role", "status");
+      toastRoot.setAttribute("aria-live", "polite");
+      document.body.appendChild(toastRoot);
+    }
+    const el = document.createElement("div");
+    el.className = "toast" + (opts.tone ? " " + opts.tone : "");
+    el.innerHTML = `<span class="toast-msg">${esc(msg)}</span>${opts.actionLabel ? `<button class="toast-act" type="button">${esc(opts.actionLabel)}</button>` : ""}`;
+    toastRoot.appendChild(el);
+    let gone = false;
+    const dismiss = () => {
+      if (gone) return; gone = true;
+      el.classList.add("out");
+      setTimeout(() => el.remove(), 220);
+    };
+    if (opts.actionLabel && opts.onAction) {
+      el.querySelector(".toast-act").addEventListener("click", () => { dismiss(); opts.onAction(); });
+    }
+    setTimeout(dismiss, opts.duration || (opts.actionLabel ? 5500 : 3200));
+    return dismiss;
+  }
+
+  /* ---- System status banner (sync errors, expired session, storage full) ---- */
+  function sysBannerHtml() {
+    const sy = window.TheraSync || {};
+    const stErr = S.storageError && S.storageError();
+    if (sy.authExpired) {
+      return `<div class="banner bad sys-banner" role="alert">
+        <span><b>Session expired.</b> Sign in again so your changes can sync to the clinic server.</span>
+        <button class="btn small primary" type="button" id="sysSignInBtn">Sign in</button>
+      </div>`;
+    }
+    if (sy.syncError) {
+      return `<div class="banner bad sys-banner" role="alert">
+        <span><b>Sync needs attention:</b> ${esc(sy.syncError)}</span>
+        <button class="btn small" type="button" id="sysRetryBtn">Retry sync</button>
+      </div>`;
+    }
+    if (stErr) {
+      return `<div class="banner warn sys-banner" role="alert">
+        <span><b>Device storage is full.</b> Changes are kept in memory until space is freed — export a backup now.</span>
+        <button class="btn small" type="button" id="sysBackupBtn">Export backup</button>
+      </div>`;
+    }
+    return "";
+  }
+  function updateSysBanner() {
+    const slot = document.getElementById("sysBannerSlot");
+    if (!slot) return;
+    slot.innerHTML = sysBannerHtml();
+    const si = slot.querySelector("#sysSignInBtn");
+    if (si) si.addEventListener("click", () => { S.logout(); location.hash = "#/signin"; render(); });
+    const rt = slot.querySelector("#sysRetryBtn");
+    if (rt) rt.addEventListener("click", async () => {
+      rt.disabled = true; rt.textContent = "Retrying…";
+      const r = window.TheraSync && window.TheraSync.syncNow ? await window.TheraSync.syncNow() : { ok: false };
+      if (r.ok) showToast("Synced with clinic server", { tone: "good" });
+      updateSysBanner();
+    });
+    const bk = slot.querySelector("#sysBackupBtn");
+    if (bk) bk.addEventListener("click", () => {
+      const blob = new Blob([S.exportAll()], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `therachart-backup-${todayIso()}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      showToast("Backup downloaded");
+    });
+  }
+  S.setStorageErrorHook((info) => {
+    if (info && info.recovered) {
+      showToast("Freed device storage by trimming old local audit entries.", { tone: "warn" });
+    }
+    updateSysBanner();
+  });
+
+  /* ---- Optional idle screen-lock for shared clinic devices ---- */
+  const LS_IDLE_LOCK = "therachart.idleLockMins";
+  const getIdleLockMins = () => {
+    try { return Math.max(0, Number(localStorage.getItem(LS_IDLE_LOCK) || 0) || 0); } catch (_) { return 0; }
+  };
+  const setIdleLockMins = (mins) => {
+    try { localStorage.setItem(LS_IDLE_LOCK, String(Math.max(0, Number(mins) || 0))); } catch (_) { }
+    resetIdleTimer();
+  };
+  let idleTimer = null;
+  let idleLocked = false;
+  function showIdleLock() {
+    const user = S.currentUser();
+    if (!user || idleLocked) return;
+    idleLocked = true;
+    const isGoogle = user.authProvider === "google";
+    const isDemo = (S.SEEDED_DEMO_USER_IDS || new Set()).has(user.id);
+    const ov = document.createElement("div");
+    ov.id = "idleLockOverlay";
+    ov.className = "idle-lock";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "Screen locked");
+    ov.innerHTML = `<div class="idle-lock-card">
+      <div class="idle-lock-logo">${ICON.logo}</div>
+      <h2>Screen locked</h2>
+      <p>Signed in as <b>${esc(user.name)}</b>. Your open work is untouched.</p>
+      ${isGoogle || isDemo
+        ? `<div class="idle-lock-acts">
+            <button class="btn primary" id="idleUnlockBtn" type="button">Resume session</button>
+            <button class="btn" id="idleSignOutBtn" type="button">Sign out</button>
+          </div>`
+        : `<div class="field"><label for="idleLockPw">Enter your password to unlock</label>
+            <input id="idleLockPw" type="password" autocomplete="current-password" placeholder="Password" /></div>
+          <div id="idleLockErr" class="idle-lock-err" aria-live="polite"></div>
+          <div class="idle-lock-acts">
+            <button class="btn primary" id="idleUnlockBtn" type="button">Unlock</button>
+            <button class="btn" id="idleSignOutBtn" type="button">Sign out</button>
+          </div>`}
+    </div>`;
+    document.body.appendChild(ov);
+    const unlock = async () => {
+      if (isGoogle || isDemo) {
+        ov.remove(); idleLocked = false; resetIdleTimer(); return;
+      }
+      const pwEl = ov.querySelector("#idleLockPw");
+      const errEl = ov.querySelector("#idleLockErr");
+      const btn = ov.querySelector("#idleUnlockBtn");
+      const pw = pwEl ? pwEl.value : "";
+      if (!pw) { if (errEl) errEl.textContent = "Enter your password."; return; }
+      btn.disabled = true;
+      const ok = window.TheraSync && window.TheraSync.verifyPassword
+        ? await window.TheraSync.verifyPassword(pw)
+        : S.verifyPassword(user.id, pw);
+      btn.disabled = false;
+      if (!ok) { if (errEl) errEl.textContent = "Incorrect password."; if (pwEl) { pwEl.select(); pwEl.focus(); } return; }
+      ov.remove(); idleLocked = false; resetIdleTimer();
+    };
+    ov.querySelector("#idleUnlockBtn").addEventListener("click", unlock);
+    const pwEl = ov.querySelector("#idleLockPw");
+    if (pwEl) { pwEl.focus(); pwEl.addEventListener("keydown", (e) => { if (e.key === "Enter") unlock(); }); }
+    else ov.querySelector("#idleUnlockBtn").focus();
+    ov.querySelector("#idleSignOutBtn").addEventListener("click", async () => {
+      ov.remove(); idleLocked = false;
+      await signOutFully(); render();
+    });
+  }
+  let lastActivityAt = Date.now();
+  function resetIdleTimer() {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+    if (idleLocked) return;
+    const mins = getIdleLockMins();
+    if (!mins || !S.currentUser()) return;
+    idleTimer = setTimeout(showIdleLock, mins * 60 * 1000);
+  }
+  const onUserActivity = () => {
+    const now = Date.now();
+    if (now - lastActivityAt < 2000) return;
+    lastActivityAt = now;
+    resetIdleTimer();
+  };
+  ["pointerdown", "keydown", "touchstart"].forEach((ev) => document.addEventListener(ev, onUserActivity, { passive: true }));
+
   // capture phase, so Escape closes the modal and not the drawer behind it too
   document.addEventListener("keydown", (e) => {
     const m = modalRoot.querySelector(".modal");
@@ -487,6 +680,42 @@
   // If the user leaves it untouched (see render()), it's auto-discarded.
   let pristineDraft = null;
 
+  function renderCrashCard(err, user) {
+    console.error("[render] view failed:", err);
+    const msg = (err && err.message) ? String(err.message) : "Unexpected error while loading this screen.";
+    const detail = err && err.stack ? String(err.stack).split("\n").slice(0, 4).join("\n") : msg;
+    const html = `<div class="card crash-card" role="alert">
+      <h2>Something went wrong on this screen</h2>
+      <p style="color:var(--muted); font-size:14px">Your saved clinical records are safe. You can go back to the dashboard or reload the page.</p>
+      <pre class="crash-pre">${esc(msg)}</pre>
+      <div class="crash-actions">
+        <a class="btn primary" href="#/dashboard">Go to Dashboard</a>
+        <button class="btn" id="crashReload" type="button">Reload page</button>
+        <button class="btn bug-trigger" id="crashBug" type="button">Report a bug</button>
+      </div>
+    </div>`;
+    if (user) {
+      try {
+        return renderShell(location.hash || "#/dashboard", html, user, () => {
+          const r = document.getElementById("crashReload");
+          if (r) r.addEventListener("click", () => location.reload());
+          const b = document.getElementById("crashBug");
+          if (b) b.addEventListener("click", () => {
+            setTimeout(() => {
+              const sum = document.getElementById("bugSummary");
+              if (sum && !sum.value) sum.value = `Screen error on ${location.hash || "#/dashboard"}: ${msg}`;
+              const st = document.getElementById("bugSteps");
+              if (st && !st.value) st.value = detail;
+            }, 30);
+          });
+        });
+      } catch (_) { /* fall back to bare card below */ }
+    }
+    app.innerHTML = `<div style="max-width:540px; margin:48px auto; padding:0 16px">${html}</div>`;
+    const r = document.getElementById("crashReload");
+    if (r) r.addEventListener("click", () => location.reload());
+  }
+
   function render() {
     if (activeDictation) { activeDictation.stop(); activeDictation = null; window.__theraDict = null; window.__theraSay = null; }
     if (activeRecording) { activeRecording.stop(); activeRecording = null; }
@@ -503,6 +732,9 @@
     // flips to the login form. A browser that has signed in before, or a deep
     // link into an app screen, goes straight to sign-in instead.
     if (!user) {
+      clearTimeout(idleTimer); idleTimer = null;
+      const ov = document.getElementById("idleLockOverlay");
+      if (ov) { ov.remove(); idleLocked = false; }
       /* An explicit "← Back" outranks knowsAnAccount(). That flag is a GUESS
          about which page this visitor wants; a click is them saying it. A deep
          link into an app route still wins over both, because those screens
@@ -513,6 +745,7 @@
       return (showLogin || knowsAnAccount() || deepLink) ? renderLogin() : renderLanding();
     }
     rememberAccount(); // signed in here at least once — see LS_KNOWN
+    resetIdleTimer();
     // New hires and admin-reset accounts must set their own password before doing anything.
     if (user.mustChangePassword) return renderForcePassword(user);
 
@@ -533,34 +766,38 @@
     const emrAllowed = S.canAccessEmr(user);
     const route = (hash.split("/")[1] || "dashboard").split("?")[0];
 
-    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "scan", "facility", "visit-time"];
-    if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
+    try {
+      const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "scan", "facility", "visit-time"];
+      if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
 
-    if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
-    if (route === "drafts") return renderShell(hash, draftsView(user), user, bindDrafts);
-    if (route === "patients") return renderShell(hash, patientsView(user), user, bindPatients);
-    if (route === "intake") return renderShell(hash, intakeView(user), user, bindIntake);
-    if (route === "patient") return renderShell(hash, patientView(user), user, bindPatient);
-    if (route === "doc") return renderShell(hash, "", user, bindDoc); // doc builds its own DOM
-    if (route === "calendar") return renderShell(hash, calendarView(user), user, bindCalendar);
-    if (route === "scan") return renderShell(hash, scanView(user), user, bindScan);
-    if (route === "privacy") return renderShell(hash, privacyView(user), user, bindPrivacy);
-    if (route === "visit-time") {
-      if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Visit time is for the clinic's administrators.</div></div>`, user);
-      return renderShell(hash, visitTimeView(user), user, bindVisitTime);
+      if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
+      if (route === "drafts") return renderShell(hash, draftsView(user), user, bindDrafts);
+      if (route === "patients") return renderShell(hash, patientsView(user), user, bindPatients);
+      if (route === "intake") return renderShell(hash, intakeView(user), user, bindIntake);
+      if (route === "patient") return renderShell(hash, patientView(user), user, bindPatient);
+      if (route === "doc") return renderShell(hash, "", user, bindDoc); // doc builds its own DOM
+      if (route === "calendar") return renderShell(hash, calendarView(user), user, bindCalendar);
+      if (route === "scan") return renderShell(hash, scanView(user), user, bindScan);
+      if (route === "privacy") return renderShell(hash, privacyView(user), user, bindPrivacy);
+      if (route === "visit-time") {
+        if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Visit time is for the clinic's administrators.</div></div>`, user);
+        return renderShell(hash, visitTimeView(user), user, bindVisitTime);
+      }
+      if (route === "facility") {
+        if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Facility administration is limited to admin accounts.</div></div>`, user);
+        return renderShell(hash, facilityView(user), user, bindFacility);
+      }
+      if (route === "clinics") {
+        // Same refusal whether you're a clinic admin or typed the URL — this page
+        // spans every tenant, so it says nothing at all to anyone but the operator.
+        if (!isOwner()) return renderShell(hash, `<div class="card"><div class="empty-state">This area is limited to the platform operator.</div></div>`, user);
+        return renderShell(hash, clinicsView(user), user, bindClinics);
+      }
+      if (route === "profile") return renderShell(hash, profileView(user), user, bindProfile);
+      location.hash = "#/dashboard";
+    } catch (err) {
+      renderCrashCard(err, user);
     }
-    if (route === "facility") {
-      if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Facility administration is limited to admin accounts.</div></div>`, user);
-      return renderShell(hash, facilityView(user), user, bindFacility);
-    }
-    if (route === "clinics") {
-      // Same refusal whether you're a clinic admin or typed the URL — this page
-      // spans every tenant, so it says nothing at all to anyone but the operator.
-      if (!isOwner()) return renderShell(hash, `<div class="card"><div class="empty-state">This area is limited to the platform operator.</div></div>`, user);
-      return renderShell(hash, clinicsView(user), user, bindClinics);
-    }
-    if (route === "profile") return renderShell(hash, profileView(user), user, bindProfile);
-    location.hash = "#/dashboard";
   }
 
   /* Brief branded splash shown right after a successful sign-in — the logo,
@@ -716,8 +953,12 @@
   function renderShell(hash, content, user, bind) {
     shellSeq += 1; shellHash = hash;
     const emrAllowed = S.canAccessEmr(user);
-    // the patient assistant drawer is available whenever a patient chart is open
-    const drawerPid = /^#\/patient\//.test(hash) ? (hash.split("/")[2] || "").split("?")[0] : null;
+    // the patient assistant drawer is available whenever a patient chart or note is open
+    const drawerPid = /^#\/patient\//.test(hash)
+      ? (hash.split("/")[2] || "").split("?")[0]
+      : /^#\/doc\//.test(hash)
+        ? ((S.getDoc((hash.split("/")[2] || "").split("?")[0]) || {}).patientId || null)
+        : null;
     if (assistantFor !== drawerPid) { assistantOpen = false; assistantFor = drawerPid; }
     const groups = [
       { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar", "#/scan", "#/visit-time"].includes(n.hash)) },
@@ -798,7 +1039,7 @@
         ${canBack ? `<button class="nav-back" id="crumbBack" type="button" title="Back" aria-label="Back">${ICON.back}<span>Back</span></button>` : ""}
       </div>
       <button class="note-pin" id="notePin" type="button" hidden></button>
-      <span class="topbar-sync" id="topSyncDot" title="Sync status" aria-label="Sync status">●</span>
+      <button class="topbar-sync" id="topSyncDot" type="button" title="Sync status" aria-label="Sync status">●</button>
       <nav class="nav" aria-label="Main">${nav}${drawerPid ? `<div class="nav-group sidebar-context">
         <div class="nav-group-label">This patient</div>
         <button class="nav-link nav-btn" id="assistantLaunch" type="button"><span class="nav-ico">${ICON.spark}</span><span class="nav-label">Ask about patient</span></button>
@@ -815,7 +1056,7 @@
       ${acctMenuHtml}
     </div>
   </aside>
-  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view" tabindex="-1">${demoBannerMarkup(user)}${crumbBar}<div id="viewBody">${content}</div></main>
+  <main class="content ${drawerPid ? "patient-bg" : ""}" id="view" tabindex="-1"><div id="sysBannerSlot"></div>${demoBannerMarkup(user)}${crumbBar}<div id="viewBody">${content}</div></main>
   ${tabbar}
   ${drawerPid ? `
   <div class="assistant-backdrop" id="asstBackdrop"></div>
@@ -854,8 +1095,13 @@
       const acctLogout = document.getElementById("acctLogout");
       if (acctLogout) acctLogout.addEventListener("click", async () => { await signOutFully(); render(); });
     }
-    // paint the top-bar sync dot with the live connection state
+    // paint the top-bar sync dot with the live connection state & make it interactive
     if (window.TheraSync && window.TheraSync.refreshBadge) window.TheraSync.refreshBadge();
+    const topDot = document.getElementById("topSyncDot");
+    if (topDot) topDot.addEventListener("click", () => {
+      if (window.TheraSync && window.TheraSync.togglePopover) window.TheraSync.togglePopover(topDot);
+    });
+    updateSysBanner();
     const back = document.getElementById("crumbBack");
     /* Back returns to the screen the user actually came from when it is on
        this trail (a draft opened straight from the dashboard goes back to the
@@ -2547,11 +2793,61 @@ ${walkthroughMarkup()}`;
 
     const scopeBtn = (val, label) => `<button class="fchip ${scope === val ? "on" : ""}" data-scope="${esc(val)}" type="button">${label}</button>`;
 
+    // ---- New-clinic onboarding checklist (dismissible; shown for brand-new clinics) ----
+    const LS_ONBOARD_HIDE = "therachart.onboardDismissed";
+    const onboardDismissed = (() => { try { return localStorage.getItem(LS_ONBOARD_HIDE) === S.currentClinicId(); } catch (_) { return false; } })();
+    const pricesSet = Object.keys(S.settings().servicePrices || {}).some((k) => Number(S.settings().servicePrices[k]) > 0);
+    const hasStaff = S.staff().filter((u) => u.active).length > 1;
+    const hasPatients = S.patients().length > 0;
+    const showOnboard = user.role === "admin" && !onboardDismissed && (!hasPatients || (S.patients().length <= 1 && !pricesSet));
+    const onboardHtml = showOnboard ? `
+<div class="card onboard-card" id="onboardCard">
+  <div class="onboard-head">
+    <div><h2>Getting started with ${esc(S.currentClinicName())}</h2><div class="sub">Four quick steps to get your clinic ready</div></div>
+    <button class="btn small" type="button" id="onboardDismiss">Dismiss</button>
+  </div>
+  <ul class="onboard-list">
+    <li class="onboard-item done"><span class="onboard-chk">✓</span><div><b>Confirm clinic hours &amp; slot length</b><small>Defaults to ${S.settings().dayStartHour}:00–${S.settings().dayEndHour}:00 (${S.settings().slotMinutes} min slots)</small></div><a class="btn small" href="#/facility">Settings</a></li>
+    <li class="onboard-item ${pricesSet ? "done" : ""}"><span class="onboard-chk">${pricesSet ? "✓" : "2"}</span><div><b>Set your clinic's service prices</b><small>Used for visit billing subtotals in Visit time</small></div><a class="btn small" href="#/facility">Set prices</a></li>
+    <li class="onboard-item ${hasStaff ? "done" : ""}"><span class="onboard-chk">${hasStaff ? "✓" : "3"}</span><div><b>Add your therapists &amp; front desk</b><small>${S.staff().filter((u) => u.active).length} active account${S.staff().filter((u) => u.active).length === 1 ? "" : "s"} so far</small></div><a class="btn small" href="#/facility">Staff</a></li>
+    <li class="onboard-item ${hasPatients ? "done" : ""}"><span class="onboard-chk">${hasPatients ? "✓" : "4"}</span><div><b>Create your first patient chart</b><small>Intake a patient or scan an existing paper chart</small></div><a class="btn small primary" href="#/intake">+ New patient</a></li>
+  </ul>
+</div>` : "";
+
+    // ---- Answered schedule-change requests (for therapists) ----
+    const LS_SEEN_SCHED = "therachart.seenSchedReqs";
+    const seenSched = new Set((() => { try { return JSON.parse(localStorage.getItem(LS_SEEN_SCHED) || "[]"); } catch (_) { return []; } })());
+    const answeredReqs = !S.canEditSchedule(user)
+      ? S.scheduleRequests().filter((r) => r.requestedBy === user.id && r.status !== "pending" && !seenSched.has(r.id))
+      : [];
+    const answeredSchedHtml = answeredReqs.length ? `
+<div class="card dash-notice-card">
+  <div class="dash-notice-head"><b>Schedule request update${answeredReqs.length === 1 ? "" : "s"}</b><button class="btn small" type="button" id="dismissSchedAnswers">Dismiss</button></div>
+  <div class="dash-notice-list">
+    ${answeredReqs.map((r) => `<div class="dash-notice-row">
+      <span class="chip ${r.status === "approved" ? "good" : "bad"}">${esc(r.status)}</span>
+      <span>${esc(requestSummary(r, false))}${r.response ? ` — <i>“${esc(r.response)}”</i>` : ""}</span>
+      <a class="btn small" href="#/calendar">Calendar →</a>
+    </div>`).join("")}
+  </div>
+</div>` : "";
+
+    // ---- Unbilled visits notice (for billing admins) ----
+    const unbilledCount = user.role === "admin" && S.canSetPrices(user)
+      ? S.documents().filter((d) => d.status === "signed" && !(S.visitCharges(d) || []).length).length
+      : 0;
+    const unbilledHtml = unbilledCount ? `
+<div class="banner info dash-unbilled">
+  <span><b>${unbilledCount} signed visit${unbilledCount === 1 ? "" : "s"}</b> waiting to be billed.</span>
+  <button class="btn small primary" type="button" id="openUnbilledBtn">Review unbilled →</button>
+</div>` : "";
+
     return `
 <div class="page-head">
   <div><h1>Good day, ${firstName(user)}</h1>
   <div class="sub">${fmtDate(new Date().toISOString())} · ${esc(S.currentClinicName())}</div></div>
 </div>
+${onboardHtml}${answeredSchedHtml}${unbilledHtml}
 
 <div class="card dash-bar">
   <div class="dash-search">
@@ -2836,6 +3132,25 @@ ${team}`;
     user = user || S.currentUser();
     const rerender = () => renderShell(location.hash, dashboardView(user), user, bindDashboard);
     const setScope = (val) => { dashState.scope = val; rerender(); };
+    const obDis = document.getElementById("onboardDismiss");
+    if (obDis) obDis.addEventListener("click", () => {
+      try { localStorage.setItem("therachart.onboardDismissed", S.currentClinicId()); } catch (_) { }
+      rerender();
+    });
+    const disSched = document.getElementById("dismissSchedAnswers");
+    if (disSched) disSched.addEventListener("click", () => {
+      try {
+        const prev = JSON.parse(localStorage.getItem("therachart.seenSchedReqs") || "[]");
+        const ids = S.scheduleRequests().filter((r) => r.requestedBy === user.id && r.status !== "pending").map((r) => r.id);
+        localStorage.setItem("therachart.seenSchedReqs", JSON.stringify([...new Set([...prev, ...ids])]));
+      } catch (_) { }
+      rerender();
+    });
+    const unbBtn = document.getElementById("openUnbilledBtn");
+    if (unbBtn) unbBtn.addEventListener("click", () => {
+      if (typeof visitTimeState === "object") visitTimeState.show = "unbilled";
+      location.hash = "#/visit-time";
+    });
     document.querySelectorAll("[data-scope]").forEach((el) => {
       el.addEventListener("click", (e) => { e.preventDefault(); setScope(el.dataset.scope); });
       el.addEventListener("keydown", (e) => { if (e.key === "Enter") setScope(el.dataset.scope); });
@@ -3006,6 +3321,22 @@ ${team}`;
      ("Show all patients", #/patients?all=1) and the same box filters it there.
      The query survives a trip into a chart and Back, so a near-miss search
      doesn't have to be retyped. */
+  const LS_RECENT_PATS = "therachart.recentPatients";
+  function recordRecentPatient(pid) {
+    if (!pid) return;
+    try {
+      const prev = JSON.parse(localStorage.getItem(LS_RECENT_PATS) || "[]");
+      const next = [pid, ...prev.filter((x) => x !== pid)].slice(0, 8);
+      localStorage.setItem(LS_RECENT_PATS, JSON.stringify(next));
+    } catch (_) { }
+  }
+  function getRecentPatients() {
+    try {
+      const ids = JSON.parse(localStorage.getItem(LS_RECENT_PATS) || "[]");
+      return ids.map((id) => S.getPatient(id)).filter(Boolean);
+    } catch (_) { return []; }
+  }
+
   let patQuery = "";
   const patHay = (p) => [p.firstName, p.lastName, p.preferredName, S.patientName(p), p.phone, p.referringPhysician].join(" ").toLowerCase();
   // every typed word must appear somewhere: "mateo villa" finds "Villanueva, Mateo"
@@ -3022,7 +3353,7 @@ ${team}`;
     const search = `<div class="pat-search">
     <svg class="pat-search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="patSearch" type="search" autocomplete="off" spellcheck="false" aria-label="${all ? "Filter patients" : "Search patients"}"
-      placeholder="${all ? "Filter by name, phone, or physician…" : "Search a patient by name, phone, or physician…"}" value="${esc(patQuery)}"${all ? "" : ` aria-controls="patResults"`} />
+      placeholder="${all ? "Filter by name, phone, or physician…" : "Search a patient by name, phone, or physician (or note text)…"}" value="${esc(patQuery)}"${all ? "" : ` aria-controls="patResults"`} />
   </div>`;
     if (all) return `
 <div class="page-head">
@@ -3038,7 +3369,7 @@ ${team}`;
 </div>`;
     return `
 <div class="page-head">
-  <div><h1>Patients</h1><div class="sub">Find a patient to open their chart</div></div>
+  <div><h1>Patients</h1><div class="sub">Find a patient to open their chart · press <kbd>/</kbd> from anywhere to quick-jump</div></div>
   <div class="page-actions"><a class="btn primary" href="#/intake">+ New patient intake</a></div>
 </div>
 <div class="card pat-finder">
@@ -3072,29 +3403,52 @@ ${team}`;
     }
     const box = document.getElementById("patResults");
     const MAX = 8;
+    const hitCard = (p, extraChip) => {
+      const meta = [p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · ");
+      return `<a class="pat-hit" role="option" href="#/patient/${p.id}">
+        <span class="pat-hit-av" aria-hidden="true">${esc(initials(S.patientName(p)))}</span>
+        <span class="pat-hit-main"><b>${esc(S.patientName(p))}</b><small>${esc(meta)}</small></span>
+        ${extraChip || ""}${S.progressDue(p.id) ? '<span class="chip info">progress due</span>' : ""}
+        <span class="pat-hit-go" aria-hidden="true">›</span></a>`;
+    };
     const draw = (q) => {
       if (!S.patients().length) {
         box.innerHTML = `<div class="pat-hint">No patients found in this clinic yet. <a href="#/intake">Start the first intake</a></div>`;
         return;
       }
       if (!q.trim()) {
-        box.innerHTML = `<div class="pat-hint">Start typing — matching patients appear here.</div>`;
+        const todayAppts = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
+        const seen = new Set();
+        const todayPats = [];
+        for (const a of todayAppts) {
+          if (seen.has(a.patientId)) continue;
+          const p = S.getPatient(a.patientId);
+          if (p) { seen.add(a.patientId); todayPats.push({ p, time: fmtTime(a.start) }); }
+        }
+        const recents = getRecentPatients().filter((p) => !seen.has(p.id)).slice(0, 5);
+        if (!todayPats.length && !recents.length) {
+          box.innerHTML = `<div class="pat-hint">Start typing — matching patients (and clinical notes) appear here.</div>`;
+          return;
+        }
+        box.innerHTML =
+          (todayPats.length ? `<div class="pat-quick-label">Scheduled today</div>${todayPats.map(({ p, time }) => hitCard(p, `<span class="chip muted num">${esc(time)}</span>`)).join("")}` : "") +
+          (recents.length ? `<div class="pat-quick-label">Recently opened</div>${recents.map((p) => hitCard(p)).join("")}` : "");
         return;
       }
       const hits = patMatches(q);
-      if (!hits.length) {
-        box.innerHTML = `<div class="pat-hint">No patients match “${esc(q.trim())}”. <a href="#/intake">Start a new intake</a></div>`;
+      const noteHits = typeof searchDocsFullText === "function" ? searchDocsFullText(q, { limit: 5 }) : [];
+      if (!hits.length && !noteHits.length) {
+        box.innerHTML = `<div class="pat-hint">No patients or notes match “${esc(q.trim())}”. <a href="#/intake">Start a new intake</a></div>`;
         return;
       }
-      box.innerHTML = hits.slice(0, MAX).map((p) => {
-        const meta = [p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · ");
-        return `<a class="pat-hit" role="option" href="#/patient/${p.id}">
-          <span class="pat-hit-av" aria-hidden="true">${esc(initials(S.patientName(p)))}</span>
-          <span class="pat-hit-main"><b>${esc(S.patientName(p))}</b><small>${esc(meta)}</small></span>
-          ${S.progressDue(p.id) ? '<span class="chip info">progress due</span>' : ""}
-          <span class="pat-hit-go" aria-hidden="true">›</span></a>`;
-      }).join("") + (hits.length > MAX
-        ? `<a class="pat-more" href="#/patients?all=1">${hits.length - MAX} more match — see them in the full list</a>` : "");
+      box.innerHTML =
+        (hits.length ? hits.slice(0, MAX).map((p) => hitCard(p)).join("") +
+          (hits.length > MAX ? `<a class="pat-more" href="#/patients?all=1">${hits.length - MAX} more match — see them in the full list</a>` : "") : "") +
+        (noteHits.length ? `<div class="pat-quick-label">Matching clinical notes</div>${noteHits.map((h) => `
+          <a class="pat-hit" role="option" href="#/doc/${h.doc.id}">
+            <span class="doc-tag ${docMeta(h.doc.type).cls}">${docMeta(h.doc.type).short}</span>
+            <span class="pat-hit-main"><b>${esc(S.patientName(h.patient))} · ${esc(h.doc.title)}</b><small>${esc(h.snippet)}</small></span>
+            <span class="pat-hit-go" aria-hidden="true">›</span></a>`).join("")}` : "");
     };
     draw(patQuery);
     input.addEventListener("input", (e) => { patQuery = e.target.value; draw(patQuery); });
@@ -3492,6 +3846,7 @@ ${team}`;
   function patientView(user) {
     const p = S.getPatient(currentPatientId());
     if (!p) return `<div class="card"><div class="empty-state">Patient not found.</div></div>`;
+    recordRecentPatient(p.id);
     // reset per-patient view state when a different chart is opened
     if (patientTabFor !== p.id) {
       patientTab = "overview"; patientTabFor = p.id;
@@ -4858,14 +5213,63 @@ ${rows.length ? `<table>
      the tab and coming back keeps the pages; it is dropped on sign-out and
      never belongs to a different user. */
 
+  const SCAN_DB = "therachart-scans";
+  function scanIdb() {
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(SCAN_DB, 1); } catch (_) { return resolve(null); }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("pages")) db.createObjectStore("pages", { keyPath: "id" });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    });
+  }
+  const scanTx = async (mode, fn) => {
+    const db = await scanIdb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      let out = null;
+      const tx = db.transaction("pages", mode);
+      out = fn(tx.objectStore("pages"));
+      tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+      tx.onerror = () => resolve(null);
+    });
+  };
+  const savedScans = {
+    async saveAll(userId, pages) {
+      await this.clearUser(userId);
+      const ready = (pages || []).filter((p) => p && p.blob && p.bytes);
+      for (let i = 0; i < ready.length; i++) {
+        const p = ready[i];
+        await scanTx("readwrite", (st) => st.put({ id: p.id, userId, order: i, rotate: p.rotate || 0, blob: p.blob, at: Date.now() }));
+      }
+    },
+    async loadUser(userId) {
+      const all = await scanTx("readonly", (st) => st.getAll());
+      return (all || []).filter((r) => r.userId === userId).sort((a, b) => (a.order || 0) - (b.order || 0));
+    },
+    async clearUser(userId) {
+      const all = await scanTx("readonly", (st) => st.getAll());
+      for (const r of (all || [])) if (!userId || r.userId === userId) await scanTx("readwrite", (st) => st.delete(r.id));
+    },
+  };
+
   let scanJob = null;
   const newScanJob = (user) => ({
     userId: user.id, step: "capture", pages: [], pdf: null, queue: Promise.resolve(),
-    file: null, b64: null, result: null, readError: null, chosenId: null, query: "",
+    file: null, b64: null, result: null, readError: null, chosenId: null, query: "", hydrated: false,
   });
-  function dropScanJob() {
+  function dropScanJob(keepSaved) {
+    const uid = scanJob && scanJob.userId;
     if (scanJob) scanJob.pages.forEach((x) => x.url && URL.revokeObjectURL(x.url));
     scanJob = null;
+    if (!keepSaved) savedScans.clearUser(uid || null);
+  }
+  function persistScanPages(j) {
+    if (!j || j.pdf) return;
+    savedScans.saveAll(j.userId, j.pages);
   }
 
   const SCAN_KINDS = {
@@ -4874,8 +5278,23 @@ ${rows.length ? `<table>
   };
 
   function scanView(user) {
-    if (!scanJob || scanJob.userId !== user.id) { dropScanJob(); scanJob = newScanJob(user); }
+    if (!scanJob || scanJob.userId !== user.id) { dropScanJob(true); scanJob = newScanJob(user); }
     const j = scanJob;
+    if (!j.hydrated && !j.pages.length && !j.pdf && j.step === "capture") {
+      j.hydrated = true;
+      savedScans.loadUser(user.id).then(async (rows) => {
+        if (scanJob !== j || j.pages.length || j.pdf || !rows.length) return;
+        for (const r of rows) {
+          if (!r.blob) continue;
+          const bytes = new Uint8Array(await r.blob.arrayBuffer());
+          j.pages.push({ id: r.id, file: r.blob, rotate: r.rotate || 0, busy: false, blob: r.blob, bytes, url: URL.createObjectURL(r.blob) });
+        }
+        if (j.pages.length) {
+          showToast(`Restored ${j.pages.length} scanned page${j.pages.length === 1 ? "" : "s"} from earlier.`);
+          if (j.draw) j.draw(); else redrawScan(user);
+        }
+      });
+    }
     const steps = [["capture", "Scan"], ["reading", "Read"], ["file", "File"]];
     const at = steps.findIndex(([k]) => k === j.step);
     const stepper = `<ol class="scan-steps" aria-label="Steps">${steps.map(([k, label], i) =>
@@ -4967,6 +5386,7 @@ ${rows.length ? `<table>
           const i = j.pages.findIndex((x) => x.id === id), k = i + Number(d);
           if (i < 0 || k < 0 || k >= j.pages.length) return;
           [j.pages[i], j.pages[k]] = [j.pages[k], j.pages[i]];
+          persistScanPages(j);
           draw();
         }));
         grid.querySelectorAll("[data-scan-del]").forEach((b) => b.addEventListener("click", () => {
@@ -4974,6 +5394,7 @@ ${rows.length ? `<table>
           if (i < 0) return;
           if (j.pages[i].url) URL.revokeObjectURL(j.pages[i].url);
           j.pages.splice(i, 1);
+          persistScanPages(j);
           draw();
         }));
       }
@@ -5003,6 +5424,7 @@ ${rows.length ? `<table>
           const out = await T.enhancePage(pg.file, { rotate: pg.rotate });
           if (pg.url) URL.revokeObjectURL(pg.url);
           Object.assign(pg, { blob: out.blob, bytes: out.bytes, url: URL.createObjectURL(out.blob) });
+          persistScanPages(j);
         } catch (e) {
           console.error("[scan] page failed:", e);
           pg.error = e.message || "unreadable"; pg.bytes = null;
@@ -5028,21 +5450,39 @@ ${rows.length ? `<table>
     const cam = document.getElementById("scanCam"), pick = document.getElementById("scanPick"), pdf = document.getElementById("scanPdf");
     cam.addEventListener("change", () => { addPhotos(cam.files); cam.value = ""; });
     pick.addEventListener("change", () => { addPhotos(pick.files); pick.value = ""; });
-    pdf.addEventListener("change", () => {
+    pdf.addEventListener("change", async () => {
       const f = pdf.files[0];
       pdf.value = "";
       if (!f) return;
-      if (j.pages.length && !confirm(`Use this PDF instead of the ${j.pages.length} photographed page${j.pages.length === 1 ? "" : "s"}?`)) return;
+      if (j.pages.length) {
+        const ok = await confirmModal({
+          title: "Replace photographed pages?",
+          body: `Use this PDF instead of the ${j.pages.length} photographed page${j.pages.length === 1 ? "" : "s"}?`,
+          confirmLabel: "Use PDF",
+          cancelLabel: "Keep pages",
+        });
+        if (!ok) return;
+      }
       j.pages.forEach((x) => x.url && URL.revokeObjectURL(x.url));
       j.pages = [];
+      savedScans.clearUser(j.userId);
       j.pdf = f;
       redrawScan(user);
     });
     const drop = document.getElementById("scanPdfDrop");
     if (drop) drop.addEventListener("click", () => { j.pdf = null; redrawScan(user); });
 
-    document.getElementById("scanReset").addEventListener("click", () => {
-      if ((j.pages.length || j.pdf) && !confirm("Start over? The pages scanned so far are discarded.")) return;
+    document.getElementById("scanReset").addEventListener("click", async () => {
+      if (j.pages.length || j.pdf) {
+        const ok = await confirmModal({
+          title: "Start over?",
+          body: "The pages scanned so far will be discarded.",
+          confirmLabel: "Discard pages",
+          cancelLabel: "Keep scanning",
+          danger: true,
+        });
+        if (!ok) return;
+      }
       dropScanJob();
       redrawScan(user);
     });
@@ -5839,8 +6279,20 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
 ${locked ? `<div class="lock-banner">🔒 Signed &amp; locked. Edits require a signed amendment with an authorization reason.</div>` : ""}
 ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot edit clinical documents.</div>` : ""}
 
+<nav class="doc-jumpbar" aria-label="Jump to section">
+  <button class="doc-jump" type="button" data-djump="#docMapCard">Body map</button>
+  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval-intake"]'>Intake</button>` : ""}
+  ${doc.type === "daily" || doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-subjective"]'>Subjective</button>` : ""}
+  ${doc.type === "progress" ? `<button class="doc-jump" type="button" data-djump='details[data-group="prog-status"]'>Status</button>` : ""}
+  ${doc.type === "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group="dc-summary"]'>Summary</button>` : ""}
+  ${doc.type !== "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-objective"], details[data-group="prog-findings"]'>Objective</button>` : ""}
+  ${doc.type !== "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-plan"], details[data-group="prog-assess"]'>Plan &amp; goals</button>` : ""}
+  <button class="doc-jump" type="button" data-djump="#insightsCard">Insights</button>
+  <button class="doc-jump doc-jump-asst" type="button" id="assistantLaunchM">${ICON.spark} Ask AI</button>
+</nav>
+
 <div class="doc-layout">
-  <div class="card map-card">
+  <div class="card map-card" id="docMapCard">
     <div class="map-card-head">
       <h2>${dictationOn() ? "Dictation &amp; body map" : "Findings &amp; body map"}</h2>
       <div class="sev-legend">
@@ -6023,7 +6475,6 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
   </div>
 </div>
 <div class="card" id="insightsCard"></div>
-<div class="card asst-card" id="docAssistant"></div>
 </div>`;
 
     // ------- shared dictation/map state -------
@@ -6037,8 +6488,15 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
     renderFieldGuide(doc);
     view.querySelectorAll("details.doc-group").forEach((g) =>
       g.addEventListener("toggle", () => setGroupCollapsed(g.dataset.group, !g.open)));
+    view.querySelectorAll("[data-djump]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const target = view.querySelector(btn.dataset.djump);
+        if (!target) return;
+        if (target.tagName === "DETAILS" && !target.open) target.open = true;
+        const y = Math.max(0, target.getBoundingClientRect().top + window.scrollY - topBarCover() - 62);
+        window.scrollTo({ top: y, behavior: "smooth" });
+      }));
     renderInsightsCard(doc, user);
-    renderAssistant(document.getElementById("docAssistant"), doc.patientId, user, { compact: true });
     if (dictationOn() && S.settings().audioReview) bindAudioReview(doc, user, editable);
     const refineBtn = document.getElementById("refineBtn");
     if (refineBtn) refineBtn.addEventListener("click", () => runRefine(doc, user, dstate));
@@ -13256,10 +13714,19 @@ ${pricesCard(user)}
     document.querySelectorAll("[data-delete-user]").forEach((b) =>
       b.addEventListener("click", async () => {
         const id = b.dataset.deleteUser;
-        if (!confirm(`Delete ${S.getUser(id) ? S.getUser(id).name : "this employee"}? Their login is removed. Their signed documents and audit history stay intact.`)) return;
+        const empName = S.getUser(id) ? S.getUser(id).name : "this employee";
+        const ok = await confirmModal({
+          title: `Delete ${empName}?`,
+          body: "Their login is removed. Their signed documents and audit history stay intact.",
+          confirmLabel: "Delete employee",
+          cancelLabel: "Keep employee",
+          danger: true,
+        });
+        if (!ok) return;
         b.disabled = true;
         const err = T.deleteUser ? await T.deleteUser(id) : (S.deleteUser(id, user).error || null);
         if (err) { b.disabled = false; return userMsg(id, err, false); }
+        showToast(`${empName} removed.`);
         render();
       })
     );
@@ -13407,10 +13874,20 @@ ${accessRequestsCard()}
        Deleting is neither, so it gets the typed-name dialog below. */
     async function holdClinic(btn) {
       const wasActive = btn.dataset.active === "1";
-      if (wasActive && !confirm(`Put this clinic on hold?\n\nEvery record stays exactly where it is. Nobody at the clinic can sign in until you reactivate it, and anyone signed in now is signed out.`)) return;
+      if (wasActive) {
+        const ok = await confirmModal({
+          title: "Put this clinic on hold?",
+          body: "Every record stays exactly where it is. Nobody at the clinic can sign in until you reactivate it, and anyone signed in now is signed out.",
+          confirmLabel: "Put on hold",
+          cancelLabel: "Cancel",
+          danger: true,
+        });
+        if (!ok) return;
+      }
       btn.disabled = true;
       const r = await T.setClinicActive(btn.dataset.hold, !wasActive);
       if (r && r.error) { btn.disabled = false; alertBanner(r.error); return; }
+      showToast(wasActive ? "Clinic put on hold." : "Clinic reactivated.", { tone: "good" });
       await refresh();
     }
 
@@ -13503,9 +13980,113 @@ ${accessRequestsCard()}
     refresh();
   }
 
+  /* ================= THEME (per device) ================= */
+  const LS_THEME = "therachart.theme"; // "light" | "dark" | "system"
+  function getThemePref() {
+    try {
+      const v = localStorage.getItem(LS_THEME);
+      return v === "dark" || v === "system" ? v : "light";
+    } catch (_) { return "light"; }
+  }
+  function applyTheme(pref) {
+    const mode = pref === "dark" || pref === "system" ? pref : "light";
+    const root = document.documentElement;
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (mode === "system") {
+      root.removeAttribute("data-theme");
+      if (meta) meta.setAttribute("content", "light dark");
+    } else {
+      root.setAttribute("data-theme", mode);
+      if (meta) meta.setAttribute("content", mode);
+    }
+  }
+  function setThemePref(pref) {
+    const mode = pref === "dark" || pref === "system" ? pref : "light";
+    try { localStorage.setItem(LS_THEME, mode); } catch (_) { }
+    applyTheme(mode);
+  }
+  applyTheme(getThemePref());
+
+  /* ================= GLOBAL QUICK-JUMP PALETTE (⌘K / Ctrl+K / /) ================= */
+  function openQuickJump(user) {
+    if (!user || !S.canAccessEmr(user)) return;
+    if (modalRoot.querySelector(".modal")) return;
+    const m = showModal(`
+      <h2>Quick jump</h2>
+      <div class="pat-search" style="margin-top:8px">
+        <svg class="pat-search-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="qjInput" type="search" autocomplete="off" spellcheck="false" placeholder="Jump to a patient, note text, or screen…" />
+      </div>
+      <div id="qjList" class="qj-list" role="listbox" aria-label="Quick jump results"></div>
+      <div class="qj-foot"><span class="hint">↑↓ to move · Enter to open · Esc to close</span></div>
+    `);
+    const input = m.querySelector("#qjInput");
+    const listEl = m.querySelector("#qjList");
+    let active = 0;
+    const getItems = () => [...listEl.querySelectorAll(".qj-item")];
+    const screens = [
+      { label: "Dashboard", sub: "Work queue & clinic overview", href: "#/dashboard" },
+      { label: "Patients", sub: "Search or browse all patients", href: "#/patients" },
+      { label: "Scan documents", sub: "Scan paper records or upload PDFs", href: "#/scan" },
+      { label: "Calendar", sub: "Day & week clinic schedule", href: "#/calendar" },
+      { label: "New patient intake", sub: "Register a new patient", href: "#/intake" },
+      { label: "My Profile", sub: "Appearance, security & preferences", href: "#/profile" },
+    ];
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      const rows = [];
+      if (!q) {
+        const recents = getRecentPatients().slice(0, 5);
+        if (recents.length) {
+          rows.push(`<div class="qj-group">Recent patients</div>`);
+          recents.forEach((p) => rows.push(`<a class="qj-item" role="option" href="#/patient/${p.id}"><b>${esc(S.patientName(p))}</b><small>${esc([p.dob ? `${age(p.dob)} y` : "", p.phone].filter(Boolean).join(" · "))}</small></a>`));
+        }
+        rows.push(`<div class="qj-group">Screens</div>`);
+        screens.forEach((s) => rows.push(`<a class="qj-item" role="option" href="${s.href}"><b>${esc(s.label)}</b><small>${esc(s.sub)}</small></a>`));
+      } else {
+        const pats = patMatches(q).slice(0, 6);
+        if (pats.length) {
+          rows.push(`<div class="qj-group">Patients</div>`);
+          pats.forEach((p) => rows.push(`<a class="qj-item" role="option" href="#/patient/${p.id}"><b>${esc(S.patientName(p))}</b><small>${esc([p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · "))}</small></a>`));
+        }
+        const docHits = typeof searchDocsFullText === "function" ? searchDocsFullText(q, { limit: 5 }) : [];
+        if (docHits.length) {
+          rows.push(`<div class="qj-group">Notes &amp; findings</div>`);
+          docHits.forEach((h) => rows.push(`<a class="qj-item" role="option" href="#/doc/${h.doc.id}"><b>${esc(S.patientName(h.patient))} · ${esc(h.doc.title)}</b><small>${esc(h.snippet)}</small></a>`));
+        }
+        const scrHits = screens.filter((s) => (s.label + " " + s.sub).toLowerCase().includes(q));
+        if (scrHits.length) {
+          rows.push(`<div class="qj-group">Screens</div>`);
+          scrHits.forEach((s) => rows.push(`<a class="qj-item" role="option" href="${s.href}"><b>${esc(s.label)}</b><small>${esc(s.sub)}</small></a>`));
+        }
+        if (!rows.length) rows.push(`<div class="pat-hint">Nothing matches “${esc(input.value.trim())}”.</div>`);
+      }
+      listEl.innerHTML = rows.join("");
+      active = 0;
+      const items = getItems();
+      items.forEach((el, i) => {
+        el.classList.toggle("on", i === 0);
+        el.addEventListener("click", () => closeModal());
+      });
+    };
+    const paint = () => getItems().forEach((el, i) => el.classList.toggle("on", i === active));
+    input.addEventListener("input", draw);
+    input.addEventListener("keydown", (e) => {
+      const items = getItems();
+      if (!items.length) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; paint(); items[active].scrollIntoView({ block: "nearest" }); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % items.length; paint(); items[active].scrollIntoView({ block: "nearest" }); }
+      else if (e.key === "Enter") { e.preventDefault(); const href = items[active].getAttribute("href"); closeModal(); if (href) location.hash = href; }
+    });
+    draw();
+    input.focus();
+  }
+
   /* ================= PROFILE ================= */
 
   function profileView(user) {
+    const theme = getThemePref();
+    const idleMins = getIdleLockMins();
     return `
 <div class="page-head"><div><h1>My Profile</h1></div></div>
 <div class="cards-2">
@@ -13532,9 +14113,30 @@ ${accessRequestsCard()}
     ${user.authProvider === "google"
       ? `<p style="font-size:12.5px; color:var(--muted); margin:12px 0 0">You sign in with your Google account, so there's no separate TheraChart password to manage here.</p>`
       : `<button class="btn" id="openPwBtn" style="margin-top:12px">Change password</button>`}
+    <hr class="prof-sep" />
+    <div class="field" style="margin-bottom:8px">
+      <label for="idleLockSel">Auto-lock this device when idle</label>
+      <select id="idleLockSel">
+        <option value="0"${idleMins === 0 ? " selected" : ""}>Off</option>
+        <option value="5"${idleMins === 5 ? " selected" : ""}>After 5 minutes</option>
+        <option value="15"${idleMins === 15 ? " selected" : ""}>After 15 minutes</option>
+        <option value="30"${idleMins === 30 ? " selected" : ""}>After 30 minutes</option>
+      </select>
+      <div class="hint">Helpful on shared clinic tablets or front-desk computers. Locking keeps open drafts untouched.</div>
+    </div>
+    <button class="btn small" id="lockNowBtn" type="button">Lock screen now</button>
   </div>
   <div class="card">
-    <h2>Sound &amp; feel</h2>
+    <h2>Appearance, sound &amp; feel</h2>
+    <div class="field" style="margin-bottom:14px">
+      <label>Theme (this device)</label>
+      <div class="seg-group" role="radiogroup" aria-label="Theme">
+        <button class="seg-btn${theme === "light" ? " on" : ""}" type="button" data-theme-pick="light" aria-pressed="${theme === "light"}">Light</button>
+        <button class="seg-btn${theme === "dark" ? " on" : ""}" type="button" data-theme-pick="dark" aria-pressed="${theme === "dark"}">Dark</button>
+        <button class="seg-btn${theme === "system" ? " on" : ""}" type="button" data-theme-pick="system" aria-pressed="${theme === "system"}">System</button>
+      </div>
+      <div class="hint">Saved on this device only. Dark theme eases eye strain during late charting.</div>
+    </div>
     <label class="feel-toggle"><input type="checkbox" id="feelSounds" ${window.TheraFeel && window.TheraFeel.soundsOn() ? "checked" : ""} />
       <span><b>Play a sound when a note is signed</b><small>A soft click on Sign &amp; lock. Saved on this device only — turn it off for quiet rooms.</small></span></label>
     <button class="btn small" id="feelTest" type="button" style="margin-top:10px">Play it</button>
@@ -13543,6 +14145,27 @@ ${accessRequestsCard()}
   }
 
   function bindProfile(user) {
+    document.querySelectorAll("[data-theme-pick]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const pick = btn.dataset.themePick;
+        setThemePref(pick);
+        document.querySelectorAll("[data-theme-pick]").forEach((b) => {
+          const on = b.dataset.themePick === pick;
+          b.classList.toggle("on", on);
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        showToast(`Theme set to ${cap(pick)}`);
+      })
+    );
+    const idleSel = document.getElementById("idleLockSel");
+    if (idleSel) idleSel.addEventListener("change", () => {
+      const m = Number(idleSel.value) || 0;
+      setIdleLockMins(m);
+      showToast(m ? `Auto-lock set to ${m} minutes` : "Auto-lock turned off");
+    });
+    const lockBtn = document.getElementById("lockNowBtn");
+    if (lockBtn) lockBtn.addEventListener("click", () => showIdleLock());
+
     const feelBox = document.getElementById("feelSounds");
     if (feelBox && window.TheraFeel) {
       feelBox.addEventListener("change", () => {
@@ -13589,6 +14212,71 @@ ${accessRequestsCard()}
   }
 
   /* ================= boot ================= */
+
+  // Global keyboard shortcuts: ⌘K/Ctrl+K or '/' opens Quick Jump; ⌘S/Ctrl+S reassures autosave.
+  document.addEventListener("keydown", (e) => {
+    const user = S.currentUser();
+    if (!user || idleLocked) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      openQuickJump(user);
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      showToast("All changes are already autosaved.", { tone: "good", duration: 2200 });
+      return;
+    }
+    if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const t = e.target;
+      const editing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (!editing && !modalRoot.querySelector(".modal")) {
+        e.preventDefault();
+        openQuickJump(user);
+      }
+    }
+  });
+
+  // Guard against closing the tab with unsynced changes or unfiled scanned pages.
+  window.addEventListener("beforeunload", (e) => {
+    const sy = window.TheraSync;
+    const hasUnsynced = !!(sy && sy.mode !== "local" && sy.dirty > 0);
+    const hasUnfiledScan = !!(scanJob && (scanJob.pages.length || scanJob.pdf));
+    if (hasUnsynced || hasUnfiledScan) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  // Catch unexpected runtime errors outside render() so the user isn't left in silence.
+  let lastErrorToastAt = 0;
+  function noteGlobalError(err) {
+    const now = Date.now();
+    if (now - lastErrorToastAt < 4000) return;
+    lastErrorToastAt = now;
+    const msg = (err && err.message) ? String(err.message) : String(err || "Unexpected error");
+    if (/AbortError|ResizeObserver/i.test(msg)) return;
+    console.error("[app] uncaught:", err);
+    showToast("Something went wrong — your saved records are safe.", {
+      tone: "bad",
+      actionLabel: "Reload",
+      onAction: () => location.reload(),
+      duration: 6000,
+    });
+  }
+  window.addEventListener("error", (e) => noteGlobalError(e.error || e.message));
+  window.addEventListener("unhandledrejection", (e) => noteGlobalError(e.reason));
+
+  // Subscribe to sync status transitions once sync.js has loaded right after app.js.
+  setTimeout(() => {
+    if (window.TheraSync && window.TheraSync.onStatusChange) {
+      window.TheraSync.onStatusChange((sy, ev) => {
+        updateSysBanner();
+        if (ev === "reconnected-synced") showToast("Back online — queued changes synced.", { tone: "good" });
+        else if (ev === "recovered") showToast("Synced with clinic server.", { tone: "good" });
+      });
+    }
+  }, 0);
 
   window.TheraRender = render; // the sync layer re-renders after remote pulls
   window.addEventListener("hashchange", (e) => {
