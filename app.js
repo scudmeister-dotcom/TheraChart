@@ -279,7 +279,7 @@
     if (!user || idleLocked) return;
     idleLocked = true;
     const isGoogle = user.authProvider === "google";
-    const isDemo = (S.SEEDED_DEMO_USER_IDS || new Set()).has(user.id);
+    const isDemo = Array.isArray(S.SEEDED_DEMO_USER_IDS) && S.SEEDED_DEMO_USER_IDS.includes(user.id);
     const ov = document.createElement("div");
     ov.id = "idleLockOverlay";
     ov.className = "idle-lock";
@@ -2602,6 +2602,9 @@ ${walkthroughMarkup()}`;
     const visitItems = w.visits.map(({ appt, note }) => {
       const state = !note ? `<span class="chip warn">no note yet</span>`
         : note.status === "signed" ? `<span class="chip good">signed</span>` : `<span class="chip info">draft started</span>`;
+      const apSt = appt.status === "arrived" ? `<span class="chip info">checked in</span>`
+        : appt.status === "completed" ? `<span class="chip good">completed</span>`
+        : appt.status === "no-show" ? `<span class="chip bad">no-show</span>` : "";
       return {
         key: appt.id, kind: !note ? "nonote" : note.status === "signed" ? "signed" : "draft", pid: appt.patientId, name: pName(appt.patientId), hour: new Date(appt.start).getHours(),
         html: qrow({
@@ -2609,7 +2612,7 @@ ${walkthroughMarkup()}`;
           tag: `<span class="q-time num">${fmtTime(appt.start)}</span>`,
           title: esc(pName(appt.patientId)),
           sub: `${esc(appt.note || "Visit")}${scope === "clinic" || !isMe ? ` · ${nameOf(appt.therapistId)}` : ""}`,
-          chips: state,
+          chips: `${apSt}${state}`,
           href: note ? `#/doc/${note.id}` : `#/patient/${appt.patientId}`,
           ptab: note ? null : "documents", pid: appt.patientId,
           action: !note ? "Start note" : note.status === "signed" ? "Open" : "Continue",
@@ -3375,6 +3378,7 @@ ${team}`;
 <div class="card pat-finder">
   ${search}
   <div id="patResults" class="pat-results" role="listbox" aria-label="Matching patients"></div>
+  <div id="patQuick" class="pat-quick"></div>
   ${count ? `<div class="pat-foot"><a class="btn" id="patShowAll" href="#/patients?all=1">Show all patients <span class="pat-count">${count}</span></a></div>` : ""}
 </div>`;
   }
@@ -3402,10 +3406,11 @@ ${team}`;
       return;
     }
     const box = document.getElementById("patResults");
+    const quick = document.getElementById("patQuick");
     const MAX = 8;
-    const hitCard = (p, extraChip) => {
+    const hitCard = (p, extraChip, cls = "pat-hit") => {
       const meta = [p.dob ? `${age(p.dob)} y` : "", p.phone, p.referringPhysician].filter(Boolean).join(" · ");
-      return `<a class="pat-hit" role="option" href="#/patient/${p.id}">
+      return `<a class="${cls}"${cls === "pat-hit" ? ' role="option"' : ""} href="#/patient/${p.id}">
         <span class="pat-hit-av" aria-hidden="true">${esc(initials(S.patientName(p)))}</span>
         <span class="pat-hit-main"><b>${esc(S.patientName(p))}</b><small>${esc(meta)}</small></span>
         ${extraChip || ""}${S.progressDue(p.id) ? '<span class="chip info">progress due</span>' : ""}
@@ -3414,27 +3419,28 @@ ${team}`;
     const draw = (q) => {
       if (!S.patients().length) {
         box.innerHTML = `<div class="pat-hint">No patients found in this clinic yet. <a href="#/intake">Start the first intake</a></div>`;
+        if (quick) quick.innerHTML = "";
         return;
       }
       if (!q.trim()) {
-        const todayAppts = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
-        const seen = new Set();
-        const todayPats = [];
-        for (const a of todayAppts) {
-          if (seen.has(a.patientId)) continue;
-          const p = S.getPatient(a.patientId);
-          if (p) { seen.add(a.patientId); todayPats.push({ p, time: fmtTime(a.start) }); }
+        box.innerHTML = `<div class="pat-hint">Start typing — matching patients and notes appear here.</div>`;
+        if (quick) {
+          const todayAppts = S.apptsOn(todayIso()).sort((a, b) => (a.start < b.start ? -1 : 1));
+          const seen = new Set();
+          const todayPats = [];
+          for (const a of todayAppts) {
+            if (seen.has(a.patientId)) continue;
+            const p = S.getPatient(a.patientId);
+            if (p) { seen.add(a.patientId); todayPats.push({ p, time: fmtTime(a.start) }); }
+          }
+          const recents = getRecentPatients().filter((p) => !seen.has(p.id)).slice(0, 5);
+          quick.innerHTML =
+            (todayPats.length ? `<div class="pat-quick-label">Scheduled today</div><div class="pat-results">${todayPats.map(({ p, time }) => hitCard(p, `<span class="chip muted num">${esc(time)}</span>`, "pat-hit pat-quick-hit")).join("")}</div>` : "") +
+            (recents.length ? `<div class="pat-quick-label">Recently opened</div><div class="pat-results">${recents.map((p) => hitCard(p, "", "pat-hit pat-quick-hit")).join("")}</div>` : "");
         }
-        const recents = getRecentPatients().filter((p) => !seen.has(p.id)).slice(0, 5);
-        if (!todayPats.length && !recents.length) {
-          box.innerHTML = `<div class="pat-hint">Start typing — matching patients (and clinical notes) appear here.</div>`;
-          return;
-        }
-        box.innerHTML =
-          (todayPats.length ? `<div class="pat-quick-label">Scheduled today</div>${todayPats.map(({ p, time }) => hitCard(p, `<span class="chip muted num">${esc(time)}</span>`)).join("")}` : "") +
-          (recents.length ? `<div class="pat-quick-label">Recently opened</div>${recents.map((p) => hitCard(p)).join("")}` : "");
         return;
       }
+      if (quick) quick.innerHTML = "";
       const hits = patMatches(q);
       const noteHits = typeof searchDocsFullText === "function" ? searchDocsFullText(q, { limit: 5 }) : [];
       if (!hits.length && !noteHits.length) {
@@ -3810,7 +3816,8 @@ ${team}`;
      document list, files, info and scheduling each get their own tab. */
   let patientTab = "overview";
   let patientTabFor = null; // the patient id the tab/filter state belongs to
-  const docFilter = { type: "all", status: "all", from: "", to: "" };
+  const docFilter = { type: "all", status: "all", from: "", to: "", q: "" };
+  const searchDocsFullText = (q, opts) => (S.searchDocuments ? S.searchDocuments(q, opts) : []);
   const aiReviewRuns = {}; // patientId -> true while an AI review request is in flight
   let completingItemId = null; // action item currently showing its "done + note" form
 
@@ -3850,7 +3857,7 @@ ${team}`;
     // reset per-patient view state when a different chart is opened
     if (patientTabFor !== p.id) {
       patientTab = "overview"; patientTabFor = p.id;
-      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = "";
+      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = ""; docFilter.q = "";
       completingItemId = null;
     }
     const tab = patientTab;
@@ -4060,6 +4067,7 @@ ${tabStrip}
 
     const goalsCard = goalsOverviewCard(p);
     const outcomesCard = outcomesOverviewCard(p);
+    const trendsCard = progressTrendsCard(p);
 
     // Recommendation history: AI recommendations (or manual tasks) that were
     // accepted and then carried out — a record of what was recommended and done.
@@ -4084,12 +4092,112 @@ ${tabStrip}
     return `${attentionCard}
       ${glance}
       ${goalsCard}
+      ${trendsCard}
       ${outcomesCard}
       <div class="card" id="patientAiReview"></div>
       ${historyCard}`;
   }
 
-  /* ---------- Overview cards: goals and outcome-measure trends ---------- */
+  /* ---------- Overview cards: goals, clinical trends and outcome measures ---------- */
+
+  function renderTrendSvg({ label, unit = "", points, yMin, yMax, lowerIsBetter = false }) {
+    if (!points || points.length < 2) return "";
+    const W = 280, H = 96, padL = 30, padR = 14, padT = 12, padB = 22;
+    const vals = points.map((pt) => Number(pt.value));
+    const lo = yMin != null ? Math.min(yMin, ...vals) : Math.min(...vals);
+    const hi = yMax != null ? Math.max(yMax, ...vals) : Math.max(...vals);
+    const span = Math.max(1, hi - lo);
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const coords = points.map((pt, i) => {
+      const x = padL + (i / (points.length - 1)) * iw;
+      const y = padT + (1 - (pt.value - lo) / span) * ih;
+      return { x, y, pt };
+    });
+    const first = vals[0], last = vals[vals.length - 1];
+    const diff = last - first;
+    const improved = lowerIsBetter ? diff < 0 : diff > 0;
+    const declined = lowerIsBetter ? diff > 0 : diff < 0;
+    const stroke = improved ? "var(--good)" : declined ? "var(--danger)" : "var(--accent)";
+    const poly = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+    const area = `${padL},${padT + ih} ${poly} ${coords[coords.length - 1].x.toFixed(1)},${padT + ih}`;
+    const mid = Math.round(((lo + hi) / 2) * 10) / 10;
+    const fmtShort = (iso) => {
+      if (!iso) return "";
+      const d = new Date(asLocalDay(iso.slice(0, 10)));
+      return isNaN(d.getTime()) ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" });
+    };
+    return `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}: ${first}${unit} to ${last}${unit}">
+      <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}" class="trend-grid" />
+      <line x1="${padL}" y1="${padT + ih / 2}" x2="${W - padR}" y2="${padT + ih / 2}" class="trend-grid" />
+      <line x1="${padL}" y1="${padT + ih}" x2="${W - padR}" y2="${padT + ih}" class="trend-grid" />
+      <text x="${padL - 5}" y="${padT + 4}" text-anchor="end" class="trend-axis">${hi}${esc(unit)}</text>
+      <text x="${padL - 5}" y="${padT + ih / 2 + 4}" text-anchor="end" class="trend-axis">${mid}</text>
+      <text x="${padL - 5}" y="${padT + ih + 3}" text-anchor="end" class="trend-axis">${lo}</text>
+      <polygon points="${area}" fill="${stroke}" opacity="0.11" />
+      <polyline points="${poly}" fill="none" stroke="${stroke}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" />
+      ${coords.map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.4" fill="var(--panel)" stroke="${stroke}" stroke-width="2"><title>${esc(fmtShort(c.pt.date))}: ${c.pt.value}${esc(unit)}</title></circle>`).join("")}
+      <text x="${padL}" y="${H - 4}" text-anchor="start" class="trend-axis">${esc(fmtShort(points[0].date))}</text>
+      <text x="${W - padR}" y="${H - 4}" text-anchor="end" class="trend-axis">${esc(fmtShort(points[points.length - 1].date))}</text>
+    </svg>`;
+  }
+
+  function progressTrendsCard(p, { compact = false } = {}) {
+    const docs = S.docsFor(p.id).slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    if (docs.length < 2) return "";
+    // 1. Pain trajectory (max reported pain per visit)
+    const painPts = [];
+    for (const d of docs) {
+      const scores = ((d.data && d.data.pain) || []).map((x) => Number(x.score)).filter((n) => !isNaN(n));
+      if (scores.length) painPts.push({ date: d.createdAt, value: Math.max(...scores) });
+    }
+    // 2. ROM trajectories (grouped by side + joint + motion, >=2 readings)
+    const romByKey = new Map();
+    for (const d of docs) {
+      for (const r of (d.data && d.data.rom) || []) {
+        const deg = Number(r.degrees);
+        if (isNaN(deg) || !r.joint || !r.motion) continue;
+        const key = `${(r.side || "").toLowerCase()}|${r.joint.toLowerCase()}|${r.motion.toLowerCase()}`;
+        const label = `${r.side ? cap(r.side) + " " : ""}${cap(r.joint)} ${r.motion}`;
+        if (!romByKey.has(key)) romByKey.set(key, { label, norm: romNorm(r), points: [] });
+        romByKey.get(key).points.push({ date: d.createdAt, value: deg });
+      }
+    }
+    const romSeries = [...romByKey.values()]
+      .filter((s) => s.points.length >= 2)
+      .sort((a, b) => b.points.length - a.points.length)
+      .slice(0, compact ? 2 : 4);
+
+    if (painPts.length < 2 && !romSeries.length) return "";
+    const cards = [];
+    if (painPts.length >= 2) {
+      const first = painPts[0].value, last = painPts[painPts.length - 1].value;
+      const delta = last - first;
+      const chip = delta <= -2 ? `<span class="chip good">${delta} pts (improved)</span>`
+        : delta >= 2 ? `<span class="chip bad">+${delta} pts</span>`
+        : `<span class="chip muted">${delta === 0 ? "unchanged" : `${delta > 0 ? "+" : ""}${delta} pt`}</span>`;
+      cards.push(`<div class="trend-tile">
+        <div class="trend-head"><b>Pain rating (0–10)</b>${chip}</div>
+        <div class="trend-nums num">${first}/10 <span class="otrend-arrow">→</span> <b>${last}/10</b> <span class="hint">across ${painPts.length} visits</span></div>
+        ${renderTrendSvg({ label: "Pain rating", unit: "/10", points: painPts, yMin: 0, yMax: 10, lowerIsBetter: true })}
+      </div>`);
+    }
+    for (const s of romSeries) {
+      const first = s.points[0].value, last = s.points[s.points.length - 1].value;
+      const delta = last - first;
+      const chip = delta >= 10 ? `<span class="chip good">+${delta}°</span>`
+        : delta <= -10 ? `<span class="chip bad">${delta}°</span>`
+        : `<span class="chip muted">${delta >= 0 ? "+" : ""}${delta}°</span>`;
+      cards.push(`<div class="trend-tile">
+        <div class="trend-head"><b>${esc(s.label)}</b>${chip}</div>
+        <div class="trend-nums num">${first}° <span class="otrend-arrow">→</span> <b>${last}°</b>${s.norm != null ? ` <span class="hint">(norm ${s.norm}°)</span>` : ""}</div>
+        ${renderTrendSvg({ label: s.label, unit: "°", points: s.points, yMin: 0, yMax: s.norm != null ? Math.max(s.norm, last, first) : null, lowerIsBetter: false })}
+      </div>`);
+    }
+    return `<div class="card${compact ? " trend-inline" : ""}">
+      <div class="ins-head"><h2>Clinical progress trends</h2><span class="chip muted">${cards.length} chart${cards.length === 1 ? "" : "s"}</span></div>
+      <div class="trend-grid">${cards.join("")}</div>
+    </div>`;
+  }
 
   function goalsOverviewCard(p) {
     const sum = CL.goalSummary(S.goalsFor(p.id), todayIso());
@@ -4120,29 +4228,14 @@ ${tabStrip}
   function outcomesOverviewCard(p) {
     const trends = CL.outcomeTrends(S.outcomeSeries(p.id));
     if (!trends.length) return "";
-    const spark = (t) => {
-      if (t.n < 2) return "";
-      const vals = t.points.map((x) => x.score);
-      const lo = Math.min(...vals), hi = Math.max(...vals);
-      const span = hi - lo || 1;
-      const w = 84, h = 24;
-      const pts = vals.map((v, i) => {
-        const x = (i / (vals.length - 1)) * w;
-        // always draw "up" as improvement, whichever way the scale runs
-        const norm = t.mcid && CL.findTool(t.toolId).better === "down" ? (hi - v) / span : (v - lo) / span;
-        return `${x.toFixed(1)},${(h - norm * h).toFixed(1)}`;
-      });
-      const [lastX, lastY] = pts[pts.length - 1].split(",");
-      return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
-        <polyline points="${pts.join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
-        <circle cx="${lastX}" cy="${lastY}" r="2.5" fill="currentColor" />
-      </svg>`;
-    };
     return `
       <div class="card">
         <div class="ins-head"><h2>Outcome measures</h2><span class="chip muted">${trends.length} tracked</span></div>
         <div class="outcome-trends">
-          ${trends.map((t) => `
+          ${trends.map((t) => {
+            const tool = CL.findTool(t.toolId);
+            const pts = (t.points || []).map((x) => ({ date: x.date, value: x.score }));
+            return `
             <div class="otrend ${t.direction}">
               <div class="otrend-head">
                 <b title="${esc(t.full)}">${esc(t.name)}</b>
@@ -4152,12 +4245,13 @@ ${tabStrip}
                 <span class="otrend-from">${t.first}${esc(t.unit)}</span>
                 <span class="otrend-arrow">→</span>
                 <span class="otrend-to">${t.latest}${esc(t.unit)}</span>
-                ${spark(t)}
               </div>
+              ${t.n >= 2 ? renderTrendSvg({ label: t.name, unit: t.unit, points: pts, lowerIsBetter: !!(tool && tool.better === "down") }) : ""}
               <div class="otrend-foot">${t.n < 2
                 ? "Baseline only — repeat it to show change."
                 : `${t.improvement > 0 ? "+" : ""}${Math.round(t.improvement * 10) / 10} toward better · MCID ${t.mcid}`}</div>
-            </div>`).join("")}
+            </div>`;
+          }).join("")}
         </div>
       </div>`;
   }
@@ -4410,6 +4504,8 @@ ${tabStrip}
     const statChip = (val, label) => `<button class="fchip fs-${val} ${docFilter.status === val ? "on" : ""}" data-fstatus="${val}">${label}</button>`;
     return `
       <div class="doc-filters">
+        <div class="fgroup fgroup-search"><span class="fglabel">Search</span>
+          <input type="search" class="fsearch" id="fQuery" value="${esc(docFilter.q || "")}" placeholder="Search inside notes, findings, measurements…" aria-label="Search inside notes" /></div>
         <div class="fgroup"><span class="fglabel">Type</span>
           <div class="fchips">${typeChip("all", "All")}${typeChip("eval", "Eval")}${typeChip("daily", "Daily")}${typeChip("progress", "Progress")}${typeChip("discharge", "Discharge")}</div></div>
         <div class="fgroup"><span class="fglabel">Status</span>
@@ -4423,18 +4519,27 @@ ${tabStrip}
   }
 
   function filteredDocs(p) {
+    const q = (docFilter.q || "").trim();
     if (docFilter.status === "deleted") {
       let gone = S.deletedDocsFor(p.id); // already most-recently-deleted first
       if (docFilter.type !== "all") gone = gone.filter((d) => d.type === docFilter.type);
       if (docFilter.from) gone = gone.filter((d) => d.createdAt.slice(0, 10) >= docFilter.from);
       if (docFilter.to) gone = gone.filter((d) => d.createdAt.slice(0, 10) <= docFilter.to);
+      if (q) gone = gone.filter((d) => (d.title || "").toLowerCase().includes(q.toLowerCase()));
       return gone;
     }
     let docs = S.docsFor(p.id).slice().reverse(); // newest first
+    let snippets = null;
+    if (q) {
+      const hits = searchDocsFullText(q, { patientId: p.id, limit: 200 });
+      snippets = new Map(hits.map((h) => [h.doc.id, h.snippet]));
+      docs = docs.filter((d) => snippets.has(d.id));
+    }
     if (docFilter.type !== "all") docs = docs.filter((d) => d.type === docFilter.type);
     if (docFilter.status !== "all") docs = docs.filter((d) => d.status === docFilter.status);
     if (docFilter.from) docs = docs.filter((d) => d.createdAt.slice(0, 10) >= docFilter.from);
     if (docFilter.to) docs = docs.filter((d) => d.createdAt.slice(0, 10) <= docFilter.to);
+    docs._snippets = snippets;
     return docs;
   }
 
@@ -4458,8 +4563,18 @@ ${tabStrip}
     if (!docs.length) {
       return `<div class="empty-state">${anyDocs ? "No documents match these filters." : `No documents yet.${S.canDocument(S.currentUser()) ? " Start with an <b>Evaluation</b> above." : ""}`}</div>`;
     }
+    const snips = docs._snippets;
+    const row = (d) => snips && snips.get(d.id)
+      ? `<tr class="rowlink" data-href="#/doc/${d.id}">
+          <td><span class="doc-tag ${docMeta(d.type).cls}">${docMeta(d.type).short}</span><a class="row-link" href="#/doc/${d.id}"><b>${esc(d.title)}</b></a>
+            <div class="doc-snip">${esc(snips.get(d.id))}</div></td>
+          <td>${d.status === "signed" ? '<span class="chip good">signed & locked</span>' : '<span class="chip warn">draft</span>'}${d.imported ? ' <span class="chip muted">imported</span>' : ""}</td>
+          <td>${esc((S.getUser(d.createdBy) || {}).name || "—")}</td>
+          <td class="num">${fmtDate(d.createdAt)}</td>
+        </tr>`
+      : docRow(d);
     return `<table class="list"><thead><tr><th>Document</th><th>Status</th><th>Therapist</th><th>Date</th></tr></thead>
-      <tbody>${docs.map(docRow).join("")}</tbody></table>`;
+      <tbody>${docs.map(row).join("")}</tbody></table>`;
   }
 
   // The picker that replaces auto-creating a draft: shows existing unsigned
@@ -5100,11 +5215,12 @@ ${rows.length ? `<table>
         document.querySelectorAll("[data-fstatus]").forEach((x) => x.classList.toggle("on", x.dataset.fstatus === docFilter.status));
         refresh();
       }));
-    const from = document.getElementById("fFrom"), to = document.getElementById("fTo"), clr = document.getElementById("fClear");
+    const fq = document.getElementById("fQuery"), from = document.getElementById("fFrom"), to = document.getElementById("fTo"), clr = document.getElementById("fClear");
+    if (fq) fq.addEventListener("input", () => { docFilter.q = fq.value; refresh(); });
     if (from) from.addEventListener("change", () => { docFilter.from = from.value; refresh(); });
     if (to) to.addEventListener("change", () => { docFilter.to = to.value; refresh(); });
     if (clr) clr.addEventListener("click", () => {
-      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = "";
+      docFilter.type = "all"; docFilter.status = "all"; docFilter.from = ""; docFilter.to = ""; docFilter.q = "";
       renderShell(location.hash, patientView(user), user, bindPatient);
     });
   }
@@ -5757,6 +5873,32 @@ ${rows.length ? `<table>
         </div>
       </div>`;
 
+    const scanPages = (scanJob && scanJob.pages || []).filter((pg) => pg && pg.url);
+    const pdfBlobUrl = !scanPages.length && f ? URL.createObjectURL(f) : null;
+    const hasPreview = scanPages.length > 0 || !!pdfBlobUrl;
+    let previewIdx = 0;
+
+    const previewPane = hasPreview ? `
+      <div class="imp-preview" id="impPreview">
+        <div class="imp-preview-head">
+          <b>Scanned record</b>
+          ${scanPages.length > 1 ? `<div class="imp-preview-nav">
+            <button class="btn small" type="button" id="impPgPrev" aria-label="Previous page">←</button>
+            <span class="num" id="impPgNum">1 / ${scanPages.length}</span>
+            <button class="btn small" type="button" id="impPgNext" aria-label="Next page">→</button>
+          </div>` : scanPages.length === 1 ? `<span class="hint">1 page</span>` : ""}
+        </div>
+        ${scanPages.length
+          ? `<div class="imp-preview-stage"><img id="impPgImg" src="${scanPages[0].url}" alt="Scanned page 1" title="Click to zoom" /></div>
+             <div class="hint" style="margin-top:4px">Click image to toggle zoom · check dates and numbers beside the scan.</div>`
+          : `<div class="imp-preview-pdf">
+              <div style="font-size:28px" aria-hidden="true">📄</div>
+              <b>${esc(f.name)}</b>
+              <small>${fmtBytes(f.size)}</small>
+              <a class="btn small" href="${pdfBlobUrl}" target="_blank" rel="noopener">Open PDF in new tab ↗</a>
+            </div>`}
+      </div>` : "";
+
     const m = showModal(`
 <h2>⇪ Review imported visits <span class="chip info">AI</span></h2>
 <p style="font-size:12.5px; color:var(--muted); margin-top:-4px">
@@ -5764,12 +5906,41 @@ ${rows.length ? `<table>
   Check the dates and values against the scan; edit anything. Only checked visits are saved — each becomes a locked
   historical document dated to the original visit.</p>
 ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b>${esc(result.patientName)}</b>, but this chart is <b>${esc(S.patientName(p))}</b>. Make sure you're importing into the right patient.</div>` : ""}
-<div style="max-height:56vh; overflow:auto">${visits.map(visitCard).join("")}</div>
+<div class="${hasPreview ? "imp-split" : ""}">
+  ${previewPane}
+  <div class="imp-visits">${visits.map(visitCard).join("")}</div>
+</div>
 <div class="modal-actions">
   <button class="btn" id="impCancel">Cancel</button>
   <button class="btn primary" id="impApply">Add ${visits.length} visit${visits.length === 1 ? "" : "s"} to chart</button>
 </div>`);
-    m.classList.add("wide");
+    m.classList.add(hasPreview ? "imp-modal-split" : "wide");
+
+    if (scanPages.length) {
+      const img = m.querySelector("#impPgImg");
+      const num = m.querySelector("#impPgNum");
+      const prev = m.querySelector("#impPgPrev");
+      const next = m.querySelector("#impPgNext");
+      const paintPg = () => {
+        if (!img) return;
+        img.src = scanPages[previewIdx].url;
+        img.alt = `Scanned page ${previewIdx + 1}`;
+        img.classList.remove("zoomed");
+        if (num) num.textContent = `${previewIdx + 1} / ${scanPages.length}`;
+        if (prev) prev.disabled = previewIdx === 0;
+        if (next) next.disabled = previewIdx === scanPages.length - 1;
+      };
+      if (img) img.addEventListener("click", () => img.classList.toggle("zoomed"));
+      if (prev) prev.addEventListener("click", () => { if (previewIdx > 0) { previewIdx--; paintPg(); } });
+      if (next) next.addEventListener("click", () => { if (previewIdx < scanPages.length - 1) { previewIdx++; paintPg(); } });
+      paintPg();
+    }
+    if (pdfBlobUrl) {
+      const obs = new MutationObserver(() => {
+        if (!m.isConnected) { URL.revokeObjectURL(pdfBlobUrl); obs.disconnect(); }
+      });
+      obs.observe(modalRoot, { childList: true });
+    }
 
     // live edits back into the working copies
     m.querySelectorAll("[data-vinc]").forEach((c) => c.addEventListener("change", () => { visits[+c.dataset.vinc]._inc = c.checked; updateApplyLabel(); }));
@@ -5909,6 +6080,10 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
       put("Progress toward goals", d.goalsProgress); put("Assessment", d.assessment);
     } else if (doc.type === "discharge") {
       put("Summary of care", d.summary); put("Outcome", d.outcome); put("Recommendations", d.recommendations);
+    }
+    if ((d.hep || []).length) {
+      secs.push(`<h3>Home exercise program (HEP)</h3><table><tr><th>Exercise</th><th>Sets × Reps</th><th>Hold</th><th>Frequency</th><th>Notes</th></tr>
+        ${d.hep.map((ex) => `<tr><td><b>${esc(ex.name)}</b></td><td>${esc([ex.sets ? `${ex.sets} sets` : "", ex.reps ? `${ex.reps} reps` : ""].filter(Boolean).join(" × ") || "—")}</td><td>${esc(ex.hold || "—")}</td><td>${esc(ex.frequency || "—")}</td><td>${esc(ex.notes || "")}</td></tr>`).join("")}</table>`);
     }
     // Outcome scores and the charge sheet are what a payer or referring
     // physician reads for proof and for the claim, so both print.
@@ -6155,6 +6330,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         group("Plan &amp; goals", "Where care goes from here",
           ["plan", "@goals"],
           ta("plan", "Plan", "Frequency, duration, interventions") +
+          hepEditor(doc, editable) +
           goalsEditor(doc, editable));
     } else if (doc.type === "daily") {
       sections =
@@ -6170,13 +6346,15 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
           ta("assessment", "Assessment", "Response to treatment, clinical reasoning, progress toward goals", 2)) +
         group("Plan", "Next visit and home programme",
           ["plan"],
-          ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2));
+          ta("plan", "Plan", "Next visit, frequency, HEP, progressions", 2) +
+          hepEditor(doc, editable));
     } else if (doc.type === "progress") {
       sections =
         group("Since the evaluation", "Where they started, and where they are now",
           ["currentStatus"],
           `<div class="field"><label>Baseline subjective — carried over from the evaluation</label>
             <textarea rows="2" disabled>${esc(doc.data.baselineSubjective || "(no signed evaluation found)")}</textarea></div>` +
+          progressTrendsCard(p, { compact: true }) +
           ta("currentStatus", "Current status", "How the patient presents now")) +
         group("Objective", "What you observed and measured",
           ["updatedFindings", "@measurements", "@outcomes"],
@@ -6189,6 +6367,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
         group("Goals &amp; progress", "Where care goes from here",
           ["@goals", "goalsProgress"],
           goalsEditor(doc, editable) +
+          hepEditor(doc, editable) +
           ta("goalsProgress", "Progress toward goals — narrative", ""));
     } else if (doc.type === "discharge") {
       sections =
@@ -6260,6 +6439,11 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
       <div class="typed-dictation-actions"><span class="hint">Enter files it · Shift+Enter = new line</span><button class="btn small ai" id="typedDictationAdd" type="button">＋ Add to note</button></div>
     </div>`;
 
+    const carrySrc = doc.type === "daily" && editable && S.lastVisitSource ? S.lastVisitSource(doc.patientId, doc.id) : null;
+    const carryNote = doc.data && doc.data.carriedFrom
+      ? `<div class="banner info carry-banner">Carried forward from <b>${esc(doc.data.carriedFrom.title)}</b> (${fmtDate(doc.data.carriedFrom.date)}) — review and update for today's visit before signing.</div>`
+      : "";
+
     view.innerHTML = `
 <div class="doc-page ${meta.cls}">
 <div class="page-head doc-head ${meta.cls}">
@@ -6268,6 +6452,7 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
     <div class="sub">created ${fmtDT(doc.createdAt)} by ${esc((S.getUser(doc.createdBy) || {}).name || "—")}</div>
   </div>
   <div class="page-actions">
+    ${carrySrc ? `<button class="btn" id="carryForwardBtn" type="button" title="Bring forward selected items from the patient's previous visit">Copy from last visit</button>` : ""}
     <button class="btn" id="printDocBtn">Print / PDF</button>
     ${locked
       ? (canDoc ? `<button class="btn" id="amendBtn">Add amendment</button>` : "")
@@ -6278,15 +6463,21 @@ ${docs.map((d, i) => `<div class="${i > 0 ? "doc-break" : ""}">${docPrintHtml(d)
 
 ${locked ? `<div class="lock-banner">🔒 Signed &amp; locked. Edits require a signed amendment with an authorization reason.</div>` : ""}
 ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot edit clinical documents.</div>` : ""}
+${carryNote}
 
 <nav class="doc-jumpbar" aria-label="Jump to section">
   <button class="doc-jump" type="button" data-djump="#docMapCard">Body map</button>
-  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval-intake"]'>Intake</button>` : ""}
-  ${doc.type === "daily" || doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-subjective"]'>Subjective</button>` : ""}
-  ${doc.type === "progress" ? `<button class="doc-jump" type="button" data-djump='details[data-group="prog-status"]'>Status</button>` : ""}
-  ${doc.type === "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group="dc-summary"]'>Summary</button>` : ""}
-  ${doc.type !== "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-objective"], details[data-group="prog-findings"]'>Objective</button>` : ""}
-  ${doc.type !== "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group$="-plan"], details[data-group="prog-assess"]'>Plan &amp; goals</button>` : ""}
+  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval:reason,precautions,pmh"]'>Intake</button>` : ""}
+  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval:subjective"]'>Subjective</button>` : ""}
+  ${doc.type === "daily" ? `<button class="doc-jump" type="button" data-djump='details[data-group="daily:subjective"]'>Subjective</button>` : ""}
+  ${doc.type === "progress" ? `<button class="doc-jump" type="button" data-djump='details[data-group="progress:currentStatus"]'>Status</button>` : ""}
+  ${doc.type === "discharge" ? `<button class="doc-jump" type="button" data-djump='details[data-group="discharge:summary"]'>Summary</button>` : ""}
+  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval:objectiveText,@measurements,@outcomes"]'>Objective</button>` : ""}
+  ${doc.type === "daily" ? `<button class="doc-jump" type="button" data-djump='details[data-group="daily:summary,@measurements"]'>Objective</button>` : ""}
+  ${doc.type === "progress" ? `<button class="doc-jump" type="button" data-djump='details[data-group="progress:updatedFindings,@measurements,@outcomes"]'>Objective</button>` : ""}
+  ${doc.type === "eval" ? `<button class="doc-jump" type="button" data-djump='details[data-group="eval:plan,@goals"]'>Plan &amp; HEP</button>` : ""}
+  ${doc.type === "daily" ? `<button class="doc-jump" type="button" data-djump='details[data-group="daily:plan"]'>Plan &amp; HEP</button>` : ""}
+  ${doc.type === "progress" ? `<button class="doc-jump" type="button" data-djump='details[data-group="progress:@goals,goalsProgress"]'>Goals &amp; HEP</button>` : ""}
   <button class="doc-jump" type="button" data-djump="#insightsCard">Insights</button>
   <button class="doc-jump doc-jump-asst" type="button" id="assistantLaunchM">${ICON.spark} Ask AI</button>
 </nav>
@@ -6526,6 +6717,9 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       bindTimeEditor(doc, user);
       bindOutcomeEditor(doc, user);
     }
+    bindHepEditor(doc, p, user, editable);
+    const carryBtn = document.getElementById("carryForwardBtn");
+    if (carryBtn && carrySrc) carryBtn.addEventListener("click", () => openCarryForwardModal(doc, carrySrc, user));
     // goal status is part of the plan of care, not the note body: a locked
     // note still shows the goals, but only an editable one can change them
     if (editable) bindGoalsEditor(doc, user);
@@ -6578,6 +6772,153 @@ ${!canDoc && !locked ? `<div class="banner warn">Read-only: your account cannot 
       const typedAdd = document.getElementById("typedDictationAdd");
       if (typed && typedAdd) typedAdd.addEventListener("click", submitTyped);
     }
+  }
+
+  /* ---- Home Exercise Program (HEP) + printable patient handout ---- */
+
+  function hepEditor(doc, editable) {
+    const list = (doc.data && doc.data.hep) || [];
+    const rows = list.map((ex, i) => `
+      <tr>
+        <td><b>${esc(ex.name)}</b>${ex.notes ? `<div class="hint">${esc(ex.notes)}</div>` : ""}</td>
+        <td class="num">${esc([ex.sets ? `${ex.sets} ×` : "", ex.reps ? `${ex.reps}` : ""].filter(Boolean).join(" ") || "—")}</td>
+        <td>${esc(ex.hold || "—")}</td>
+        <td>${esc(ex.frequency || "—")}</td>
+        ${editable ? `<td><button class="icon-btn" type="button" data-hep-del="${i}" aria-label="Remove exercise" title="Remove">✕</button></td>` : ""}
+      </tr>`).join("");
+    return `
+    <div class="hep-box" id="hepBox">
+      <div class="hep-head">
+        <div><b>Home exercise program (HEP)</b>${list.length ? ` <span class="chip muted">${list.length}</span>` : ""}</div>
+        ${list.length ? `<button class="btn small" type="button" id="hepPrintBtn">Print patient handout</button>` : ""}
+      </div>
+      ${list.length ? `<div class="table-scroll"><table class="list hep-table">
+        <thead><tr><th>Exercise</th><th>Sets × Reps</th><th>Hold</th><th>Frequency</th>${editable ? "<th></th>" : ""}</tr></thead>
+        <tbody>${rows}</tbody></table></div>` : `<div class="hint" style="margin:4px 0 8px">No home exercises added yet.</div>`}
+      ${editable ? `<div class="hep-form">
+        <input id="hepName" class="hep-in-name" placeholder="Exercise name (e.g. Wall slides, Quad sets)" aria-label="Exercise name" />
+        <input id="hepSets" class="hep-in-sm" placeholder="Sets (3)" aria-label="Sets" />
+        <input id="hepReps" class="hep-in-sm" placeholder="Reps (10)" aria-label="Reps" />
+        <input id="hepHold" class="hep-in-sm" placeholder="Hold (5s)" aria-label="Hold" />
+        <input id="hepFreq" class="hep-in-md" placeholder="Frequency (2x/day)" aria-label="Frequency" />
+        <input id="hepNotes" class="hep-in-notes" placeholder="Cues / precautions (optional)" aria-label="Exercise notes" />
+        <button class="btn small primary" type="button" id="hepAddBtn">＋ Add exercise</button>
+      </div>` : ""}
+    </div>`;
+  }
+
+  function printHepHandout(doc, p, user) {
+    const list = (doc.data && doc.data.hep) || [];
+    if (!list.length) return;
+    const prec = S.patientPrecautions(p);
+    const html = `
+      <h1>${esc(S.currentClinicName())}</h1>
+      <div class="print-muted">Home Exercise Program · Printed ${fmtDate(new Date().toISOString())}</div>
+      <h2>For: ${esc(S.patientNameWithPreferred(p))}</h2>
+      <p style="font-size:13px; margin:0 0 10px">Prescribed by <b>${esc((S.getUser(doc.createdBy) || user || {}).name || "Your Physical Therapist")}</b> · Stop any exercise that causes sharp or worsening pain and let your therapist know at your next visit.</p>
+      ${prec ? `<div style="border:1.5px solid #c22f43; background:#fde8ea; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:13px"><b>Important precautions:</b> ${esc(prec)}</div>` : ""}
+      <table>
+        <thead><tr><th>#</th><th>Exercise &amp; instructions</th><th>Sets × Reps</th><th>Hold</th><th>Frequency</th><th>Mon–Sun check-off</th></tr></thead>
+        <tbody>${list.map((ex, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td><b>${esc(ex.name)}</b>${ex.notes ? `<div class="print-muted">${esc(ex.notes)}</div>` : ""}</td>
+            <td>${esc([ex.sets ? `${ex.sets} sets` : "", ex.reps ? `${ex.reps} reps` : ""].filter(Boolean).join(" × ") || "—")}</td>
+            <td>${esc(ex.hold || "—")}</td>
+            <td>${esc(ex.frequency || "—")}</td>
+            <td style="letter-spacing:3px; white-space:nowrap">☐ ☐ ☐ ☐ ☐ ☐ ☐</td>
+          </tr>`).join("")}</tbody>
+      </table>`;
+    printHTML(html);
+  }
+
+  function bindHepEditor(doc, p, user, editable) {
+    const redraw = () => {
+      const box = document.getElementById("hepBox");
+      if (!box) return;
+      const fresh = S.getDoc(doc.id) || doc;
+      box.outerHTML = hepEditor(fresh, editable);
+      bindHepEditor(fresh, p, user, editable);
+    };
+    const printBtn = document.getElementById("hepPrintBtn");
+    if (printBtn) printBtn.addEventListener("click", () => printHepHandout(S.getDoc(doc.id) || doc, p, user));
+    if (!editable) return;
+    const add = () => {
+      const nameEl = document.getElementById("hepName");
+      const name = (nameEl && nameEl.value || "").trim();
+      if (!name) { if (nameEl) nameEl.focus(); return; }
+      const g = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+      const fresh = S.getDoc(doc.id) || doc;
+      const next = [...((fresh.data && fresh.data.hep) || []), {
+        id: S.uid("hep"), name, sets: g("hepSets"), reps: g("hepReps"), hold: g("hepHold"), frequency: g("hepFreq"), notes: g("hepNotes"),
+      }];
+      S.updateDocData(doc.id, { hep: next }, user);
+      redraw();
+      const n2 = document.getElementById("hepName");
+      if (n2) n2.focus();
+    };
+    const addBtn = document.getElementById("hepAddBtn");
+    if (addBtn) addBtn.addEventListener("click", add);
+    ["hepName", "hepSets", "hepReps", "hepHold", "hepFreq", "hepNotes"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+    });
+    document.querySelectorAll("[data-hep-del]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const idx = Number(b.dataset.hepDel);
+        const fresh = S.getDoc(doc.id) || doc;
+        const next = ((fresh.data && fresh.data.hep) || []).filter((_, i) => i !== idx);
+        S.updateDocData(doc.id, { hep: next }, user);
+        redraw();
+      }));
+  }
+
+  /* ---- Carry forward from last visit (explicit, clinician-picked) ---- */
+
+  function openCarryForwardModal(doc, src, user) {
+    const sx = src.data || {};
+    const opts = [];
+    if ((sx.summary || "").trim()) opts.push({ key: "summary", label: "Treatment summary", preview: sx.summary.trim() });
+    if ((sx.plan || "").trim()) opts.push({ key: "plan", label: "Plan", preview: sx.plan.trim() });
+    if ((sx.hep || []).length) opts.push({ key: "hep", label: `Home exercise program (${sx.hep.length} exercise${sx.hep.length === 1 ? "" : "s"})`, preview: sx.hep.map((e) => e.name).join(", ") });
+    if ((sx.mapPoints || []).length) opts.push({ key: "mapPoints", label: `Active body-map areas (${sx.mapPoints.length} pin${sx.mapPoints.length === 1 ? "" : "s"})`, preview: sx.mapPoints.map((pt) => pinLabel(pt.part, pt.side)).join(", ") });
+    if (!opts.length) return showToast("Nothing to carry forward from the last visit.");
+    const m = showModal(`
+      <h2>Copy from last visit</h2>
+      <p style="font-size:13px; color:var(--muted); margin-top:-2px">From <b>${esc(src.title)}</b> (${fmtDate(src.createdAt)}). Pick what to bring into today's draft — you can edit everything afterwards.</p>
+      <div class="carry-list">
+        ${opts.map((o) => `<label class="carry-opt">
+          <input type="checkbox" data-carry="${o.key}" checked />
+          <span><b>${esc(o.label)}</b><small>${esc(o.preview.slice(0, 140))}${o.preview.length > 140 ? "…" : ""}</small></span>
+        </label>`).join("")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="cfCancel" type="button">Cancel</button>
+        <button class="btn primary" id="cfApply" type="button">Copy selected</button>
+      </div>`);
+    m.querySelector("#cfCancel").addEventListener("click", closeModal);
+    m.querySelector("#cfApply").addEventListener("click", () => {
+      const picked = [...m.querySelectorAll("[data-carry]:checked")].map((c) => c.dataset.carry);
+      if (!picked.length) return closeModal();
+      const fresh = S.getDoc(doc.id) || doc;
+      const patch = { carriedFrom: { docId: src.id, title: src.title, date: src.createdAt } };
+      if (picked.includes("summary")) patch.summary = sx.summary;
+      if (picked.includes("plan")) patch.plan = sx.plan;
+      if (picked.includes("hep")) patch.hep = (sx.hep || []).map((e) => ({ ...e, id: S.uid("hep") }));
+      if (picked.includes("mapPoints")) {
+        const existing = (fresh.data && fresh.data.mapPoints) || [];
+        const keys = new Set(existing.map((pt) => `${pt.part}|${pt.side || ""}`));
+        const copied = (sx.mapPoints || [])
+          .filter((pt) => !keys.has(`${pt.part}|${pt.side || ""}`))
+          .map((pt) => ({ ...pt, notes: (pt.notes || []).map((n) => ({ ...n, uttId: null })) }));
+        patch.mapPoints = existing.concat(copied);
+      }
+      S.updateDocData(doc.id, patch, user);
+      S.audit(user.id, "doc-carry-forward", `${doc.title} copied ${picked.join(", ")} from ${src.title}`);
+      closeModal();
+      showToast(`Copied ${picked.length} section${picked.length === 1 ? "" : "s"} from ${src.title}.`, { tone: "good" });
+      render();
+    });
   }
 
   /* ---- measurement tables ---- */
@@ -12219,7 +12560,30 @@ ${isGoogleAccount(user)
   /* ================= CALENDAR ================= */
 
   let calDate = todayIso();
+  let calMode = "day"; // "day" | "week"
   const calHidden = new Set(); // therapist ids whose column is hidden on the board
+
+  const APPT_STATUS_META = {
+    booked: { label: "Booked", chip: "muted" },
+    arrived: { label: "Checked in", chip: "info" },
+    completed: { label: "Completed", chip: "good" },
+    "no-show": { label: "No-show", chip: "bad" },
+  };
+  const apptStatusBadge = (a) => {
+    if (!a || !a.status || a.status === "booked") return "";
+    const m = APPT_STATUS_META[a.status];
+    return m ? ` <span class="chip ${m.chip} appt-st-chip">${m.label}</span>` : "";
+  };
+  function weekDaysOf(dateIso) {
+    const d = new Date(dateIso + "T00:00:00");
+    const dow = d.getDay();
+    const mondayOffset = dow === 0 ? -6 : 1 - dow;
+    d.setDate(d.getDate() + mondayOffset);
+    return Array.from({ length: 7 }, (_, i) => {
+      const x = new Date(d); x.setDate(d.getDate() + i);
+      return localIso(x);
+    });
+  }
 
   function therapists() {
     /* No licence requirement: an approved therapist starts with none on file
@@ -12258,25 +12622,69 @@ ${isGoogleAccount(user)
     const ths = therapists();
     // forget any hidden ids for providers that no longer exist
     [...calHidden].forEach((id) => { if (!ths.some((t) => t.id === id)) calHidden.delete(id); });
+    const cols = ths.filter((t) => !calHidden.has(t.id));
     const slots = S.slotsForDay(calDate);
     const appts = S.apptsOn(calDate);
-    const { byKey: apptsBySlot, outside: offHours } = bucketAppointments(appts, slots, S.settings().slotMinutes);
-    const cols = ths.filter((t) => !calHidden.has(t.id));
-    const minW = Math.max(480, 72 + cols.length * 150); // keep columns readable; scroll when many
+    let grid = "";
+    let toolbarStatus = "";
 
-    // hidden providers keep their bookings off the board on purpose; a hidden
-    // column is the user's own doing, so those don't belong in the overflow list
-    const stranded = offHours.concat(
-      slots.length ? appts.filter((a) => calHidden.has(a.therapistId)) : []
-    );
-
-    const board = !ths.length
-      ? `<div class="empty-state" style="padding:22px">No PTs in this clinic yet. Use <b>Request to add someone</b> in Facility Admin — once the operator approves them, they appear here.</div>`
-      : !cols.length
-      ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their column.</div>`
-      : !slots.length
-      ? `<div class="empty-state" style="padding:22px">The facility is closed on this day.</div>`
-      : `
+    if (calMode === "week") {
+      const days = weekDaysOf(calDate);
+      const today = todayIso();
+      const visibleIds = new Set(cols.map((t) => t.id));
+      let weekTotal = 0;
+      const dayCols = days.map((isoDay) => {
+        const dayDate = new Date(isoDay + "T00:00:00");
+        const daySlots = S.slotsForDay(isoDay);
+        const dayAppts = S.apptsOn(isoDay)
+          .filter((a) => visibleIds.has(a.therapistId))
+          .sort((a, b) => (a.start < b.start ? -1 : 1));
+        weekTotal += dayAppts.length;
+        const wkLabel = dayDate.toLocaleDateString([], { weekday: "short" });
+        const mdLabel = dayDate.toLocaleDateString([], { month: "short", day: "numeric" });
+        return `<div class="cal-wk-col${isoDay === today ? " is-today" : ""}${!daySlots.length ? " is-closed" : ""}">
+          <button class="cal-wk-head" type="button" data-cal-open-day="${isoDay}" title="Open ${esc(mdLabel)} in Day view">
+            <span class="cal-wk-dow">${esc(wkLabel)}</span>
+            <b>${esc(mdLabel)}</b>
+            <span class="cal-wk-cnt">${dayAppts.length || ""}</span>
+          </button>
+          <div class="cal-wk-body">
+            ${!daySlots.length && !dayAppts.length ? `<div class="cal-wk-empty">Closed</div>`
+              : !dayAppts.length ? `<div class="cal-wk-empty">No visits</div>`
+              : dayAppts.map((a) => {
+                const th = S.getUser(a.therapistId);
+                return `<div class="slot-appt wk-appt st-${esc(a.status || "booked")}" data-appt="${a.id}">
+                  <div class="wk-appt-top"><b class="num">${fmtTime(a.start)}</b>${apptStatusBadge(a)}</div>
+                  <div class="wk-appt-pt">${esc(S.patientCallName(S.getPatient(a.patientId)))}</div>
+                  <small>${esc(th ? th.name.split(",")[0] : "")}${a.note ? ` · ${esc(a.note)}` : ""}</small>
+                </div>`;
+              }).join("")}
+          </div>
+        </div>`;
+      }).join("");
+      const firstD = fmtDate(days[0]), lastD = fmtDate(days[6]);
+      toolbarStatus = `${firstD} – ${lastD} · ${weekTotal} visit${weekTotal === 1 ? "" : "s"}`;
+      grid = !ths.length
+        ? `<div class="empty-state" style="padding:22px">No PTs in this clinic yet. Use <b>Request to add someone</b> in Facility Admin — once the operator approves them, they appear here.</div>`
+        : !cols.length
+        ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their visits.</div>`
+        : `<div class="cal-scroll"><div class="cal-week">${dayCols}</div></div>`;
+    } else {
+      const { byKey: apptsBySlot, outside: offHours } = bucketAppointments(appts, slots, S.settings().slotMinutes);
+      const minW = Math.max(480, 72 + cols.length * 150); // keep columns readable; scroll when many
+      // hidden providers keep their bookings off the board on purpose; a hidden
+      // column is the user's own doing, so those don't belong in the overflow list
+      const stranded = offHours.concat(
+        slots.length ? appts.filter((a) => calHidden.has(a.therapistId)) : []
+      );
+      toolbarStatus = slots.length ? `${slots.length} slots · ${appts.length} booked` : "closed";
+      const board = !ths.length
+        ? `<div class="empty-state" style="padding:22px">No PTs in this clinic yet. Use <b>Request to add someone</b> in Facility Admin — once the operator approves them, they appear here.</div>`
+        : !cols.length
+        ? `<div class="empty-state" style="padding:22px">All PTs are hidden — tap a name under “Providers” to show their column.</div>`
+        : !slots.length
+        ? `<div class="empty-state" style="padding:22px">The facility is closed on this day.</div>`
+        : `
 <div class="cal-scroll">
   <div class="cal-grid" style="grid-template-columns: 72px repeat(${cols.length}, minmax(150px, 1fr)); min-width: ${minW}px">
     <div class="cal-cell cal-head cal-corner">Time</div>
@@ -12286,22 +12694,23 @@ ${isGoogleAccount(user)
       ${cols.map((t) => {
         const here = apptsBySlot.get(`${t.id}|${slot}`) || [];
         if (here.length) return `<div class="cal-cell">${here.map((a) => `
-          <div class="slot-appt" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientCallName(S.getPatient(a.patientId)))}
+          <div class="slot-appt st-${esc(a.status || "booked")}" data-appt="${a.id}">${a.start !== slot ? `<b>${fmtTime(a.start)}</b> ` : ""}${esc(S.patientCallName(S.getPatient(a.patientId)))}${apptStatusBadge(a)}
           <small>${esc(a.note || "")}</small></div>`).join("")}</div>`;
         return `<div class="cal-cell"><span class="slot-free ${canEdit ? "" : "ask"}" data-slot="${slot}" data-ther="${t.id}"${canEdit ? "" : ` title="Ask for this slot"`}>${canEdit ? "+ Available" : "Available · Ask"}</span></div>`;
       }).join("")}`).join("")}
   </div>
 </div>`;
 
-    // Anything the board can't show still has to be visible somewhere, or the
-    // toolbar's "N booked" count contradicts an apparently empty day.
-    const grid = board + (stranded.length ? `<div class="cal-offhours">
+      // Anything the board can't show still has to be visible somewhere, or the
+      // toolbar's "N booked" count contradicts an apparently empty day.
+      grid = board + (stranded.length ? `<div class="cal-offhours">
   <p><b>Booked, but not on this board</b> — outside the day's opening hours, or a provider without a column.</p>
   <div class="cal-offhours-list">
-    ${stranded.map((a) => `<div class="slot-appt" data-appt="${a.id}">${fmtTime(a.start)} · ${esc(S.patientCallName(S.getPatient(a.patientId)))}
+    ${stranded.map((a) => `<div class="slot-appt st-${esc(a.status || "booked")}" data-appt="${a.id}">${fmtTime(a.start)} · ${esc(S.patientCallName(S.getPatient(a.patientId)))}${apptStatusBadge(a)}
       <small>${esc((S.getUser(a.therapistId) || {}).name || "")}${a.note ? ` — ${esc(a.note)}` : ""}</small></div>`).join("")}
   </div>
 </div>` : "");
+    }
 
     const upcomingReminders = S.appointments()
       .filter((a) => a.status === "booked")
@@ -12321,11 +12730,15 @@ ${isGoogleAccount(user)
 ${scheduleRequestsCard(user)}
 <div class="card">
   <div class="cal-toolbar">
-    <button class="btn small" id="calPrev">←</button>
+    <div class="seg-group" role="tablist" aria-label="Calendar view">
+      <button class="seg-btn${calMode === "day" ? " on" : ""}" type="button" data-cal-mode="day" role="tab" aria-selected="${calMode === "day"}">Day</button>
+      <button class="seg-btn${calMode === "week" ? " on" : ""}" type="button" data-cal-mode="week" role="tab" aria-selected="${calMode === "week"}">Week</button>
+    </div>
+    <button class="btn small" id="calPrev" title="${calMode === "week" ? "Previous week" : "Previous day"}">←</button>
     <input type="date" id="calDate" aria-label="Go to date" value="${calDate}" />
-    <button class="btn small" id="calNext">→</button>
+    <button class="btn small" id="calNext" title="${calMode === "week" ? "Next week" : "Next day"}">→</button>
     <button class="btn small" id="calToday">Today</button>
-    <span class="dict-status">${slots.length ? `${slots.length} slots · ${appts.length} booked` : "closed"}</span>
+    <span class="dict-status">${toolbarStatus}</span>
     <span class="cal-toolbar-spacer"></span>
     <button class="btn small soft" id="calAddPt">+ Add PT</button>
   </div>
@@ -12354,9 +12767,14 @@ ${scheduleRequestsCard(user)}
 
   function bindCalendar(user) {
     const redraw = () => { renderShell(location.hash, calendarView(user), user, bindCalendar); };
+    const stepDays = () => (calMode === "week" ? 7 : 1);
+    document.querySelectorAll("[data-cal-mode]").forEach((b) =>
+      b.addEventListener("click", () => { calMode = b.dataset.calMode; redraw(); }));
+    document.querySelectorAll("[data-cal-open-day]").forEach((b) =>
+      b.addEventListener("click", () => { calDate = b.dataset.calOpenDay; calMode = "day"; redraw(); }));
     document.getElementById("calDate").addEventListener("change", (e) => { calDate = e.target.value; redraw(); });
-    document.getElementById("calPrev").addEventListener("click", () => { calDate = shiftDay(calDate, -1); redraw(); });
-    document.getElementById("calNext").addEventListener("click", () => { calDate = shiftDay(calDate, 1); redraw(); });
+    document.getElementById("calPrev").addEventListener("click", () => { calDate = shiftDay(calDate, -stepDays()); redraw(); });
+    document.getElementById("calNext").addEventListener("click", () => { calDate = shiftDay(calDate, stepDays()); redraw(); });
     document.getElementById("calToday").addEventListener("click", () => { calDate = todayIso(); redraw(); });
     document.getElementById("printSchedBtn").addEventListener("click", () => printSchedule(user));
 
@@ -12452,6 +12870,7 @@ ${body}
       }, user);
       if (res.error) { m.querySelector("#bkErr").textContent = res.error; return; }
       closeModal();
+      showToast("Visit booked.", { tone: "good" });
       render();
     });
   }
@@ -12460,14 +12879,24 @@ ${body}
     const a = S.appointments().find((x) => x.id === apptId);
     if (!a) return;
     const p = S.getPatient(a.patientId);
+    const curStatus = a.status || "booked";
+    const meta = APPT_STATUS_META[curStatus] || { label: curStatus, chip: "muted" };
+    const canEdit = S.canEditSchedule(user);
     const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent("PT visit — " + S.patientName(p))}&dates=${gcalTime(a.start)}/${gcalTime(new Date(new Date(a.start).getTime() + a.minutes * 60000).toISOString())}`;
     const m = showModal(`
 <h2>${esc(S.patientNameWithPreferred(p))} — ${fmtDT(a.start)}</h2>
 <table class="list"><tbody>
+  <tr><td style="color:var(--muted)">Status</td><td><span class="chip ${meta.chip}">${esc(meta.label)}</span></td></tr>
   <tr><td style="color:var(--muted)">Therapist</td><td>${esc((S.getUser(a.therapistId) || {}).name || "—")}</td></tr>
   <tr><td style="color:var(--muted)">Note</td><td>${esc(a.note || "—")}</td></tr>
   <tr><td style="color:var(--muted)">Booked by</td><td>${esc((S.getUser(a.createdBy) || {}).name || "—")} · ${fmtDT(a.createdAt)}</td></tr>
 </tbody></table>
+${canEdit ? `<div class="appt-st-bar">
+  <span class="fglabel">Visit status</span>
+  <div class="fchips">
+    ${["booked", "arrived", "completed", "no-show"].map((st) => `<button class="fchip ${curStatus === st ? "on" : ""}" type="button" data-appt-st="${st}">${esc(APPT_STATUS_META[st].label)}</button>`).join("")}
+  </div>
+</div>` : ""}
 <h3 style="margin-top:10px">Change history</h3>
 <table class="list"><tbody>${a.history.map((h) => `<tr><td>${esc(h.action)}</td><td>${esc((S.getUser(h.userId) || {}).name || "—")}</td><td class="num">${fmtDT(h.time)}</td></tr>`).join("")}</tbody></table>
 <h3 style="margin-top:10px">Reminders</h3>
@@ -12475,18 +12904,27 @@ ${body}
 <div class="modal-actions">
   <a class="btn small" href="${gcal}" target="_blank" rel="noopener">Add to Google Calendar</a>
   <a class="btn small" href="#/patient/${p.id}" id="apChart">Open chart</a>
-  ${S.canEditSchedule(user)
+  ${canEdit
     ? `<button class="btn small danger" id="apCancel">Cancel visit</button>`
     : `<button class="btn small primary" id="apRequest">Request a change</button>`}
   <button class="btn small" id="apClose">Close</button>
 </div>`);
     m.querySelector("#apClose").addEventListener("click", closeModal);
     m.querySelector("#apChart").addEventListener("click", closeModal);
+    m.querySelectorAll("[data-appt-st]").forEach((b) => b.addEventListener("click", () => {
+      const next = b.dataset.apptSt;
+      const res = S.setAppointmentStatus(a.id, next, user);
+      if (res.error) return alertBanner(res.error);
+      closeModal();
+      showToast(`Visit marked ${APPT_STATUS_META[next].label.toLowerCase()}.`, { tone: next === "no-show" ? "warn" : "good" });
+      render();
+    }));
     const cancel = m.querySelector("#apCancel");
     if (cancel) cancel.addEventListener("click", () => {
       const res = S.cancelAppointment(a.id, user);
       if (res.error) return alertBanner(res.error);
       closeModal();
+      showToast("Visit cancelled.");
       render();
     });
     const ask = m.querySelector("#apRequest");
