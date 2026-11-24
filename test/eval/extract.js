@@ -267,13 +267,19 @@ function assess(fx, r) {
     const runs = [];
     for (let i = 0; i < RUNS; i++) {
       const t0 = Date.now();
+      // Thinking tokens are what the read's latency is made of (see NOTES.md,
+      // 2026-11-24), so every run reports them beside its time.
+      let usage = null, attempts = 0;
       try {
-        const r = await ai.extractRecords(b64, mime, opts);
+        const r = await ai.extractRecords(b64, mime, { ...opts,
+          onUsage: (u) => { usage = u; },
+          onRetry: () => { attempts++; } });
         const a = assess(fx, r);
-        runs.push({ ok: true, ms: Date.now() - t0, ...a });
+        runs.push({ ok: true, ms: Date.now() - t0, thinking: usage && usage.thinking, retries: attempts, ...a });
         if (!JSON_OUT) {
           const failed = Object.entries(a.checks).filter(([, ok]) => !ok).map(([k]) => k);
-          console.log(`   run ${i + 1}: ${a.passed}/${a.total} [${((Date.now() - t0) / 1000).toFixed(0)}s]` +
+          console.log(`   run ${i + 1}: ${a.passed}/${a.total} [${((Date.now() - t0) / 1000).toFixed(0)}s` +
+            `${usage ? `, ${usage.thinking} thinking + ${usage.out} answer tok` : ""}${attempts ? `, ${attempts} retr${attempts > 1 ? "ies" : "y"}` : ""}]` +
             (failed.length ? `  ✗ ${failed.join(", ")}` : "  ✓"));
         }
       } catch (e) {

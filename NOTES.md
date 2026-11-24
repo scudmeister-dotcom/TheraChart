@@ -12,6 +12,37 @@ Requests Amador has made and parked for later, newest first. Pick the next one
 from here when asked "what's still open". Strike an item through (or delete it)
 once it ships.
 
+**Done 2026-11-18** (branch `claude/document-upload-organization-925d0c`) — paper → digital, step 1
+- ~~Scan paper records~~ — its own tab, **Scan documents** (`#/scan`; sidebar and the
+  phone tab bar). Amador: scan FIRST, choose the patient AFTER — never patient →
+  Documents/Files → scan. Three steps on one page:
+  1. **Scan** — photograph page after page, pick photos, or upload a scanner PDF.
+     Photos are cleaned up on the device (`scan.js`: upright, 1600px, uneven light
+     flattened, grayscale, ~40 KB a page) and joined into ONE PDF with no library
+     (`TheraScan.buildPdf`). Rotate / reorder / remove per page.
+  2. **Read ✦** — the same Gemini read as before, now also returning `patientDob`,
+     `patientSex`, `patientPhone`, `referringPhysician` and `docKind` (ai.js
+     `EXTRACT_SCHEMA`). Never an enum value of "" — Gemini 400s the whole request.
+  3. **File** — what it is + a suggestion (add N visits / save as a referral…),
+     suggested patients (`TheraScan.matchPatients`: name either order, accents,
+     birth date, phone; a differing birth date rules a same-name patient out; only
+     name + birth date/phone is pre-selected), a search, or **+ New patient from
+     this document** (pre-filled, same `validatePatient` as intake). Visits go
+     through the existing review modal; otherwise the PDF is saved to Files.
+  Skip reading is always there; without AI (or for front desk, who can't
+  document) it is "Next: choose patient". The per-patient scan/import buttons are
+  gone from Documents and Files (Files points to the Scan tab).
+- Phone: the action bar sticks above the tab bar. That needed
+  `html:has(.scan-page) { overflow-x: clip }` — the global `overflow-x: hidden` on
+  html/body makes <body> the sticky container and nothing sticks (scoped so other
+  screens' sticky elements are unchanged).
+- *Not covered:* no auto-crop/deskew (fill the frame); pages live in memory until
+  filed (kept across tabs, dropped on sign-out), so a phone killing the tab while
+  the camera is open loses them.
+- *Suggested next, not yet asked for:* side-by-side review (scan page beside the
+  extracted visit, `[illegible]` flags) → full-text search inside notes and scans →
+  cost estimate before a read → several documents in one batch.
+
 **Done 2026-11-13** (branch `claude/phone-preview-d9df9f`) — phone pass
 - ~~Fold Finish and sign / Today's visits / Follow up like Housekeeping~~ — every
   section header is a disclosure button (whole band is tappable); fold state is
@@ -215,6 +246,40 @@ It also pins every branch of the delete dialog's spend line.
 a step is skipped or fails, not just the one where each step succeeds. Those
 are the states no fixture will build for you, and they are the ones a clinic
 meets first.
+
+---
+
+## Scanned-document read speed (2026-11-24)
+
+`extractRecords` used to take 1–6 minutes on a one-page scan. Two causes, both
+fixed in `ai.js`:
+
+1. **Thinking, not the image or the queue.** At `THINKING_DEEP` the model
+   thought for 2.6k–16k tokens (~165 tok/s) before writing a byte. A page is
+   only ~520 image tokens, so `media_resolution` is not a lever. The read now
+   runs at `THINKING_STANDARD`.
+2. **The 120 s timeout was per attempt.** A timeout is retryable, so three
+   attempts × 120 s + backoff = the 362 s "aborted due to timeout" seen on
+   2026-11-18. `withRetry` now takes `opts.deadline` (whole call, retries
+   included); the read uses 45 s per attempt inside a 90 s deadline. Other
+   callers are unchanged (no deadline → old behaviour).
+
+Eval: `node test/eval/extract.js --fixture scan_ --runs 2`, Vertex
+`gemini-3.8-flash` global, 0 FELL BACK. Score is checks passed out of 11.
+
+| level | scan_2visit | scan_4visit | scan_taglish | scan_handwritten | score |
+|---|---|---|---|---|---|
+| high (before) | 19, 28 s | 41, 56 s | 316, 146 s (3 + 2 attempts) | 102, 66 s | 11/11 all |
+| **medium (chosen)**, round 1 | 10, 12 s | 21, 12 s | 27, 9 s | 11, 18 s | 11/11 all |
+| **medium (chosen)**, round 2 | 11, 9 s | 15, 8 s | 14, 5 s | 12, 15 s | 11/11 all |
+| low, 2 rounds | 6, 6, 5, 5 s | 83, 9, 10, 9 s | 20, 14, 5, 5 s | 4, 6, 38, 7 s | 11/11 all |
+
+`low` is quicker but reasons not at all; the laterality rules (Tagalog vs
+Cebuano `wala`) are the judgement calls we kept thinking for. Its 83 s and
+38 s reads had zero thinking and ~750 answer tokens — server-side queueing,
+which the 45 s attempt timeout now cuts and retries. The eval prints thinking
+and answer tokens per run so the next change can be read the same way.
+Synthetic fixtures only; each eval run is billed.
 
 ---
 

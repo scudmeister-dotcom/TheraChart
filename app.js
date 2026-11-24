@@ -98,6 +98,8 @@
     clock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     dash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18"/><path d="M7 14l2.5 2.5L12 13l2 2 3-4"/></svg>',
     people: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    // a page inside scanner corners
+    scan: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
     cal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
     shield: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></svg>',
     gear: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="13" rx="2"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><circle cx="12" cy="14" r="1.6"/><path d="M12 15.6V18"/></svg>',
@@ -434,7 +436,7 @@
      genuinely wants the app, so it still opens the sign-in form for a stranger.
      Deliberately a list of routes rather than "any hash": a leftover #pricing
      from the landing page is not a request to sign in. */
-  const APP_ROUTES = /^#\/(dashboard|drafts|patients|patient|intake|doc|calendar|privacy|facility|clinics|profile)\b/;
+  const APP_ROUTES = /^#\/(dashboard|drafts|patients|patient|intake|doc|calendar|scan|privacy|facility|clinics|profile)\b/;
 
   /* The sign-in card has its own address so the BROWSER's Back button works on
      it. Landing and login are one page swapping its contents, so without a hash
@@ -455,6 +457,7 @@
     { hash: "#/dashboard", label: "Dashboard", short: "Home", icon: ICON.dash, emr: true },
     { hash: "#/patients", label: "Patients", short: "Patients", icon: ICON.people, emr: true },
     { hash: "#/calendar", label: "Calendar", short: "Calendar", icon: ICON.cal, emr: true },
+    { hash: "#/scan", label: "Scan documents", short: "Scan", icon: ICON.scan, emr: true },
     { hash: "#/privacy", label: "Privacy & Security", short: "Privacy", icon: ICON.shield, emr: false },
     { hash: "#/visit-time", label: "Visit time", short: "Time", icon: ICON.clock, emr: true, adminOnly: true },
     { hash: "#/facility", label: "Facility Admin", short: "Admin", icon: ICON.gear, emr: true, adminOnly: true },
@@ -530,7 +533,7 @@
     const emrAllowed = S.canAccessEmr(user);
     const route = (hash.split("/")[1] || "dashboard").split("?")[0];
 
-    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "facility", "visit-time"];
+    const emrRoutes = ["dashboard", "patients", "intake", "patient", "doc", "drafts", "calendar", "scan", "facility", "visit-time"];
     if (!emrAllowed && emrRoutes.includes(route)) return renderShell(hash, blockedView(user), user);
 
     if (route === "dashboard") return renderShell(hash, dashboardView(user), user, bindDashboard);
@@ -540,6 +543,7 @@
     if (route === "patient") return renderShell(hash, patientView(user), user, bindPatient);
     if (route === "doc") return renderShell(hash, "", user, bindDoc); // doc builds its own DOM
     if (route === "calendar") return renderShell(hash, calendarView(user), user, bindCalendar);
+    if (route === "scan") return renderShell(hash, scanView(user), user, bindScan);
     if (route === "privacy") return renderShell(hash, privacyView(user), user, bindPrivacy);
     if (route === "visit-time") {
       if (user.role !== "admin") return renderShell(hash, `<div class="card"><div class="empty-state">Visit time is for the clinic's administrators.</div></div>`, user);
@@ -650,6 +654,7 @@
       else trail.push({ label: "New intake", hash });
     } else if (route === "drafts") trail.push({ label: "Unsigned drafts", hash: "#/drafts" });
     else if (route === "calendar") trail.push({ label: "Calendar", hash: "#/calendar" });
+    else if (route === "scan") trail.push({ label: "Scan documents", hash: "#/scan" });
     else if (route === "privacy") trail.push({ label: "Privacy & Security", hash: "#/privacy" });
     else if (route === "facility") trail.push({ label: "Facility Admin", hash: "#/facility" });
     else if (route === "visit-time") trail.push({ label: "Visit time", hash: "#/visit-time" });
@@ -715,7 +720,7 @@
     const drawerPid = /^#\/patient\//.test(hash) ? (hash.split("/")[2] || "").split("?")[0] : null;
     if (assistantFor !== drawerPid) { assistantOpen = false; assistantFor = drawerPid; }
     const groups = [
-      { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar", "#/visit-time"].includes(n.hash)) },
+      { label: "Clinic", items: NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar", "#/scan", "#/visit-time"].includes(n.hash)) },
       { label: "Account", items: NAV.filter((n) => ["#/privacy", "#/facility", "#/clinics", "#/profile"].includes(n.hash)) },
     ];
     const linkHtml = (n) => {
@@ -736,7 +741,7 @@
 
     // --- mobile bottom bar: the three main workflow destinations as a
     //     segmented pill slider, with a highlight that slides to where we are.
-    const primaryNav = NAV.filter((n) => ["#/dashboard", "#/patients", "#/calendar"].includes(n.hash));
+    const primaryNav = NAV.filter((n) => ["#/dashboard", "#/patients", "#/scan", "#/calendar"].includes(n.hash));
     const isTabActive = (n) => navActive(n.hash, hash);
     const activeTabIdx = primaryNav.findIndex(isTabActive);
     /* The whole shell is redrawn on every route, so a pill drawn straight at
@@ -1245,6 +1250,7 @@ ${walkthroughMarkup()}`;
   /* Sign out through the sync layer, which also revokes the server session —
      clearing only the local view would leave a live bearer token on the device. */
   async function signOutFully() {
+    dropScanJob(); // scanned pages are patient records; they don't outlive the session
     const sync = window.TheraSync;
     if (sync && typeof sync.signOut === "function") await sync.signOut();
     await Promise.resolve(S.logout());
@@ -4131,8 +4137,7 @@ ${tabStrip}
      otherwise sit on somebody's personal device. On a desktop with no camera
      the attribute is ignored and the control is a second file picker, so it
      is safe to show everywhere rather than sniffing for a device. */
-  function filesPanel(p, user) {
-    const canDoc = S.canDocument(user);
+  function filesPanel(p) {
     return `
       <div class="card">
         <h2>Referrals, imaging & other files</h2>
@@ -4147,11 +4152,9 @@ ${tabStrip}
           <label class="btn small" style="position:relative; overflow:hidden" title="Opens the camera on a phone or tablet — the photo goes straight into the chart, not into your camera roll">
             📷 Take a photo<input id="photoCapture" type="file" accept="image/*" capture="environment" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
           </label>
-          ${canDoc ? `<label class="btn small" style="position:relative; overflow:hidden" title="AI reads a scanned document and turns each visit into a chart entry — you review everything before it's saved">
-            ⇪ Import visit history (PDF)<input id="pdfImport" type="file" accept="application/pdf,image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer" />
-          </label>` : ""}
           <small style="color:var(--muted)">Referrals, imaging & scans · up to 20 MB per file</small>
         </div>
+        <p class="scan-elsewhere">Old paper records? <a href="#/scan">Scan them on the Scan tab</a> — they're read first and you choose the patient after.</p>
       </div>`;
   }
 
@@ -4751,11 +4754,12 @@ ${rows.length ? `<table>
     });
   }
 
-  function bindFiles(p, user) {
-    /* One upload path. The camera button and the file picker differ only in
-       what the browser puts in front of the user; everything after the bytes
-       arrive is identical, so a photo is an attachment like any other. */
-    const upload = async (f, rename) => {
+  /* One upload path. The camera button, the file picker and a saved scan
+     differ only in what the browser puts in front of the user; everything
+     after the bytes arrive is identical, so a photo is an attachment like any
+     other. */
+  function attachmentUploader(p, user) {
+    return async (f, rename) => {
       if (!f) return;
       if (f.size > 20 * 1024 * 1024) return alertBanner("File is too large (limit 20 MB).");
       try {
@@ -4771,9 +4775,13 @@ ${rows.length ? `<table>
         S.save();
         S.audit(user.id, "attachment-added", `${rename || f.name} → ${S.patientName(cur)}`);
         render();
-      } catch (e) { alertBanner(e.message || "Upload failed."); }
+        return true;
+      } catch (e) { alertBanner(e.message || "Upload failed."); return false; }
     };
+  }
 
+  function bindFiles(p, user) {
+    const upload = attachmentUploader(p, user);
     const up = document.getElementById("fileUpload");
     if (up) up.addEventListener("change", () => upload(up.files[0]));
 
@@ -4799,12 +4807,6 @@ ${rows.length ? `<table>
         catch (e) { alertBanner(e.message || "Download failed."); }
       })
     );
-    const imp = document.getElementById("pdfImport");
-    if (imp) imp.addEventListener("change", () => {
-      const f = imp.files[0];
-      if (f) importPdfFlow(p, user, f);
-      imp.value = "";
-    });
   }
 
   function bindSchedule(p, user) {
@@ -4837,45 +4839,426 @@ ${rows.length ? `<table>
      documents are dated with their original visit date and locked, with the
      importing clinician's attestation. */
 
-  async function importPdfFlow(p, user, f) {
-    const sync = window.TheraSync || {};
-    if (!sync.ai) {
-      return alertBanner("Reading scanned documents needs the AI, which isn't configured on this server. Past visits can still be entered by hand.");
-    }
-    // Vercel serverless caps request bodies at ~4.5 MB; the clinic server allows 8 MB
-    const maxMb = sync.mode === "server" ? 8 : 3;
-    if (f.size > maxMb * 1024 * 1024) {
-      return alertBanner(`This file is ${(f.size / 1024 / 1024).toFixed(1)} MB — the limit here is ${maxMb} MB. Split the scan into smaller PDFs and import them one at a time.`);
-    }
-    let b64;
-    try {
-      b64 = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result).split(",")[1] || "");
-        r.onerror = () => reject(new Error("couldn't read the file"));
-        r.readAsDataURL(f);
-      });
-    } catch (e) { return alertBanner("Couldn't read the file: " + e.message); }
-
-    showModal(`<h2>⇪ Reading ${esc(f.name)}…</h2>
-      <p style="font-size:13px">The AI is reading the document and pulling out each visit — dates, note types, findings, and measurements. You'll review everything before anything is saved to the chart.</p>
-      <div class="empty-state">Working…</div>`);
-    let result;
-    try {
-      result = await sync.extractRecords(b64, f.type || "application/pdf");
-    } catch (e) {
-      closeModal();
-      const hint = /timeout|abort/i.test(e.message) ? " Long or unclear scans can take too long — try again, or split the PDF into fewer pages." : "";
-      return alertBanner("Couldn't read the document: " + e.message + hint);
-    }
-    closeModal();
-    if (!result.visits || !result.visits.length) {
-      return alertBanner(`No visit records were found in this document${result.docDescription ? ` — it looks like: ${result.docDescription}` : ""}. Nothing was saved.`);
-    }
-    openImportReviewModal(p, user, f, b64, result);
+  // Vercel serverless caps request bodies at ~4.5 MB; the clinic server allows 8 MB
+  function importLimitMb() {
+    return (window.TheraSync || {}).mode === "server" ? 8 : 3;
   }
 
-  function openImportReviewModal(p, user, f, b64, result) {
+  /* ========== Scan tab: scan → read → choose the patient → file ==========
+     Paper is scanned FIRST and filed after. Whoever is at the scanner picks up
+     a page of a chart, not a patient: the document is photographed page by
+     page (or a scanned PDF is uploaded), read by the AI — what it is, whose
+     name and birth date are on it, any past visits — and only then does the
+     person choose which patient it belongs to, from suggested matches, a
+     search, or a new patient made from what was read.
+
+     Each photo is cleaned up on the device (TheraScan.enhancePage) and the
+     pages are joined into ONE PDF (TheraScan.buildPdf). Nothing leaves the
+     device until Read is pressed. The job lives here, in memory, so leaving
+     the tab and coming back keeps the pages; it is dropped on sign-out and
+     never belongs to a different user. */
+
+  let scanJob = null;
+  const newScanJob = (user) => ({
+    userId: user.id, step: "capture", pages: [], pdf: null, queue: Promise.resolve(),
+    file: null, b64: null, result: null, readError: null, chosenId: null, query: "",
+  });
+  function dropScanJob() {
+    if (scanJob) scanJob.pages.forEach((x) => x.url && URL.revokeObjectURL(x.url));
+    scanJob = null;
+  }
+
+  const SCAN_KINDS = {
+    "therapy-notes": "Therapy notes", referral: "Referral", imaging: "Imaging report", lab: "Lab result",
+    intake: "Intake form", consent: "Consent form", insurance: "Insurance / HMO", other: "Other document",
+  };
+
+  function scanView(user) {
+    if (!scanJob || scanJob.userId !== user.id) { dropScanJob(); scanJob = newScanJob(user); }
+    const j = scanJob;
+    const steps = [["capture", "Scan"], ["reading", "Read"], ["file", "File"]];
+    const at = steps.findIndex(([k]) => k === j.step);
+    const stepper = `<ol class="scan-steps" aria-label="Steps">${steps.map(([k, label], i) =>
+      `<li class="${i < at ? "done" : i === at ? "now" : ""}"${i === at ? ' aria-current="step"' : ""}><span>${i + 1}</span>${label}</li>`).join("")}</ol>`;
+    let body = "";
+    if (j.step === "capture") body = scanCaptureHtml(user);
+    else if (j.step === "reading") body = `
+      <h1 class="scan-h1">Reading the document…</h1>
+      <p class="scan-intro">The AI is working out what this is, whose name and birth date are on it, and any past visits in it. You choose the patient next.</p>
+      <div class="empty-state scan-working">Working… long handwritten scans can take a minute.</div>`;
+    else body = scanFileHtml(user);
+    return `<div class="scan-page">${stepper}<div class="card scan-card">${body}</div></div>`;
+  }
+
+  function scanCaptureHtml(user) {
+    const j = scanJob;
+    return `
+      <div class="scan-head"><h1 class="scan-h1">Scan documents</h1>
+        <button class="btn small" type="button" id="scanReset">Start over</button></div>
+      <p class="scan-intro">Photograph a paper record page by page — or upload a PDF from a scanner. It's read first; you choose the patient after.<span class="scan-intro-more"> Photos are cleaned up to high-contrast grayscale on this device, and nothing is sent anywhere until you press Read.</span></p>
+      ${j.pdf ? `<div class="scan-pdf"><span class="scan-pdf-ico" aria-hidden="true">📄</span><div><b>${esc(j.pdf.name)}</b><small>${fmtBytes(j.pdf.size)} · uploaded PDF</small></div>
+          <button class="btn small" type="button" id="scanPdfDrop">Remove</button></div>`
+        : `<div id="scanGrid" class="scan-grid" aria-live="polite"></div>`}
+      <div class="scan-foot">
+        <div class="scan-add">
+          <label class="btn ${j.pdf ? "" : "primary"}">📷 Add page<input id="scanCam" type="file" accept="image/*" capture="environment" /></label>
+          <label class="btn">🖼 Photos<input id="scanPick" type="file" accept="image/*" multiple /></label>
+          <label class="btn">📄 PDF<input id="scanPdf" type="file" accept="application/pdf" /></label>
+        </div>
+        <div id="scanMeta" class="scan-meta"></div>
+        <div class="scan-actions">
+          ${scanCanRead(user) ? `<button class="btn" type="button" id="scanSkip" title="Choose the patient and save the file without the AI reading it">Skip reading</button>
+            <button class="btn primary" type="button" id="scanRead">Read it ✦</button>`
+            : `<button class="btn primary" type="button" id="scanSkip">Next: choose patient</button>`}
+        </div>
+      </div>`;
+  }
+
+  // Reading needs Gemini itself — there is no local fallback for a document.
+  // `sync.ai` is present even when the server has no model, so ask what it has.
+  const scanCanRead = (user) => {
+    const ai = (window.TheraSync || {}).ai;
+    return S.canDocument(user) && !!ai && ai.assistant !== "unavailable";
+  };
+  const scanReady = () => scanJob.pages.filter((x) => x.bytes);
+  const scanBytes = () => scanJob.pdf ? scanJob.pdf.size : scanReady().reduce((a, x) => a + x.bytes.length, 0);
+
+  function bindScan(user) {
+    const j = scanJob;
+    if (j.step === "capture") return bindScanCapture(user);
+    if (j.step === "reading") return; // the read in flight redraws when it lands
+    bindScanFile(user);
+  }
+  const redrawScan = (user) => {
+    if (routeOf(location.hash) === "scan") renderShell(location.hash, scanView(user), user, bindScan);
+  };
+
+  function bindScanCapture(user) {
+    const j = scanJob;
+    const T = window.TheraScan;
+    const limit = importLimitMb() * 1024 * 1024;
+    const grid = document.getElementById("scanGrid");
+    const meta = document.getElementById("scanMeta");
+    const readBtn = document.getElementById("scanRead");
+    const skipBtn = document.getElementById("scanSkip");
+
+    function draw() {
+      if (!meta || !meta.isConnected) return;
+      const pages = j.pages;
+      if (grid) {
+        grid.innerHTML = pages.length ? pages.map((pg, i) => `
+          <figure class="scan-tile${pg.error ? " bad" : ""}">
+            <div class="scan-thumb">${pg.url ? `<img src="${pg.url}" alt="Page ${i + 1}" />` : `<span>${pg.error ? "Couldn't read this photo" : "Cleaning up…"}</span>`}
+              <b class="scan-num" aria-hidden="true">${i + 1}</b>
+              <button class="btn small scan-del" type="button" data-scan-del="${pg.id}" aria-label="Remove page ${i + 1}" title="Remove">✕</button></div>
+            <figcaption>
+              <button class="btn small" type="button" data-scan-rot="${pg.id}" aria-label="Rotate page ${i + 1}" title="Rotate" ${pg.busy ? "disabled" : ""}>↻</button>
+              <button class="btn small" type="button" data-scan-mv="${pg.id}:-1" aria-label="Move page ${i + 1} earlier" title="Earlier" ${i === 0 ? "disabled" : ""}>←</button>
+              <button class="btn small" type="button" data-scan-mv="${pg.id}:1" aria-label="Move page ${i + 1} later" title="Later" ${i === pages.length - 1 ? "disabled" : ""}>→</button>
+            </figcaption>
+          </figure>`).join("")
+          : `<div class="empty-state">No pages yet — tap <b>Add page</b> to photograph the first one.</div>`;
+        grid.querySelectorAll("[data-scan-rot]").forEach((b) => b.addEventListener("click", () => {
+          const pg = j.pages.find((x) => x.id === b.dataset.scanRot);
+          if (pg) { pg.rotate = (pg.rotate + 1) % 4; process(pg); }
+        }));
+        grid.querySelectorAll("[data-scan-mv]").forEach((b) => b.addEventListener("click", () => {
+          const [id, d] = b.dataset.scanMv.split(":");
+          const i = j.pages.findIndex((x) => x.id === id), k = i + Number(d);
+          if (i < 0 || k < 0 || k >= j.pages.length) return;
+          [j.pages[i], j.pages[k]] = [j.pages[k], j.pages[i]];
+          draw();
+        }));
+        grid.querySelectorAll("[data-scan-del]").forEach((b) => b.addEventListener("click", () => {
+          const i = j.pages.findIndex((x) => x.id === b.dataset.scanDel);
+          if (i < 0) return;
+          if (j.pages[i].url) URL.revokeObjectURL(j.pages[i].url);
+          j.pages.splice(i, 1);
+          draw();
+        }));
+      }
+      const busy = pages.some((x) => x.busy);
+      const bad = pages.filter((x) => x.error).length;
+      const n = j.pdf ? 0 : scanReady().length;
+      const size = scanBytes();
+      const over = size > limit;
+      const empty = !j.pdf && !n;
+      meta.innerHTML = j.pdf ? "" : (pages.length
+        ? `${n} page${n === 1 ? "" : "s"} · ${fmtBytes(size)}${busy ? " · still cleaning up…" : ""}` +
+          (bad ? ` · <span class="warn-text">${bad} photo${bad === 1 ? "" : "s"} couldn't be read — remove ${bad === 1 ? "it" : "them"} or try again</span>` : "")
+        : "") +
+        (over ? `<span class="warn-text">${j.pdf ? "This PDF is" : "That's"} too big for the AI to read in one go (limit ${importLimitMb()} MB). ${j.pdf ? "Split it into smaller PDFs," : "Read these, then scan the rest as a second document,"} or skip reading and just file it.</span>` : "");
+      if (readBtn) readBtn.disabled = busy || empty || over;
+      if (skipBtn) skipBtn.disabled = busy || empty || size > 20 * 1024 * 1024;
+    }
+
+    // one page at a time: a phone holding several full-size camera frames
+    // decoded at once is how a tab gets killed mid-scan
+    function process(pg) {
+      pg.busy = true; pg.started = true; pg.error = null;
+      draw();
+      j.queue = j.queue.then(async () => {
+        if (!j.pages.includes(pg)) return;
+        try {
+          const out = await T.enhancePage(pg.file, { rotate: pg.rotate });
+          if (pg.url) URL.revokeObjectURL(pg.url);
+          Object.assign(pg, { blob: out.blob, bytes: out.bytes, url: URL.createObjectURL(out.blob) });
+        } catch (e) {
+          console.error("[scan] page failed:", e);
+          pg.error = e.message || "unreadable"; pg.bytes = null;
+        }
+        pg.busy = false;
+        j.draw(); // whichever screen is up now — the tab may have been redrawn since
+      });
+    }
+    j.draw = draw;
+
+    const addPhotos = (files) => {
+      const imgs = [...(files || [])].filter((f) => /^image\//i.test(f.type));
+      if (!imgs.length) return;
+      j.pdf = null;
+      const added = imgs.map((f) => ({ id: S.uid("pg"), file: f, rotate: 0, busy: true }));
+      j.pages.push(...added);
+      if (!grid) return redrawScan(user); // was showing a PDF: bring the grid back, which starts them
+      added.forEach(process);
+    };
+    // pages added while the grid wasn't on screen start here
+    j.pages.filter((x) => x.busy && !x.started).forEach(process);
+
+    const cam = document.getElementById("scanCam"), pick = document.getElementById("scanPick"), pdf = document.getElementById("scanPdf");
+    cam.addEventListener("change", () => { addPhotos(cam.files); cam.value = ""; });
+    pick.addEventListener("change", () => { addPhotos(pick.files); pick.value = ""; });
+    pdf.addEventListener("change", () => {
+      const f = pdf.files[0];
+      pdf.value = "";
+      if (!f) return;
+      if (j.pages.length && !confirm(`Use this PDF instead of the ${j.pages.length} photographed page${j.pages.length === 1 ? "" : "s"}?`)) return;
+      j.pages.forEach((x) => x.url && URL.revokeObjectURL(x.url));
+      j.pages = [];
+      j.pdf = f;
+      redrawScan(user);
+    });
+    const drop = document.getElementById("scanPdfDrop");
+    if (drop) drop.addEventListener("click", () => { j.pdf = null; redrawScan(user); });
+
+    document.getElementById("scanReset").addEventListener("click", () => {
+      if ((j.pages.length || j.pdf) && !confirm("Start over? The pages scanned so far are discarded.")) return;
+      dropScanJob();
+      redrawScan(user);
+    });
+
+    // the document as one file: the uploaded PDF, or the pages joined into one
+    const assemble = () => {
+      if (j.pdf) return j.pdf;
+      const n = scanReady().length;
+      return new File([T.buildPdf(scanReady().map((x) => x.bytes))],
+        `Scan ${photoStamp()} (${n} page${n === 1 ? "" : "s"}).pdf`, { type: "application/pdf" });
+    };
+    if (readBtn) readBtn.addEventListener("click", async () => {
+      try { j.file = assemble(); } catch (e) { return alertBanner("Couldn't put the pages together: " + e.message); }
+      j.step = "reading"; j.result = null; j.readError = null;
+      redrawScan(user);
+      try {
+        j.b64 = await fileToB64(j.file);
+        j.result = await window.TheraSync.extractRecords(j.b64, "application/pdf");
+        S.audit(user.id, "scan-read", `${j.file.name}: ${(j.result.visits || []).length} visit(s) read`);
+      } catch (e) {
+        const hint = /timeout|abort/i.test(e.message) ? " Long or unclear scans can take too long — try again, or scan fewer pages at a time." : "";
+        j.readError = "Couldn't read the document: " + e.message + hint;
+      }
+      if (scanJob !== j) return; // started over meanwhile
+      j.step = "file";
+      j.chosenId = null;
+      const top = j.result ? window.TheraScan.matchPatients(j.result, S.patients())[0] : null;
+      if (top && top.strength === "strong") j.chosenId = top.patient.id;
+      redrawScan(user);
+    });
+    skipBtn.addEventListener("click", () => {
+      try { j.file = assemble(); } catch (e) { return alertBanner("Couldn't put the pages together: " + e.message); }
+      j.step = "file"; j.result = null; j.readError = null; j.chosenId = null;
+      redrawScan(user);
+    });
+    draw();
+  }
+
+  const fileToB64 = (f) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = () => reject(new Error("couldn't read the file"));
+    r.readAsDataURL(f);
+  });
+
+  function scanPatientRow(p, extra, chosen) {
+    const bits = [p.dob ? `born ${fmtDate(p.dob)}` : "", p.phone || ""].filter(Boolean).join(" · ");
+    return `<label class="scan-pt ${chosen ? "on" : ""}">
+      <input type="radio" name="scanPt" value="${esc(p.id)}" ${chosen ? "checked" : ""} />
+      <span class="scan-pt-body"><b>${esc(S.patientName(p))}</b>${bits ? `<small>${esc(bits)}</small>` : ""}${extra || ""}</span>
+    </label>`;
+  }
+
+  function scanSearch(q) {
+    const ql = q.trim().toLowerCase();
+    if (!ql) return [];
+    const has = (...xs) => xs.filter(Boolean).join(" ").toLowerCase().includes(ql);
+    return S.patients().filter((p) => has(p.firstName, p.lastName, p.preferredName, `${p.firstName} ${p.lastName}`, `${p.lastName}, ${p.firstName}`, p.phone, p.dob))
+      .sort((a, b) => (a.lastName < b.lastName ? -1 : 1)).slice(0, 8);
+  }
+
+  function scanFileHtml(user) {
+    const j = scanJob;
+    const r = j.result;
+    const T = window.TheraScan;
+    const matches = r ? T.matchPatients(r, S.patients()) : [];
+    const chosen = j.chosenId ? S.getPatient(j.chosenId) : null;
+    const advice = r ? T.adviceFor(r) : null;
+    const visits = r ? r.visits || [] : [];
+    const canDoc = S.canDocument(user);
+
+    const what = r ? `
+      <div class="scan-what">
+        <div class="scan-what-head">
+          <span class="chip info">${esc(SCAN_KINDS[r.docKind] || "Document")}</span>
+          ${visits.length ? `<span class="chip good">${visits.length} visit${visits.length === 1 ? "" : "s"} found</span>` : ""}
+        </div>
+        ${r.docDescription ? `<p>${esc(r.docDescription)}</p>` : ""}
+        <dl class="scan-facts">
+          <div><dt>Name on it</dt><dd>${esc(r.patientName || "— not readable")}</dd></div>
+          <div><dt>Born</dt><dd>${r.patientDob ? esc(fmtDate(r.patientDob)) : "— not on it"}</dd></div>
+          ${r.patientPhone ? `<div><dt>Phone</dt><dd>${esc(r.patientPhone)}</dd></div>` : ""}
+          ${r.referringPhysician ? `<div><dt>Referred by</dt><dd>${esc(r.referringPhysician)}</dd></div>` : ""}
+        </dl>
+        ${visits.length ? `<ul class="scan-visits">${visits.slice(0, 8).map((v) => `<li><span class="chip muted">${esc(docMeta(v.type).label)}</span> ${v.date ? esc(fmtDate(v.date)) : "<i>no date</i>"}</li>`).join("")}${visits.length > 8 ? `<li>…and ${visits.length - 8} more</li>` : ""}</ul>` : ""}
+        <div class="banner info scan-advice"><b>Suggested:</b> ${esc(advice.text)}${matches[0] && matches[0].strength !== "possible" ? ` It looks like <b>${esc(S.patientName(matches[0].patient))}</b>'s.` : ""}</div>
+      </div>`
+      : `<div class="scan-what">${j.readError ? `<div class="banner warn">${esc(j.readError)}</div>` : ""}
+          <p class="scan-intro">${esc(j.file ? j.file.name : "")} · ${fmtBytes(j.file ? j.file.size : 0)} — not read by the AI. Choose the patient and it's saved to their Files.</p>
+          ${j.readError && scanCanRead(user) ? `<button class="btn small" type="button" id="scanRetry">Try reading again</button>` : ""}</div>`;
+
+    const matchHtml = matches.length ? `
+      <h3 class="scan-h3">Suggested</h3>
+      <div class="scan-pts">${matches.map((m) => scanPatientRow(m.patient,
+        `<span class="scan-why"><span class="chip ${m.strength === "strong" ? "good" : m.strength === "likely" ? "info" : "muted"}">${m.strength} match</span> ${m.reasons.map((x) => `<span class="${/differs/.test(x) ? "warn-text" : ""}">${esc(x)}</span>`).join(" · ")}</span>`,
+        m.patient.id === j.chosenId)).join("")}</div>`
+      : (r ? `<p class="scan-none">No patient here matches the name${r.patientDob ? " or birth date" : ""} on this document.</p>` : "");
+
+    const searchHits = scanSearch(j.query);
+    const actions = !chosen ? `<p class="scan-pick-hint">Choose a patient above to file this document.</p>`
+      : (visits.length && canDoc && r)
+        ? `<button class="btn" type="button" id="scanFileOnly">Only save the file</button>
+           <button class="btn primary" type="button" id="scanReview">Review ${visits.length} visit${visits.length === 1 ? "" : "s"} →</button>`
+        : `<button class="btn primary" type="button" id="scanFileOnly">Save to their chart</button>`;
+    // who it is going to, said once where the buttons are — the list may be scrolled away
+    const filingTo = chosen ? `<div class="scan-to">Filing to <b>${esc(S.patientName(chosen))}</b>${chosen.dob ? ` · born ${esc(fmtDate(chosen.dob))}` : ""}</div>` : "";
+
+    return `
+      <h1 class="scan-h1">File this document</h1>
+      <div class="scan-file">
+        <section class="scan-file-doc" aria-label="What was scanned">
+          ${j.pages.length && j.pages[0].url ? `<img class="scan-cover" src="${j.pages[0].url}" alt="First page" />` : ""}
+          ${what}
+        </section>
+        <section class="scan-file-who" aria-label="Choose the patient">
+          <h2 class="scan-h2">Whose record is this?</h2>
+          ${matchHtml}
+          <h3 class="scan-h3">Find a patient</h3>
+          <input id="scanQuery" type="search" autocomplete="off" placeholder="Name, phone or birth date…" value="${esc(j.query)}" aria-label="Search patients" />
+          <div class="scan-pts" id="scanHits">${searchHits.map((p) => scanPatientRow(p, "", p.id === j.chosenId)).join("")}</div>
+          <button class="btn small scan-newpt" type="button" id="scanNewPt">+ New patient${r && r.patientName ? " from this document" : ""}</button>
+        </section>
+      </div>
+      <div class="scan-foot scan-file-foot">
+        ${filingTo}
+        <div class="scan-actions">
+          <button class="btn" type="button" id="scanBack">← Back to pages</button>
+          ${actions}
+        </div>
+      </div>`;
+  }
+
+  function bindScanFile(user) {
+    const j = scanJob;
+    const choose = (id) => { j.chosenId = id; redrawScan(user); };
+    const wireRadios = (root) => root.querySelectorAll('input[name="scanPt"]').forEach((el) =>
+      el.addEventListener("change", () => choose(el.value)));
+    wireRadios(document);
+
+    const q = document.getElementById("scanQuery");
+    const hits = document.getElementById("scanHits");
+    q.addEventListener("input", () => {
+      j.query = q.value;
+      hits.innerHTML = scanSearch(j.query).map((p) => scanPatientRow(p, "", p.id === j.chosenId)).join("");
+      wireRadios(hits);
+    });
+
+    document.getElementById("scanBack").addEventListener("click", () => { j.step = "capture"; redrawScan(user); });
+    const retry = document.getElementById("scanRetry");
+    if (retry) retry.addEventListener("click", () => { j.step = "capture"; redrawScan(user); setTimeout(() => { const b = document.getElementById("scanRead"); if (b) b.click(); }, 0); });
+    document.getElementById("scanNewPt").addEventListener("click", () => openScanNewPatient(user));
+
+    const chosen = j.chosenId && S.getPatient(j.chosenId);
+    const done = (p, tab) => {
+      dropScanJob();
+      patientTab = tab; patientTabFor = p.id;
+      location.hash = `#/patient/${p.id}`;
+    };
+    const fileOnly = document.getElementById("scanFileOnly");
+    if (fileOnly) fileOnly.addEventListener("click", async () => {
+      fileOnly.disabled = true;
+      const ok = await attachmentUploader(chosen, user)(j.file);
+      if (ok) done(chosen, "files"); else fileOnly.disabled = false;
+    });
+    const review = document.getElementById("scanReview");
+    if (review) review.addEventListener("click", () =>
+      openImportReviewModal(chosen, user, j.file, j.b64, j.result, () => done(chosen, "documents")));
+  }
+
+  /* A new patient made from what the document says — the same validation as
+     intake (required fields, duplicate warning), so a scan never creates a
+     half-registered chart. Everything else is added later from the Info tab. */
+  function openScanNewPatient(user) {
+    const r = scanJob.result || {};
+    const nm = window.TheraScan.splitName(r.patientName);
+    const m = showModal(`
+<h2>New patient from this document</h2>
+<p style="font-size:12.5px; color:var(--muted); margin-top:-4px">Filled in from what was read — check it against the paper. Everything else can be added later on the patient's Info tab.</p>
+<div class="form-grid scan-np">
+  <div class="field"><label for="np-first">First name</label><input id="np-first" value="${esc(nm.firstName)}" autocomplete="off" /></div>
+  <div class="field"><label for="np-last">Last name</label><input id="np-last" value="${esc(nm.lastName)}" autocomplete="off" /></div>
+  <div class="field"><label for="np-dob">Date of birth</label><input id="np-dob" type="date" value="${esc(r.patientDob || "")}" /></div>
+  <div class="field"><label for="np-sex">Sex</label><select id="np-sex"><option value=""></option><option value="F" ${r.patientSex === "F" ? "selected" : ""}>Female</option><option value="M" ${r.patientSex === "M" ? "selected" : ""}>Male</option></select></div>
+  <div class="field"><label for="np-phone">Phone</label><input id="np-phone" type="tel" value="${esc(r.patientPhone || "")}" autocomplete="off" /></div>
+  <div class="field"><label for="np-ref">Referring physician</label><input id="np-ref" value="${esc(r.referringPhysician || "")}" autocomplete="off" /></div>
+</div>
+<div id="npWarn"></div>
+<div class="error" id="npErr"></div>
+<div class="modal-actions">
+  <button class="btn" type="button" id="npCancel">Cancel</button>
+  <button class="btn primary" type="button" id="npSave">Register patient</button>
+</div>`);
+    wirePhoneMasks(m, ["np-phone"]);
+    let acknowledged = false;
+    m.addEventListener("input", () => { acknowledged = false; });
+    m.querySelector("#npCancel").addEventListener("click", closeModal);
+    m.querySelector("#npSave").addEventListener("click", () => {
+      const g = (id) => m.querySelector("#" + id).value.trim();
+      const result = VD.validatePatient({
+        firstName: g("np-first"), lastName: g("np-last"), dob: g("np-dob"), sex: g("np-sex"),
+        phone: g("np-phone"), referringPhysician: g("np-ref"),
+      }, { today: todayIso(), existingPatients: S.patients(), patientId: null });
+      const verdict = applyValidation(m, result, {
+        firstName: "np-first", lastName: "np-last", dob: "np-dob", phone: "np-phone", referringPhysician: "np-ref",
+      }, { summaryEl: m.querySelector("#npErr"), confirmEl: m.querySelector("#npWarn"),
+        warningsAcknowledged: acknowledged, saveLabel: "Register patient" });
+      if (verdict === "errors") return;
+      if (verdict === "confirm") { acknowledged = true; return; }
+      const p = S.addPatient(result.cleaned, user.id);
+      closeModal();
+      scanJob.chosenId = p.id;
+      redrawScan(user);
+    });
+  }
+
+  function openImportReviewModal(p, user, f, b64, result, onDone) {
     const existing = S.docsFor(p.id);
     const isDupe = (v) => !!v.date && existing.some((d) => d.type === v.type && d.createdAt.slice(0, 10) === v.date);
     const visits = result.visits.map((v) => {
@@ -4990,6 +5373,7 @@ ${mismatch ? `<div class="banner warn">△ The document reads as belonging to <b
       applyBtn.disabled = true;
       await applyImport(p, user, f, b64, visits);
       closeModal();
+      if (onDone) onDone();
     });
   }
 

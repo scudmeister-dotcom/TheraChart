@@ -2739,6 +2739,147 @@ table.bill-table td { vertical-align: middle; overflow: hidden; }
   .modal .modal-actions { position: sticky; bottom: 0; background: var(--panel); padding-top: 10px; }
 }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* ---- Scan tab: scan → read → file ----
+   A page of its own, so the page scrolls (no box-in-a-box scrolling); the
+   bar holding Add page and the actions sticks to the bottom of the screen —
+   above the phone's tab bar — so Read / Save are always one tap away however
+   many pages are above them. */
+.scan-page { max-width: 1100px; }
+/* html/body clip sideways with overflow-x: hidden, which makes <body> the
+   container a sticky element sticks to — and <body> never scrolls, so nothing
+   sticks. `clip` cuts the same overflow without becoming a scroll container.
+   Scoped to this page so other screens' sticky elements keep behaving as they
+   do now; a browser without :has() simply shows the bar at the end. */
+html:has(.scan-page), html:has(.scan-page) body { overflow-x: clip; }
+.scan-steps {
+  list-style: none; display: flex; gap: 6px; margin: 0 0 12px; padding: 0;
+  font-size: 13px; color: var(--muted);
+}
+.scan-steps li { display: flex; align-items: center; gap: 6px; }
+.scan-steps li + li::before { content: ""; width: 22px; height: 1px; background: var(--border); margin-right: 2px; }
+.scan-steps span {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--border); background: var(--panel); font-weight: 600; font-size: 12px;
+}
+.scan-steps li.now { color: var(--ink); font-weight: 600; }
+.scan-steps li.now span { background: var(--accent); border-color: var(--accent); color: #fff; }
+.scan-steps li.done span { border-color: var(--accent); color: var(--accent); }
+/* overflow visible: a phone .card scrolls sideways, and a scrolling card would
+   be what the sticky bar sticks to — pinning it inside the card, over the pages */
+.scan-card { padding-bottom: 0; overflow: visible !important; }
+.scan-h1 { font-size: 20px; margin: 0 0 4px; }
+.scan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.scan-h2 { font-size: 15px; margin: 0 0 8px; }
+.scan-h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 6px; }
+.scan-intro { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; }
+.scan-working { margin: 12px 0 20px; }
+.scan-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
+  grid-auto-rows: max-content; align-content: start; margin: 10px 0;
+}
+.scan-grid .empty-state { grid-column: 1 / -1; }
+.scan-tile { margin: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.scan-tile.bad { border-color: var(--danger); }
+.scan-thumb {
+  aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--muted); font-size: 12px; text-align: center; padding: 4px;
+  position: relative;
+}
+.scan-thumb .scan-del { position: absolute; top: 4px; right: 4px; min-width: 36px; min-height: 36px; padding: 0; }
+.scan-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.scan-tile figcaption { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 6px 4px; }
+.scan-tile figcaption .btn { flex: 1 1 0; min-width: 0; max-width: 56px; min-height: 36px; padding: 0; font-size: 16px; justify-content: center; }
+.scan-num {
+  position: absolute; top: 6px; left: 6px; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px;
+  background: var(--ink); color: var(--panel); font-size: 13px; line-height: 26px; text-align: center;
+}
+.scan-pdf {
+  display: flex; align-items: center; gap: 12px; margin: 10px 0; padding: 14px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+}
+.scan-pdf > div { flex: 1; min-width: 0; }
+.scan-pdf b { display: block; overflow-wrap: anywhere; }
+.scan-pdf small { color: var(--muted); }
+.scan-pdf-ico { font-size: 26px; }
+
+.scan-foot {
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 0 -18px; padding: 10px 18px 14px;
+  background: var(--panel); border-top: 1px solid var(--border);
+  border-radius: 0 0 14px 14px;
+}
+.scan-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.scan-add label { position: relative; overflow: hidden; }
+.scan-add input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.scan-add .btn { white-space: nowrap; }
+.scan-meta { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.scan-meta:empty { display: none; }
+.scan-meta .warn-text { display: block; }
+.scan-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.scan-file-foot .scan-actions { margin-top: 0; }
+.scan-pick-hint { margin: 0 auto 0 0; font-size: 13px; color: var(--muted); }
+.scan-to { font-size: 13px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.warn-text { color: var(--warn, #b06d0b); }
+
+/* step 3: what was read, beside whose it is */
+.scan-file { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 22px; margin: 8px 0 16px; }
+.scan-cover { display: block; max-height: 220px; max-width: 100%; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+.scan-what p { margin: 6px 0; font-size: 13.5px; }
+.scan-what-head { display: flex; gap: 6px; flex-wrap: wrap; }
+.scan-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 14px; margin: 10px 0; }
+.scan-facts dt { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.scan-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.scan-visits { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
+.scan-advice { margin-top: 10px; font-size: 13px; }
+.scan-none { font-size: 13px; color: var(--muted); }
+.scan-pts { display: grid; gap: 6px; }
+.scan-pts:empty { display: none; }
+#scanHits { margin-top: 6px; }
+.scan-pt {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+}
+.scan-pt:hover { background: var(--hover); }
+.scan-pt.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.scan-pt input { margin-top: 3px; accent-color: var(--accent); }
+.scan-pt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.scan-pt-body small { color: var(--muted); }
+.scan-why { font-size: 12px; color: var(--muted); }
+.scan-why .chip { margin-right: 4px; }
+.scan-newpt { margin-top: 10px; }
+#scanQuery { width: 100%; }
+.scan-elsewhere { margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 760px) {
+  .scan-file { grid-template-columns: 1fr; gap: 14px; }
+}
+@media (max-width: 560px) {
+  .scan-h1 { font-size: 18px; }
+  .scan-intro { font-size: 12.5px; }
+  .scan-intro-more { display: none; }
+  .scan-thumb { aspect-ratio: 4 / 5; }
+  .scan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .scan-cover { max-height: 130px; }
+  /* the phone's tab bar is fixed over the bottom of the page */
+  .scan-foot { bottom: calc(68px + env(safe-area-inset-bottom)); padding-bottom: 12px; border-radius: 0 0 14px 14px; }
+  .scan-add .btn { flex: 1; justify-content: center; padding-left: 8px; padding-right: 8px; }
+  .scan-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 44px; }
+  .scan-actions .btn.primary { flex: 2 1 auto; }
+  /* filing: the primary names the patient, so it gets its own full row */
+  .scan-file-foot .scan-actions .btn.primary { flex-basis: 100%; order: -1; }
+  .scan-pick-hint { flex-basis: 100%; text-align: center; margin: 0; }
+  .scan-steps li + li::before { width: 12px; }
+}
+@media (max-height: 640px) {
+  .scan-thumb { aspect-ratio: 1 / 1; }
+}
+@media (pointer: coarse) {
+  .scan-tile figcaption .btn { min-height: 44px; }
+  .scan-thumb .scan-del { min-width: 44px; min-height: 44px; }
+  .scan-add .btn { min-height: 46px; }
+  .scan-pt { padding: 12px; }
+}
 @media (prefers-reduced-motion: reduce) { .modal { animation: none !important; } }
 
 /* ---- record-then-process dictation ----

@@ -56,6 +56,8 @@ function check(name, ok, extra) {
     JSON.stringify(daily.findings));
   check("empty-summary findings dropped", !daily.findings.some((f) => !f.summary));
   check("patientName/docDescription trimmed", r.patientName === "Reyes, Juan" && r.docDescription === "Scanned PT daily notes");
+  check("no kind given + visits found → therapy notes", r.docKind === "therapy-notes", r.docKind);
+  check("identity fields default to empty", r.patientDob === "" && r.patientSex === "" && r.patientPhone === "" && r.referringPhysician === "");
   check("text fields trimmed", daily.subjective === "pain better");
 
   // duplicate visits (same content) collapse to one
@@ -65,6 +67,27 @@ function check(name, ok, extra) {
     { type: "eval", date: "2023-05-01", subjective: "different" },
   ] });
   check("exact duplicate visits are dropped", dup.visits.length === 2, `got ${dup.visits.length}`);
+}
+
+
+/* ---------------- who + what, for filing a scan before a patient is chosen ---------------- */
+{
+  const n = (o) => ai.normalizeExtraction(Object.assign({ visits: [] }, o));
+  check("a real birth date is kept", n({ patientDob: "1980-03-12" }).patientDob === "1980-03-12");
+  check("an impossible birth date is dropped", n({ patientDob: "1980-02-30" }).patientDob === "");
+  check("a future birth date is dropped", n({ patientDob: "2999-01-01" }).patientDob === "");
+  check("a non-ISO birth date is dropped, not guessed at", n({ patientDob: "03/12/1980" }).patientDob === "");
+  check("sex only F or M", n({ patientSex: "F" }).patientSex === "F" && n({ patientSex: "female" }).patientSex === "");
+  check("phone and referring physician trimmed",
+    n({ patientPhone: " 0917 555 0101 ", referringPhysician: " Dr. R. Cruz " }).patientPhone === "0917 555 0101");
+  check("a known document kind is kept", n({ docKind: "referral" }).docKind === "referral");
+  check("an unknown kind with no visits → other", n({ docKind: "memo" }).docKind === "other");
+  check("the schema offers the identity fields to the model",
+    ["patientDob", "patientSex", "patientPhone", "referringPhysician", "docKind"].every((k) => ai.EXTRACT_SCHEMA.properties[k]));
+  check("no empty string in any schema enum (Gemini rejects the whole request)",
+    !JSON.stringify(ai.EXTRACT_SCHEMA).includes('""'));
+  check("'unknown' sex reads as not written", n({ patientSex: "unknown" }).patientSex === "");
+  check("the prompt tells the model never to work a birth date out from an age", /never work one out from an age/.test(ai.extractSystem()));
 }
 
 /* ---------------- buildHistoryDigest ---------------- */

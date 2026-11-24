@@ -443,15 +443,31 @@
      a clinic finishes their notes at roughly the same times of day, so a fixed
      backoff would line their retries up and re-create the burst that caused
      the throttle. */
+  /* `opts.timeout` bounds ONE attempt. `opts.deadline` (ms, optional) bounds
+     the whole call, retries and backoff included.
+
+     Without a deadline the two are easy to confuse, and we did: the document
+     read passed timeout 120000 and was seen running for 362 s before it
+     failed with "aborted due to timeout" (2026-11-18). The timer was firing
+     on schedule — a timeout is retryable, so each of the three attempts got a
+     fresh 120 s and the caller waited 3 × 120 s + backoff. Someone standing
+     at a scanner needs a bound on the wait, not on each try. With a deadline,
+     every attempt is cut to what is left of it, and no retry starts that
+     could not finish in time. */
+  const MIN_ATTEMPT_MS = 5000;
   async function withRetry(fn, opts) {
     const tries = Math.max(1, opts.retries == null ? 3 : opts.retries);
+    const perAttempt = opts.timeout || 40000;
+    const end = opts.deadline ? Date.now() + opts.deadline : Infinity;
     let last;
     for (let i = 0; i < tries; i++) {
-      try { return await fn(i); } catch (e) {
+      const timeout = Math.max(1, Math.min(perAttempt, end - Date.now()));
+      try { return await fn(i, timeout); } catch (e) {
         last = e;
         if (i === tries - 1 || !RETRYABLE(e)) throw e;
         const backoff = Math.min(8000, 600 * Math.pow(2, i));
         const wait = backoff / 2 + Math.random() * (backoff / 2);
+        if (end - Date.now() - wait < MIN_ATTEMPT_MS) throw e;
         if (opts.onRetry) opts.onRetry(i + 1, tries, wait, e);
         await sleep(wait);
       }
@@ -460,7 +476,7 @@
   }
 
   async function geminiJson(prompt, schema, opts) {
-    return withRetry(() => geminiJsonOnce(prompt, schema, opts), opts);
+    return withRetry((i, timeout) => geminiJsonOnce(prompt, schema, { ...opts, timeout }), opts);
   }
 
   async function geminiJsonOnce(prompt, schema, opts) {
@@ -479,7 +495,7 @@
           thinkingConfig: { thinkingLevel: opts.thinkingLevel || THINKING_STANDARD },
         },
       }),
-      signal: AbortSignal.timeout(opts.timeout || 40000),
+      signal: AbortSignal.timeout(opts.timeout),
     });
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
@@ -555,9 +571,21 @@
   // An absent section is an empty string; see extractSystem().
   const EXTRACT_SCHEMA = {
     type: "object",
-    propertyOrdering: ["patientName", "docDescription", "visits"],
+    propertyOrdering: ["patientName", "patientDob", "patientSex", "patientPhone", "referringPhysician",
+      "docKind", "docDescription", "visits"],
     properties: {
       patientName: { type: "string" },
+      /* Who the document is about, read off it so a scan can be filed BEFORE
+         anyone has picked a patient: the Scan tab matches these against the
+         clinic's patients, or pre-fills a new one. Only what is written —
+         never a birth date worked out from an age. */
+      patientDob: { type: "string" },
+      // not "" for unwritten: Gemini refuses a schema with an empty enum value (400)
+      patientSex: { type: "string", enum: ["F", "M", "unknown"] },
+      patientPhone: { type: "string" },
+      referringPhysician: { type: "string" },
+      // what kind of paper this is, so the Scan tab can advise where it goes
+      docKind: { type: "string", enum: ["therapy-notes", "referral", "imaging", "lab", "intake", "consent", "insurance", "other"] },
       docDescription: { type: "string" },
       visits: { type: "array", items: { type: "object", properties: {
         date: { type: "string" },
@@ -669,6 +697,17 @@
       "document is. If the document contains no therapy visit records, return an",
       "empty visits array and explain what it is in docDescription.",
       "",
+      "WHO AND WHAT. The document may be filed before anyone has chosen the",
+      "patient, so also return, ONLY when written on it (else an empty string):",
+      "patientDob as YYYY-MM-DD — never work one out from an age; patientSex",
+      "'F' or 'M' ('unknown' when not written); patientPhone as written; referringPhysician, the doctor who",
+      "referred the patient. And docKind: 'therapy-notes' (evaluations, session",
+      "or progress notes, discharge summaries), 'referral' (a doctor's referral",
+      "or request for therapy), 'imaging' (X-ray, MRI, CT, ultrasound report),",
+      "'lab', 'intake' (a registration or history form the patient filled in),",
+      "'consent', 'insurance' (HMO, PhilHealth, LOA or guarantee letter), or",
+      "'other'.",
+      "",
       "Return ONLY JSON matching the schema.",
     ].join("\n");
   }
@@ -731,12 +770,56 @@
     // chronological order; undated visits sink to the end
     unique.sort((a, b) => ((a.date || "9999") < (b.date || "9999") ? -1 : 1));
 
+    /* A birth date only if it is a real, past, plausible one: this pre-fills
+       a new patient and drives the "birth date matches" in patient matching,
+       so a misread is worse than nothing. */
+    const dob = (() => {
+      const t = String(parsed.patientDob || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return "";
+      const d = new Date(t + "T00:00:00Z");
+      if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) return "";
+      const y = +t.slice(0, 4);
+      return y >= 1900 && d.getTime() <= Date.now() ? t : "";
+    })();
+    const KINDS = ["therapy-notes", "referral", "imaging", "lab", "intake", "consent", "insurance", "other"];
+    const docKind = KINDS.includes(parsed.docKind) ? parsed.docKind : (unique.length ? "therapy-notes" : "other");
+
     return {
       visits: unique,
       patientName: String(parsed.patientName || "").trim(),
+      patientDob: dob,
+      patientSex: parsed.patientSex === "F" || parsed.patientSex === "M" ? parsed.patientSex : "",
+      patientPhone: String(parsed.patientPhone || "").trim(),
+      referringPhysician: String(parsed.referringPhysician || "").trim(),
+      docKind,
       docDescription: String(parsed.docDescription || "").trim(),
     };
   }
+
+  /* How fast a read is, and why — measured 2026-11-24 on the synthetic scans
+     (gemini-3.8-flash on Vertex global, test/eval/extract.js, 2 runs each).
+
+     The wait is THINKING, not the image and not queueing. A page costs ~520
+     image tokens; at THINKING_DEEP the model then thought for 2.6k–16k tokens
+     before the first byte of answer, at ~165 tok/s: 19–102 s per attempt on a
+     single page, and 146–316 s once a slow attempt timed out and was retried.
+     At THINKING_STANDARD it thinks ~0–2.3k tokens and a read takes 5–27 s
+     (16 runs), with every fixture (typed, 2-page, Taglish, handwritten) still
+     11/11 — the same score DEEP got. `low` reasons not at all and was 4–10 s
+     typically, also 11/11; we keep the thinking anyway, because the
+     laterality rules in extractSystem() (Tagalog `wala` = none, Cebuano
+     `wala` = left) are exactly the judgement calls a non-thinking pass gets
+     wrong on a page we have no fixture for, and ~1k thinking tokens is cheap.
+
+     Queueing is real but rare: two `low` reads took 38 s and 83 s with ZERO
+     thinking and ~750 answer tokens — the server sat on them. That is what
+     the attempt timeout is for: it cuts such an outlier and retries, and a
+     second try at a typical read finishes long before the first would have.
+     The deadline bounds the whole wait for the person standing at the
+     scanner, retries included. */
+  const EXTRACT_THINKING = THINKING_STANDARD;
+  const EXTRACT_ATTEMPT_MS = 45000;
+  const EXTRACT_DEADLINE_MS = 90000;
 
   async function extractRecords(fileBase64, mime, opts) {
     opts = opts || {};
@@ -749,7 +832,10 @@
       { inline_data: { mime_type: mime || "application/pdf", data: fileBase64 } },
       { text: extractSystem() },
     ];
-    const parsed = await geminiJson(parts, EXTRACT_SCHEMA, { ...opts, thinkingLevel: opts.thinkingLevel || THINKING_DEEP, timeout: opts.timeout || 120000 });
+    const parsed = await geminiJson(parts, EXTRACT_SCHEMA, { ...opts,
+      thinkingLevel: opts.thinkingLevel || EXTRACT_THINKING,
+      timeout: opts.timeout || EXTRACT_ATTEMPT_MS,
+      deadline: opts.deadline || EXTRACT_DEADLINE_MS });
     return { ...normalizeExtraction(parsed), source: "gemini" };
   }
 
