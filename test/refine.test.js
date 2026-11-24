@@ -837,6 +837,54 @@ for (const t of [
     check("a 400 is not retried — the request itself was wrong",
       notRetried.aiFailed === true && calls === 1, JSON.stringify({ calls }));
 
+    /* A deadline bounds the WHOLE call. The scanned-document read passed a
+       120 s timeout and ran for 362 s (2026-11-18): a timeout is retryable,
+       so each of three attempts got a fresh 120 s. A model that never answers
+       is the case that matters — it hangs until its signal aborts it. */
+    const hang = () => {
+      calls = 0;
+      const realFetch = global.fetch;
+      // AbortSignal.timeout's timer is unref'd; a real socket keeps the
+      // process alive while it waits, so the stand-in has to as well.
+      const alive = setInterval(() => {}, 1000);
+      global.fetch = (url, init) => new Promise((_, reject) => {
+        calls += 1;
+        init.signal.addEventListener("abort", () => reject(init.signal.reason));
+      });
+      return () => { global.fetch = realFetch; clearInterval(alive); };
+    };
+    const timed = async (fn) => {
+      const t0 = Date.now();
+      let err = null;
+      try { await fn(); } catch (e) { err = e; }
+      return { ms: Date.now() - t0, err };
+    };
+
+    restore = hang();
+    const perTry = await timed(() => AI.geminiJson("x", {}, { key: "k", base: "http://x", timeout: 150, retries: 3 }));
+    restore();
+    check("without a deadline, `timeout` bounds each attempt and a timeout is retried",
+      perTry.err && calls === 3 && perTry.ms >= 450, JSON.stringify({ calls, ms: perTry.ms }));
+
+    restore = hang();
+    const capped = await timed(() => AI.geminiJson("x", {}, { key: "k", base: "http://x", timeout: 60000, deadline: 300, retries: 3 }));
+    restore();
+    check("a deadline cuts the attempt in flight and starts no retry it could not finish",
+      capped.err && /timeout|abort/i.test(capped.err.message) && calls === 1 && capped.ms < 1500,
+      JSON.stringify({ calls, ms: capped.ms, e: capped.err && capped.err.message }));
+
+    restore = hang();
+    const doc = await timed(() => AI.extractRecords("JVBERi0=", "application/pdf", { key: "k", base: "http://x", deadline: 300 }));
+    restore();
+    check("the document read honours its deadline instead of waiting out three attempts",
+      doc.err && calls === 1 && doc.ms < 1500, JSON.stringify({ calls, ms: doc.ms }));
+
+    restore = flaky(429, 2);
+    const busyButInTime = await AI.geminiJson("x", {}, { key: "k", base: "http://x", deadline: 30000, retries: 3 });
+    restore();
+    check("a deadline still leaves room to retry a fast 429",
+      calls === 3 && Array.isArray(busyButInTime.dialogue), JSON.stringify({ calls }));
+
     report();
   })();
 }

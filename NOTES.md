@@ -249,6 +249,40 @@ meets first.
 
 ---
 
+## Scanned-document read speed (2026-11-24)
+
+`extractRecords` used to take 1–6 minutes on a one-page scan. Two causes, both
+fixed in `ai.js`:
+
+1. **Thinking, not the image or the queue.** At `THINKING_DEEP` the model
+   thought for 2.6k–16k tokens (~165 tok/s) before writing a byte. A page is
+   only ~520 image tokens, so `media_resolution` is not a lever. The read now
+   runs at `THINKING_STANDARD`.
+2. **The 120 s timeout was per attempt.** A timeout is retryable, so three
+   attempts × 120 s + backoff = the 362 s "aborted due to timeout" seen on
+   2026-11-18. `withRetry` now takes `opts.deadline` (whole call, retries
+   included); the read uses 45 s per attempt inside a 90 s deadline. Other
+   callers are unchanged (no deadline → old behaviour).
+
+Eval: `node test/eval/extract.js --fixture scan_ --runs 2`, Vertex
+`gemini-3.8-flash` global, 0 FELL BACK. Score is checks passed out of 11.
+
+| level | scan_2visit | scan_4visit | scan_taglish | scan_handwritten | score |
+|---|---|---|---|---|---|
+| high (before) | 19, 28 s | 41, 56 s | 316, 146 s (3 + 2 attempts) | 102, 66 s | 11/11 all |
+| **medium (chosen)**, round 1 | 10, 12 s | 21, 12 s | 27, 9 s | 11, 18 s | 11/11 all |
+| **medium (chosen)**, round 2 | 11, 9 s | 15, 8 s | 14, 5 s | 12, 15 s | 11/11 all |
+| low, 2 rounds | 6, 6, 5, 5 s | 83, 9, 10, 9 s | 20, 14, 5, 5 s | 4, 6, 38, 7 s | 11/11 all |
+
+`low` is quicker but reasons not at all; the laterality rules (Tagalog vs
+Cebuano `wala`) are the judgement calls we kept thinking for. Its 83 s and
+38 s reads had zero thinking and ~750 answer tokens — server-side queueing,
+which the 45 s attempt timeout now cuts and retries. The eval prints thinking
+and answer tokens per run so the next change can be read the same way.
+Synthetic fixtures only; each eval run is billed.
+
+---
+
 ## Deploy
 
 **Production is on `8926714`, revision `therachart-00059-cxk`**, deployed
