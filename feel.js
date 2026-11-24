@@ -182,6 +182,9 @@
       update(); return;
     }
     running = vt;
+    // a skipped transition (a newer navigation, or the stall guard below)
+    // rejects `ready` with an AbortError; that is expected, not an error
+    vt.ready.catch(() => { });
     // belt and braces: a transition that stalls (tab backgrounded mid-way) is
     // cut short rather than leaving the page frozen on a snapshot
     setTimeout(() => { if (running === vt) { try { vt.skipTransition(); } catch (_) { } } }, 1500);
