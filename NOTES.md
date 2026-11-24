@@ -12,6 +12,37 @@ Requests Amador has made and parked for later, newest first. Pick the next one
 from here when asked "what's still open". Strike an item through (or delete it)
 once it ships.
 
+**Done 2026-11-18** (branch `claude/document-upload-organization-925d0c`) — paper → digital, step 1
+- ~~Scan paper records~~ — its own tab, **Scan documents** (`#/scan`; sidebar and the
+  phone tab bar). Amador: scan FIRST, choose the patient AFTER — never patient →
+  Documents/Files → scan. Three steps on one page:
+  1. **Scan** — photograph page after page, pick photos, or upload a scanner PDF.
+     Photos are cleaned up on the device (`scan.js`: upright, 1600px, uneven light
+     flattened, grayscale, ~40 KB a page) and joined into ONE PDF with no library
+     (`TheraScan.buildPdf`). Rotate / reorder / remove per page.
+  2. **Read ✦** — the same Gemini read as before, now also returning `patientDob`,
+     `patientSex`, `patientPhone`, `referringPhysician` and `docKind` (ai.js
+     `EXTRACT_SCHEMA`). Never an enum value of "" — Gemini 400s the whole request.
+  3. **File** — what it is + a suggestion (add N visits / save as a referral…),
+     suggested patients (`TheraScan.matchPatients`: name either order, accents,
+     birth date, phone; a differing birth date rules a same-name patient out; only
+     name + birth date/phone is pre-selected), a search, or **+ New patient from
+     this document** (pre-filled, same `validatePatient` as intake). Visits go
+     through the existing review modal; otherwise the PDF is saved to Files.
+  Skip reading is always there; without AI (or for front desk, who can't
+  document) it is "Next: choose patient". The per-patient scan/import buttons are
+  gone from Documents and Files (Files points to the Scan tab).
+- Phone: the action bar sticks above the tab bar. That needed
+  `html:has(.scan-page) { overflow-x: clip }` — the global `overflow-x: hidden` on
+  html/body makes <body> the sticky container and nothing sticks (scoped so other
+  screens' sticky elements are unchanged).
+- *Not covered:* no auto-crop/deskew (fill the frame); pages live in memory until
+  filed (kept across tabs, dropped on sign-out), so a phone killing the tab while
+  the camera is open loses them.
+- *Suggested next, not yet asked for:* side-by-side review (scan page beside the
+  extracted visit, `[illegible]` flags) → full-text search inside notes and scans →
+  cost estimate before a read → several documents in one batch.
+
 **Done 2026-11-13** (branch `claude/phone-preview-d9df9f`) — phone pass
 - ~~Fold Finish and sign / Today's visits / Follow up like Housekeeping~~ — every
   section header is a disclosure button (whole band is tappable); fold state is

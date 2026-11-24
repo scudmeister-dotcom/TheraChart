@@ -555,9 +555,21 @@
   // An absent section is an empty string; see extractSystem().
   const EXTRACT_SCHEMA = {
     type: "object",
-    propertyOrdering: ["patientName", "docDescription", "visits"],
+    propertyOrdering: ["patientName", "patientDob", "patientSex", "patientPhone", "referringPhysician",
+      "docKind", "docDescription", "visits"],
     properties: {
       patientName: { type: "string" },
+      /* Who the document is about, read off it so a scan can be filed BEFORE
+         anyone has picked a patient: the Scan tab matches these against the
+         clinic's patients, or pre-fills a new one. Only what is written —
+         never a birth date worked out from an age. */
+      patientDob: { type: "string" },
+      // not "" for unwritten: Gemini refuses a schema with an empty enum value (400)
+      patientSex: { type: "string", enum: ["F", "M", "unknown"] },
+      patientPhone: { type: "string" },
+      referringPhysician: { type: "string" },
+      // what kind of paper this is, so the Scan tab can advise where it goes
+      docKind: { type: "string", enum: ["therapy-notes", "referral", "imaging", "lab", "intake", "consent", "insurance", "other"] },
       docDescription: { type: "string" },
       visits: { type: "array", items: { type: "object", properties: {
         date: { type: "string" },
@@ -669,6 +681,17 @@
       "document is. If the document contains no therapy visit records, return an",
       "empty visits array and explain what it is in docDescription.",
       "",
+      "WHO AND WHAT. The document may be filed before anyone has chosen the",
+      "patient, so also return, ONLY when written on it (else an empty string):",
+      "patientDob as YYYY-MM-DD — never work one out from an age; patientSex",
+      "'F' or 'M' ('unknown' when not written); patientPhone as written; referringPhysician, the doctor who",
+      "referred the patient. And docKind: 'therapy-notes' (evaluations, session",
+      "or progress notes, discharge summaries), 'referral' (a doctor's referral",
+      "or request for therapy), 'imaging' (X-ray, MRI, CT, ultrasound report),",
+      "'lab', 'intake' (a registration or history form the patient filled in),",
+      "'consent', 'insurance' (HMO, PhilHealth, LOA or guarantee letter), or",
+      "'other'.",
+      "",
       "Return ONLY JSON matching the schema.",
     ].join("\n");
   }
@@ -731,9 +754,28 @@
     // chronological order; undated visits sink to the end
     unique.sort((a, b) => ((a.date || "9999") < (b.date || "9999") ? -1 : 1));
 
+    /* A birth date only if it is a real, past, plausible one: this pre-fills
+       a new patient and drives the "birth date matches" in patient matching,
+       so a misread is worse than nothing. */
+    const dob = (() => {
+      const t = String(parsed.patientDob || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return "";
+      const d = new Date(t + "T00:00:00Z");
+      if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) return "";
+      const y = +t.slice(0, 4);
+      return y >= 1900 && d.getTime() <= Date.now() ? t : "";
+    })();
+    const KINDS = ["therapy-notes", "referral", "imaging", "lab", "intake", "consent", "insurance", "other"];
+    const docKind = KINDS.includes(parsed.docKind) ? parsed.docKind : (unique.length ? "therapy-notes" : "other");
+
     return {
       visits: unique,
       patientName: String(parsed.patientName || "").trim(),
+      patientDob: dob,
+      patientSex: parsed.patientSex === "F" || parsed.patientSex === "M" ? parsed.patientSex : "",
+      patientPhone: String(parsed.patientPhone || "").trim(),
+      referringPhysician: String(parsed.referringPhysician || "").trim(),
+      docKind,
       docDescription: String(parsed.docDescription || "").trim(),
     };
   }
